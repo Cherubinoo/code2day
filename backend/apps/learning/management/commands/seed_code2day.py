@@ -2,6 +2,7 @@ from django.core.management.base import BaseCommand
 
 from apps.learning.data import FALLBACK_DASHBOARD, FALLBACK_PROBLEMS
 from apps.learning.models import Problem, StudentProfile
+from apps.learning.services.problem_testcases import sync_problem_test_cases
 
 
 class Command(BaseCommand):
@@ -19,7 +20,7 @@ class Command(BaseCommand):
         )
 
         for item in FALLBACK_PROBLEMS:
-            Problem.objects.get_or_create(
+            problem, _ = Problem.objects.get_or_create(
                 slug=item["slug"],
                 defaults={
                     "title": item["title"],
@@ -27,8 +28,12 @@ class Command(BaseCommand):
                     "difficulty": item["difficulty"],
                     "tags": item["tags"],
                     "is_daily": item["is_daily"],
+                    "examples": item.get("examples", []),
+                    "hints": item.get("hints", []),
+                    "editorial": item.get("editorial", ""),
                 },
             )
+            sync_problem_test_cases(problem)
 
         self.stdout.write(
             self.style.SUCCESS(

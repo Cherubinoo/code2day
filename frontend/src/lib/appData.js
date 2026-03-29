@@ -22,25 +22,248 @@ function buildFallbackCalendar() {
 }
 
 export const starterCodeByLanguage = {
-  JavaScript: `function solve(input) {
-  return input;
+  JavaScript: `const fs = require("fs");
+
+const input = fs.readFileSync(0, "utf8").trimEnd();
+
+function solve(rawInput) {
+  // Parse rawInput for this problem and return the final answer.
+  return rawInput;
+}
+
+const result = solve(input);
+if (result !== undefined) {
+  process.stdout.write(String(result));
 }`,
-  Python: `def solve(input_data):
-    return input_data`,
-  Java: `class Solution {
-    public Object solve(Object input) {
-        return input;
+  Python: `import sys
+
+
+def solve(raw_input):
+    # Parse raw_input for this problem and return the final answer.
+    return raw_input
+
+
+if __name__ == "__main__":
+    raw_input = sys.stdin.read().rstrip("\\n")
+    result = solve(raw_input)
+    if result is not None:
+        sys.stdout.write(str(result))`,
+  Java: `import java.io.IOException;
+
+public class Main {
+    static String solve(String rawInput) {
+        // Parse rawInput for this problem and return the final answer.
+        return rawInput;
+    }
+
+    public static void main(String[] args) throws IOException {
+        String rawInput = new String(System.in.readAllBytes()).stripTrailing();
+        String result = solve(rawInput);
+        if (result != null) {
+            System.out.print(result);
+        }
     }
 }`,
-  "C++": `#include <bits/stdc++.h>
+  "C++": `#include <iostream>
+#include <iterator>
+#include <string>
+
 using namespace std;
 
+string solve(const string& rawInput) {
+    // Parse rawInput for this problem and return the final answer.
+    return rawInput;
+}
+
 int main() {
+    string rawInput((istreambuf_iterator<char>(cin)), istreambuf_iterator<char>());
+    while (!rawInput.empty() && (rawInput.back() == '\\n' || rawInput.back() == '\\r')) {
+        rawInput.pop_back();
+    }
+
+    string result = solve(rawInput);
+    cout << result;
     return 0;
 }`,
-  SQL: `SELECT *
-FROM practice_table
-LIMIT 10;`,
+  "C": `#include <stdio.h>
+#include <string.h>
+
+void solve(const char* raw_input) {
+    // Parse raw_input for this problem and print the final answer.
+    printf("%s", raw_input);
+}
+
+int main(void) {
+    char raw_input[65536];
+    size_t total = fread(raw_input, 1, sizeof(raw_input) - 1, stdin);
+    raw_input[total] = '\\0';
+
+    while (total > 0 && (raw_input[total - 1] == '\\n' || raw_input[total - 1] == '\\r')) {
+        raw_input[--total] = '\\0';
+    }
+
+    solve(raw_input);
+    return 0;
+}`,
+  "C#": `using System;
+using System.IO;
+
+public class Program {
+    static string Solve(string rawInput) {
+        // Parse rawInput for this problem and return the final answer.
+        return rawInput;
+    }
+
+    public static void Main() {
+        string rawInput = Console.In.ReadToEnd().TrimEnd('\\r', '\\n');
+        string result = Solve(rawInput);
+        if (result != null) {
+            Console.Write(result);
+        }
+    }
+}`,
+  Go: `package main
+
+import (
+    "fmt"
+    "io"
+    "os"
+    "strings"
+)
+
+func solve(rawInput string) string {
+    // Parse rawInput for this problem and return the final answer.
+    return rawInput
+}
+
+func main() {
+    data, _ := io.ReadAll(os.Stdin)
+    rawInput := strings.TrimRight(string(data), "\\r\\n")
+    fmt.Print(solve(rawInput))
+}`,
+  Rust: `use std::io::{self, Read};
+
+fn solve(raw_input: String) -> String {
+    // Parse raw_input for this problem and return the final answer.
+    raw_input
+}
+
+fn main() {
+    let mut raw_input = String::new();
+    io::stdin().read_to_string(&mut raw_input).unwrap();
+    let raw_input = raw_input.trim_end_matches(['\\r', '\\n']).to_string();
+    let result = solve(raw_input);
+    print!("{result}");
+}`,
+  Ruby: `raw_input = STDIN.read.rstrip
+
+def solve(raw_input)
+  # Parse raw_input for this problem and return the final answer.
+  raw_input
+end
+
+result = solve(raw_input)
+print(result) unless result.nil?`,
+  PHP: `<?php
+$rawInput = rtrim(stream_get_contents(STDIN));
+
+function solve(string $rawInput): string {
+    // Parse rawInput for this problem and return the final answer.
+    return $rawInput;
+}
+
+$result = solve($rawInput);
+if ($result !== null) {
+    echo $result;
+}`,
+  Swift: `import Foundation
+
+func solve(_ rawInput: String) -> String {
+    // Parse rawInput for this problem and return the final answer.
+    return rawInput
+}
+
+let data = FileHandle.standardInput.readDataToEndOfFile()
+let rawInput = String(data: data, encoding: .utf8)?
+    .trimmingCharacters(in: .newlines) ?? ""
+let result = solve(rawInput)
+print(result, terminator: "")`,
+  Kotlin: `fun solve(rawInput: String): String {
+    // Parse rawInput for this problem and return the final answer.
+    return rawInput
+}
+
+fun main() {
+    val rawInput = generateSequence(::readLine).joinToString("\\n").trimEnd()
+    print(solve(rawInput))
+}`,
+  TypeScript: `import * as fs from "fs";
+
+const input = fs.readFileSync(0, "utf8").trimEnd();
+
+function solve(rawInput: string): string {
+  // Parse rawInput for this problem and return the final answer.
+  return rawInput;
+}
+
+const result = solve(input);
+if (result !== undefined) {
+  process.stdout.write(String(result));
+}`,
+  Bash: `#!/bin/bash
+
+input="$(cat)"
+
+solve() {
+  local raw_input="$1"
+  printf "%s" "$raw_input"
+}
+
+solve "$input"`,
+  R: `input <- paste(readLines(file("stdin"), warn = FALSE), collapse = "\\n")
+
+solve <- function(raw_input) {
+  # Parse raw_input for this problem and return the final answer.
+  raw_input
+}
+
+cat(solve(input), sep = "")`,
+  Scala: `object Main {
+  def solve(rawInput: String): String = {
+    // Parse rawInput for this problem and return the final answer.
+    rawInput
+  }
+
+  def main(args: Array[String]): Unit = {
+    val rawInput = scala.io.Source.stdin.mkString.trim
+    val result = solve(rawInput)
+    if (result != null) {
+      print(result)
+    }
+  }
+}`,
+  Perl: `my $raw_input = do { local $/; <STDIN> };
+$raw_input =~ s/[\\r\\n]+$//;
+
+sub solve {
+    my ($raw_input) = @_;
+    # Parse raw_input for this problem and return the final answer.
+    return $raw_input;
+}
+
+my $result = solve($raw_input);
+print $result if defined $result;`,
+  Haskell: `import Data.Char (isSpace)
+
+trimEnd :: String -> String
+trimEnd = reverse . dropWhile isSpace . reverse
+
+solve :: String -> String
+solve rawInput =
+    rawInput
+
+main :: IO ()
+main = interact (solve . trimEnd)`,
 };
 
 export const editorLanguageByChoice = {
@@ -48,7 +271,20 @@ export const editorLanguageByChoice = {
   Python: "python",
   Java: "java",
   "C++": "cpp",
-  SQL: "sql",
+  "C": "c",
+  "C#": "csharp",
+  Go: "go",
+  Rust: "rust",
+  Ruby: "ruby",
+  PHP: "php",
+  Swift: "swift",
+  Kotlin: "kotlin",
+  TypeScript: "typescript",
+  Bash: "shell",
+  R: "r",
+  Scala: "scala",
+  Perl: "perl",
+  Haskell: "haskell",
 };
 
 export const fallbackDashboard = {
@@ -98,22 +334,35 @@ export const fallbackProblems = [
   {
     title: "Two Sum Variants",
     slug: "two-sum-variants",
-    description: "Return the pair of indices whose values add up to a target.",
+    description: "Given an array of integers `nums` and an integer `target`, return **indices** of the two numbers such that they add up to `target`. You may assume that each input would have **exactly one solution**, and you may not use the same element twice.",
     difficulty: "Easy",
     tags: ["Array", "Hash Map"],
     is_daily: true,
     progress_state: "open",
-    available_languages: ["JavaScript", "Python", "Java", "C++"],
+    available_languages: ["JavaScript", "Python", "Java", "C++", "C", "C#", "Go", "Rust", "TypeScript", "PHP", "Ruby", "Swift", "Kotlin"],
+    examples: [
+      { input: "nums = [2,7,11,15], target = 9", output: "[0,1]", explanation: "Because nums[0] + nums[1] == 9, we return [0, 1]." },
+      { input: "nums = [3,2,4], target = 6", output: "[1,2]", explanation: "Because nums[1] + nums[2] == 6, we return [1, 2]." },
+      { input: "nums = [3,3], target = 6", output: "[0,1]", explanation: "Because nums[0] + nums[1] == 6, we return [0, 1]." }
+    ],
+    hints: ["Try using a hash map to store complement values", "For each number, check if (target - current) exists in the map", "Return the indices when you find the complement"],
+    sample_output: "Input: nums = [2,7,11,15], target = 9\nOutput: [0,1]\n\nInput: nums = [3,2,4], target = 6\nOutput: [1,2]"
   },
   {
     title: "Binary Search Basics",
     slug: "binary-search-basics",
-    description: "Find the target position inside a sorted array with logarithmic time.",
+    description: "Given an array of integers `nums` which is sorted in **ascending order**, and an integer `target`, write a function to search `target` in `nums`. If `target` exists, then return its index. Otherwise, return `-1`. You must write an algorithm with `O(log n)` runtime complexity.",
     difficulty: "Easy",
     tags: ["Binary Search", "Array"],
     is_daily: false,
     progress_state: "not_completed",
-    available_languages: ["JavaScript", "Python", "Java", "C++"],
+    available_languages: ["JavaScript", "Python", "Java", "C++", "C", "C#", "Go", "Rust", "TypeScript", "PHP", "Ruby", "Swift", "Kotlin"],
+    examples: [
+      { input: "nums = [-1,0,3,5,9,12], target = 9", output: "4", explanation: "9 exists in nums and its index is 4" },
+      { input: "nums = [-1,0,3,5,9,12], target = 2", output: "-1", explanation: "2 does not exist in nums so return -1" }
+    ],
+    hints: ["Calculate the middle index of the current search range", "Compare the middle element with the target", "Eliminate half of the search space based on comparison"],
+    sample_output: "Input: nums = [-1,0,3,5,9,12], target = 9\nOutput: 4\n\nInput: nums = [-1,0,3,5,9,12], target = 2\nOutput: -1"
   },
   {
     title: "Customer Order Summary",
@@ -128,12 +377,20 @@ export const fallbackProblems = [
   {
     title: "Balanced Brackets",
     slug: "balanced-brackets",
-    description: "Validate whether an input string of brackets is correctly nested.",
+    description: "Given a string `s` containing just the characters `'('`, `')'`, `'{'`, `'}'`, `'['` and `']'`, determine if the input string is **valid**.\\n\\nAn input string is **valid** if:\\n1. Open brackets must be closed by the same type of brackets.\\n2. Open brackets must be closed in the correct order.\\n3. Every close bracket has a corresponding open bracket of the same type.",
     difficulty: "Medium",
     tags: ["Stack", "String"],
     is_daily: false,
     progress_state: "not_completed",
-    available_languages: ["JavaScript", "Python", "Java", "C++"],
+    available_languages: ["JavaScript", "Python", "Java", "C++", "C", "C#", "Go", "Rust", "TypeScript", "PHP", "Ruby", "Swift", "Kotlin"],
+    examples: [
+      { input: "s = \"()\"", output: "true", explanation: "Simple valid parentheses" },
+      { input: "s = \"()[]{}\"", output: "true", explanation: "Multiple valid bracket types" },
+      { input: "s = \"(]\"", output: "false", explanation: "Mismatched bracket types" },
+      { input: "s = \"([)]\"", output: "false", explanation: "Wrong closing order" }
+    ],
+    hints: ["Use a stack data structure", "Push opening brackets onto the stack", "When you see a closing bracket, check if it matches the top of stack"],
+    sample_output: "Input: s = \"()\"\\nOutput: true\\n\\nInput: s = \"(]\"\\nOutput: false"
   },
   {
     title: "Monthly Revenue Report",
@@ -148,22 +405,35 @@ export const fallbackProblems = [
   {
     title: "Merge K Lists",
     slug: "merge-k-lists",
-    description: "Merge multiple sorted linked lists into one sorted list.",
+    description: "You are given an array of `k` linked-lists `lists`, each linked-list is sorted in **ascending order**. Merge all the linked-lists into **one sorted** linked-list and return it.",
     difficulty: "Hard",
     tags: ["Heap", "Linked List"],
     is_daily: false,
     progress_state: "completed",
-    available_languages: ["JavaScript", "Python", "Java", "C++"],
+    available_languages: ["JavaScript", "Python", "Java", "C++", "C", "C#", "Go", "Rust", "TypeScript", "PHP", "Ruby", "Swift", "Kotlin"],
+    examples: [
+      { input: "lists = [[1,4,5],[1,3,4],[2,6]]", output: "[1,1,2,3,4,4,5,6]", explanation: "The linked-lists are: [1->4->5, 1->3->4, 2->6] Merging them into one sorted list: 1->1->2->3->4->4->5->6" },
+      { input: "lists = []", output: "[]", explanation: "Empty list of lists" },
+      { input: "lists = [[]]", output: "[]", explanation: "List containing empty list" }
+    ],
+    hints: ["Consider using a min-heap/priority queue", "Compare the head of each list to find the minimum", "Add the next element from the same list after extracting min"],
+    sample_output: "Input: lists = [[1,4,5],[1,3,4],[2,6]]\nOutput: [1,1,2,3,4,4,5,6]\n\nInput: lists = []\nOutput: []"
   },
   {
-    title: "Warehouse Stock Audit",
-    slug: "warehouse-stock-audit",
-    description: "Use nested SQL logic to identify stock mismatches across warehouse snapshots.",
+    title: "Median of Two Sorted Arrays",
+    slug: "median-of-two-sorted-arrays",
+    description: "Given two sorted arrays `nums1` and `nums2` of size `m` and `n` respectively, return the median of the two sorted arrays.",
     difficulty: "Hard",
-    tags: ["SQL"],
+    tags: ["Array", "Binary Search", "Divide and Conquer"],
     is_daily: false,
     progress_state: "not_completed",
-    available_languages: ["SQL"],
+    available_languages: ["JavaScript", "Python", "Java", "C++", "C", "C#", "Go", "Rust", "TypeScript", "PHP", "Ruby", "Swift", "Kotlin"],
+    examples: [
+      { input: "nums1 = [1,3], nums2 = [2]", output: "2.00000", explanation: "Merged array = [1,2,3] and median is 2." },
+      { input: "nums1 = [1,2], nums2 = [3,4]", output: "2.50000", explanation: "Merged array = [1,2,3,4] and median is (2 + 3) / 2 = 2.5." },
+      { input: "nums1 = [], nums2 = [1]", output: "1.00000", explanation: "Only element is 1, median is 1." }
+    ],
+    hints: ["Think about binary search on the smaller array", "Partition both arrays such that left half contains half of total elements", "Find the correct partition where all left elements <= all right elements"],
   },
 ];
 
@@ -251,7 +521,26 @@ export const conceptOptions = [
   "SQL",
 ];
 
-export const languageOptions = ["JavaScript", "Python", "Java", "C++", "SQL"];
+export const languageOptions = [
+  "JavaScript",
+  "Python",
+  "Java",
+  "C++",
+  "C",
+  "C#",
+  "Go",
+  "Rust",
+  "Ruby",
+  "PHP",
+  "Swift",
+  "Kotlin",
+  "TypeScript",
+  "Bash",
+  "R",
+  "Scala",
+  "Perl",
+  "Haskell",
+];
 
 export const contestCards = [
   {

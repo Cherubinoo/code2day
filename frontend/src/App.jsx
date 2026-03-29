@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import AuthScreen from "./components/AuthScreen";
 import TopBar from "./components/TopBar";
@@ -24,23 +24,41 @@ import {
   roleTracks,
   starterCodeByLanguage,
 } from "./lib/appData";
+import { runCodeExecution, editorLanguageMap } from "./lib/codeExecution";
 import {
   buildJsonPostOptions,
   estimateComplexity,
   extractApiError,
   normalizeProblems,
 } from "./lib/appUtils";
+import { useHistoryNav } from "./lib/useHistoryNav";
 
 function App() {
-  const [activePage, setActivePage] = useState("explore");
+  const [activePage, navigate] = useHistoryNav(() => {
+    // Restore saved page from localStorage on init
+    return window.localStorage.getItem("code2day-active-page") || "explore";
+  });
   const [dashboard, setDashboard] = useState(fallbackDashboard);
   const [problemSet, setProblemSet] = useState(normalizeProblems(fallbackProblems));
   const [selectedDifficulty, setSelectedDifficulty] = useState("All Levels");
-  const [selectedConcept, setSelectedConcept] = useState("All Concepts");
-  const [selectedLanguage, setSelectedLanguage] = useState("JavaScript");
-  const [selectedProblemSlug, setSelectedProblemSlug] = useState("two-sum-variants");
+  const [selectedConcept, setSelectedConcept] = useState("All Topics");
+  const [selectedLanguage, setSelectedLanguage] = useState(() => {
+    return window.localStorage.getItem("code2day-language") || "JavaScript";
+  });
+  const [selectedProblemSlug, setSelectedProblemSlug] = useState(() => {
+    return window.localStorage.getItem("code2day-problem-slug") || "";
+  });
   const [problemDetailTab, setProblemDetailTab] = useState("current");
-  const [code, setCode] = useState(starterCodeByLanguage.JavaScript);
+  const [code, setCode] = useState(() => {
+    const savedCode = window.localStorage.getItem("code2day-code");
+    const savedLang = window.localStorage.getItem("code2day-language") || "JavaScript";
+    // Return saved code if exists, otherwise use starter code for saved language
+    return savedCode || starterCodeByLanguage[savedLang] || starterCodeByLanguage.JavaScript;
+  });
+  const [problemStartTime, setProblemStartTime] = useState(() => {
+    const saved = window.localStorage.getItem("code2day-problem-start");
+    return saved ? parseInt(saved, 10) : null;
+  });
   const [registerNumber, setRegisterNumber] = useState(
     () => window.localStorage.getItem(authStorageKey) ?? "",
   );
@@ -60,6 +78,13 @@ function App() {
   const [outputLog, setOutputLog] = useState(
     "Output panel ready. Run the code to see sample execution results here.",
   );
+  const [executionInput, setExecutionInput] = useState("");
+  const [executionMeta, setExecutionMeta] = useState({
+    status: "Idle",
+    time: "",
+    memory: "",
+  });
+  const [executionBusy, setExecutionBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [expandedSections, setExpandedSections] = useState({
     open: true,
@@ -90,17 +115,20 @@ function App() {
     setSelectedDifficulty("All Levels");
     setSelectedConcept("All Concepts");
     setSelectedLanguage("JavaScript");
-    setSelectedProblemSlug("two-sum-variants");
+    setSelectedProblemSlug("");
     setProblemDetailTab("current");
     setCode(starterCodeByLanguage.JavaScript);
     setOutputLog("Output panel ready. Run the code to see sample execution results here.");
+    setExecutionInput("");
+    setExecutionMeta({ status: "Idle", time: "", memory: "" });
+    setExecutionBusy(false);
     setSessionMode("practice");
     setActiveContestId("");
     setContestSecondsLeft(null);
     setProblemSecondsElapsed(0);
     setContestHistory([]);
     setSelectedRoadmapId("");
-    setActivePage("explore");
+    navigate("explore", { replace: true });
   }
 
   useEffect(() => {
@@ -196,6 +224,61 @@ function App() {
   }, [isLoggedIn]);
 
   useEffect(() => {
+    if (!isLoggedIn || !selectedProblemSlug) {
+      return undefined;
+    }
+
+    const existingProblem = problemSet.find((problem) => problem.slug === selectedProblemSlug);
+    if (existingProblem?.examples?.length || existingProblem?.editorial || existingProblem?.hints?.length) {
+      return undefined;
+    }
+
+    let isMounted = true;
+
+    async function loadProblemDetail() {
+      try {
+        const response = await fetch(`/api/problems/${encodeURIComponent(selectedProblemSlug)}/`, {
+          credentials: "include",
+        });
+        if (response.status === 401) {
+          if (isMounted) {
+            resetStudentSession();
+          }
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error("Problem detail request failed");
+        }
+
+        const payload = await response.json();
+        if (!isMounted) {
+          return;
+        }
+
+        setProblemSet((current) =>
+          current.map((problem) =>
+            problem.slug === selectedProblemSlug
+              ? {
+                  ...problem,
+                  ...normalizeProblems([payload])[0],
+                }
+              : problem,
+          ),
+        );
+      } catch (error) {
+        console.error("Could not load problem detail", error);
+      }
+    }
+
+    loadProblemDetail();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isLoggedIn, problemSet, selectedProblemSlug]);
+
+  useEffect(() => {
     if (isLoggedIn || registerNumber.trim().length < 2) {
       setStudentMatches([]);
       return undefined;
@@ -247,15 +330,11 @@ function App() {
     return baseProblemPool.filter((problem) => {
       const matchesDifficulty =
         selectedDifficulty === "All Levels" || problem.difficulty === selectedDifficulty;
-      const matchesConcept =
-        selectedConcept === "All Concepts" || (problem.tags ?? []).includes(selectedConcept);
-      const matchesLanguage = (problem.available_languages ?? languageOptions).includes(
-        selectedLanguage,
-      );
-
-      return matchesDifficulty && matchesConcept && matchesLanguage;
+      const matchesTag =
+        selectedConcept === "All Topics" || (problem.tags ?? []).includes(selectedConcept);
+      return matchesDifficulty && matchesTag;
     });
-  }, [baseProblemPool, selectedConcept, selectedDifficulty, selectedLanguage]);
+  }, [baseProblemPool, selectedConcept, selectedDifficulty]);
 
   const conceptCounts = useMemo(() => {
     return conceptOptions.reduce(
@@ -273,17 +352,24 @@ function App() {
     );
   }, [baseProblemPool]);
 
-  useEffect(() => {
-    if (!selectedProblemSlug && selectedConcept !== "All Concepts") {
-      return;
-    }
+  // Extract unique tags from problems for dynamic topic filters
+  const dynamicTags = useMemo(() => {
+    const allTags = new Set();
+    baseProblemPool.forEach((problem) => {
+      (problem.tags ?? []).forEach((tag) => allTags.add(tag));
+    });
+    return ["All Topics", ...Array.from(allTags).sort()];
+  }, [baseProblemPool]);
 
-    if (!filteredProblemSet.some((problem) => problem.slug === selectedProblemSlug)) {
-      setSelectedProblemSlug(
-        selectedConcept === "All Concepts" ? filteredProblemSet[0]?.slug ?? "" : "",
-      );
-    }
-  }, [filteredProblemSet, selectedConcept, selectedProblemSlug]);
+  const tagCounts = useMemo(() => {
+    const counts = { "All Topics": baseProblemPool.length };
+    dynamicTags.slice(1).forEach((tag) => {
+      counts[tag] = baseProblemPool.filter((problem) =>
+        (problem.tags ?? []).includes(tag),
+      ).length;
+    });
+    return counts;
+  }, [baseProblemPool, dynamicTags]);
 
   useEffect(() => {
     const availableLanguages =
@@ -295,9 +381,47 @@ function App() {
     }
   }, [filteredProblemSet, selectedLanguage, selectedProblemSlug]);
 
+  // Ref to track initial load - prevents overwriting saved code on refresh
+  const isInitialLoad = useRef(true);
+  const hasRestoredCode = useRef(false);
+
   useEffect(() => {
-    setCode(starterCodeByLanguage[selectedLanguage] ?? starterCodeByLanguage.JavaScript);
+    // On initial load only: restore saved code
+    if (isInitialLoad.current) {
+      const savedCode = window.localStorage.getItem("code2day-code");
+      const savedSlug = window.localStorage.getItem("code2day-problem-slug");
+      
+      if (savedSlug && savedCode) {
+        // Restore saved code instead of starter code
+        setCode(savedCode);
+        hasRestoredCode.current = true;
+      }
+      // Mark initial load as done
+      isInitialLoad.current = false;
+    }
+  }, []);
+
+  // Handle language change - switch to starter code ONLY when user manually changes language
+  useEffect(() => {
+    // Skip on initial mount and on code restore
+    if (isInitialLoad.current) {
+      isInitialLoad.current = false;
+      return;
+    }
+    if (hasRestoredCode.current) {
+      hasRestoredCode.current = false;
+      return;
+    }
+    if (!selectedProblemSlug) return;
+    
+    // User changed language - switch to new language's starter code
+    const currentStarter = starterCodeByLanguage[selectedLanguage];
+    setCode(currentStarter ?? starterCodeByLanguage.JavaScript);
   }, [selectedLanguage, selectedProblemSlug]);
+
+  useEffect(() => {
+    setExecutionMeta({ status: "Idle", time: "", memory: "" });
+  }, [selectedProblemSlug, selectedLanguage]);
 
   useEffect(() => {
     if (activePage !== "problems" || !selectedProblemSlug) {
@@ -340,7 +464,7 @@ function App() {
       setSessionMode("practice");
       setActiveContestId("");
       setContestSecondsLeft(null);
-      setActivePage("progress");
+      navigate("progress");
       return undefined;
     }
 
@@ -393,6 +517,30 @@ function App() {
       window.clearInterval(poller);
     };
   }, [activePage, isLoggedIn]);
+
+  // Save active page to localStorage whenever it changes
+  useEffect(() => {
+    window.localStorage.setItem("code2day-active-page", activePage);
+  }, [activePage]);
+
+  // Save code to localStorage whenever it changes
+  useEffect(() => {
+    if (code) {
+      window.localStorage.setItem("code2day-code", code);
+    }
+  }, [code]);
+
+  // Save problem slug to localStorage when it changes
+  useEffect(() => {
+    if (selectedProblemSlug) {
+      window.localStorage.setItem("code2day-problem-slug", selectedProblemSlug);
+    }
+  }, [selectedProblemSlug]);
+
+  // Save selected language to localStorage when it changes
+  useEffect(() => {
+    window.localStorage.setItem("code2day-language", selectedLanguage);
+  }, [selectedLanguage]);
 
   const selectedProblem = useMemo(() => {
     if (!selectedProblemSlug) {
@@ -479,7 +627,7 @@ function App() {
       setActiveRegisterNumber(registerNumber.trim());
       setPassword("");
       setAuthMessage(payload.detail);
-      setActivePage("explore");
+      navigate("explore", { replace: true });
     } catch (error) {
       setAuthError(error.message);
     } finally {
@@ -546,11 +694,51 @@ function App() {
       return true;
     } catch (error) {
       console.error(error);
-      setOutputLog(
-        `Could not save progress in the database.\n\n${error.message ?? "Unknown error."}`,
-      );
       return false;
     }
+  }
+
+  function applyExecutionResult(result) {
+    setExecutionMeta({
+      status: result.status || "Unknown",
+      time: result.time ? `${result.time}s` : "",
+      memory: result.memory ? `${result.memory} KB` : "",
+    });
+
+    let displayOutput = result.output || "Execution finished with no output.";
+
+    // If test case results are present, append a summary
+    if (result.test_results && result.test_results.length > 0) {
+      const lines = [`\n--- Test Cases (${result.passed_cases}/${result.total_cases} passed) ---`];
+      result.test_results.forEach((tc, i) => {
+        lines.push(
+          `\nCase ${i + 1}: ${tc.passed ? "✓ Passed" : "✗ Failed"}` +
+          (tc.stdin ? `\n  Input:    ${tc.stdin}` : "") +
+          `\n  Expected: ${tc.expected}` +
+          `\n  Got:      ${tc.actual || "(no output)"}` +
+          (tc.time ? `\n  Time: ${tc.time}s` : ""),
+        );
+      });
+      displayOutput = displayOutput + lines.join("");
+    }
+
+    setOutputLog(displayOutput);
+  }
+
+  async function executeCurrentCode(isSubmit = false) {
+    if (!selectedProblem) {
+      throw new Error("Select a problem first to start coding.");
+    }
+
+    const result = await runCodeExecution({
+      sourceCode: code,
+      language: selectedLanguage,
+      stdin: executionInput,
+      problemSlug: selectedProblem.slug,
+      isSubmit,
+    });
+    applyExecutionResult(result);
+    return result;
   }
 
   async function handleRunCode() {
@@ -559,14 +747,21 @@ function App() {
       return;
     }
 
-    const isSaved = await persistProblemProgress("open");
-    if (!isSaved) {
-      return;
+    setExecutionBusy(true);
+    try {
+      const result = await executeCurrentCode(false);
+      if (result.status !== "Unsupported Language") {
+        const isSaved = await persistProblemProgress("open");
+        if (!isSaved) {
+          setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
+        }
+      }
+    } catch (error) {
+      setExecutionMeta({ status: "Error", time: "", memory: "" });
+      setOutputLog(error.message ?? "Execution failed.");
+    } finally {
+      setExecutionBusy(false);
     }
-
-    setOutputLog(
-      `Running ${selectedProblem.title} in ${selectedLanguage}\n\nSample Case 1: Passed\nStarter validation: Workspace is ready for deeper testing.\nNext Step: Review edge cases before submitting.`,
-    );
   }
 
   async function handleSubmitCode() {
@@ -575,14 +770,26 @@ function App() {
       return;
     }
 
-    const isSaved = await persistProblemProgress("completed");
-    if (!isSaved) {
-      return;
+    setExecutionBusy(true);
+    try {
+      const result = await executeCurrentCode(true);
+      if (result.status === "Accepted") {
+        const isSaved = await persistProblemProgress("completed");
+        if (!isSaved) {
+          setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
+        }
+      } else if (result.status !== "Unsupported Language") {
+        const isSaved = await persistProblemProgress("open");
+        if (!isSaved) {
+          setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
+        }
+      }
+    } catch (error) {
+      setExecutionMeta({ status: "Error", time: "", memory: "" });
+      setOutputLog(error.message ?? "Execution failed.");
+    } finally {
+      setExecutionBusy(false);
     }
-
-    setOutputLog(
-      `Submitting ${selectedProblem.title} in ${selectedLanguage}\n\nStatus: Accepted\nTests Passed: 14 / 14\nResult: Marked as completed in your problemset.`,
-    );
   }
 
   function handleJoinContest(contest) {
@@ -602,7 +809,7 @@ function App() {
         ? `Joined ${contest.name}\n\nContest timer started.\nSolve each contest problem before the countdown ends.`
         : `Joined ${contest.name}\n\nNo contest problems are available to solve right now.`,
     );
-    setActivePage("problems");
+    navigate("problems");
   }
 
   function handleFinishContest() {
@@ -630,7 +837,7 @@ function App() {
     setSessionMode("practice");
     setActiveContestId("");
     setContestSecondsLeft(null);
-    setActivePage("progress");
+    navigate("progress");
   }
 
   async function handlePostDiscussion(event) {
@@ -661,9 +868,9 @@ function App() {
     }
   }
 
-  function handleSelectConcept(nextConcept, context = "general") {
-    setSelectedConcept(nextConcept);
-    if (context === "problems" && nextConcept !== "All Concepts") {
+  function handleSelectConcept(nextTag, context = "general") {
+    setSelectedConcept(nextTag);
+    if (context === "problems" && nextTag !== "All Topics") {
       setSelectedProblemSlug("");
       setOutputLog("Choose a problem from the filtered list to open the coding workspace.");
     }
@@ -687,6 +894,7 @@ function App() {
         password={password}
         registerNumber={registerNumber}
         setAuthError={setAuthError}
+        setAuthMode={setAuthMode}
         setAuthStudent={setAuthStudent}
         setPassword={setPassword}
         setRegisterNumber={setRegisterNumber}
@@ -703,13 +911,16 @@ function App() {
         <ProblemsPage
           activeContest={activeContest}
           code={code}
-          conceptCounts={conceptCounts}
+          tagCounts={tagCounts}
           complexityInsight={complexityInsight}
           contestSecondsLeft={contestSecondsLeft}
           dashboard={dashboard}
-          handleSelectConcept={handleSelectConcept}
+          handleSelectTag={handleSelectConcept}
           difficultyOrder={difficultyOrder}
-          editorLanguage={editorLanguageByChoice[selectedLanguage] ?? "javascript"}
+          editorLanguage={editorLanguageMap[selectedLanguage] ?? "javascript"}
+          executionBusy={executionBusy}
+          executionInput={executionInput}
+          executionMeta={executionMeta}
           expandedSections={expandedSections}
           groupedProblems={groupedProblems}
           handleFinishContest={handleFinishContest}
@@ -718,12 +929,13 @@ function App() {
           outputLog={outputLog}
           problemSecondsElapsed={problemSecondsElapsed}
           problemDetailTab={problemDetailTab}
-          selectedConcept={selectedConcept}
+          selectedTag={selectedConcept}
           selectedDifficulty={selectedDifficulty}
           selectedLanguage={selectedLanguage}
           selectedProblem={selectedProblem}
           sessionMode={sessionMode}
           setCode={setCode}
+          setExecutionInput={setExecutionInput}
           setProblemDetailTab={setProblemDetailTab}
           setSelectedDifficulty={setSelectedDifficulty}
           setSelectedLanguage={setSelectedLanguage}
@@ -732,7 +944,7 @@ function App() {
           sidebarOpen={sidebarOpen}
           toggleProblemSection={toggleProblemSection}
           totalSolved={totalSolved}
-          conceptOptions={conceptOptions}
+          dynamicTags={dynamicTags}
         />
       );
       break;
@@ -742,7 +954,7 @@ function App() {
           contestCards={contestCards}
           contestHistory={contestHistory}
           handleJoinContest={handleJoinContest}
-          setActivePage={setActivePage}
+          setActivePage={navigate}
         />
       );
       break;
@@ -762,7 +974,7 @@ function App() {
         <RoadmapsPage
           roleTracks={roleTracks}
           selectedRoadmapId={selectedRoadmapId}
-          setActivePage={setActivePage}
+          setActivePage={navigate}
           setSelectedRoadmapId={setSelectedRoadmapId}
         />
       );
@@ -794,7 +1006,7 @@ function App() {
           selectedConcept={selectedConcept}
           selectedDifficulty={selectedDifficulty}
           selectedLanguage={selectedLanguage}
-          setActivePage={setActivePage}
+          setActivePage={navigate}
           setSelectedRoadmapId={setSelectedRoadmapId}
           setSelectedConcept={handleSelectConcept}
           setSelectedDifficulty={setSelectedDifficulty}
@@ -814,7 +1026,7 @@ function App() {
         dashboard={dashboard}
         handleLogout={handleLogout}
         navItems={navItems}
-        setActivePage={setActivePage}
+        setActivePage={navigate}
       />
       <main className="main-shell">{activeView}</main>
     </div>

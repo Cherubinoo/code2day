@@ -44,7 +44,7 @@ FALLBACK_DASHBOARD = {
         {"name": "Kavin", "solved": 118},
     ],
     "editor": {
-        "starter_code": "function solve(nums, target) {\n  const seen = new Map();\n\n  for (let index = 0; index < nums.length; index += 1) {\n    const complement = target - nums[index];\n\n    if (seen.has(complement)) {\n      return [seen.get(complement), index];\n    }\n\n    seen.set(nums[index], index);\n  }\n\n  return [];\n}\n",
+        "starter_code": "const fs = require(\"fs\");\n\nconst input = fs.readFileSync(0, \"utf8\").trim();\n\nfunction solve(rawInput) {\n  // Parse rawInput for this problem and return the answer.\n  return rawInput;\n}\n\nconst result = solve(input);\nif (result !== undefined) {\n  process.stdout.write(String(result));\n}\n",
     },
 }
 
@@ -56,6 +56,22 @@ FALLBACK_PROBLEMS = [
         "difficulty": "Easy",
         "tags": ["Array", "Hash Map"],
         "is_daily": True,
+        "examples": [
+            {
+                "input": "nums = [2,7,11,15], target = 9",
+                "output": "[0,1]",
+                "explanation": "The values at index 0 and 1 add up to 9.",
+            },
+            {
+                "input": "nums = [3,2,4], target = 6",
+                "output": "[1,2]",
+                "explanation": "The values at index 1 and 2 add up to 6.",
+            },
+        ],
+        "hints": [
+            "Track visited values in a hash map.",
+            "Look for target - current before inserting the current value.",
+        ],
     },
     {
         "title": "Balanced Brackets",
@@ -64,6 +80,22 @@ FALLBACK_PROBLEMS = [
         "difficulty": "Medium",
         "tags": ["Stack", "String"],
         "is_daily": False,
+        "examples": [
+            {
+                "input": "()[]{}",
+                "output": "true",
+                "explanation": "Each bracket closes in the correct order.",
+            },
+            {
+                "input": "([)]",
+                "output": "false",
+                "explanation": "The closing order is invalid.",
+            },
+        ],
+        "hints": [
+            "Push opening brackets onto a stack.",
+            "Each closing bracket must match the latest opening bracket.",
+        ],
     },
     {
         "title": "Merge K Lists",
@@ -72,5 +104,21 @@ FALLBACK_PROBLEMS = [
         "difficulty": "Hard",
         "tags": ["Heap", "Linked List"],
         "is_daily": False,
+        "examples": [
+            {
+                "input": "lists = [[1,4,5],[1,3,4],[2,6]]",
+                "output": "[1,1,2,3,4,4,5,6]",
+                "explanation": "Merging the sorted lists keeps the final order sorted.",
+            },
+            {
+                "input": "lists = []",
+                "output": "[]",
+                "explanation": "An empty input should return an empty list.",
+            },
+        ],
+        "hints": [
+            "A min-heap lets you pull the next smallest node efficiently.",
+            "After taking the smallest node, push the next node from the same list.",
+        ],
     },
 ]

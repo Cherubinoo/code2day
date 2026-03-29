@@ -364,17 +364,6 @@ function ExplorePage({
             <button type="button" className="primary-button" onClick={() => setActivePage("problems")}>
               Open Practice Board
             </button>
-            <button
-              type="button"
-              className="ghost-button"
-              onClick={() => {
-                setSelectedConcept("SQL");
-                setSelectedLanguage("SQL");
-                setActivePage("problems");
-              }}
-            >
-              Open SQL Practice
-            </button>
           </div>
         </article>
 

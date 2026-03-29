@@ -3,10 +3,20 @@ from django.test import TestCase
 from django.urls import reverse
 
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.utils import timezone
 
-from .models import DiscussionMessage, Problem, StudentActivity, StudentProfile, Submission
+from .models import (
+    DiscussionMessage,
+    ExecutionRecord,
+    Problem,
+    ProblemSolution,
+    StudentActivity,
+    StudentProfile,
+    Submission,
+    TestCase as ProblemTestCase,
+)
 
 
 class DashboardApiTests(TestCase):
@@ -62,6 +72,28 @@ class DashboardApiTests(TestCase):
         problem_payload = next(item for item in payload if item["slug"] == problem.slug)
         self.assertEqual(problem_payload["progress_state"], "completed")
         self.assertIn("Python", problem_payload["available_languages"])
+        self.assertNotIn("editorial", problem_payload)
+
+    def test_problem_detail_returns_examples_and_editorial(self):
+        problem = Problem.objects.create(
+            title="Two Sum Variants",
+            slug="two-sum-variants-detail",
+            description="desc",
+            difficulty="Easy",
+            tags=["Array"],
+            examples=[{"input": "1", "output": "1"}],
+            hints=["Use a map"],
+            editorial="<p>Detailed solution</p>",
+        )
+
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("problem-detail", kwargs={"slug": problem.slug}))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["examples"][0]["input"], "1")
+        self.assertEqual(payload["hints"], ["Use a map"])
+        self.assertEqual(payload["editorial"], "<p>Detailed solution</p>")
 
 
 class StudentAuthApiTests(TestCase):
@@ -99,7 +131,7 @@ class StudentAuthApiTests(TestCase):
             reverse("student-first-login"),
             {
                 "register_number": self.profile.register_number,
-                "password": "secret123",
+                "password": "secret1234",
             },
             content_type="application/json",
         )
@@ -119,13 +151,13 @@ class StudentAuthApiTests(TestCase):
         )
 
     def test_login_requires_password_after_first_setup(self):
-        self.user.set_password("secret123")
+        self.user.set_password("secret1234")
         self.user.save()
         response = self.client.post(
             reverse("student-login"),
             {
                 "register_number": self.profile.register_number,
-                "password": "secret123",
+                "password": "secret1234",
             },
             content_type="application/json",
         )
@@ -138,7 +170,7 @@ class StudentAuthApiTests(TestCase):
         )
 
     def test_logout_clears_authenticated_session(self):
-        self.user.set_password("secret123")
+        self.user.set_password("secret1234")
         self.user.save()
         self.client.force_login(self.user)
 
@@ -152,21 +184,21 @@ class StudentAuthApiTests(TestCase):
             reverse("student-first-login"),
             {
                 "register_number": self.profile.register_number,
-                "password": "secret123",
+                "password": "secret1234",
             },
             content_type="application/json",
         )
 
         self.assertEqual(response.status_code, 200)
         self.profile.account.refresh_from_db()
-        self.assertNotEqual(self.profile.account.password, "secret123")
+        self.assertNotEqual(self.profile.account.password, "secret1234")
         self.assertTrue(self.profile.account.password.startswith("pbkdf2_"))
 
         second_response = self.client.post(
             reverse("student-first-login"),
             {
                 "register_number": self.profile.register_number,
-                "password": "secret123",
+                "password": "secret1234",
             },
             content_type="application/json",
         )
@@ -196,7 +228,7 @@ class DiscussionApiTests(TestCase):
         response = self.client.get(reverse("discussion-messages"))
         self.assertEqual(response.status_code, 401)
 
-    def test_discussion_post_is_anonymous_and_tracks_problem(self):
+    def test_discussion_post_shows_author_and_tracks_problem(self):
         self.client.force_login(self.user)
 
         response = self.client.post(
@@ -209,7 +241,10 @@ class DiscussionApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.json()["author"], "Anonymous")
+        # Author should be "<name> …<last digit of reg number>"
+        author = response.json()["author"]
+        self.assertIn(self.profile.name, author)
+        self.assertTrue(author.endswith(self.profile.register_number[-1]))
         self.assertEqual(response.json()["problem_slug"], self.problem.slug)
         self.assertTrue(
             DiscussionMessage.objects.filter(student=self.profile, problem=self.problem).exists()
@@ -297,3 +332,255 @@ class ProblemProgressApiTests(TestCase):
                 activity_type="solve",
             ).exists()
         )
+
+
+class Judge0RunApiTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="953624243083", password="secret123")
+        self.profile = StudentProfile.objects.create(
+            account=self.user,
+            name="Rithish",
+            title="Imported",
+            register_number="953624243083",
+            personal_email="rithish@example.com",
+        )
+        self.problem = Problem.objects.create(
+            title="Two Sum Variants",
+            slug="two-sum-variants",
+            description="desc",
+            difficulty="Easy",
+            tags=["Array", "Hash Map"],
+        )
+
+    @patch("apps.learning.services.judge0.urllib_request.urlopen")
+    def test_run_endpoint_executes_code_and_stores_history(self, mocked_urlopen):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return (
+                    b'{"stdout":"Hello World\\n","stderr":null,"compile_output":null,'
+                    b'"status":{"description":"Accepted"},"time":"0.01","memory":10240}'
+                )
+
+        mocked_urlopen.return_value = FakeResponse()
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("code-run"),
+            {
+                "source_code": 'print("Hello World")',
+                "language_id": 71,
+                "stdin": "",
+                "language": "Python",
+                "problem_slug": self.problem.slug,
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["stdout"], "Hello World\n")
+        self.assertEqual(response.json()["status"], "Accepted")
+        self.assertTrue(
+            ExecutionRecord.objects.filter(
+                student=self.profile,
+                problem=self.problem,
+                language="Python",
+                status_description="Accepted",
+            ).exists()
+        )
+
+    def test_run_endpoint_validates_source_code(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("code-run"),
+            {
+                "source_code": "   ",
+                "language_id": 71,
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("source_code", response.json())
+
+    @patch("apps.learning.views.execute_judge0_submission")
+    def test_submit_uses_problem_testcases_and_saves_solution(self, mocked_execute):
+        ProblemTestCase.objects.create(
+            problem=self.problem,
+            stdin="nums = [2,7,11,15], target = 9",
+            expected_output="[0,1]",
+            is_sample=True,
+            order=1,
+        )
+        ProblemTestCase.objects.create(
+            problem=self.problem,
+            stdin="nums = [3,2,4], target = 6",
+            expected_output="[1,2]",
+            is_sample=False,
+            order=2,
+        )
+        mocked_execute.side_effect = [
+            {
+                "stdout": "[0,1]\n",
+                "stderr": "",
+                "compile_output": "",
+                "status": "Accepted",
+                "time": "0.01",
+                "memory": "1000",
+                "output": "[0,1]\n",
+            },
+            {
+                "stdout": "[1,2]\n",
+                "stderr": "",
+                "compile_output": "",
+                "status": "Accepted",
+                "time": "0.02",
+                "memory": "1001",
+                "output": "[1,2]\n",
+            },
+        ]
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("code-run"),
+            {
+                "source_code": 'print("placeholder")',
+                "language_id": 71,
+                "language": "Python",
+                "problem_slug": self.problem.slug,
+                "is_submit": True,
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "Accepted")
+        self.assertEqual(payload["passed_cases"], 2)
+        self.assertEqual(payload["total_cases"], 2)
+        self.assertTrue(
+            ProblemSolution.objects.filter(
+                student=self.profile,
+                problem=self.problem,
+                status="Accepted",
+                passed_cases=2,
+                total_cases=2,
+            ).exists()
+        )
+
+    @patch("apps.learning.views.execute_judge0_submission")
+    def test_run_without_stdin_uses_problem_examples_as_sample_cases(self, mocked_execute):
+        self.problem.examples = [
+            {"input": "abc", "output": "abc"},
+            {"input": "xyz", "output": "xyz"},
+        ]
+        self.problem.save(update_fields=["examples"])
+        mocked_execute.side_effect = [
+            {
+                "stdout": "abc\n",
+                "stderr": "",
+                "compile_output": "",
+                "status": "Accepted",
+                "time": "0.01",
+                "memory": "1000",
+                "output": "abc\n",
+            },
+            {
+                "stdout": "xyz\n",
+                "stderr": "",
+                "compile_output": "",
+                "status": "Accepted",
+                "time": "0.02",
+                "memory": "1001",
+                "output": "xyz\n",
+            },
+        ]
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("code-run"),
+            {
+                "source_code": 'print("placeholder")',
+                "language_id": 71,
+                "language": "Python",
+                "problem_slug": self.problem.slug,
+                "stdin": "",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["test_case_mode"], "sample")
+        self.assertEqual(payload["passed_cases"], 2)
+        self.assertEqual(payload["total_cases"], 2)
+        self.assertEqual(payload["output"], "Sample test cases passed: 2/2.")
+
+    def test_submit_requires_problem_slug(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("code-run"),
+            {
+                "source_code": 'print("placeholder")',
+                "language_id": 71,
+                "language": "Python",
+                "is_submit": True,
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "problem_slug is required for submission.")
+
+    @patch("apps.learning.views.execute_judge0_submission")
+    def test_python_function_solution_is_wrapped_for_problem_examples(self, mocked_execute):
+        self.problem.slug = "two-sum"
+        self.problem.examples = [
+            {
+                "input": "nums = [2,7,11,15], target = 9",
+                "output": "[0,1]\nOutput: Because nums[0] + nums[1] == 9, we return [0, 1].",
+            }
+        ]
+        self.problem.save(update_fields=["slug", "examples"])
+        mocked_execute.return_value = {
+            "stdout": "[0,1]",
+            "stderr": "",
+            "compile_output": "",
+            "status": "Accepted",
+            "time": "0.01",
+            "memory": "1000",
+            "output": "[0,1]",
+        }
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            reverse("code-run"),
+            {
+                "source_code": (
+                    "def twoSum(nums, target):\n"
+                    "    return [0, 1]\n"
+                ),
+                "language_id": 71,
+                "language": "Python",
+                "problem_slug": self.problem.slug,
+                "stdin": "",
+            },
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "Accepted")
+        self.assertEqual(payload["passed_cases"], 1)
+        self.assertEqual(payload["total_cases"], 1)
+
+        execute_kwargs = mocked_execute.call_args.kwargs
+        self.assertEqual(execute_kwargs["stdin"], "[[2,7,11,15],9]")
+        self.assertIn("__code2day_find_solver", execute_kwargs["source_code"])

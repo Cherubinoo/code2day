@@ -27,7 +27,7 @@ class StudentProfile(models.Model):
     current_streak = models.PositiveIntegerField(default=0)
     login_days = models.PositiveIntegerField(default=0)
     last_login_on = models.DateField(null=True, blank=True)
-    campus_rank = models.CharField(max_length=60, default="Campus Rank #1")
+    campus_rank = models.CharField(max_length=60, blank=True, default="")
 
     def __str__(self):
         return self.register_number or self.name
@@ -76,6 +76,11 @@ class Problem(models.Model):
     difficulty = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES)
     tags = models.JSONField(default=list, blank=True)
     is_daily = models.BooleanField(default=False)
+    # Dynamic content fields from LeetCode dataset
+    examples = models.JSONField(default=list, blank=True)  # [{input, output, explanation}]
+    hints = models.JSONField(default=list, blank=True)  # ["hint1", "hint2"]
+    editorial = models.TextField(blank=True, default="")
+    source_dataset_id = models.CharField(max_length=50, blank=True, default="")
 
     def __str__(self):
         return self.title
@@ -90,6 +95,41 @@ class Submission(models.Model):
 
     def __str__(self):
         return f"{self.student.name} - {self.problem.title}"
+
+
+class ExecutionRecord(models.Model):
+    student = models.ForeignKey(
+        StudentProfile,
+        on_delete=models.CASCADE,
+        related_name="execution_records",
+        null=True,
+        blank=True,
+    )
+    problem = models.ForeignKey(
+        Problem,
+        on_delete=models.SET_NULL,
+        related_name="execution_records",
+        null=True,
+        blank=True,
+    )
+    language = models.CharField(max_length=40)
+    language_id = models.PositiveIntegerField()
+    source_code = models.TextField()
+    stdin = models.TextField(blank=True, default="")
+    stdout = models.TextField(blank=True, default="")
+    stderr = models.TextField(blank=True, default="")
+    compile_output = models.TextField(blank=True, default="")
+    status_description = models.CharField(max_length=120, default="Unknown")
+    execution_time = models.CharField(max_length=40, blank=True, default="")
+    memory = models.CharField(max_length=40, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        owner = self.student.register_number if self.student else "anonymous"
+        return f"{owner} - {self.language} - {self.status_description}"
 
 
 class StudentActivity(models.Model):
@@ -121,6 +161,52 @@ class StudentActivity(models.Model):
         return f"{self.student} - {self.activity_type} - {self.activity_date}"
 
 
+class TestCase(models.Model):
+    problem = models.ForeignKey(
+        Problem,
+        on_delete=models.CASCADE,
+        related_name="test_cases",
+    )
+    stdin = models.TextField(blank=True, default="")
+    expected_output = models.TextField()
+    is_sample = models.BooleanField(default=False)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ("order",)
+
+    def __str__(self):
+        return f"TestCase #{self.order} for {self.problem.slug}"
+
+
+class ProblemSolution(models.Model):
+    problem = models.ForeignKey(
+        Problem,
+        on_delete=models.CASCADE,
+        related_name="solutions",
+    )
+    student = models.ForeignKey(
+        StudentProfile,
+        on_delete=models.CASCADE,
+        related_name="solutions",
+    )
+    language = models.CharField(max_length=40)
+    language_id = models.PositiveIntegerField()
+    source_code = models.TextField()
+    status = models.CharField(max_length=40, default="Attempted")  # Accepted / Wrong Answer / etc.
+    passed_cases = models.PositiveIntegerField(default=0)
+    total_cases = models.PositiveIntegerField(default=0)
+    execution_time = models.CharField(max_length=40, blank=True, default="")
+    memory = models.CharField(max_length=40, blank=True, default="")
+    submitted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-submitted_at",)
+
+    def __str__(self):
+        return f"{self.student} - {self.problem.slug} - {self.status}"
+
+
 class DiscussionMessage(models.Model):
     student = models.ForeignKey(
         StudentProfile,
@@ -143,3 +229,29 @@ class DiscussionMessage(models.Model):
     def __str__(self):
         target = self.problem.slug if self.problem else "general"
         return f"{self.student} - {target}"
+
+
+class StaffProfile(models.Model):
+    """Staff/Faculty profile - minimal fields, password added later like students"""
+    account = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="staff_profile",
+        null=True,
+        blank=True,
+    )
+    faculty_id = models.CharField(max_length=50, unique=True)
+    name = models.CharField(max_length=120)
+    # Password will be set on first login (like students)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "staff_profiles"
+
+    def __str__(self):
+        return f"{self.faculty_id} - {self.name}"
+
+    @property
+    def password_is_set(self):
+        return bool(self.account and self.account.has_usable_password())

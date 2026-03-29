@@ -1,6 +1,8 @@
+import logging
 from collections import defaultdict
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.db.models import Count, Q
 from django.utils import timezone
@@ -10,19 +12,46 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from .auth_utils import RateLimitExceeded, StudentAuthMixin, check_rate_limit
 from .data import FALLBACK_DASHBOARD, FALLBACK_PROBLEMS
-from .models import DiscussionMessage, Problem, StudentActivity, StudentProfile, Submission
+from .models import (
+    DiscussionMessage,
+    ExecutionRecord,
+    Problem,
+    ProblemSolution,
+    StudentActivity,
+    StudentProfile,
+    Submission,
+)
 from .serializers import (
+    CodeRunSerializer,
     DiscussionMessageCreateSerializer,
     DiscussionMessageSerializer,
     FirstLoginSerializer,
-    ProblemSerializer,
+    ProblemDetailSerializer,
     ProblemProgressUpdateSerializer,
+    ProblemSerializer,
     StudentLoginSerializer,
     StudentLookupListSerializer,
     StudentProfileSerializer,
 )
+from .services.judge0 import (
+    Judge0ServiceError,
+    Judge0TimeoutError,
+    execute_judge0_submission,
+)
+from .services.execution_adapter import (
+    normalize_comparable_output,
+    prepare_execution_payload,
+)
+from .services.problem_testcases import build_runtime_test_cases
 
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Helper builders (pure functions — no HTTP side-effects)
+# ---------------------------------------------------------------------------
 
 def build_activity_calendar(profile, window_days=35):
     today = timezone.localdate()
@@ -101,18 +130,124 @@ def build_weekly_activity(activity_calendar):
 
 def get_recent_discussions_queryset():
     cutoff = timezone.now() - timedelta(hours=24)
-    return DiscussionMessage.objects.filter(created_at__gte=cutoff).select_related("problem")
+    return (
+        DiscussionMessage.objects.filter(created_at__gte=cutoff)
+        .select_related("student", "problem")
+    )
 
 
-class DashboardView(APIView):
+def execute_problem_test_case_batch(
+    *,
+    problem,
+    source_code,
+    language,
+    language_id,
+    test_cases,
+    batch_kind,
+):
+    test_results = []
+    latest_time = ""
+    latest_memory = ""
+
+    for case in test_cases:
+        prepared = prepare_execution_payload(
+            problem=problem,
+            source_code=source_code,
+            language=language,
+            stdin=case.stdin,
+        )
+        tc_result = execute_judge0_submission(
+            source_code=prepared["source_code"],
+            language_id=language_id,
+            stdin=prepared["stdin"],
+        )
+        actual_raw = (tc_result["stdout"] or "").strip()
+        expected = case.expected_output.strip()
+        passed = (
+            tc_result["status"] == "Accepted"
+            and normalize_comparable_output(actual_raw)
+            == normalize_comparable_output(expected)
+        )
+
+        latest_time = tc_result["time"] or latest_time
+        latest_memory = tc_result["memory"] or latest_memory
+        test_results.append(
+            {
+                "stdin": case.stdin,
+                "expected": expected,
+                "actual": actual_raw,
+                "passed": passed,
+                "status": tc_result["status"],
+                "time": tc_result["time"],
+                "memory": tc_result["memory"],
+                "stderr": tc_result["stderr"],
+                "compile_output": tc_result["compile_output"],
+                "is_sample": case.is_sample,
+                "source": case.source,
+            }
+        )
+
+    total_cases = len(test_results)
+    passed_cases = sum(1 for item in test_results if item["passed"])
+    first_failure = next((item for item in test_results if not item["passed"]), None)
+
+    if total_cases and passed_cases == total_cases:
+        status_label = "Accepted"
+    elif first_failure and first_failure["status"] != "Accepted":
+        status_label = first_failure["status"]
+    else:
+        status_label = "Wrong Answer"
+
+    if batch_kind == "sample":
+        output = f"Sample test cases passed: {passed_cases}/{total_cases}."
+    elif status_label == "Accepted":
+        output = f"All {total_cases} test cases passed."
+    else:
+        output = f"{passed_cases}/{total_cases} test cases passed."
+
+    return {
+        "stdout": output if status_label == "Accepted" else "",
+        "stderr": first_failure["stderr"] if first_failure else "",
+        "compile_output": first_failure["compile_output"] if first_failure else "",
+        "status": status_label,
+        "time": latest_time,
+        "memory": latest_memory,
+        "output": output,
+        "test_results": test_results,
+        "passed_cases": passed_cases,
+        "total_cases": total_cases,
+        "test_case_mode": batch_kind,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit settings helpers
+# ---------------------------------------------------------------------------
+
+def _auth_rate_limits():
+    return (
+        getattr(settings, "AUTH_RATE_LIMIT_MAX_ATTEMPTS", 5),
+        getattr(settings, "AUTH_RATE_LIMIT_WINDOW_SECONDS", 60),
+    )
+
+
+def _lookup_rate_limits():
+    return (
+        getattr(settings, "LOOKUP_RATE_LIMIT_MAX_ATTEMPTS", 20),
+        getattr(settings, "LOOKUP_RATE_LIMIT_WINDOW_SECONDS", 60),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Views
+# ---------------------------------------------------------------------------
+
+class DashboardView(StudentAuthMixin, APIView):
     def get(self, request):
-        if not request.user.is_authenticated or not hasattr(request.user, "student_profile"):
-            return Response(
-                {"detail": "Authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
 
-        profile = request.user.student_profile
         problems = Problem.objects.all()
         activity_calendar = build_activity_calendar(profile)
         stats = build_student_stats(profile)
@@ -139,6 +274,7 @@ class DashboardView(APIView):
                     "student": StudentProfileSerializer(profile).data,
                 }
             )
+
         daily_problem = problems.filter(is_daily=True).first() or problems.first()
 
         payload = {
@@ -161,13 +297,11 @@ class DashboardView(APIView):
         return Response(payload)
 
 
-class ProblemListView(APIView):
+class ProblemListView(StudentAuthMixin, APIView):
     def get(self, request):
-        if not request.user.is_authenticated or not hasattr(request.user, "student_profile"):
-            return Response(
-                {"detail": "Authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
 
         difficulty = request.query_params.get("difficulty")
         queryset = Problem.objects.all()
@@ -176,7 +310,7 @@ class ProblemListView(APIView):
             queryset = queryset.filter(difficulty__iexact=difficulty)
 
         if queryset.exists():
-            progress_map = build_problem_progress_map(request.user.student_profile)
+            progress_map = build_problem_progress_map(profile)
             return Response(
                 ProblemSerializer(
                     queryset,
@@ -193,29 +327,55 @@ class ProblemListView(APIView):
         return Response(fallback)
 
 
-class EditorBootstrapView(APIView):
-    def get(self, request):
-        if not request.user.is_authenticated or not hasattr(request.user, "student_profile"):
+class ProblemDetailView(StudentAuthMixin, APIView):
+    def get(self, request, slug):
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        problem = Problem.objects.filter(slug=slug).first()
+        if not problem:
             return Response(
-                {"detail": "Authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
+                {"detail": "Problem not found."},
+                status=status.HTTP_404_NOT_FOUND,
             )
 
+        progress_map = build_problem_progress_map(profile)
+        return Response(
+            ProblemDetailSerializer(
+                problem,
+                context={"progress_map": progress_map},
+            ).data
+        )
+
+
+class EditorBootstrapView(StudentAuthMixin, APIView):
+    def get(self, request):
+        _, error = self.get_authenticated_profile(request)
+        if error:
+            return error
         return Response(FALLBACK_DASHBOARD["editor"])
 
 
-class ProblemProgressUpdateView(APIView):
+class HealthCheckView(APIView):
+    def get(self, request):
+        return Response(
+            {
+                "status": "ok",
+                "judge0_configured": bool(getattr(settings, "JUDGE0_BASE_URL", "").strip()),
+            }
+        )
+
+
+class ProblemProgressUpdateView(StudentAuthMixin, APIView):
     def post(self, request):
-        if not request.user.is_authenticated or not hasattr(request.user, "student_profile"):
-            return Response(
-                {"detail": "Authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
 
         serializer = ProblemProgressUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        profile = request.user.student_profile
         problem = Problem.objects.filter(
             slug=serializer.validated_data["problem_slug"].strip()
         ).first()
@@ -239,18 +399,12 @@ class ProblemProgressUpdateView(APIView):
             status=status_label,
         )
 
-        if progress_state == "completed":
-            StudentActivity.objects.get_or_create(
-                student=profile,
-                activity_date=timezone.localdate(),
-                activity_type="solve",
-            )
-        else:
-            StudentActivity.objects.get_or_create(
-                student=profile,
-                activity_date=timezone.localdate(),
-                activity_type="practice",
-            )
+        activity_type = "solve" if progress_state == "completed" else "practice"
+        StudentActivity.objects.get_or_create(
+            student=profile,
+            activity_date=timezone.localdate(),
+            activity_type=activity_type,
+        )
 
         return Response(
             {
@@ -267,9 +421,140 @@ class ProblemProgressUpdateView(APIView):
         )
 
 
+class CodeRunView(StudentAuthMixin, APIView):
+    def post(self, request):
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        serializer = CodeRunSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        validated = serializer.validated_data
+        problem = None
+        problem_slug = (validated.get("problem_slug") or "").strip()
+        is_submit = validated.get("is_submit", False)
+        stdin = validated.get("stdin", "")
+
+        if problem_slug:
+            problem = Problem.objects.filter(slug=problem_slug).first()
+
+        try:
+            if is_submit and not problem:
+                return Response(
+                    {"detail": "problem_slug is required for submission."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            run_sample_cases = bool(problem and not is_submit and not stdin.strip())
+            if is_submit or run_sample_cases:
+                test_cases = build_runtime_test_cases(
+                    problem,
+                    sample_only=not is_submit,
+                )
+                if is_submit and not test_cases:
+                    return Response(
+                        {"detail": "No test cases are configured for this problem yet."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if test_cases:
+                    result = execute_problem_test_case_batch(
+                        problem=problem,
+                        source_code=validated["source_code"],
+                        language=validated.get("language", ""),
+                        language_id=validated["language_id"],
+                        test_cases=test_cases,
+                        batch_kind="submit" if is_submit else "sample",
+                    )
+                else:
+                    prepared = prepare_execution_payload(
+                        problem=problem,
+                        source_code=validated["source_code"],
+                        language=validated.get("language", ""),
+                        stdin=stdin,
+                    )
+                    result = execute_judge0_submission(
+                        source_code=prepared["source_code"],
+                        language_id=validated["language_id"],
+                        stdin=prepared["stdin"],
+                    )
+            else:
+                prepared = prepare_execution_payload(
+                    problem=problem,
+                    source_code=validated["source_code"],
+                    language=validated.get("language", ""),
+                    stdin=stdin,
+                )
+                result = execute_judge0_submission(
+                    source_code=prepared["source_code"],
+                    language_id=validated["language_id"],
+                    stdin=prepared["stdin"],
+                )
+        except Judge0TimeoutError as exc:
+            logger.error("Judge0 timeout: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+        except Judge0ServiceError as exc:
+            logger.error("Judge0 service error: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        except Exception as exc:
+            logger.error("Unexpected execution error: %s", exc, exc_info=True)
+            detail = (
+                f"Unexpected execution error: {exc}"
+                if settings.DEBUG
+                else "Unexpected execution error."
+            )
+            return Response({"detail": detail}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        try:
+            ExecutionRecord.objects.create(
+                student=profile,
+                problem=problem,
+                language=validated.get("language") or str(validated["language_id"]),
+                language_id=validated["language_id"],
+                source_code=validated["source_code"],
+                stdin=stdin,
+                stdout=result["output"] if result.get("test_results") else result["stdout"],
+                stderr=result["stderr"],
+                compile_output=result["compile_output"],
+                status_description=result["status"],
+                execution_time=str(result["time"] or ""),
+                memory=str(result["memory"] or ""),
+            )
+        except Exception as exc:
+            logger.error("Error creating ExecutionRecord: %s", exc, exc_info=True)
+
+        # ── Submit mode: run all test cases ────────────────────────────────
+        if is_submit and problem and result.get("total_cases"):
+            ProblemSolution.objects.create(
+                problem=problem,
+                student=profile,
+                language=validated.get("language") or str(validated["language_id"]),
+                language_id=validated["language_id"],
+                source_code=validated["source_code"],
+                status=result["status"],
+                passed_cases=result["passed_cases"],
+                total_cases=result["total_cases"],
+                execution_time=str(result["time"] or ""),
+                memory=str(result["memory"] or ""),
+            )
+
+        return Response(result, status=status.HTTP_200_OK)
+
+
 @method_decorator(ensure_csrf_cookie, name="dispatch")
 class StudentLookupView(APIView):
     def get(self, request):
+        max_attempts, window = _lookup_rate_limits()
+        try:
+            check_rate_limit(request, "student-lookup", max_attempts, window)
+        except RateLimitExceeded as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            )
+
         register_number = (request.query_params.get("register_number") or "").strip()
         if not register_number:
             return Response(
@@ -309,23 +594,19 @@ class RegisterNumberListView(APIView):
         return Response(StudentLookupListSerializer(students, many=True).data)
 
 
-class DiscussionMessageListCreateView(APIView):
+class DiscussionMessageListCreateView(StudentAuthMixin, APIView):
     def get(self, request):
-        if not request.user.is_authenticated or not hasattr(request.user, "student_profile"):
-            return Response(
-                {"detail": "Authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+        _, error = self.get_authenticated_profile(request)
+        if error:
+            return error
 
         messages = get_recent_discussions_queryset()[:100]
         return Response(DiscussionMessageSerializer(messages, many=True).data)
 
     def post(self, request):
-        if not request.user.is_authenticated or not hasattr(request.user, "student_profile"):
-            return Response(
-                {"detail": "Authentication required."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
+        _, error = self.get_authenticated_profile(request)
+        if error:
+            return error
 
         serializer = DiscussionMessageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -348,14 +629,26 @@ class DiscussionMessageListCreateView(APIView):
 
 class FirstLoginView(APIView):
     def post(self, request):
+        max_attempts, window = _auth_rate_limits()
+        try:
+            check_rate_limit(request, "first-login", max_attempts, window)
+        except RateLimitExceeded as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            )
+
         serializer = FirstLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         register_number = serializer.validated_data["register_number"].strip()
         password = serializer.validated_data["password"]
-        profile = StudentProfile.objects.filter(register_number=register_number).select_related(
-            "account"
-        ).first()
+        profile = (
+            StudentProfile.objects.filter(register_number=register_number)
+            .select_related("account")
+            .first()
+        )
 
         if not profile or not profile.account:
             return Response(
@@ -384,14 +677,26 @@ class FirstLoginView(APIView):
 
 class StudentLoginView(APIView):
     def post(self, request):
+        max_attempts, window = _auth_rate_limits()
+        try:
+            check_rate_limit(request, "student-login", max_attempts, window)
+        except RateLimitExceeded as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            )
+
         serializer = StudentLoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         register_number = serializer.validated_data["register_number"].strip()
         password = serializer.validated_data["password"]
-        profile = StudentProfile.objects.filter(register_number=register_number).select_related(
-            "account"
-        ).first()
+        profile = (
+            StudentProfile.objects.filter(register_number=register_number)
+            .select_related("account")
+            .first()
+        )
 
         if not profile or not profile.account:
             return Response(

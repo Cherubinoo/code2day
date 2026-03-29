@@ -51,6 +51,9 @@ export function normalizeProblems(problems) {
       progress_state: problem.progress_state ?? fallback?.progress_state ?? "not_completed",
       available_languages:
         problem.available_languages ?? fallback?.available_languages ?? languageOptions,
+      examples: problem.examples ?? fallback?.examples ?? [],
+      hints: problem.hints ?? fallback?.hints ?? [],
+      editorial: problem.editorial ?? fallback?.editorial ?? "",
     };
   });
 }
