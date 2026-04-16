@@ -16,11 +16,14 @@ Shared authentication helpers for the learning app.
                           Caught in views and converted to HTTP 429.
 """
 
+import logging
 import threading
 import time
 
 from rest_framework import status
 from rest_framework.response import Response
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -44,8 +47,8 @@ class StudentAuthMixin:
     def get_authenticated_profile(self, request):
         """
         Returns (StudentProfile, None) when the request carries a valid
-        authenticated student session, or (None, Response) with HTTP 401
-        when it does not.
+        authenticated student session, or (None, Response) with HTTP 401/403
+        when it does not or the account is blocked.
         """
         if not request.user.is_authenticated or not hasattr(
             request.user, "student_profile"
@@ -54,7 +57,58 @@ class StudentAuthMixin:
                 {"detail": "Authentication required."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
+        if not request.user.is_active:
+            return None, Response(
+                {"detail": "Your account has been blocked. Contact your department staff."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         return request.user.student_profile, None
+
+
+class UnifiedAuthMixin:
+    """
+    Mixin that supports both Student and Staff authentication.
+    Returns the appropriate profile based on user type.
+    """
+
+    def get_authenticated_profile(self, request):
+        """
+        Returns (profile, profile_type, None) where profile_type is 'student' or 'staff',
+        or (None, None, Response) with HTTP 401 when not authenticated.
+        """
+        if not request.user.is_authenticated:
+            return None, None, Response(
+                {"detail": "Authentication required."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        # Check for student profile
+        if hasattr(request.user, "student_profile"):
+            return request.user.student_profile, "student", None
+
+        # Check for staff profile - determine specific role
+        if hasattr(request.user, "staff_profile"):
+            staff_profile = request.user.staff_profile
+            # Check if staff is active (not locked by HOD)
+            if not staff_profile.is_active:
+                logger.warning(
+                    "Blocked inactive staff user: %s", staff_profile.faculty_id
+                )
+                return None, None, Response(
+                    {"detail": "Your account has been disabled. Contact your HOD."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            # Return the role from the profile (staff, hod, or admin)
+            return staff_profile, staff_profile.role, None
+
+        # Admin superuser without staff profile
+        if request.user.is_superuser:
+            return None, "admin", None
+
+        return None, None, Response(
+            {"detail": "Authentication required."},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
 
 
 # ---------------------------------------------------------------------------

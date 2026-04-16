@@ -1,104 +1,127 @@
-#!/usr/bin/env python3
-"""
-Test script to check Judge0 EC2 instance response.
-Run: python test_judge0.py
-"""
+#!/usr/bin/env python
+"""Test Judge0 endpoints"""
 import json
-import os
-from pathlib import Path
 import urllib.request
 import urllib.error
-import sys
 
-from dotenv import load_dotenv
-
-load_dotenv(Path(__file__).resolve().parent / ".env")
-
-# Judge0 EC2 instance
-JUDGE0_BASE_URL = os.getenv("JUDGE0_BASE_URL", "http://43.205.198.74:2358")
-
-# Simple Python code that prints a message
-test_code = """
-print("Hello from Judge0!")
-"""
-
-def test_judge0():
-    """Test basic connectivity and execution on Judge0."""
-    print(f"Testing Judge0 at {JUDGE0_BASE_URL}")
+def test_system_info():
+    """Test Judge0 system info endpoint"""
+    print("=" * 50)
+    print("TEST 1: Judge0 System Info")
     print("=" * 50)
     
-    # Test 1: Check if Judge0 is reachable
-    print("\n1. Testing connectivity...")
     try:
         req = urllib.request.Request(
-            f"{JUDGE0_BASE_URL}/languages",
-            headers={"Content-Type": "application/json"},
-            method="GET"
+            "http://localhost:8000/api/judge0/system_info/",
+            headers={"Accept": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=10) as response:
-            if response.status == 200:
-                print("   [OK] Judge0 is reachable!")
-                data = json.loads(response.read().decode("utf-8"))
-                print(f"   [OK] Available languages: {len(data)} languages")
-            else:
-                print(f"   [FAIL] Unexpected status: {response.status}")
-                return False
-    except Exception as e:
-        print(f"   [FAIL] Connection failed: {e}")
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            print(f"Status: {data.get('status')}")
+            if data.get('judge0_info'):
+                print(f"Judge0 Version: {data['judge0_info'].get('version', 'N/A')}")
+                print(f"Judge0 Status: Online ✓")
+            return True
+    except urllib.error.HTTPError as e:
+        print(f"HTTP Error: {e.code} - {e.reason}")
+        try:
+            error_body = json.loads(e.read().decode('utf-8'))
+            print(f"Error: {error_body}")
+        except:
+            pass
         return False
-    
-    # Test 2: Submit a simple program
-    print("\n2. Testing code execution...")
-    print("   Submitting simple Python program...")
+    except Exception as e:
+        print(f"Error: {e}")
+        return False
+
+def test_submit_python():
+    """Test Python code submission"""
+    print("\n" + "=" * 50)
+    print("TEST 2: Submit Python Code")
+    print("=" * 50)
     
     payload = {
-        "source_code": test_code,
-        "language_id": 71,  # Python
-        "stdin": "",
-        "wait_timeout": 30000,  # 30 seconds in ms
+        "language_id": 71,
+        "source_code": "s = 0\nfor i in range(100):\n    s += i\nprint(f'Sum: {s}')",
+        "stdin": ""
     }
     
     try:
         req = urllib.request.Request(
-            f"{JUDGE0_BASE_URL}/submissions?wait=true",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST"
+            "http://localhost:8000/api/judge0/submit/",
+            data=json.dumps(payload).encode('utf-8'),
+            headers={"Content-Type": "application/json", "Accept": "application/json"}
         )
-        
-        with urllib.request.urlopen(req, timeout=35) as response:
-            result = json.loads(response.read().decode("utf-8"))
-            
-            print(f"   Status: {result.get('status', 'unknown')}")
-            print(f"   Output: {result.get('stdout', 'No output')}")
-            
-            if result.get('stderr'):
-                print(f"   Stderr: {result.get('stderr')}")
-            
-            if result.get('compile_output'):
-                print(f"   Compile output: {result.get('compile_output')}")
-            
-            if result.get('status', {}).get('id') == 3:  # 3 = Accepted
-                print("   [OK] Code executed successfully!")
+        with urllib.request.urlopen(req, timeout=30) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            print(f"Status: {data.get('status')}")
+            if data.get('execution'):
+                exec_result = data['execution']
+                print(f"Output: {exec_result.get('output', 'N/A')}")
+                print(f"Time: {exec_result.get('time', 'N/A')}")
+                print(f"Memory: {exec_result.get('memory', 'N/A')}")
                 return True
-            else:
-                print(f"   [FAIL] Execution failed: {result.get('status', {}).get('description', 'Unknown error')}")
-                return False
-                
     except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8", errors="ignore")
-        print(f"   [FAIL] HTTP Error {e.code}: {error_body}")
+        print(f"HTTP Error: {e.code} - {e.reason}")
+        try:
+            error_body = json.loads(e.read().decode('utf-8'))
+            print(f"Error: {error_body}")
+        except:
+            pass
         return False
     except Exception as e:
-        print(f"   [FAIL] Execution failed: {e}")
+        print(f"Error: {e}")
+        return False
+
+def test_submit_c():
+    """Test C code submission"""
+    print("\n" + "=" * 50)
+    print("TEST 3: Submit C Code")
+    print("=" * 50)
+    
+    payload = {
+        "language_id": 50,
+        "source_code": '#include <stdio.h>\nint main() {\n    int s = 0;\n    for(int i = 0; i < 100; i++) s += i;\n    printf("Sum: %d", s);\n    return 0;\n}'
+    }
+    
+    try:
+        req = urllib.request.Request(
+            "http://localhost:8000/api/judge0/submit/",
+            data=json.dumps(payload).encode('utf-8'),
+            headers={"Content-Type": "application/json", "Accept": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            print(f"Status: {data.get('status')}")
+            if data.get('execution'):
+                exec_result = data['execution']
+                print(f"Output: {exec_result.get('output', 'N/A')}")
+                print(f"Time: {exec_result.get('time', 'N/A')}")
+                print(f"Memory: {exec_result.get('memory', 'N/A')}")
+                return True
+    except urllib.error.HTTPError as e:
+        print(f"HTTP Error: {e.code} - {e.reason}")
+        try:
+            error_body = json.loads(e.read().decode('utf-8'))
+            print(f"Error: {error_body}")
+        except:
+            pass
+        return False
+    except Exception as e:
+        print(f"Error: {e}")
         return False
 
 if __name__ == "__main__":
-    success = test_judge0()
+    print("Testing Judge0 Endpoints...\n")
+    
+    results = []
+    results.append(("System Info", test_system_info()))
+    results.append(("Python Submit", test_submit_python()))
+    results.append(("C Submit", test_submit_c()))
+    
     print("\n" + "=" * 50)
-    if success:
-        print("[OK] All tests passed! Judge0 is working correctly.")
-        sys.exit(0)
-    else:
-        print("[FAIL] Tests failed. Check Judge0 EC2 instance.")
-        sys.exit(1)
+    print("SUMMARY")
+    print("=" * 50)
+    for name, passed in results:
+        status = "✓ PASS" if passed else "✗ FAIL"
+        print(f"  {name}: {status}")

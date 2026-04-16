@@ -5,8 +5,6 @@ from dotenv import load_dotenv
 
 # Load variables from backend/.env (or project-root/.env) into the process
 # environment before any os.getenv() call below reads them.
-# On EC2 you can set real env vars instead — load_dotenv() is a no-op when
-# the var is already present in the environment (override=False by default).
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(_ENV_FILE)
 
@@ -17,9 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------------------
 
 # Never hard-code the secret key.
-# On EC2: set DJANGO_SECRET_KEY in /etc/environment or your systemd unit file.
-# On local dev: if the env var is missing, a dev-only fallback is used and a
-# warning will be logged when DEBUG is False.
+# On local dev: if the env var is missing, a dev-only fallback is used.
 _SECRET_KEY_ENV = os.getenv("DJANGO_SECRET_KEY", "")
 _DEBUG_ENV = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
 
@@ -29,12 +25,11 @@ SECRET_KEY = _SECRET_KEY_ENV or (
 
 DEBUG = _DEBUG_ENV
 
-# Warn loudly if running in production without a real secret key
+# Warn if running without a real secret key
 if not DEBUG and not _SECRET_KEY_ENV:
     import warnings
     warnings.warn(
-        "DJANGO_SECRET_KEY is not set. Using insecure fallback key. "
-        "Set the env var before deploying to EC2.",
+        "DJANGO_SECRET_KEY is not set. Using insecure fallback key.",
         RuntimeWarning,
         stacklevel=1,
     )
@@ -46,8 +41,6 @@ ALLOWED_HOSTS = [
     ).split(",")
     if host.strip()
 ]
-USE_X_FORWARDED_HOST = True
-SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 # ---------------------------------------------------------------------------
 # Application definition
@@ -98,20 +91,17 @@ WSGI_APPLICATION = "code2day.wsgi.application"
 ASGI_APPLICATION = "code2day.asgi.application"
 
 # ---------------------------------------------------------------------------
-# Database — MySQL on EC2 (or local)
+# Database — PostgreSQL (configured via pgAdmin)
 # ---------------------------------------------------------------------------
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("CODE2DAY_DB_NAME", "ramcoad"),
-        "USER": os.getenv("CODE2DAY_DB_USER", "root"),
-        "PASSWORD": os.getenv("CODE2DAY_DB_PASSWORD", ""),
-        "HOST": os.getenv("CODE2DAY_DB_HOST", "127.0.0.1"),
-        "PORT": os.getenv("CODE2DAY_DB_PORT", "3306"),
-        "OPTIONS": {
-            "charset": "utf8mb4",
-        },
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.getenv("DB_NAME", "code2day"),
+        "USER": os.getenv("DB_USER", "postgres"),
+        "PASSWORD": os.getenv("DB_PASSWORD", "123"),
+        "HOST": os.getenv("DB_HOST", "localhost"),
+        "PORT": os.getenv("DB_PORT", "5432"),
     }
 }
 
@@ -155,32 +145,37 @@ SESSION_SAVE_EVERY_REQUEST = True
 # HttpOnly prevents JS from reading the session cookie (XSS protection)
 SESSION_COOKIE_HTTPONLY = True
 
-# SameSite=Lax blocks cross-site POST requests (CSRF mitigation layer 2)
-SESSION_COOKIE_SAMESITE = "Lax"
-
-# Secure flag: only send cookies over HTTPS — enable on EC2 with SSL
-SESSION_COOKIE_SECURE = not DEBUG
+# SameSite=None for local dev (localhost vs 127.0.0.1 are different origins)
+# In production, use "Lax" or "Strict"
+if DEBUG:
+    SESSION_COOKIE_SAMESITE = None  # No restriction for local dev
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SAMESITE = None
+    CSRF_COOKIE_SECURE = False
+else:
+    SESSION_COOKIE_SAMESITE = "Lax"
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SAMESITE = "Lax"
+    CSRF_COOKIE_SECURE = True
 
 # CSRF cookie — must NOT be HttpOnly because appUtils.js reads it to send
-# the X-CSRFToken header. SameSite=Lax still gives cross-site protection.
+# the X-CSRFToken header
 CSRF_COOKIE_HTTPONLY = False
-CSRF_COOKIE_SAMESITE = "Lax"
-CSRF_COOKIE_SECURE = not DEBUG
 
 # ---------------------------------------------------------------------------
-# CORS — allow the Vite dev server + production EC2 origin
+# CORS — allow the Vite dev server
 # ---------------------------------------------------------------------------
 
 _cors_raw = os.getenv(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173",
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
 )
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 CORS_ALLOW_CREDENTIALS = True
 
 _csrf_raw = os.getenv(
     "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173",
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
 )
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_raw.split(",") if o.strip()]
 
@@ -203,15 +198,13 @@ REST_FRAMEWORK = {
 }
 
 # ---------------------------------------------------------------------------
-# Judge0 — self-hosted on Amazon EC2 (no Docker on the app server)
-# ---------------------------------------------------------------------------
-# Set JUDGE0_BASE_URL to your EC2 instance's public IP or domain, e.g.:
-#
-#   Windows:  set JUDGE0_BASE_URL=http://<ec2-ip>:2358
-#   Linux:    export JUDGE0_BASE_URL=http://<ec2-ip>:2358
-#
-JUDGE0_BASE_URL = os.getenv("JUDGE0_BASE_URL", "http://15.207.175.134:2358")
-JUDGE0_TIMEOUT_SECONDS = int(os.getenv("JUDGE0_TIMEOUT_SECONDS", "300"))
+# Judge0 Configuration - External Docker Instance
+# Set JUDGE0_BASE_URL environment variable to your external Judge0 URL
+# Example: JUDGE0_BASE_URL=http://your-server-ip:2358
+# For local testing: JUDGE0_BASE_URL=http://localhost:2358
+# If not set, code execution will be disabled (mock responses)
+JUDGE0_BASE_URL = os.getenv("JUDGE0_BASE_URL", "http://172.16.4.111:2358")
+JUDGE0_TIMEOUT_SECONDS = int(os.getenv("JUDGE0_TIMEOUT_SECONDS", "30"))
 
 # ---------------------------------------------------------------------------
 # Auth rate limiting (InMemoryRateLimiter in auth_utils.py)

@@ -12,14 +12,14 @@
 ## Backend
 
 - Django + Django REST Framework
+- SQLite database for local development
 - Separate API routes for dashboard data, problem lists, and editor bootstrap data
 - Starter models for student profiles, problems, and submissions
 - Initial migration and a demo seed command
-- SQLite configuration for local development
 
 ## Run locally
 
-Frontend:
+### Frontend:
 
 ```bash
 cd frontend
@@ -27,7 +27,7 @@ npm install
 npm run dev
 ```
 
-Backend:
+### Backend:
 
 ```bash
 cd backend
@@ -42,11 +42,9 @@ python manage.py runserver
 
 ## Student import and first login
 
-- Source import table: `collegeadmissiondb.personaldetails`
 - Import command: `python manage.py import_students`
 - Student lookup: `GET /api/auth/student/?register_number=<value>`
 - First password setup: `POST /api/auth/first-login/`
 - Student login: `POST /api/auth/login/`
 
-Imported students are created with their register number as the username and an unusable password. On first login, the student sets a password through the first-login endpoint; after that, the normal login endpoint can be used.
-"# code2day" 
+Imported students are created with their register number as the username and an unusable password. On first login, the student sets a password through the first-login endpoint; after that, the normal login endpoint can be used. 

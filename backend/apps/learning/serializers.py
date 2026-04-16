@@ -1,62 +1,15 @@
 from rest_framework import serializers
 
-from .models import DiscussionMessage, Problem, ProblemSolution, StudentProfile, Submission, TestCase
+from .models import Contest, Department, DiscussionMessage, Problem, ProblemSolution, StudentProfile, Submission, TestCase
 from .services.execution_adapter import clean_expected_output
 
 
 DEFAULT_PRACTICE_LANGUAGES = [
-    # ── Most popular ─────────────────────────────────────────────────────
+    "C",
+    "C++",
+    "Java",
     "JavaScript",
     "Python",
-    "Java",
-    "C++",
-    "C (GCC 9.2.0)",
-    # ── JavaScript / TypeScript ──────────────────────────────────────────
-    "JavaScript (Node.js 12.14.0)",
-    "TypeScript (3.7.4)",
-    # ── Python variants ──────────────────────────────────────────────────
-    "Python (3.8.1)",
-    "Python (2.7.17)",
-    # ── C / C++ variants ─────────────────────────────────────────────────
-    "C (GCC 8.3.0)",
-    "C (GCC 7.4.0)",
-    "C (Clang 7.0.1)",
-    "C++ (GCC 8.3.0)",
-    "C++ (GCC 7.4.0)",
-    "C++ (Clang 7.0.1)",
-    # ── Systems / compiled ───────────────────────────────────────────────
-    "Rust",
-    "Go",
-    "Swift (5.2.3)",
-    # ── JVM family ───────────────────────────────────────────────────────
-    "C# (Mono 6.6.0.161)",
-    "Kotlin (1.3.70)",
-    "Scala (2.13.2)",
-    "Clojure (1.10.1)",
-    "Groovy (3.0.3)",
-    # ── Scripting ────────────────────────────────────────────────────────
-    "PHP (7.4.1)",
-    "Ruby (2.7.0)",
-    "Perl (5.28.1)",
-    "Lua (5.3.5)",
-    "Bash (5.0.0)",
-    "R (4.0.0)",
-    # ── Functional ───────────────────────────────────────────────────────
-    "Haskell (GHC 8.8.1)",
-    "Elixir (1.9.4)",
-    "Erlang (OTP 22.2)",
-    "F# (.NET Core SDK 3.1.202)",
-    "OCaml (4.09.0)",
-    # ── Other languages ──────────────────────────────────────────────────
-    "Objective-C (Clang 7.0.1)",
-    "D (DMD 2.089.1)",
-    "Fortran (GFortran 9.2.0)",
-    "Pascal (FPC 3.0.4)",
-    "Prolog (GNU Prolog 1.4.5)",
-    "Common Lisp (SBCL 2.0.0)",
-    "Assembly (NASM 2.14.02)",
-    "Basic (FBC 1.07.1)",
-    "COBOL (GnuCOBOL 2.2)",
 ]
 
 
@@ -76,6 +29,9 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             "date_of_birth",
             "father_name",
             "mother_name",
+            "role",
+            "batch",
+            "department",
             "current_streak",
             "login_days",
             "campus_rank",
@@ -227,3 +183,72 @@ class DiscussionMessageCreateSerializer(serializers.Serializer):
         if len(cleaned) < 4:
             raise serializers.ValidationError("Enter a clearer doubt or error message.")
         return cleaned
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Department
+        fields = ("id", "name", "code", "institution")
+
+
+class ContestSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source="created_by.name", read_only=True)
+    department_name = serializers.CharField(source="department.name", read_only=True)
+    problem_count = serializers.SerializerMethodField()
+    approved_by_name = serializers.CharField(source="approved_by.name", read_only=True, allow_null=True)
+    
+    class Meta:
+        model = Contest
+        fields = (
+            "id", "title", "description", "created_by", "created_by_name",
+            "department", "department_name", "start_time", "end_time",
+            "duration_minutes", "problems", "problem_count", "status",
+            "assigned_batches", "total_participants", "total_submissions",
+            "approved_by", "approved_by_name", "approved_at", "rejection_reason",
+            "submitted_for_approval_at", "created_at", "updated_at"
+        )
+        read_only_fields = (
+            "created_by", "total_participants", "total_submissions", 
+            "approved_by", "approved_at", "submitted_for_approval_at",
+            "created_at", "updated_at"
+        )
+    
+    def get_problem_count(self, obj):
+        return obj.problems.count()
+
+
+class ContestCreateSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=200)
+    description = serializers.CharField(required=False, allow_blank=True)
+    start_time = serializers.DateTimeField(required=False, allow_null=True)
+    end_time = serializers.DateTimeField(required=False, allow_null=True)
+    duration_minutes = serializers.IntegerField(default=60)
+    problem_slugs = serializers.ListField(child=serializers.CharField(), required=False)
+    assigned_batches = serializers.ListField(child=serializers.CharField(), required=False)
+    assigned_student_ids = serializers.ListField(child=serializers.IntegerField(), required=False)
+    status = serializers.ChoiceField(
+        choices=["draft", "pending_approval"],
+        default="draft"
+    )
+    submit_for_approval = serializers.BooleanField(default=False)
+
+
+class BatchAnalyticsSerializer(serializers.Serializer):
+    batch = serializers.CharField()
+    student_count = serializers.IntegerField()
+    total_solved = serializers.IntegerField()
+    avg_solved = serializers.FloatField()
+    top_performers = serializers.ListField()
+    students = serializers.ListField()
+
+
+class StudentAnalyticsSerializer(serializers.Serializer):
+    register_number = serializers.CharField()
+    name = serializers.CharField()
+    batch = serializers.CharField()
+    solved_count = serializers.IntegerField()
+    current_streak = serializers.IntegerField()
+    last_active = serializers.DateField(allow_null=True)
+    difficulty_breakdown = serializers.DictField()
+    recent_activity = serializers.ListField()
+    time_spent_total = serializers.IntegerField()

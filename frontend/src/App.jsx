@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import AuthScreen from "./components/AuthScreen";
-import TopBar from "./components/TopBar";
-import ContestPage from "./components/pages/ContestPage";
-import DiscussPage from "./components/pages/DiscussPage";
-import ExplorePage from "./components/pages/ExplorePage";
-import ProblemsPage from "./components/pages/ProblemsPage";
-import ProgressPage from "./components/pages/ProgressPage";
-import RoadmapsPage from "./components/pages/RoadmapsPage";
+import AdminDashboard from "./components/admin/AdminDashboard";
+import InstitutionDetail from "./components/admin/InstitutionDetail";
+import HODDashboard from "./components/hod/HODDashboard";
+import StaffDashboard from "./components/staff/StaffDashboard";
+import AuthScreen from "./components/common/AuthScreen";
+import TopBar from "./components/common/TopBar";
+import ContestContainer from "./components/student/pages/ContestContainer";
+import DiscussPage from "./components/student/pages/DiscussPage";
+import ExplorePage from "./components/student/pages/ExplorePage";
+import ProblemsPage from "./components/student/pages/ProblemsPage";
+import ProgressPage from "./components/student/pages/ProgressPage";
+import RoadmapsPage from "./components/student/pages/RoadmapsPage";
 import {
   authStorageKey,
   conceptOptions,
@@ -63,8 +67,12 @@ function App() {
     () => window.localStorage.getItem(authStorageKey) ?? "",
   );
   const [password, setPassword] = useState("");
+  const [loginType, setLoginType] = useState("student"); // "student" or "staff"
   const [authMode, setAuthMode] = useState("identify");
   const [authStudent, setAuthStudent] = useState(null);
+  const [userType, setUserType] = useState(() => {
+    return window.localStorage.getItem("code2day-user-type") || null;
+  });
   const [activeRegisterNumber, setActiveRegisterNumber] = useState(
     () => window.localStorage.getItem(authStorageKey) ?? "",
   );
@@ -72,6 +80,7 @@ function App() {
   const [authMessage, setAuthMessage] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [studentMatches, setStudentMatches] = useState([]);
+  const [staffMatches, setStaffMatches] = useState([]);
   const [discussionDraft, setDiscussionDraft] = useState("");
   const [discussionFeed, setDiscussionFeed] = useState([]);
   const [discussionBusy, setDiscussionBusy] = useState(false);
@@ -97,15 +106,22 @@ function App() {
   const [problemSecondsElapsed, setProblemSecondsElapsed] = useState(0);
   const [contestHistory, setContestHistory] = useState([]);
   const [selectedRoadmapId, setSelectedRoadmapId] = useState("");
+  const [selectedInstitutionId, setSelectedInstitutionId] = useState(
+    () => window.localStorage.getItem("code2day-institution-id") || null,
+  );
 
   const isLoggedIn = Boolean(activeRegisterNumber);
 
   function resetStudentSession() {
     window.localStorage.removeItem(authStorageKey);
+    window.localStorage.removeItem("code2day-user-type");
+    window.localStorage.removeItem("code2day-institution-id");
     setActiveRegisterNumber("");
     setRegisterNumber("");
     setPassword("");
     setAuthStudent(null);
+    setUserType(null);
+    setSelectedInstitutionId(null);
     setDiscussionFeed([]);
     setAuthMode("identify");
     setAuthError("");
@@ -146,6 +162,17 @@ function App() {
         if (response.status === 401) {
           if (isMounted) {
             resetStudentSession();
+          }
+          return;
+        }
+
+        // Account blocked mid-session — force logout and show message
+        if (response.status === 403) {
+          if (isMounted) {
+            const data = await response.json().catch(() => ({}));
+            const msg = data.detail || 'Your account has been blocked. Contact your department staff.';
+            resetStudentSession();
+            setAuthMessage(msg);
           }
           return;
         }
@@ -372,6 +399,12 @@ function App() {
   }, [baseProblemPool, dynamicTags]);
 
   useEffect(() => {
+    // Skip if user just manually changed language
+    if (userChangedLanguage.current) {
+      userChangedLanguage.current = false;
+      return;
+    }
+    
     const availableLanguages =
       filteredProblemSet.find((problem) => problem.slug === selectedProblemSlug)
         ?.available_languages ?? languageOptions;
@@ -379,11 +412,12 @@ function App() {
     if (!availableLanguages.includes(selectedLanguage)) {
       setSelectedLanguage(availableLanguages[0] ?? "JavaScript");
     }
-  }, [filteredProblemSet, selectedLanguage, selectedProblemSlug]);
+  }, [filteredProblemSet, selectedProblemSlug]);
 
   // Ref to track initial load - prevents overwriting saved code on refresh
   const isInitialLoad = useRef(true);
   const hasRestoredCode = useRef(false);
+  const userChangedLanguage = useRef(false);
 
   useEffect(() => {
     // On initial load only: restore saved code
@@ -413,6 +447,9 @@ function App() {
       return;
     }
     if (!selectedProblemSlug) return;
+    
+    // Mark that user changed language to prevent auto-reset
+    userChangedLanguage.current = true;
     
     // User changed language - switch to new language's starter code
     const currentStarter = starterCodeByLanguage[selectedLanguage];
@@ -559,7 +596,7 @@ function App() {
   async function handleLookup(event) {
     event.preventDefault();
     if (!registerNumber.trim()) {
-      setAuthError("Enter your register number to continue.");
+      setAuthError(loginType === "staff" ? "Enter your Faculty ID to continue." : "Enter your register number to continue.");
       return;
     }
 
@@ -568,8 +605,9 @@ function App() {
     setAuthMessage("");
 
     try {
+      // Use unified lookup endpoint
       const response = await fetch(
-        `/api/auth/student/?register_number=${encodeURIComponent(registerNumber.trim())}`,
+        `/api/auth/lookup/?user_id=${encodeURIComponent(registerNumber.trim())}`,
         {
           credentials: "include",
         },
@@ -577,16 +615,32 @@ function App() {
       const payload = await response.json();
 
       if (!response.ok) {
-        throw new Error(extractApiError(payload, "Student lookup failed."));
+        throw new Error(extractApiError(payload, "User lookup failed."));
       }
 
-      setAuthStudent(payload.student);
+      console.log("Lookup response:", payload);
+      console.log("User type detected:", payload.user_type);
+
+      // Check if user type matches selected login type
+      if (loginType === "student" && payload.user_type !== "student") {
+        throw new Error("This ID is not a student account. Please use Staff Login.");
+      }
+      if (loginType === "staff" && payload.user_type === "student") {
+        throw new Error("This ID is a student account. Please use Student Login.");
+      }
+
+      setAuthStudent({
+        ...payload.user,
+        user_type: payload.user_type,
+      });
+      console.log("AuthStudent set with user_type:", payload.user_type);
       setStudentMatches([]);
+      setStaffMatches([]);
       setAuthMode(payload.first_login_required ? "first-login" : "login");
       setAuthMessage(
         payload.first_login_required
           ? "First login detected. Create your password to unlock the workspace."
-          : "Student found. Enter your password to continue.",
+          : "User found. Enter your password to continue.",
       );
     } catch (error) {
       setAuthError(error.message);
@@ -602,8 +656,30 @@ function App() {
       return;
     }
 
-    const endpoint =
-      authMode === "first-login" ? "/api/auth/first-login/" : "/api/auth/login/";
+    // Determine endpoint based on user type
+    const isFirstLogin = authMode === "first-login";
+    let endpoint;
+    let requestBody;
+    
+    if (authStudent?.user_type === "admin") {
+      endpoint = isFirstLogin ? "/api/auth/admin/first-login/" : "/api/auth/admin/login/";
+      requestBody = {
+        admin_id: registerNumber.trim(),
+        password,
+      };
+    } else if (authStudent?.user_type === "staff" || authStudent?.user_type === "hod") {
+      endpoint = isFirstLogin ? "/api/auth/staff/first-login/" : "/api/auth/staff/login/";
+      requestBody = {
+        faculty_id: registerNumber.trim(),
+        password,
+      };
+    } else {
+      endpoint = isFirstLogin ? "/api/auth/first-login/" : "/api/auth/login/";
+      requestBody = {
+        register_number: registerNumber.trim(),
+        password,
+      };
+    }
 
     setAuthBusy(true);
     setAuthError("");
@@ -611,10 +687,7 @@ function App() {
 
     try {
       const response = await fetch(endpoint, {
-        ...buildJsonPostOptions({
-          register_number: registerNumber.trim(),
-          password,
-        }),
+        ...buildJsonPostOptions(requestBody),
       });
       const payload = await response.json();
 
@@ -622,12 +695,32 @@ function App() {
         throw new Error(extractApiError(payload, "Authentication failed."));
       }
 
+      // Determine user type from response - prioritize user_type field, then check keys
+      let type = payload.user_type || (payload.admin ? "admin" : payload.hod ? "hod" : payload.staff ? "staff" : "student");
+      console.log("Login response payload:", payload);
+      console.log("Login response - user type:", type, "admin:", !!payload.admin, "hod:", !!payload.hod, "staff:", !!payload.staff);
+
       window.localStorage.setItem(authStorageKey, registerNumber.trim());
-      setAuthStudent(payload.student);
+      window.localStorage.setItem("code2day-user-type", type);
+      setUserType(type);
+      // Store institution_id for staff/hod
+      if (payload.institution_id) {
+        setSelectedInstitutionId(payload.institution_id);
+        window.localStorage.setItem("code2day-institution-id", payload.institution_id);
+      }
+      // Preserve user_type in authStudent by spreading existing authStudent first
+      setAuthStudent({
+        ...authStudent,
+        ...(payload.student || payload.staff || payload.hod || payload.admin),
+        user_type: type,
+        institution_id: payload.institution_id,
+      });
       setActiveRegisterNumber(registerNumber.trim());
       setPassword("");
       setAuthMessage(payload.detail);
-      navigate("explore", { replace: true });
+      // Navigate to role-specific dashboard
+      const targetPage = type === "admin" ? "admin" : type === "hod" ? "hod" : type === "staff" ? "staff" : "explore";
+      navigate(targetPage, { replace: true });
     } catch (error) {
       setAuthError(error.message);
     } finally {
@@ -812,6 +905,12 @@ function App() {
     navigate("problems");
   }
 
+  function handleNavigateToContest(contestId) {
+    // Navigate to contest page - this will be handled by the new contest system
+    // For now, just navigate to the contest page
+    navigate("contest");
+  }
+
   function handleFinishContest() {
     if (!activeContest) {
       return;
@@ -891,13 +990,17 @@ function App() {
         authStudent={authStudent}
         handleLookup={handleLookup}
         handlePasswordSubmit={handlePasswordSubmit}
+        loginType={loginType}
         password={password}
         registerNumber={registerNumber}
         setAuthError={setAuthError}
         setAuthMode={setAuthMode}
         setAuthStudent={setAuthStudent}
+        setLoginType={setLoginType}
         setPassword={setPassword}
         setRegisterNumber={setRegisterNumber}
+        setStaffMatches={setStaffMatches}
+        staffMatches={staffMatches}
         setStudentMatches={setStudentMatches}
         studentMatches={studentMatches}
       />
@@ -907,6 +1010,15 @@ function App() {
   let activeView = null;
   switch (activePage) {
     case "problems":
+      // Redirect staff and admin to their dashboards
+      if (userType === "staff") {
+        navigate("staff", { replace: true });
+        break;
+      }
+      if (userType === "admin") {
+        navigate("admin", { replace: true });
+        break;
+      }
       activeView = (
         <ProblemsPage
           activeContest={activeContest}
@@ -949,22 +1061,25 @@ function App() {
       );
       break;
     case "contest":
-      activeView = (
-        <ContestPage
-          contestCards={contestCards}
-          contestHistory={contestHistory}
-          handleJoinContest={handleJoinContest}
-          setActivePage={navigate}
-        />
-      );
+      activeView = <ContestContainer />;
       break;
     case "progress":
+      // Redirect staff and admin to their dashboards
+      if (userType === "staff") {
+        navigate("staff", { replace: true });
+        break;
+      }
+      if (userType === "admin") {
+        navigate("admin", { replace: true });
+        break;
+      }
       activeView = (
         <ProgressPage
           contestCards={contestCards}
           contestHistory={contestHistory}
           dashboard={dashboard}
           handleJoinContest={handleJoinContest}
+          onNavigateToContest={handleNavigateToContest}
           resultCards={resultCards}
         />
       );
@@ -980,6 +1095,15 @@ function App() {
       );
       break;
     case "discuss":
+      // Redirect staff, hod, and admin to their dashboards
+      if (userType === "staff" || userType === "hod") {
+        navigate("staff", { replace: true });
+        break;
+      }
+      if (userType === "admin") {
+        navigate("admin", { replace: true });
+        break;
+      }
       activeView = (
         <DiscussPage
           discussionDraft={discussionDraft}
@@ -991,8 +1115,93 @@ function App() {
         />
       );
       break;
+    case "admin":
+      activeView = userType === "admin" ? (
+        <AdminDashboard />
+      ) : (
+        <div style={{ padding: 40 }}>
+          <h2>Access Denied</h2>
+          <p>Admin access required.</p>
+        </div>
+      );
+      break;
+    case "hod":
+      activeView = userType === "hod" ? (
+        <HODDashboard institutionId={selectedInstitutionId} />
+      ) : (
+        <div style={{ padding: 40 }}>
+          <h2>Access Denied</h2>
+          <p>HOD access required.</p>
+        </div>
+      );
+      break;
+    case "staff":
+      activeView = userType === "staff" ? (
+        <StaffDashboard institutionId={selectedInstitutionId} />
+      ) : (
+        <div style={{ padding: 40 }}>
+          <h2>Access Denied</h2>
+          <p>Staff access required.</p>
+        </div>
+      );
+      break;
+    case "announcements":
+      activeView = userType === "admin" ? (
+        <AdminDashboard 
+          onSelectInstitution={(instId) => {
+            setSelectedInstitutionId(instId);
+            navigate("institution");
+          }}
+        />
+      ) : (
+        <div style={{ padding: 40 }}>
+          <h2>Access Denied</h2>
+          <p>Admin access required.</p>
+        </div>
+      );
+      break;
+    case "institution":
+      console.log("Institution route debug - userType:", userType, "selectedInstitutionId:", selectedInstitutionId);
+      activeView = userType === "admin" && selectedInstitutionId ? (
+        <InstitutionDetail 
+          institutionId={selectedInstitutionId} 
+          onBack={() => {
+            setSelectedInstitutionId(null);
+            navigate("explore");
+          }}
+        />
+      ) : (
+        <div style={{ padding: 40 }}>
+          <h2>Access Denied</h2>
+          <p>Admin access required or no institution selected.</p>
+          <p style={{ fontSize: '0.9rem', color: '#666', marginTop: 10 }}>
+            Debug: userType={userType}, institutionId={selectedInstitutionId || "null"}
+          </p>
+          <button 
+            onClick={() => navigate("explore")}
+            style={{ marginTop: 20, padding: '8px 16px', cursor: 'pointer' }}
+          >
+            Go Back
+          </button>
+        </div>
+      );
+      break;
     case "explore":
     default:
+      console.log("Route debug - activePage:", activePage, "userType:", userType);
+      // Redirect staff and hod to their dashboard if they land on explore
+      if (userType === "staff") {
+        navigate("staff", { replace: true });
+        break;
+      }
+      if (userType === "hod") {
+        navigate("hod", { replace: true });
+        break;
+      }
+      if (userType === "admin") {
+        navigate("admin", { replace: true });
+        break;
+      }
       activeView = (
         <ExplorePage
           activityCalendar={activityCalendar}
@@ -1027,6 +1236,7 @@ function App() {
         handleLogout={handleLogout}
         navItems={navItems}
         setActivePage={navigate}
+        userType={userType}
       />
       <main className="main-shell">{activeView}</main>
     </div>

@@ -1,7 +1,25 @@
+# Core Framework
 Django==5.1.4
 djangorestframework==3.15.2
+
+# Security & CORS
 django-cors-headers==4.6.0
-gunicorn==23.0.0
-PyMySQL==1.1.1
 python-dotenv==1.0.1
+
+# Database
+psycopg2-binary==2.9.9
+
+
+# HTTP & API
 requests==2.31.0
+urllib3==2.2.3
+
+# Production Server
+gunicorn==23.0.0
+whitenoise==6.8.2
+
+# Utilities
+sqlparse==0.5.3
+asgiref==3.8.1
+typing_extensions==4.12.2
+tabulate==0.10.0

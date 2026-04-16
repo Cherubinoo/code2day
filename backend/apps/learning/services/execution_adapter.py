@@ -5,20 +5,31 @@ import json
 import re
 
 
-def build_function_name_candidates(slug: str) -> list[str]:
+def build_function_name_candidates(slug: str, source_code: str = "") -> list[str]:
+    """Build function name candidates from slug and extract from source code."""
     parts = [part for part in (slug or "").split("-") if part]
     if not parts:
-        return []
+        candidates = []
+    else:
+        camel_case = parts[0] + "".join(part.capitalize() for part in parts[1:])
+        snake_case = "_".join(parts)
+        pascal_case = "".join(part.capitalize() for part in parts)
+        compact = "".join(parts)
 
-    camel_case = parts[0] + "".join(part.capitalize() for part in parts[1:])
-    snake_case = "_".join(parts)
-    pascal_case = "".join(part.capitalize() for part in parts)
-    compact = "".join(parts)
-
-    candidates = []
-    for name in (camel_case, snake_case, pascal_case, compact):
-        if name and name not in candidates:
-            candidates.append(name)
+        candidates = []
+        for name in (camel_case, snake_case, pascal_case, compact):
+            if name and name not in candidates:
+                candidates.append(name)
+    
+    # Also extract actual function names from source code
+    if source_code:
+        # Find all function definitions
+        func_pattern = re.compile(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
+        found_functions = func_pattern.findall(source_code)
+        for func_name in found_functions:
+            if func_name not in candidates and not func_name.startswith('__'):
+                candidates.append(func_name)
+    
     return candidates
 
 
@@ -104,6 +115,11 @@ def _split_top_level_arguments(raw_input: str) -> list[str]:
 
 
 def parse_argument_list(raw_input: str):
+    """Parse argument list from raw input string.
+    
+    Returns a list of arguments. For single named argument (e.g., 'adjList = [...]'),
+    returns the value directly without extra wrapping.
+    """
     cleaned = str(raw_input or "").strip()
     if not cleaned:
         return []
@@ -113,42 +129,662 @@ def parse_argument_list(raw_input: str):
         return parsed if isinstance(parsed, list) else [parsed]
 
     values = []
-    for part in _split_top_level_arguments(cleaned):
+    parts = list(_split_top_level_arguments(cleaned))
+    for part in parts:
         if "=" not in part:
             values.append(_coerce_literal(part))
             continue
         _, raw_value = part.split("=", 1)
         values.append(_coerce_literal(raw_value))
+    
+    # If only one value and it's a list, return it directly (not wrapped in another list)
+    if len(values) == 1:
+        return values[0] if isinstance(values[0], list) else values
+    
     return values
 
 
 def normalize_comparable_output(value: str) -> str:
-    cleaned = clean_expected_output(value)
+    """Normalize output for comparison without aggressive cleaning."""
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return ""
+    
+    # If it's already a valid JSON array/object, return as-is (compact)
+    if (cleaned.startswith("[") and cleaned.endswith("]")) or \
+       (cleaned.startswith("{") and cleaned.endswith("}")):
+        try:
+            # Validate it's proper JSON and re-serialize compactly
+            parsed = json.loads(cleaned)
+            return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+    
+    # Try to parse as a literal first
     parsed = _coerce_literal(cleaned)
 
     if isinstance(parsed, str):
+        # For strings, normalize whitespace but preserve the full content
         return " ".join(parsed.split())
     if isinstance(parsed, (list, dict, bool, int, float)) or parsed is None:
+        # For structured data, use compact JSON representation
         return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+    # Fallback: normalize whitespace in the raw string
     return " ".join(cleaned.split())
 
 
 def _looks_like_python_function_solution(source_code: str, candidates: list[str]) -> bool:
     if "class Solution" in source_code:
         return True
-
     for name in candidates:
         if f"def {name}(" in source_code:
+            return True
+    # Also check for any function definition at all
+    if re.search(r'def\s+[a-zA-Z_][a-zA-Z0-9_]*\s*\(', source_code):
+        return True
+    return False
+
+
+def _looks_like_java_solution(source_code: str, candidates: list[str]) -> bool:
+    if "class Solution" in source_code or "public class" in source_code:
+        return True
+    # Check for method definitions
+    for name in candidates:
+        if re.search(rf'\s+{re.escape(name)}\s*\([^)]*\)\s*{{', source_code):
             return True
     return False
 
 
+def _looks_like_c_solution(source_code: str, candidates: list[str]) -> bool:
+    # Check for C function definitions
+    for name in candidates:
+        if re.search(rf'\b(?:int|long|float|double|char|void|bool)\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    # Also check for any function pattern
+    if re.search(r'\b(?:int|long|float|double|char|void)\s+\w+\s*\([^)]*\)\s*\{', source_code):
+        return True
+    return False
+
+
+def _looks_like_csharp_solution(source_code: str, candidates: list[str]) -> bool:
+    if "class Solution" in source_code or "public class" in source_code or "static class" in source_code:
+        return True
+    # Check for method definitions
+    for name in candidates:
+        if re.search(rf'\s+(?:public|private|static|internal)?\s*{re.escape(name)}\s*\([^)]*\)', source_code):
+            return True
+    return False
+
+
+def _looks_like_go_solution(source_code: str, candidates: list[str]) -> bool:
+    if "package main" in source_code:
+        return True
+    for name in candidates:
+        if re.search(rf'func\s+(?:\([^)]*\)\s*)?{re.escape(name)}\s*\(', source_code):
+            return True
+    # Check for any func definition
+    if re.search(r'func\s+\w+\s*\(', source_code):
+        return True
+    return False
+
+
+def _looks_like_rust_solution(source_code: str, candidates: list[str]) -> bool:
+    if "fn main(" in source_code:
+        return True
+    for name in candidates:
+        if re.search(rf'fn\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    # Check for any fn definition
+    if re.search(r'fn\s+\w+\s*\(', source_code):
+        return True
+    return False
+
+
+def _looks_like_kotlin_solution(source_code: str, candidates: list[str]) -> bool:
+    if "class Solution" in source_code or "fun main(" in source_code:
+        return True
+    for name in candidates:
+        if re.search(rf'fun\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    # Check for any fun definition
+    if re.search(r'fun\s+\w+\s*\(', source_code):
+        return True
+    return False
+
+
+def _looks_like_ruby_solution(source_code: str, candidates: list[str]) -> bool:
+    for name in candidates:
+        if re.search(rf'def\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    # Check for any def
+    if re.search(r'def\s+\w+\s*\(', source_code):
+        return True
+    return False
+
+
+def _looks_like_php_solution(source_code: str, candidates: list[str]) -> bool:
+    if "<?php" in source_code or "<?" in source_code:
+        return True
+    for name in candidates:
+        if re.search(rf'function\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    return False
+
+
+def _looks_like_swift_solution(source_code: str, candidates: list[str]) -> bool:
+    if "func main(" in source_code:
+        return True
+    for name in candidates:
+        if re.search(rf'func\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    # Check for any func definition
+    if re.search(r'func\s+\w+\s*\(', source_code):
+        return True
+    return False
+
+
+def _looks_like_bash_solution(source_code: str, candidates: list[str]) -> bool:
+    if "#!/bin/bash" in source_code or "#!/bin/sh" in source_code:
+        return True
+    # Check for function definitions
+    if re.search(r'\w+\s*\(\s*\)\s*\{', source_code):
+        return True
+    return False
+
+
+def _looks_like_elixir_solution(source_code: str, candidates: list[str]) -> bool:
+    if "defmodule" in source_code:
+        return True
+    for name in candidates:
+        if re.search(rf'def\s+{re.escape(name)}', source_code):
+            return True
+    # Check for any def
+    if re.search(r'def\s+\w+', source_code):
+        return True
+    return False
+
+
+def _looks_like_erlang_solution(source_code: str, candidates: list[str]) -> bool:
+    if "-module(" in source_code:
+        return True
+    for name in candidates:
+        if re.search(rf'{re.escape(name)}\s*\(', source_code):
+            return True
+    # Check for any function export
+    if re.search(r'-export\s*\[', source_code):
+        return True
+    return False
+
+
+def _looks_like_fsharp_solution(source_code: str, candidates: list[str]) -> bool:
+    if "let " in source_code:
+        for name in candidates:
+            if re.search(rf'let\s+{re.escape(name)}\s+', source_code):
+                return True
+        # Check for any let function
+        if re.search(r'let\s+\w+\s+', source_code):
+            return True
+    return False
+
+
+def _looks_like_groovy_solution(source_code: str, candidates: list[str]) -> bool:
+    if "class Solution" in source_code or "def " in source_code:
+        return True
+    for name in candidates:
+        if re.search(rf'def\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    return False
+
+
+def _looks_like_objective_c_solution(source_code: str, candidates: list[str]) -> bool:
+    if "@implementation" in source_code or "int main(" in source_code:
+        return True
+    for name in candidates:
+        if re.search(rf'^\s*[-+]\s*\([^)]*\)\s*{re.escape(name)}', source_code, re.MULTILINE):
+            return True
+    return False
+
+
+def _looks_like_r_solution(source_code: str, candidates: list[str]) -> bool:
+    # R function definitions
+    for name in candidates:
+        if re.search(rf'{re.escape(name)}\s*<-\s*function\s*\(', source_code):
+            return True
+    # Check for any function definition
+    if re.search(r'\w+\s*<-\s*function\s*\(', source_code):
+        return True
+    return False
+
+
+def _looks_like_haskell_solution(source_code: str, candidates: list[str]) -> bool:
+    # Haskell function definitions (name :: Type or name params = ...)
+    for name in candidates:
+        if re.search(rf'{re.escape(name)}\s*::', source_code) or re.search(rf'^{re.escape(name)}\s+', source_code):
+            return True
+    # Check for any function pattern
+    if re.search(r'^\w+\s*::', source_code, re.MULTILINE):
+        return True
+    return False
+
+
+def _looks_like_lua_solution(source_code: str, candidates: list[str]) -> bool:
+    # Lua function definitions: function name( or local function name(
+    for name in candidates:
+        if re.search(rf'function\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    # Check for any function
+    if re.search(r'function\s+\w+\s*\(', source_code):
+        return True
+    return False
+
+
+def _looks_like_perl_solution(source_code: str, candidates: list[str]) -> bool:
+    # Perl subroutine definitions: sub name { or sub name(
+    for name in candidates:
+        if re.search(rf'sub\s+{re.escape(name)}\s*\{{', source_code) or re.search(rf'sub\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    # Check for any sub
+    if re.search(r'sub\s+\w+\s*[\{(]', source_code):
+        return True
+    return False
+
+
+def _looks_like_scala_solution(source_code: str, candidates: list[str]) -> bool:
+    if "class Solution" in source_code or "object Solution" in source_code:
+        return True
+    # Check for def definitions
+    for name in candidates:
+        if re.search(rf'def\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    # Check for any def
+    if re.search(r'def\s+\w+\s*\(', source_code):
+        return True
+    return False
+
+
+def _looks_like_cpp_solution(source_code: str, candidates: list[str]) -> bool:
+    # Check for function definitions
+    for name in candidates:
+        if re.search(rf'\b{re.escape(name)}\s*\([^)]*\)\s*{{', source_code):
+            return True
+    return False
+
+
+def _looks_like_c_solution(source_code: str, candidates: list[str]) -> bool:
+    # Check for C function definitions
+    for name in candidates:
+        if re.search(rf'\b(?:int|long|float|double|char|void|bool)\s+{re.escape(name)}\s*\(', source_code):
+            return True
+    # Also check for any function pattern
+    if re.search(r'\b(?:int|long|float|double|char|void)\s+\w+\s*\([^)]*\)\s*\{', source_code):
+        return True
+    return False
+
+
+def _looks_like_csharp_solution(source_code: str, candidates: list[str]) -> bool:
+    if "class Solution" in source_code or "public class" in source_code or "static class" in source_code:
+        return True
+    # Check for method definitions
+    for name in candidates:
+        if re.search(rf'\s+(?:public|private|static|internal)?\s*{re.escape(name)}\s*\([^)]*\)', source_code):
+            return True
+    return False
+
+
+def _looks_like_go_solution(source_code: str, candidates: list[str]) -> bool:
+    if "package main" in source_code:
+        return True
+    for name in candidates:
+        if re.search(rf'func\s+(?:\([^)]*\)\s*)?{re.escape(name)}\s*\(', source_code):
+            return True
+    # Check for any func definition
+    if re.search(r'func\s+\w+\s*\(', source_code):
+        return True
+    return False
+
+
+def _looks_like_javascript_solution(source_code: str, candidates: list[str]) -> bool:
+    for name in candidates:
+        # Check for: function name(, const name =, let name =, var name =, name = function, name = ( =>
+        patterns = [
+            rf'function\s+{re.escape(name)}\s*\(',
+            rf'(?:const|let|var)\s+{re.escape(name)}\s*=\s*(?:function|\(|\w+)',
+            rf'{re.escape(name)}\s*=\s*(?:function|\()',
+        ]
+        for pattern in patterns:
+            if re.search(pattern, source_code):
+                return True
+    return False
+
+
+def _build_java_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Java wrapper that reads from stdin and calls the solution method."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+import java.io.*;
+import java.util.*;
+
+{source_code}
+
+class Main {{
+    public static void main(String[] args) throws Exception {{
+        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+        String line = reader.readLine();
+        if (line == null || line.trim().isEmpty()) {{
+            line = "[]";
+        }}
+        
+        // Parse JSON-like array
+        line = line.trim();
+        List<Object> argList = new ArrayList<>();
+        if (line.startsWith("[") && line.endsWith("]")) {{
+            line = line.substring(1, line.length() - 1);
+            // Simple parsing - split by comma but respect strings
+            argList = parseArguments(line);
+        }} else {{
+            argList.add(parseValue(line));
+        }}
+        
+        // Find and call the solution method
+        Object result = callSolution(argList);
+        System.out.println(serialize(result));
+    }}
+    
+    static List<Object> parseArguments(String s) {{
+        List<Object> result = new ArrayList<>();
+        if (s.trim().isEmpty()) return result;
+        
+        // Simple comma-separated parsing respecting quotes
+        List<String> parts = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inString = false;
+        char stringChar = 0;
+        int depth = 0;
+        
+        for (int i = 0; i < s.length(); i++) {{
+            char c = s.charAt(i);
+            if (!inString && (c == '"' || c == "'")) {{
+                inString = true;
+                stringChar = c;
+                current.append(c);
+            }} else if (inString && c == stringChar) {{
+                inString = false;
+                current.append(c);
+            }} else if (!inString && (c == '[' || c == '{{')) {{
+                depth++;
+                current.append(c);
+            }} else if (!inString && (c == ']' || c == '}}')) {{
+                depth--;
+                current.append(c);
+            }} else if (!inString && c == ',' && depth == 0) {{
+                parts.add(current.toString().trim());
+                current = new StringBuilder();
+            }} else {{
+                current.append(c);
+            }}
+        }}
+        if (current.length() > 0) {{
+            parts.add(current.toString().trim());
+        }}
+        
+        for (String part : parts) {{
+            result.add(parseValue(part));
+        }}
+        return result;
+    }}
+    
+    static Object parseValue(String s) {{
+        s = s.trim();
+        if (s.isEmpty()) return null;
+        if (s.equals("null")) return null;
+        if (s.equals("true")) return true;
+        if (s.equals("false")) return false;
+        if (s.startsWith("[") && s.endsWith("]")) {{
+            // Array
+            return parseArguments(s.substring(1, s.length() - 1));
+        }}
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {{
+            return s.substring(1, s.length() - 1);
+        }}
+        // Try number
+        try {{
+            if (s.contains(".")) {{
+                return Double.parseDouble(s);
+            }}
+            return Integer.parseInt(s);
+        }} catch (NumberFormatException e) {{
+            return s;
+        }}
+    }}
+    
+    static Object callSolution(List<Object> args) throws Exception {{
+        String[] candidateNames = {candidate_list};
+        
+        // Try to find Solution class
+        Class<?> solutionClass = null;
+        Object solutionInstance = null;
+        try {{
+            solutionClass = Class.forName("Solution");
+            solutionInstance = solutionClass.getDeclaredConstructor().newInstance();
+        }} catch (Exception e) {{
+            // No Solution class, look for class with methods
+            for (Class<?> cls : new Class<?>[]{{ Main.class }}) {{
+                if (solutionClass != null) break;
+                for (String name : candidateNames) {{
+                    try {{
+                        cls.getMethod(name, getParamTypes(args));
+                        solutionClass = cls;
+                        solutionInstance = solutionClass.getDeclaredConstructor().newInstance();
+                        break;
+                    }} catch (Exception ignored) {{}}
+                }}
+            }}
+        }}
+        
+        if (solutionClass == null) {{
+            // Try static methods
+            for (String name : candidateNames) {{
+                try {{
+                    java.lang.reflect.Method m = Main.class.getMethod(name, getParamTypes(args));
+                    return m.invoke(null, args.toArray());
+                }} catch (Exception ignored) {{}}
+            }}
+            throw new RuntimeException("Could not find solution method");
+        }}
+        
+        // Try instance methods on Solution
+        for (String name : candidateNames) {{
+            try {{
+                java.lang.reflect.Method m = solutionClass.getMethod(name, getParamTypes(args));
+                return m.invoke(solutionInstance, args.toArray());
+            }} catch (Exception ignored) {{}}
+        }}
+        
+        throw new RuntimeException("Could not find matching method");
+    }}
+    
+    static Class<?>[] getParamTypes(List<Object> args) {{
+        Class<?>[] types = new Class<?>[args.size()];
+        for (int i = 0; i < args.size(); i++) {{
+            Object arg = args.get(i);
+            if (arg == null) types[i] = Object.class;
+            else if (arg instanceof Integer) types[i] = int.class;
+            else if (arg instanceof Double) types[i] = double.class;
+            else if (arg instanceof Boolean) types[i] = boolean.class;
+            else if (arg instanceof String) types[i] = String.class;
+            else if (arg instanceof List) types[i] = List.class;
+            else types[i] = arg.getClass();
+        }}
+        return types;
+    }}
+    
+    static String serialize(Object obj) {{
+        if (obj == null) return "null";
+        if (obj instanceof Boolean) return ((Boolean) obj).toString();
+        if (obj instanceof Number) return obj.toString();
+        if (obj instanceof String) return (String) obj;
+        if (obj instanceof List) {{
+            StringBuilder sb = new StringBuilder();
+            sb.append("[");
+            List<?> list = (List<?>) obj;
+            for (int i = 0; i < list.size(); i++) {{
+                if (i > 0) sb.append(",");
+                sb.append(serialize(list.get(i)));
+            }}
+            sb.append("]");
+            return sb.toString();
+        }}
+        return obj.toString();
+    }}
+}}
+'''.strip()
+
+
+def _build_c_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build C wrapper that reads from stdin and calls the solution function."""
+    # Simple approach: try calling each candidate directly
+    # Assume function signature: char* func(char*)
+    try_calls = '\n    '.join([f'result = {name}(arg); if (result) goto done;' for name in candidates])
+    
+    return f'''
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// User code
+{source_code}
+
+// Wrapper main function
+int main() {{
+    char line[4096];
+    char* arg = NULL;
+    char* result = NULL;
+    
+    // Read input
+    if (fgets(line, sizeof(line), stdin)) {{
+        // Parse simple string from JSON-like format ["string"]
+        char* start = strchr(line, '"');
+        if (start) {{
+            start++;
+            char* end = strchr(start, '"');
+            if (end) {{
+                *end = '\\0';
+                arg = start;
+            }}
+        }}
+    }}
+    
+    if (!arg) arg = "";
+    
+    // Try each candidate function
+    {try_calls}
+    
+done:
+    if (result) {{
+        printf("%s\\n", result);
+    }} else {{
+        printf("null\\n");
+    }}
+    
+    return 0;
+}}
+'''.strip()
+
+
+def _build_csharp_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build C# wrapper that reads from stdin and calls the solution method."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+using System;
+using System.IO;
+using System.Linq;
+using System.Collections.Generic;
+using System.Text.Json;
+
+{source_code}
+
+class Program {{
+    static void Main(string[] args) {{
+        string line = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(line)) line = "[]";
+        
+        var arguments = JsonSerializer.Deserialize<List<JsonElement>>(line);
+        
+        // Try to find and call solution method
+        var candidates = {candidate_list};
+        object result = null;
+        
+        // Try to find Solution class and instantiate it
+        object solutionInstance = null;
+        Type solutionType = null;
+        try {{
+            solutionType = Type.GetType("Solution");
+            if (solutionType == null) {{
+                // Try to find any class that might contain the solution
+                var allTypes = System.Reflection.Assembly.GetExecutingAssembly().GetTypes();
+                foreach (var t in allTypes) {{
+                    if (t.Name == "Solution") {{
+                        solutionType = t;
+                        break;
+                    }}
+                }}
+            }}
+            if (solutionType != null) {{
+                solutionInstance = Activator.CreateInstance(solutionType);
+            }}
+        }} catch {{ }}
+        
+        foreach (var name in candidates) {{
+            if (solutionInstance != null && solutionType != null) {{
+                // Try instance method on Solution
+                try {{
+                    var method = solutionType.GetMethod(name);
+                    if (method != null) {{
+                        var methodArgs = arguments.Select(a => ParseValue(a)).ToArray();
+                        result = method.Invoke(solutionInstance, methodArgs);
+                        break;
+                    }}
+                }} catch {{ }}
+            }}
+            
+            // Try static method on Solution
+            try {{
+                var method = typeof(Solution).GetMethod(name);
+                if (method != null && method.IsStatic) {{
+                    var methodArgs = arguments.Select(a => ParseValue(a)).ToArray();
+                    result = method.Invoke(null, methodArgs);
+                    break;
+                }}
+            }} catch {{ }}
+        }}
+        
+        if (result != null) {{
+            Console.WriteLine(JsonSerializer.Serialize(result));
+        }}
+    }}
+    
+    static object ParseValue(JsonElement elem) {{
+        switch (elem.ValueKind) {{
+            case JsonValueKind.Number: return elem.GetInt64();
+            case JsonValueKind.String: return elem.GetString();
+            case JsonValueKind.True: return true;
+            case JsonValueKind.False: return false;
+            case JsonValueKind.Array: return elem.EnumerateArray().Select(a => ParseValue(a)).ToList();
+            default: return null;
+        }}
+    }}
+}}
+'''.strip()
+
+
 def _build_python_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Python wrapper that reads from stdin and calls the solution function."""
     candidate_list = json.dumps(candidates)
     return f"""{source_code}
 
 import json as __code2day_json
 import sys as __code2day_sys
+import inspect as __code2day_inspect
 
 def __code2day_find_solver():
     candidates = {candidate_list}
@@ -181,26 +817,1074 @@ if __name__ == "__main__":
     args = __code2day_json.loads(raw) if raw else []
     if not isinstance(args, list):
         args = [args]
-    result = __code2day_find_solver()(*args)
+    
+    solver = __code2day_find_solver()
+    
+    # Try calling with unpacked args first, then with single arg if that fails
+    try:
+        sig = __code2day_inspect.signature(solver)
+        param_count = len([p for p in sig.parameters.values() if p.default is __code2day_inspect.Parameter.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)])
+        
+        if param_count == 1 and len(args) > 1:
+            # Function expects 1 arg but we have multiple - wrap them
+            result = solver(args)
+        elif param_count > 1 and len(args) == 1 and isinstance(args[0], list):
+            # Function expects multiple args but we have 1 list - try unpacking
+            result = solver(*args[0])
+        else:
+            result = solver(*args)
+    except (TypeError, ValueError):
+        # Fallback: try calling with args as-is (single argument)
+        result = solver(args)
+    
     __code2day_sys.stdout.write(__code2day_serialize(result))
 """
 
 
+def _build_go_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Go wrapper that reads from stdin and calls the solution function."""
+    # Generate explicit calls for each candidate - pass args as single JSON value
+    candidate_calls = '\n    '.join([f'try {{ return {name}(args), true }} catch {{ }}' for name in candidates])
+    return f'''
+package main
+
+import (
+    "bufio"
+    "encoding/json"
+    "fmt"
+    "os"
+    "strings"
+)
+
+{source_code}
+
+func findAndCallSolver(args interface{{}}) (interface{{}}, bool) {{
+    // Try each candidate function with the entire args
+    {candidate_calls}
+    return nil, false
+}}
+
+func main() {{
+    reader := bufio.NewReader(os.Stdin)
+    line, _ := reader.ReadString('\n')
+    line = strings.TrimSpace(line)
+    if line == "" {{
+        line = "[]"
+    }}
+    
+    var args interface{{}}
+    json.Unmarshal([]byte(line), &args)
+    
+    result, ok := findAndCallSolver(args)
+    if ok {{
+        output, _ := json.Marshal(result)
+        fmt.Println(string(output))
+    }} else {{
+        fmt.Println("Error: Could not find matching solver function")
+    }}
+}}
+'''.strip()
+
+
+def _build_rust_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Rust wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    # Generate match arms for common function names
+    match_arms = '\n        '.join([f'"{name}" => {{ let r = {name}(&args); return Some(r); }}' for name in candidates])
+    return f'''
+use std::io::{{self, BufRead}};
+use serde_json::Value;
+
+{source_code}
+
+fn find_and_call_solver(args: Value) -> Option<Value> {{
+    let candidates: Vec<&str> = serde_json::from_str(r#"{candidate_list}"#).unwrap();
+    
+    for name in &candidates {{
+        match *name {{
+            {match_arms}
+            _ => {{}}
+        }}
+    }}
+    None
+}}
+
+fn main() {{
+    let stdin = io::stdin();
+    let line = stdin.lock().lines().next().unwrap().unwrap();
+    let args: Value = if line.trim().is_empty() {{
+        serde_json::json!([])
+    }} else {{
+        serde_json::from_str(&line).unwrap()
+    }};
+    
+    if let Some(result) = find_and_call_solver(args) {{
+        println!("{{}}", result);
+    }} else {{
+        println!("Error: Could not find matching solver function");
+    }}
+}}
+'''.strip()
+
+
+def _build_kotlin_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Kotlin wrapper that reads from stdin and calls the solution function."""
+    # Generate when branches for candidate functions
+    when_branches = '\n        '.join([f'"{name}" -> solution.javaClass.getMethod(name).invoke(solution, args)' for name in candidates])
+    return f'''
+import org.json.JSONArray
+import org.json.JSONObject
+
+{source_code}
+
+fun findAndCallSolver(args: Any): Any? {{
+    // Try to find Solution class and instantiate it
+    val solution = try {{
+        Class.forName("Solution").getDeclaredConstructor().newInstance()
+    }} catch (e: Exception) {{
+        null
+    }}
+    
+    if (solution != null) {{
+        // Try each candidate method on the Solution instance
+        for (name in listOf({', '.join([f'"{n}"' for n in candidates])})) {{
+            val result = when (name) {{
+                {when_branches}
+                else -> null
+            }}
+            if (result != null) return result
+        }}
+    }}
+    
+    // Fallback: try standalone functions
+    for (name in listOf({', '.join([f'"{n}"' for n in candidates])})) {{
+        val result = when (name) {{
+            {chr(39).join([f'"{name}" -> {name}(args)' for name in candidates])}
+            else -> null
+        }}
+        if (result != null) return result
+    }}
+    return null
+}}
+
+fun main() {{
+    val line = readLine() ?: "[]"
+    val args = org.json.JSONArray(line)
+    
+    val result = findAndCallSolver(args)
+    if (result != null) {{
+        println(org.json.JSONObject.quote(result.toString()))
+    }} else {{
+        println("Error: Could not find matching solver function")
+    }}
+}}
+'''.strip()
+
+
+def _build_ruby_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Ruby wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+require 'json'
+
+{source_code}
+
+def find_solver(candidates)
+  candidates.each do |name|
+    return method(name) if respond_to?(name)
+  end
+  nil
+end
+
+input = gets || '[]'
+args = JSON.parse(input.strip)
+
+# Always pass args as a single argument (let function unpack if needed)
+args = [args] unless args.is_a?(Array)
+
+candidates = {candidate_list}
+solver = find_solver(candidates)
+
+if solver
+  # Try calling with single argument first
+  begin
+    result = solver.call(args)
+  rescue ArgumentError
+    # If that fails, try unpacking
+    result = solver.call(*args)
+  end
+  puts result.to_json
+else
+  puts 'Error: Could not find solver function'
+end
+'''.strip()
+
+
+def _build_php_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build PHP wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+<?php
+{source_code}
+
+function find_solver($candidates) {{
+    foreach ($candidates as $name) {{
+        if (function_exists($name)) {{
+            return $name;
+        }}
+    }}
+    return null;
+}}
+
+$line = fgets(STDIN) ?: '[]';
+$args = json_decode(trim($line), true);
+
+// Always pass as single argument
+if (!is_array($args)) $args = array($args);
+
+$candidates = {candidate_list};
+$solver = find_solver($candidates);
+
+if ($solver) {{
+    // Try single argument first, then unpacked
+    try {{
+        $result = call_user_func($solver, $args);
+    }} catch (Throwable $e) {{
+        $result = call_user_func_array($solver, $args);
+    }}
+    echo json_encode($result);
+}} else {{
+    echo "Error: Could not find solver function\\n";
+}}
+?>
+'''.strip()
+
+
+def _build_swift_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Swift wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    # Generate switch cases for candidate functions
+    switch_cases = '\n        '.join([f'case "{name}": return solution.{name}(args)' for name in candidates])
+    standalone_cases = '\n        '.join([f'case "{name}": return {name}(args)' for name in candidates])
+    return f'''
+import Foundation
+
+{source_code}
+
+func findAndCallSolver(args: Any) -> Any? {{
+    let candidates = {candidate_list}
+    
+    // Try to find Solution class and instantiate it
+    let solutionType: Any.Type? = NSClassFromString("Solution")
+    if let solType = solutionType as? NSObject.Type {{
+        let solution = solType.init()
+        
+        // Try instance methods on Solution
+        for name in candidates {{
+            switch name {{
+            {switch_cases}
+            default: break
+            }}
+        }}
+    }}
+    
+    // Fallback: try standalone functions
+    for name in candidates {{
+        switch name {{
+        {standalone_cases}
+        default: break
+        }}
+    }}
+    return nil
+}}
+
+if let line = readLine() {{
+    let input = line.trimmingCharacters(in: .whitespaces)
+    // Parse JSON
+    if let data = input.data(using: .utf8),
+       let args = try? JSONSerialization.jsonObject(with: data) {{
+        if let result = findAndCallSolver(args: args) {{
+            if let resultData = try? JSONSerialization.data(withJSONObject: result, options: []),
+               let resultString = String(data: resultData, encoding: .utf8) {{
+                print(resultString)
+            }}
+        }} else {{
+            print("Error: Could not find matching solver function")
+        }}
+    }} else {{
+        print("Error: Could not find matching solver function")
+    }}
+}} else {{
+    print("[]")
+}}
+'''.strip()
+
+
+def _build_bash_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Bash wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+#!/bin/bash
+
+{source_code}
+
+# Read input
+read -r line
+line="${{line:-[]}}"
+
+# Parse JSON-like input (simplified)
+# Note: Bash has limited JSON support, using simple parsing
+
+candidates=({candidate_list})
+
+# Try to find and call function
+for name in "${{candidates[@]}}"; do
+    if declare -f "$name" > /dev/null 2>&1; then
+        # Simple argument parsing - call function with raw input
+        result=$("$name" "$line" 2>/dev/null || echo "Error")
+        echo "$result"
+        exit 0
+    fi
+done
+
+echo "Error: Could not find solver function"
+'''.strip()
+
+
+def _build_elixir_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Elixir wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+defmodule Main do
+{source_code}
+
+  def run do
+    candidates = {candidate_list}
+    line = IO.gets("") |> String.trim()
+    input = if line == "", do: "[]", else: line
+    
+    # Try to find and call solution
+    args = Jason.decode!(input)
+    
+    Enum.find_value(candidates, fn name ->
+      try do
+        func = String.to_atom(name)
+        if function_exported?(Solution, func, length(args)) do
+          apply(Solution, func, args)
+        else
+          nil
+        end
+      rescue
+        _ -> nil
+      end
+    end)
+    |> Jason.encode!()
+    |> IO.puts()
+  end
+end
+
+Main.run()
+'''.strip()
+
+
+def _build_erlang_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Erlang wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    # Generate explicit function calls
+    func_calls = ';\n    '.join([f'try {{ {name}(Arg) }} catch _:_ -> continue' for name in candidates])
+    return f'''
+-module(main).
+-export([main/0]).
+
+{source_code}
+
+find_and_call_solver([Arg|_]) ->
+    Candidates = {candidate_list},
+    try_candidates(Candidates, Arg);
+find_and_call_solver([]) ->
+    error.
+
+try_candidates([Name|Rest], Arg) ->
+    try
+        Result = apply(list_to_atom(Name), [Arg]),
+        Result
+    catch
+        _:_ -> try_candidates(Rest, Arg)
+    end;
+try_candidates([], _) ->
+    error.
+
+main() ->
+    {{ok, [Line]}} = io:fread("", "~s"),
+    Input = case Line of
+        [] -> "[]";
+        _ -> Line
+    end,
+    case find_and_call_solver([Input]) of
+        error -> io:format("Error: Could not find matching solver function~n");
+        Result -> io:format("~p~n", [Result])
+    end.
+'''.strip()
+
+
+def _build_fsharp_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build F# wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    # Generate explicit match cases
+    match_cases = '\n        '.join([f'| "{name}" -> Some({name}(arg))' for name in candidates])
+    return f'''
+open System
+open Newtonsoft.Json.Linq
+
+{source_code}
+
+let findAndCallSolver (args: string list) : string option =
+    let candidates = {candidate_list}
+    
+    match args with
+    | arg::_ ->
+        candidates
+        |> List.tryPick (fun name ->
+            match name with
+            {match_cases}
+            | _ -> None
+        )
+    | [] -> None
+
+[<EntryPoint>]
+let main argv =
+    let line = Console.ReadLine()
+    let input = if String.IsNullOrWhiteSpace(line) then "[]" else line
+    
+    try
+        let json = JArray.Parse(input)
+        let args = json |> Seq.map (fun x -> x.ToString()) |> Seq.toList
+        
+        match findAndCallSolver args with
+        | Some(result) -> printfn "%s" result; 0
+        | None -> printfn "Error: Could not find matching solver function"; 1
+    with
+    | _ -> printfn "Error: Invalid JSON input"; 1
+'''.strip()
+
+
+def _build_groovy_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Groovy wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+import groovy.json.JsonSlurper
+import groovy.json.JsonOutput
+
+{source_code}
+
+def findSolver(candidates) {{
+    // Try to find Solution class and instantiate it
+    try {{
+        def solutionClass = Class.forName("Solution")
+        def solution = solutionClass.getDeclaredConstructor().newInstance()
+        for (name in candidates) {{
+            if (solution.respondsTo(name)) {{
+                return [instance: solution, method: name]
+            }}
+        }}
+    }} catch (e) {{ }}
+    
+    // Fallback: try standalone closures
+    for (name in candidates) {{
+        if (binding.hasVariable(name) && binding.getVariable(name) instanceof Closure) {{
+            return [instance: null, method: name]
+        }}
+    }}
+    return null
+}}
+
+def line = System.in.newReader().readLine() ?: '[]'
+def args = new JsonSlurper().parseText(line.trim())
+if (!(args instanceof List)) args = [args]
+
+def candidates = {candidate_list}
+def solver = findSolver(candidates)
+
+if (solver) {{
+    def result
+    if (solver.instance) {{
+        // Call instance method on Solution
+        result = solver.instance."${{solver.method}}"(*args)
+    }} else {{
+        // Call standalone closure
+        result = binding.getVariable(solver.method).call(*args)
+    }}
+    println JsonOutput.toJson(result)
+}} else {{
+    println "Error: Could not find solver function"
+}}
+'''.strip()
+
+
+def _build_objective_c_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Objective-C wrapper that reads from stdin and calls the solution method."""
+    candidate_list = json.dumps(candidates)
+    # Generate explicit calls for string-returning functions
+    candidate_calls = '\n    '.join([f'if ([{name} respondsToSelector:@selector({name}:)]) {{ result = [{name} {name}:arg]; if (result) goto found; }}' for name in candidates])
+    return f'''
+#import <Foundation/Foundation.h>
+#import <objc/runtime.h>
+
+{source_code}
+
+NSString* findAndCallSolver(NSArray* args) {{
+    NSArray* candidates = {candidate_list};
+    
+    if (args.count == 0) return nil;
+    NSString* arg = args[0];
+    NSString* result = nil;
+    
+    // Try each candidate
+    {candidate_calls}
+    
+found:
+    return result;
+}}
+
+int main(int argc, const char * argv[]) {{
+    @autoreleasepool {{
+        NSFileHandle *stdin = [NSFileHandle fileHandleWithStandardInput];
+        NSData *data = [stdin availableData];
+        NSString *line = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+        
+        if ([line length] == 0) line = @"[]";
+        
+        NSData *jsonData = [line dataUsingEncoding:NSUTF8StringEncoding];
+        NSError *error;
+        NSArray *args = [NSJSONSerialization JSONObjectWithData:jsonData options:0 error:&error];
+        if (!args) args = @[];
+        
+        NSString *result = findAndCallSolver(args);
+        if (result) {{
+            NSLog(@"%@", result);
+        }} else {{
+            NSLog(@"Error: Could not find matching solver function");
+        }}
+    }}
+    return 0;
+}}
+'''.strip()
+
+
+def _build_r_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build R wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+{source_code}
+
+# Find and call the solver
+candidates <- {candidate_list}
+input_line <- readLines(con = "stdin", n = 1)
+if (length(input_line) == 0 || input_line == "") input_line <- "[]"
+
+args <- jsonlite::fromJSON(input_line)
+if (!is.list(args)) args <- list(args)
+
+# Try to find function by name
+result <- NULL
+for (name in candidates) {{
+    if (exists(name, mode = "function")) {{
+        fn <- get(name)
+        result <- do.call(fn, args)
+        break
+    }}
+}}
+
+if (!is.null(result)) {{
+    cat(jsonlite::toJSON(result, auto_unbox = TRUE))
+}} else {{
+    cat("Error: Could not find solver function")
+}}
+'''.strip()
+
+
+def _build_haskell_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Haskell wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    # Generate explicit function calls
+    func_calls = ';\n  '.join([f'tryJust ({name} <$> decode arg)' for name in candidates])
+    return f'''
+import System.IO
+import Data.Aeson
+import qualified Data.ByteString.Lazy.Char8 as B
+import Control.Exception
+
+{source_code}
+
+tryJust :: Maybe a -> Maybe a
+tryJust x = x
+
+findAndCallSolver :: String -> Maybe String
+findAndCallSolver arg =
+    let candidates = {candidate_list}
+    in  {func_calls}
+
+main :: IO ()
+main = do
+    line <- getLine
+    let input = if null line then "[]" else line
+    
+    case findAndCallSolver input of
+        Just result -> putStrLn result
+        Nothing -> putStrLn "Error: Could not find matching solver function"
+'''.strip()
+
+
+def _build_lua_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Lua wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+local json = require("dkjson")  -- or cjson
+
+{source_code}
+
+local function findSolver(candidates)
+    for _, name in ipairs(candidates) do
+        if _G[name] and type(_G[name]) == "function" then
+            return _G[name]
+        end
+    end
+    return nil
+end
+
+local line = io.read() or "[]"
+local args = json.decode(line)
+if type(args) ~= "table" then args = {{args}} end
+
+local candidates = {candidate_list}
+local solver = findSolver(candidates)
+
+if solver then
+    local result = solver(table.unpack(args))
+    print(json.encode(result))
+else
+    print("Error: Could not find solver function")
+end
+'''.strip()
+
+
+def _build_perl_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Perl wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+use strict;
+use warnings;
+use JSON;
+
+{source_code}
+
+my @candidates = @{candidate_list};
+my $line = <STDIN> || '[]';
+chomp $line;
+my $args = decode_json($line);
+$args = [$args] unless ref $args eq 'ARRAY';
+
+my $result;
+for my $name (@candidates) {{
+    if (defined &$name) {{
+        no strict 'refs';
+        $result = &{{$name}}(@$args);
+        last;
+    }}
+}}
+
+if (defined $result) {{
+    print encode_json($result);
+}} else {{
+    print "Error: Could not find solver function\\n";
+}}
+'''.strip()
+
+
+def _build_scala_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build Scala wrapper that reads from stdin and calls the solution function."""
+    candidate_list = json.dumps(candidates)
+    # Generate explicit match cases for candidate functions
+    match_cases = '\n      '.join([f'case "{name}" => Some(solution.{name}(args))' for name in candidates])
+    standalone_cases = '\n      '.join([f'case "{name}" => Some({name}(args))' for name in candidates])
+    return f'''
+import scala.io.StdIn
+import io.circe.parser.parse
+import io.circe.syntax._
+
+{source_code}
+
+object Main {{
+  def findAndCallSolver(args: List[Any]): Option[Any] = {{
+    val candidates = {candidate_list}
+    
+    // Try to find Solution class and instantiate it
+    val solution = try {{
+      Some(Class.forName("Solution").getDeclaredConstructor().newInstance())
+    }} catch {{
+      case _: Exception => None
+    }}
+    
+    solution match {{
+      case Some(sol) =>
+        // Try instance methods on Solution
+        for (name <- candidates) {{
+          val result = name match {{
+            {match_cases}
+            case _ => None
+          }}
+          if (result.isDefined) return result
+        }}
+        None
+      case None =>
+        // Fallback: try standalone functions
+        for (name <- candidates) {{
+          val result = name match {{
+            {standalone_cases}
+            case _ => None
+          }}
+          if (result.isDefined) return result
+        }}
+        None
+    }}
+  }}
+
+  def main(args: Array[String]): Unit = {{
+    val line = StdIn.readLine()
+    val input = if (line == null || line.trim.isEmpty) "[]" else line.trim
+    
+    parse(input) match {{
+      case Right(json) =>
+        val argList = json.asArray.map(_.toList).getOrElse(List(json))
+        findAndCallSolver(argList) match {{
+          case Some(result) => println(result.asJson.noSpaces)
+          case None => println("Error: Could not find matching solver function")
+        }}
+      case Left(_) => println("Error: Invalid JSON input")
+    }}
+  }}
+}}
+'''.strip()
+
+
+def _build_javascript_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build JavaScript/TypeScript wrapper that reads from stdin and calls the solution."""
+    candidate_list = json.dumps(candidates)
+    return f'''
+{source_code}
+
+const readline = require('readline');
+
+function __code2day_findSolver() {{
+    const candidates = {candidate_list};
+    for (const name of candidates) {{
+        if (typeof global[name] === 'function') {{
+            return global[name];
+        }}
+        // Check if defined in current scope
+        try {{ if (eval('typeof ' + name) === 'function') return eval(name); }} catch (e) {{}}
+    }}
+    // Look for any function in the source
+    const funcNames = Object.keys(global).filter(k => typeof global[k] === 'function' && !k.startsWith('_'));
+    for (const name of funcNames) {{
+        if (candidates.some(c => name.toLowerCase().includes(c.toLowerCase()))) {{
+            return global[name];
+        }}
+    }}
+    throw new Error("Could not find a matching solver function");
+}}
+
+function __code2day_serialize(value) {{
+    if (value === null) return "null";
+    if (value === undefined) return "null";
+    if (typeof value === 'boolean') return value.toString();
+    if (typeof value === 'string') return value;
+    if (typeof value === 'number') return value.toString();
+    if (Array.isArray(value)) {{
+        return '[' + value.map(__code2day_serialize).join(',') + ']';
+    }}
+    if (typeof value === 'object') {{
+        return JSON.stringify(value);
+    }}
+    return String(value);
+}}
+
+const rl = readline.createInterface({{
+    input: process.stdin,
+    output: process.stdout,
+    terminal: false
+}});
+
+let input = '';
+rl.on('line', (line) => {{
+    input += line;
+}});
+
+rl.on('close', () => {{
+    input = input.trim();
+    if (!input) input = '[]';
+    
+    let args;
+    try {{
+        args = JSON.parse(input);
+    }} catch (e) {{
+        args = input;
+    }}
+    
+    const solver = __code2day_findSolver();
+    
+    // Try calling with single argument first
+    let result;
+    try {{
+        result = solver(args);
+    }} catch (e) {{
+        // If that fails, try with args as array
+        if (Array.isArray(args)) {{
+            result = solver(...args);
+        }} else {{
+            throw e;
+        }}
+    }}
+    
+    console.log(__code2day_serialize(result));
+}});
+'''.strip()
+
+
 def prepare_execution_payload(*, problem, source_code: str, language: str, stdin: str):
-    candidates = build_function_name_candidates(getattr(problem, "slug", ""))
-    if language != "Python" or not candidates:
+    candidates = build_function_name_candidates(getattr(problem, "slug", ""), source_code)
+    
+    if not candidates:
         return {"source_code": source_code, "stdin": stdin, "adapted": False}
-
-    if not _looks_like_python_function_solution(source_code, candidates):
+    
+    # Python
+    if language == "Python":
+        looks_like = _looks_like_python_function_solution(source_code, candidates)
+        if not looks_like:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        wrapper = _build_python_wrapper(source_code, candidates)
+        return {
+            "source_code": wrapper,
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # Java
+    if language == "Java":
+        # Check if user already has a main() method
+        if re.search(r'public\s+static\s+void\s+main\s*\(', source_code):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        if not _looks_like_java_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_java_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # C
+    if language == "C":
+        # Don't wrap C code - users must write their own main() function
+        # Just pass through as-is with the raw stdin
         return {"source_code": source_code, "stdin": stdin, "adapted": False}
-
-    try:
-        args = parse_argument_list(stdin)
-    except Exception:
+    
+    # C++
+    if language in ("C++", "CPP"):
+        if not _looks_like_cpp_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_cpp_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # C#
+    if language in ("C#", "CSharp"):
+        if not _looks_like_csharp_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_csharp_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # Go
+    if language == "Go":
+        # Check if user already has a main() function
+        if re.search(r'func\s+main\s*\(', source_code):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        if not _looks_like_go_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_go_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # Rust
+    if language == "Rust":
+        # Check if user already has a main() function
+        if re.search(r'fn\s+main\s*\(', source_code):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        if not _looks_like_rust_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_rust_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # Kotlin
+    if language == "Kotlin":
+        # Check if user already has a main() function
+        if re.search(r'fun\s+main\s*\(', source_code):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        if not _looks_like_kotlin_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_kotlin_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # Ruby
+    if language == "Ruby":
+        # Don't wrap Ruby - users must write their own complete script
         return {"source_code": source_code, "stdin": stdin, "adapted": False}
-
-    return {
-        "source_code": _build_python_wrapper(source_code, candidates),
-        "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-        "adapted": True,
-    }
+    
+    # PHP
+    if language == "PHP":
+        # Don't wrap PHP - users must write their own complete script
+        return {"source_code": source_code, "stdin": stdin, "adapted": False}
+    
+    # Swift
+    if language == "Swift":
+        # Check if user already has a main function
+        if re.search(r'func\s+main\s*\(|@main', source_code):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        if not _looks_like_swift_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_swift_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # R
+    if language == "R":
+        if not _looks_like_r_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_r_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # Haskell
+    if language == "Haskell":
+        if not _looks_like_haskell_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_haskell_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # Lua
+    if language == "Lua":
+        if not _looks_like_lua_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_lua_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # Perl
+    if language == "Perl":
+        if not _looks_like_perl_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_perl_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # Scala
+    if language == "Scala":
+        if not _looks_like_scala_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_scala_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # JavaScript / TypeScript
+    if language in ("JavaScript", "TypeScript", "Node.js"):
+        if not _looks_like_javascript_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_javascript_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
+    
+    # Other languages: return as-is
+    return {"source_code": source_code, "stdin": stdin, "adapted": False}

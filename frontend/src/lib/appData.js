@@ -22,6 +22,63 @@ function buildFallbackCalendar() {
 }
 
 export const starterCodeByLanguage = {
+  "C": `#include <stdio.h>
+#include <string.h>
+
+void solve(const char* raw_input) {
+    // Parse raw_input for this problem and print the final answer.
+    printf("%s", raw_input);
+}
+
+int main(void) {
+    char raw_input[65536];
+    size_t total = fread(raw_input, 1, sizeof(raw_input) - 1, stdin);
+    raw_input[total] = '\0';
+
+    while (total > 0 && (raw_input[total - 1] == '\n' || raw_input[total - 1] == '\r')) {
+        raw_input[--total] = '\0';
+    }
+
+    solve(raw_input);
+    return 0;
+}`,
+  "C++": `#include <iostream>
+#include <iterator>
+#include <string>
+
+using namespace std;
+
+string solve(const string& rawInput) {
+    // Parse rawInput for this problem and return the final answer.
+    return rawInput;
+}
+
+int main() {
+    string rawInput((istreambuf_iterator<char>(cin)), istreambuf_iterator<char>());
+    while (!rawInput.empty() && (rawInput.back() == '\n' || rawInput.back() == '\r')) {
+        rawInput.pop_back();
+    }
+
+    string result = solve(rawInput);
+    cout << result;
+    return 0;
+}`,
+  Java: `import java.io.IOException;
+
+public class Main {
+    static String solve(String rawInput) {
+        // Parse rawInput for this problem and return the final answer.
+        return rawInput;
+    }
+
+    public static void main(String[] args) throws IOException {
+        String rawInput = new String(System.in.readAllBytes()).stripTrailing();
+        String result = solve(rawInput);
+        if (result != null) {
+            System.out.print(result);
+        }
+    }
+}`,
   JavaScript: `const fs = require("fs");
 
 const input = fs.readFileSync(0, "utf8").trimEnd();
@@ -44,253 +101,24 @@ def solve(raw_input):
 
 
 if __name__ == "__main__":
-    raw_input = sys.stdin.read().rstrip("\\n")
+    raw_input = sys.stdin.read().rstrip("\n")
     result = solve(raw_input)
     if result is not None:
         sys.stdout.write(str(result))`,
-  Java: `import java.io.IOException;
-
-public class Main {
-    static String solve(String rawInput) {
-        // Parse rawInput for this problem and return the final answer.
-        return rawInput;
-    }
-
-    public static void main(String[] args) throws IOException {
-        String rawInput = new String(System.in.readAllBytes()).stripTrailing();
-        String result = solve(rawInput);
-        if (result != null) {
-            System.out.print(result);
-        }
-    }
-}`,
-  "C++": `#include <iostream>
-#include <iterator>
-#include <string>
-
-using namespace std;
-
-string solve(const string& rawInput) {
-    // Parse rawInput for this problem and return the final answer.
-    return rawInput;
-}
-
-int main() {
-    string rawInput((istreambuf_iterator<char>(cin)), istreambuf_iterator<char>());
-    while (!rawInput.empty() && (rawInput.back() == '\\n' || rawInput.back() == '\\r')) {
-        rawInput.pop_back();
-    }
-
-    string result = solve(rawInput);
-    cout << result;
-    return 0;
-}`,
-  "C": `#include <stdio.h>
-#include <string.h>
-
-void solve(const char* raw_input) {
-    // Parse raw_input for this problem and print the final answer.
-    printf("%s", raw_input);
-}
-
-int main(void) {
-    char raw_input[65536];
-    size_t total = fread(raw_input, 1, sizeof(raw_input) - 1, stdin);
-    raw_input[total] = '\\0';
-
-    while (total > 0 && (raw_input[total - 1] == '\\n' || raw_input[total - 1] == '\\r')) {
-        raw_input[--total] = '\\0';
-    }
-
-    solve(raw_input);
-    return 0;
-}`,
-  "C#": `using System;
-using System.IO;
-
-public class Program {
-    static string Solve(string rawInput) {
-        // Parse rawInput for this problem and return the final answer.
-        return rawInput;
-    }
-
-    public static void Main() {
-        string rawInput = Console.In.ReadToEnd().TrimEnd('\\r', '\\n');
-        string result = Solve(rawInput);
-        if (result != null) {
-            Console.Write(result);
-        }
-    }
-}`,
-  Go: `package main
-
-import (
-    "fmt"
-    "io"
-    "os"
-    "strings"
-)
-
-func solve(rawInput string) string {
-    // Parse rawInput for this problem and return the final answer.
-    return rawInput
-}
-
-func main() {
-    data, _ := io.ReadAll(os.Stdin)
-    rawInput := strings.TrimRight(string(data), "\\r\\n")
-    fmt.Print(solve(rawInput))
-}`,
-  Rust: `use std::io::{self, Read};
-
-fn solve(raw_input: String) -> String {
-    // Parse raw_input for this problem and return the final answer.
-    raw_input
-}
-
-fn main() {
-    let mut raw_input = String::new();
-    io::stdin().read_to_string(&mut raw_input).unwrap();
-    let raw_input = raw_input.trim_end_matches(['\\r', '\\n']).to_string();
-    let result = solve(raw_input);
-    print!("{result}");
-}`,
-  Ruby: `raw_input = STDIN.read.rstrip
-
-def solve(raw_input)
-  # Parse raw_input for this problem and return the final answer.
-  raw_input
-end
-
-result = solve(raw_input)
-print(result) unless result.nil?`,
-  PHP: `<?php
-$rawInput = rtrim(stream_get_contents(STDIN));
-
-function solve(string $rawInput): string {
-    // Parse rawInput for this problem and return the final answer.
-    return $rawInput;
-}
-
-$result = solve($rawInput);
-if ($result !== null) {
-    echo $result;
-}`,
-  Swift: `import Foundation
-
-func solve(_ rawInput: String) -> String {
-    // Parse rawInput for this problem and return the final answer.
-    return rawInput
-}
-
-let data = FileHandle.standardInput.readDataToEndOfFile()
-let rawInput = String(data: data, encoding: .utf8)?
-    .trimmingCharacters(in: .newlines) ?? ""
-let result = solve(rawInput)
-print(result, terminator: "")`,
-  Kotlin: `fun solve(rawInput: String): String {
-    // Parse rawInput for this problem and return the final answer.
-    return rawInput
-}
-
-fun main() {
-    val rawInput = generateSequence(::readLine).joinToString("\\n").trimEnd()
-    print(solve(rawInput))
-}`,
-  TypeScript: `import * as fs from "fs";
-
-const input = fs.readFileSync(0, "utf8").trimEnd();
-
-function solve(rawInput: string): string {
-  // Parse rawInput for this problem and return the final answer.
-  return rawInput;
-}
-
-const result = solve(input);
-if (result !== undefined) {
-  process.stdout.write(String(result));
-}`,
-  Bash: `#!/bin/bash
-
-input="$(cat)"
-
-solve() {
-  local raw_input="$1"
-  printf "%s" "$raw_input"
-}
-
-solve "$input"`,
-  R: `input <- paste(readLines(file("stdin"), warn = FALSE), collapse = "\\n")
-
-solve <- function(raw_input) {
-  # Parse raw_input for this problem and return the final answer.
-  raw_input
-}
-
-cat(solve(input), sep = "")`,
-  Scala: `object Main {
-  def solve(rawInput: String): String = {
-    // Parse rawInput for this problem and return the final answer.
-    rawInput
-  }
-
-  def main(args: Array[String]): Unit = {
-    val rawInput = scala.io.Source.stdin.mkString.trim
-    val result = solve(rawInput)
-    if (result != null) {
-      print(result)
-    }
-  }
-}`,
-  Perl: `my $raw_input = do { local $/; <STDIN> };
-$raw_input =~ s/[\\r\\n]+$//;
-
-sub solve {
-    my ($raw_input) = @_;
-    # Parse raw_input for this problem and return the final answer.
-    return $raw_input;
-}
-
-my $result = solve($raw_input);
-print $result if defined $result;`,
-  Haskell: `import Data.Char (isSpace)
-
-trimEnd :: String -> String
-trimEnd = reverse . dropWhile isSpace . reverse
-
-solve :: String -> String
-solve rawInput =
-    rawInput
-
-main :: IO ()
-main = interact (solve . trimEnd)`,
 };
 
 export const editorLanguageByChoice = {
+  "C": "c",
+  "C++": "cpp",
+  Java: "java",
   JavaScript: "javascript",
   Python: "python",
-  Java: "java",
-  "C++": "cpp",
-  "C": "c",
-  "C#": "csharp",
-  Go: "go",
-  Rust: "rust",
-  Ruby: "ruby",
-  PHP: "php",
-  Swift: "swift",
-  Kotlin: "kotlin",
-  TypeScript: "typescript",
-  Bash: "shell",
-  R: "r",
-  Scala: "scala",
-  Perl: "perl",
-  Haskell: "haskell",
 };
 
 export const fallbackDashboard = {
   user: {
     name: "Student One",
-    title: "Imported from college admission database",
+    title: "",
     streak: 21,
     loginDays: 58,
     rank: "Campus Rank #12",
@@ -522,24 +350,11 @@ export const conceptOptions = [
 ];
 
 export const languageOptions = [
+  "C",
+  "C++",
+  "Java",
   "JavaScript",
   "Python",
-  "Java",
-  "C++",
-  "C",
-  "C#",
-  "Go",
-  "Rust",
-  "Ruby",
-  "PHP",
-  "Swift",
-  "Kotlin",
-  "TypeScript",
-  "Bash",
-  "R",
-  "Scala",
-  "Perl",
-  "Haskell",
 ];
 
 export const contestCards = [

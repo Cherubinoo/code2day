@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from apps.learning.models import StudentProfile
+from apps.learning.models import Department, StudentProfile
 
 
 class Command(BaseCommand):
@@ -95,8 +95,32 @@ class Command(BaseCommand):
         )
 
     def _upsert_student(self, row, register_number):
+        import re
+
         email = (row.get("PersonalEmailID") or "").strip()
         name = (row.get("Name") or register_number).strip()
+
+        # Parse register number: 953623243023
+        # 9536 = institution, 23 = year, 243 = dept, 023 = unique
+        reg_clean = re.sub(r'\D', '', str(register_number).strip())
+        batch = ""
+        department = None
+
+        if len(reg_clean) >= 12:
+            joining_year = reg_clean[4:6]
+            dept_code = reg_clean[6:9]
+
+            # Calculate batch: "23-27"
+            try:
+                start_year = int(joining_year)
+                end_year = start_year + 4
+                batch = f"{start_year:02d}-{end_year:02d}"
+            except ValueError:
+                pass
+
+            # Find department by code
+            if dept_code:
+                department = Department.objects.filter(code__iexact=dept_code).first()
 
         user, user_created = User.objects.get_or_create(
             username=register_number,
@@ -125,7 +149,7 @@ class Command(BaseCommand):
             defaults={
                 "account": user,
                 "name": name,
-                "title": "Imported from college admission database",
+                "title": "",
                 "personal_email": email,
                 "mobile_number": (row.get("PersonalMobileNo") or "").strip(),
                 "gender": (row.get("Gender") or "").strip(),
@@ -134,6 +158,8 @@ class Command(BaseCommand):
                 "mother_name": (row.get("MotherName") or "").strip(),
                 "source_personal_details_id": row.get("Id"),
                 "import_source": "collegeadmissiondb.personaldetails",
+                "batch": batch,
+                "department": department,
             },
         )
         return profile, created

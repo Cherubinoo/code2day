@@ -32,7 +32,11 @@ export default defineConfig({
     },
   },
   optimizeDeps: {
-    include: ['@monaco-editor/react', 'monaco-editor'],
+    include: ['@monaco-editor/react'],
+    exclude: ['monaco-editor'],
+    esbuildOptions: {
+      target: 'es2020',
+    },
   },
   build: {
     commonjsOptions: {
