@@ -331,7 +331,7 @@ function WorkspaceView({
       </section>
 
       {/* ── Filter / Concept toolbar ── */}
-      <section className="surface-card leetcode-toolbar">
+      <section className="surface-card code2day-toolbar">
         <div className="toolbar-row">
           <div className="toolbar-group wide">
             <span className="filter-label">Concepts</span>
@@ -376,7 +376,7 @@ function WorkspaceView({
       </section>
 
       {/* ──3-Column Layout ── */}
-      <section className="problem-layout leetcode-layout">
+      <section className="problem-layout code2day-layout">
         {/* LEFT: problem list sidebar */}
         <aside className={sidebarOpen ? "surface-card problem-sidebar judge-sidebar" : "problem-sidebar-rail"}>
           <button

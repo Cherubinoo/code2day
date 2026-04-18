@@ -74,7 +74,7 @@ function AuthScreen({
             id="register-number"
             value={registerNumber}
             onChange={(e) => setRegisterNumber(e.target.value)}
-            placeholder={loginType === "staff" ? "e.g. FAC001" : "e.g. 953624243083"}
+            placeholder={loginType === "staff" ? "e.g. FAC001" : "e.g. 95362324xxxx"}
             autoComplete="username"
             autoFocus
           />
@@ -226,7 +226,7 @@ function AuthScreen({
       <section className="auth-card">
         <div className="auth-copy">
           <p className="brand-label">code-2day</p>
-          <h1>LeetCode-style practice for your campus.</h1>
+          <h1>code2day practice for your campus.</h1>
           <p>
             Log in with your register number. Your workspace, progress, and
             contest history are private to your account.

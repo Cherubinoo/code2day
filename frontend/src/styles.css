@@ -962,7 +962,7 @@ button.tab-pill {
   padding: 16px 18px;
 }
 
-.leetcode-toolbar {
+.code2day-toolbar {
   padding: 14px 18px;
   border-radius: 20px;
 }
@@ -1227,7 +1227,7 @@ button.tab-pill {
   min-height: calc(100vh - 255px);
 }
 
-.leetcode-layout {
+.code2day-layout {
   grid-template-columns: 260px minmax(0, 2.1fr) minmax(340px, 1.1fr);
 }
 
@@ -1879,7 +1879,7 @@ button.tab-pill {
   }
 
   .toolbar-row,
-  .leetcode-layout {
+  .code2day-layout {
     grid-template-columns: 1fr;
   }
 
@@ -1997,7 +1997,7 @@ button.tab-pill {
   min-height: 0;
 }
 
-.leetcode-layout {
+.code2day-layout {
   display: grid;
   grid-template-columns: 280px 1fr 380px;
   gap: 16px;

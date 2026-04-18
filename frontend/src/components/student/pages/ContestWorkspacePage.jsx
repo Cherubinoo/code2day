@@ -7,6 +7,7 @@ import { runCodeExecution, getLanguageIdForChoice } from "../../../lib/codeExecu
 import { starterCodeByLanguage, editorLanguageByChoice } from "../../../lib/appData";
 import { formatDuration } from "../../../lib/appUtils";
 import { buildJsonPostOptions } from "../../../lib/appUtils";
+import { validateLanguageMatch, getLanguageMismatchError } from "../../../lib/languageDetector";
 
 loader.config({ monaco });
 
@@ -157,6 +158,14 @@ function ContestWorkspacePage({ contestId, onBack }) {
       return;
     }
 
+    // Validate language match
+    const validation = validateLanguageMatch(code, selectedLanguage);
+    if (!validation.matches) {
+      setOutputLog(getLanguageMismatchError(selectedLanguage, validation.detectedLanguage));
+      setExecutionMeta({ status: "Error", time: null, memory: null });
+      return;
+    }
+
     setExecutionBusy(true);
     setOutputLog("Running your code...");
     setExecutionMeta({ status: "Running", time: null, memory: null });
@@ -189,6 +198,15 @@ function ContestWorkspacePage({ contestId, onBack }) {
   const handleSubmitCode = useCallback(async () => {
     if (!selectedProblem || !code.trim()) {
       setOutputLog("Please write some code first.");
+      return;
+    }
+
+    // Validate language match before submission
+    const validation = validateLanguageMatch(code, selectedLanguage);
+    if (!validation.matches) {
+      setOutputLog(getLanguageMismatchError(selectedLanguage, validation.detectedLanguage));
+      setExecutionMeta({ status: "Error", time: null, memory: null });
+      alert(`Language mismatch detected! You selected ${selectedLanguage} but your code appears to be ${validation.detectedLanguage}.`);
       return;
     }
 
@@ -377,7 +395,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
       </section>
 
       {/* ── Filter / Concept toolbar ── */}
-      <section className="surface-card leetcode-toolbar">
+      <section className="surface-card code2day-toolbar">
         <div className="toolbar-row">
           <div className="toolbar-group wide">
             <span className="filter-label">Contest Problems</span>
@@ -407,7 +425,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
       </section>
 
       {/* ──3-Column Layout ── */}
-      <section className="problem-layout leetcode-layout">
+      <section className="problem-layout code2day-layout">
         {/* LEFT: problem list sidebar */}
         <aside className={sidebarOpen ? "surface-card problem-sidebar judge-sidebar" : "problem-sidebar-rail"}>
           <button
