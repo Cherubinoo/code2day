@@ -13,6 +13,7 @@ services:
     ports:
       - "2358:2358"
     privileged: true
+    network_mode: host
     <<: *default-logging
     restart: always
 
@@ -22,11 +23,12 @@ services:
     volumes:
       - ./judge0.conf:/judge0.conf:ro
     privileged: true
+    network_mode: host
     <<: *default-logging
     restart: always
 
   db:
-    image: postgres:16.2
+    image: postgres:13
     env_file: judge0.conf
     volumes:
       - data:/var/lib/postgresql/data/
