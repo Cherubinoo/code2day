@@ -122,7 +122,7 @@ export const fallbackDashboard = {
     streak: 21,
     loginDays: 58,
     rank: "Campus Rank #12",
-    registerNumber: "953624243083",
+    registerNumber: "95362324xxxx",
     email: "student@example.com",
   },
   dailyProblem: {
