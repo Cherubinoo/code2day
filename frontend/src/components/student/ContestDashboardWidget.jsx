@@ -7,6 +7,9 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedTab, setSelectedTab] = useState('active'); // active, upcoming, completed
+  const [showWinnersModal, setShowWinnersModal] = useState(null);
+  const [leaderboard, setLeaderboard] = useState([]);
+  const [loadingLeaderboard, setLoadingLeaderboard] = useState(false);
 
   useEffect(() => {
     loadContests();
@@ -28,6 +31,22 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleViewWinners(contestId) {
+    try {
+      setLoadingLeaderboard(true);
+      const res = await fetch(`/api/student/contests/${contestId}/winners/`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setLeaderboard(data.leaderboard);
+        setShowWinnersModal(contestId);
+      }
+    } catch (err) {
+      console.error('Error fetching winners:', err);
+    } finally {
+      setLoadingLeaderboard(false);
     }
   }
 
@@ -151,15 +170,17 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
       {/* Tab Navigation */}
       <div style={{
         display: 'flex',
-        gap: '0.5rem',
-        marginBottom: '1.5rem',
-        borderBottom: '2px solid var(--bg-2)',
-        paddingBottom: '0.5rem',
+        gap: '0.75rem',
+        marginBottom: '2rem',
+        padding: '4px',
+        background: 'var(--bg-2)',
+        borderRadius: '12px',
+        width: 'fit-content',
       }}>
         <button
           onClick={() => setSelectedTab('active')}
           style={{
-            padding: '0.5rem 1rem',
+            padding: '0.6rem 1.25rem',
             background: selectedTab === 'active' ? 'var(--accent)' : 'transparent',
             color: selectedTab === 'active' ? 'white' : 'var(--text-muted)',
             border: 'none',
@@ -170,16 +191,17 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
             display: 'flex',
             alignItems: 'center',
             gap: '0.5rem',
-            transition: 'all 0.2s',
+            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+            boxShadow: selectedTab === 'active' ? '0 4px 12px var(--accent-alpha)' : 'none',
           }}
         >
-          <Play size={16} />
+          <Play size={16} fill={selectedTab === 'active' ? 'white' : 'none'} />
           Active ({activeContests.length})
         </button>
         <button
           onClick={() => setSelectedTab('upcoming')}
           style={{
-            padding: '0.5rem 1rem',
+            padding: '0.6rem 1.25rem',
             background: selectedTab === 'upcoming' ? 'var(--accent)' : 'transparent',
             color: selectedTab === 'upcoming' ? 'white' : 'var(--text-muted)',
             border: 'none',
@@ -190,16 +212,17 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
             display: 'flex',
             alignItems: 'center',
             gap: '0.5rem',
-            transition: 'all 0.2s',
+            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+            boxShadow: selectedTab === 'upcoming' ? '0 4px 12px var(--accent-alpha)' : 'none',
           }}
         >
-          <Calendar size={16} />
+          <Calendar size={16} fill={selectedTab === 'upcoming' ? 'white' : 'none'} />
           Upcoming ({upcomingContests.length})
         </button>
         <button
           onClick={() => setSelectedTab('completed')}
           style={{
-            padding: '0.5rem 1rem',
+            padding: '0.6rem 1.25rem',
             background: selectedTab === 'completed' ? 'var(--accent)' : 'transparent',
             color: selectedTab === 'completed' ? 'white' : 'var(--text-muted)',
             border: 'none',
@@ -210,10 +233,11 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
             display: 'flex',
             alignItems: 'center',
             gap: '0.5rem',
-            transition: 'all 0.2s',
+            transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+            boxShadow: selectedTab === 'completed' ? '0 4px 12px var(--accent-alpha)' : 'none',
           }}
         >
-          <CheckCircle size={16} />
+          <CheckCircle size={16} fill={selectedTab === 'completed' ? 'white' : 'none'} />
           Completed ({completedContests.length})
         </button>
       </div>
@@ -234,9 +258,119 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
             <ContestCard
               key={contest.id}
               contest={contest}
-              onNavigate={onNavigateToContest}
+              onNavigate={(id) => {
+                if (selectedTab === 'completed') {
+                  handleViewWinners(id);
+                } else {
+                  onNavigateToContest(id);
+                }
+              }}
             />
           ))}
+        </div>
+      )}
+
+      {/* Winners Modal */}
+      {showWinnersModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+          padding: '20px',
+          backdropFilter: 'blur(4px)',
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '24px',
+            width: '100%',
+            maxWidth: '600px',
+            maxHeight: '90vh',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)',
+          }}>
+            <div style={{
+              padding: '24px',
+              borderBottom: '1px solid var(--border)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'linear-gradient(135deg, var(--accent), #667eea)',
+              color: 'white',
+            }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.25rem' }}>Contest Results</h3>
+                <p style={{ margin: '4px 0 0', opacity: 0.9, fontSize: '0.875rem' }}>Leaderboard & Rankings</p>
+              </div>
+              <button
+                onClick={() => setShowWinnersModal(null)}
+                style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', padding: '8px', borderRadius: '50%', cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div style={{ padding: '24px', overflowY: 'auto' }}>
+              {loadingLeaderboard ? (
+                <div style={{ textAlign: 'center', padding: '40px' }}>Loading results...</div>
+              ) : (Array.isArray(leaderboard) && leaderboard.length > 0) ? (
+                <div style={{ display: 'grid', gap: '12px' }}>
+                  {leaderboard.map((entry, index) => (
+                    <div key={index} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '16px',
+                      padding: '16px',
+                      background: entry.is_current_user ? 'var(--bg-2)' : 'white',
+                      border: entry.is_current_user ? '2px solid var(--accent)' : '1px solid var(--border)',
+                      borderRadius: '16px',
+                    }}>
+                      <div style={{
+                        width: '32px',
+                        height: '32px',
+                        borderRadius: '50%',
+                        background: index === 0 ? '#fbbf24' : index === 1 ? '#94a3b8' : index === 2 ? '#92400e' : 'var(--bg-1)',
+                        color: index < 3 ? 'white' : 'var(--text-muted)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontWeight: 700,
+                      }}>
+                        {index + 1}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: 600 }}>{entry.student_name}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {entry.problems_solved} problems solved • {entry.total_score} points
+                        </div>
+                      </div>
+                      {index < 3 && <Trophy size={20} style={{ color: index === 0 ? '#fbbf24' : index === 1 ? '#94a3b8' : '#92400e' }} />}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                  No participants recorded for this contest.
+                </div>
+              )}
+            </div>
+            <div style={{ padding: '20px', borderTop: '1px solid var(--border)', textAlign: 'right' }}>
+              <button
+                onClick={() => setShowWinnersModal(null)}
+                style={{ padding: '10px 24px', background: 'var(--accent)', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -264,7 +398,7 @@ const ContestCard = ({ contest, onNavigate }) => {
       return { text: 'Upcoming', color: '#3b82f6', bg: '#dbeafe' };
     }
     if (contest.is_ended) {
-      return { text: 'Completed', color: '#6b7280', bg: '#f3f4f6' };
+      return { text: 'Completed', color: '#059669', bg: '#d1fae5' };
     }
     return { text: 'Unknown', color: '#9ca3af', bg: '#f9fafb' };
   };
@@ -278,7 +412,7 @@ const ContestCard = ({ contest, onNavigate }) => {
       style={{
         padding: '1.5rem',
         background: 'var(--bg-1)',
-        border: '1px solid var(--border)',
+        border: `2px solid ${contest.is_ended ? '#d1fae5' : 'var(--border)'}`,
         borderRadius: '12px',
         transition: 'all 0.2s',
         cursor: 'pointer',

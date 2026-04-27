@@ -2,10 +2,13 @@ import logging
 from collections import defaultdict
 from datetime import timedelta
 
+from io import BytesIO
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.db.models import Count, Q, Sum
+from django.http import HttpResponse
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -31,7 +34,18 @@ from .models import (
     StudentActivity,
     StudentProfile,
     Submission,
+    DailyProblem,
+    Announcement,
+    Notification,
+    AptitudeTopic,
+    AptitudeQuestion,
+    Achievement,
+    UserAchievement,
+    SystemConfiguration,
+    Department,
+    SolvedAptitude,
 )
+from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
     CodeRunSerializer,
     DiscussionMessageCreateSerializer,
@@ -40,6 +54,7 @@ from .serializers import (
     ProblemDetailSerializer,
     ProblemProgressUpdateSerializer,
     ProblemSerializer,
+    StaffProfileSerializer,
     StudentLoginSerializer,
     StudentLookupListSerializer,
     StudentProfileSerializer,
@@ -55,6 +70,13 @@ from .services.execution_adapter import (
 )
 from .services.problem_testcases import build_runtime_test_cases
 from .services.complexity_analyzer import calculate_complexity
+
+# ReportLab imports for PDF generation
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +128,7 @@ def build_student_stats(profile):
     return solved_problems.aggregate(
         easy=Count("id", filter=Q(difficulty="Easy"), distinct=True),
         medium=Count("id", filter=Q(difficulty="Medium"), distinct=True),
-        hard=Count("id", filter=Q(difficulty="Hard"), distinct=True),
+        hard=Count("id", filter=Q(difficulty="Hard"), distinct=True), sql=Count("id", filter=Q(tags__contains="SQL"), distinct=True),
     )
 
 
@@ -132,12 +154,136 @@ def build_weekly_activity(activity_calendar):
     return [{"day": day, "count": grouped.get(day, 0)} for day in order]
 
 
-def get_recent_discussions_queryset():
+def build_topic_stats(profile):
+    """Return count of problems solved by topic"""
+    solutions = profile.solutions.filter(all_tests_passed=True).select_related("problem")
+    topic_stats = {}
+    solved_problems = set()
+    for solution in solutions:
+        if solution.problem_id not in solved_problems:
+            tags = solution.problem.tags
+            if isinstance(tags, list):
+                for tag in tags:
+                    topic_stats[tag] = topic_stats.get(tag, 0) + 1
+            solved_problems.add(solution.problem_id)
+    
+    # Return top topics
+    sorted_topics = sorted(topic_stats.items(), key=lambda x: x[1], reverse=True)
+    return [{"name": name, "count": count} for name, count in sorted_topics[:6]]
+
+
+def build_aptitude_stats(profile):
+    """Calculate solved vs total questions for top-level aptitude categories"""
+    categories = AptitudeTopic.objects.filter(parent=None)
+    stats = []
+    
+    for cat in categories:
+        # Get all related topic IDs (parent + 2 levels of subtopics)
+        sub_ids = list(cat.subtopics.values_list('id', flat=True))
+        sub_sub_ids = list(AptitudeTopic.objects.filter(parent_id__in=sub_ids).values_list('id', flat=True))
+        all_ids = [cat.id] + sub_ids + sub_sub_ids
+        
+        total = AptitudeQuestion.objects.filter(topic_id__in=all_ids).count()
+        solved = SolvedAptitude.objects.filter(student=profile, question__topic_id__in=all_ids).count()
+        
+        stats.append({
+            "name": cat.title,
+            "solved": solved,
+            "total": total,
+            "percentage": round((solved / total * 100), 1) if total > 0 else 0
+        })
+    return stats
+
+def calculate_campus_rank_helper(student):
+    """Dynamically calculate the campus-wide rank of a student."""
+    from .models import StudentProfile, SolvedAptitude, ContestParticipation
+    
+    coding_solved = student.solved_problems.count()
+    aptitude_solved = SolvedAptitude.objects.filter(student=student).count()
+    contests_attended = ContestParticipation.objects.filter(student=student).count()
+    
+    better_students = StudentProfile.objects.filter(
+        institution=student.institution
+    ).annotate(
+        c_solved=Count('solutions', filter=Q(solutions__all_tests_passed=True), distinct=True),
+        c_attended=Count('contest_participations', distinct=True),
+        a_solved=Count('solved_aptitude', distinct=True)
+    ).filter(
+        Q(c_solved__gt=coding_solved) |
+        Q(c_solved=coding_solved, c_attended__gt=contests_attended) |
+        Q(c_solved=coding_solved, c_attended=contests_attended, a_solved__gt=aptitude_solved) |
+        Q(c_solved=coding_solved, c_attended=contests_attended, a_solved=aptitude_solved, current_streak__gt=student.current_streak)
+    ).count()
+    
+    return better_students + 1
+
+
+
+
+
+def get_discussion_messages(user, profile, profile_type, thread_type="general", other_user_reg=None, batch_name=None, problem_slug=None):
+    """
+    Fetch and cleanup messages based on access rules.
+    Messages older than 24h are deleted on every request for this view.
+    """
     cutoff = timezone.now() - timedelta(hours=24)
-    return (
-        DiscussionMessage.objects.filter(created_at__gte=cutoff)
-        .select_related("student", "problem")
+    DiscussionMessage.objects.filter(created_at__lt=cutoff).delete()
+
+    qs = DiscussionMessage.objects.filter(created_at__gte=cutoff).select_related(
+        "sender", "recipient", "student", "problem",
+        "sender__student_profile", "sender__staff_profile",
+        "recipient__student_profile", "recipient__staff_profile"
     )
+
+    # 3. Filter by Thread Type
+    if thread_type == "general":
+        if profile_type == "student":
+            # For students, General = Their Batch Room
+            return qs.filter(thread_type="general", batch_name=profile.batch)
+        elif profile_type in ["staff", "hod", "ja", "tpu"]:
+            # Staff/HOD see messages for the batch they requested
+            if not batch_name:
+                return qs.none() 
+            return qs.filter(thread_type="general", batch_name=batch_name)
+        return qs.none()
+    
+    if thread_type == "individual" and other_user_reg:
+        # We filter the messages directly by matching the identifier against sender/recipient profile fields.
+        # This handles collisions where a register number might match a username or faculty ID of a different user.
+        return qs.filter(thread_type="individual").filter(
+            (Q(sender=user) & (
+                Q(recipient__student_profile__register_number__iexact=other_user_reg) |
+                Q(recipient__staff_profile__faculty_id__iexact=other_user_reg) |
+                Q(recipient__username=other_user_reg)
+            )) |
+            (Q(recipient=user) & (
+                Q(sender__student_profile__register_number__iexact=other_user_reg) |
+                Q(sender__staff_profile__faculty_id__iexact=other_user_reg) |
+                Q(sender__username=other_user_reg)
+            ))
+        )
+
+    if thread_type == "batch" and batch_name:
+        return qs.filter(thread_type="batch", batch_name=batch_name)
+
+    if thread_type == "staff":
+        if profile_type in ["staff", "hod"] and profile.department:
+            return qs.filter(thread_type="staff", department=profile.department)
+        elif profile_type in ["admin", "ja", "tpu"]:
+            return qs.filter(thread_type="staff", institution=profile.institution)
+        return qs.none()
+
+    if thread_type == "hod_tp_ja":
+        if profile:
+            return qs.filter(thread_type="hod_tp_ja", institution=profile.institution)
+        return qs.none()
+
+    if thread_type == "problem" and problem_slug:
+        return qs.filter(thread_type="problem", problem__slug=problem_slug)
+
+    return qs.none()
+
+    return qs.none()
 
 
 def execute_problem_test_case_batch(
@@ -218,7 +364,7 @@ def execute_problem_test_case_batch(
         output = f"{passed_cases}/{total_cases} test cases passed."
 
     return {
-        "stdout": output if status_label == "Accepted" else "",
+        "stdout": output,
         "stderr": first_failure["stderr"] if first_failure else "",
         "compile_output": first_failure["compile_output"] if first_failure else "",
         "status": status_label,
@@ -262,37 +408,187 @@ class DashboardView(UnifiedAuthMixin, APIView):
 
         problems = Problem.objects.all()
         
-        # Handle staff/hod/admin users differently
-        if profile_type in ["staff", "hod", "admin"]:
+        # Handle staff/hod/admin/director/tpu/ja users differently
+        if profile_type in ["staff", "hod", "admin", "director", "tpu", "ja"]:
             # Get profile details
             profile_obj = profile if profile else None
             user_department = getattr(profile_obj, 'department', None) if profile_obj else None
             
-            # Filter student count by department for HOD, all for admin/staff
-            if profile_type == "hod" and user_department:
-                student_count = StudentProfile.objects.filter(department=user_department).count()
-            else:
-                student_count = StudentProfile.objects.count()
+            # Filter by institution for multi-tenant support
+            inst = getattr(profile_obj, 'institution', None)
             
+            # Filter student count by department for HOD, all for admin/staff within institution
+            if profile_type == "hod" and user_department:
+                students_qs = StudentProfile.objects.filter(department=user_department, institution=inst)
+                student_count = students_qs.count()
+                dept_contests = Contest.objects.filter(department=user_department, institution=inst)
+                contest_count = dept_contests.count()
+                pending_approvals = dept_contests.filter(status='pending_approval').count()
+                
+                # Department Weekly Activity (Total solved problems)
+                seven_days_ago = (timezone.now() - timedelta(days=7)).date()
+                activity_qs = SolvedProblem.objects.filter(
+                    student__department=user_department,
+                    student__institution=inst,
+                    solved_at__date__gte=seven_days_ago
+                ).values('solved_at__date').annotate(count=Count('id'))
+                
+                day_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+                activity_dict = {day: 0 for day in day_map.values()}
+                for item in activity_qs:
+                    day_name = day_map.get(item['solved_at__date'].weekday())
+                    if day_name:
+                        activity_dict[day_name] += item['count']
+                
+                weekly_activity = [{"day": day, "count": activity_dict[day]} for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]]
+            else:
+                student_count = StudentProfile.objects.filter(institution=inst).count() if inst else StudentProfile.objects.count()
+                contest_count = Contest.objects.filter(institution=inst).count() if inst else Contest.objects.count()
+                pending_approvals = Contest.objects.filter(status='pending_approval', institution=inst).count() if profile_type in ["admin", "director", "tpu", "ja"] and inst else 0
+                
+                # Institution Weekly Activity (Total solved problems)
+                seven_days_ago = (timezone.now() - timedelta(days=7)).date()
+                activity_filter = Q(solved_at__date__gte=seven_days_ago)
+                if inst:
+                    activity_filter &= Q(student__institution=inst)
+                
+                activity_qs = SolvedProblem.objects.filter(activity_filter).values('solved_at__date').annotate(count=Count('id'))
+                
+                day_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+                activity_dict = {day: 0 for day in day_map.values()}
+                for item in activity_qs:
+                    day_name = day_map.get(item['solved_at__date'].weekday())
+                    if day_name:
+                        activity_dict[day_name] += item['count']
+                
+                weekly_activity = [{"day": day, "count": activity_dict[day]} for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]]
+
+            # Common analytics for HOD and staff dashboards
+            recent_activity = []
+            engagement_summary = {"active_today": 0, "avg_solved": 0, "participation_rate": 0}
+            
+            if user_department:
+                # Recent Activity (Last 10 solved problems in department)
+                recent_solved = SolvedProblem.objects.filter(
+                    student__department=user_department
+                ).select_related('student', 'problem').order_by('-solved_at')[:10]
+                
+                for solved in recent_solved:
+                    recent_activity.append({
+                        "student_name": solved.student.name,
+                        "student_id": solved.student.register_number,
+                        "problem_title": solved.problem.title,
+                        "solved_at": solved.solved_at.isoformat(),
+                    })
+                
+                # Engagement Summary
+                today = timezone.now().date()
+                active_today = StudentProfile.objects.filter(department=user_department, last_login_on=today).count()
+                total_students = StudentProfile.objects.filter(department=user_department).count()
+                
+                if total_students > 0:
+                    total_solved_count = SolvedProblem.objects.filter(student__department=user_department).count()
+                    avg_solved = round(total_solved_count / total_students, 1)
+                    engagement_summary = {
+                        "active_today": active_today,
+                        "avg_solved": avg_solved,
+                        "participation_rate": round((active_today / total_students * 100), 1)
+                    }
+            elif inst:
+                # Institutional Recent Activity
+                recent_solved = SolvedProblem.objects.filter(
+                    student__institution=inst
+                ).select_related('student', 'problem').order_by('-solved_at')[:10]
+                
+                for solved in recent_solved:
+                    recent_activity.append({
+                        "student_name": solved.student.name,
+                        "student_id": solved.student.register_number,
+                        "problem_title": solved.problem.title,
+                        "solved_at": solved.solved_at.isoformat(),
+                    })
+                
+                # Institutional Engagement Summary
+                today = timezone.now().date()
+                active_today = StudentProfile.objects.filter(institution=inst, last_login_on=today).count()
+                total_students = StudentProfile.objects.filter(institution=inst).count()
+                
+                if total_students > 0:
+                    total_solved_count = SolvedProblem.objects.filter(student__institution=inst).count()
+                    avg_solved = round(total_solved_count / total_students, 1)
+                    engagement_summary = {
+                        "active_today": active_today,
+                        "avg_solved": avg_solved,
+                        "participation_rate": round((active_today / total_students * 100), 1)
+                    }
+            
+            # Get list of departments for institutional roles
+            depts_list = []
+            if profile_type in ["admin", "director", "tpu", "ja"]:
+                depts_qs = Department.objects.filter(institution=inst) if inst else Department.objects.all()
+                for d in depts_qs:
+                    depts_list.append({
+                        "id": d.id,
+                        "name": d.name,
+                        "code": d.code
+                    })
+
             # Staff/HOD/Admin get simplified dashboard without student-specific stats
             user_payload = {
                 "name": profile.name if profile else request.user.first_name,
-                "title": "Administrator" if profile_type == "admin" else "HOD" if profile_type == "hod" else "Staff",
+                "title": (
+                    "Administrator" if profile_type == "admin" else 
+                    "Director" if profile_type == "director" else 
+                    "TPU Coordinator" if profile_type == "tpu" else 
+                    "Junior Admin" if profile_type == "ja" else
+                    "HOD" if profile_type == "hod" else "Staff"
+                ),
                 "streak": 0,
                 "loginDays": 0,
                 "rank": 1,
                 "totalStudents": student_count,
+                "totalContests": contest_count,
+                "pendingApprovals": pending_approvals,
                 "registerNumber": profile.faculty_id if profile else request.user.username,
-                "facultyId": profile.faculty_id if profile else request.user.username,  # Add explicit facultyId
+                "facultyId": profile.faculty_id if profile else request.user.username,
                 "email": "",
                 "role": profile.role if profile else "admin",
+                "department": {
+                    "name": user_department.name if user_department else None,
+                    "code": user_department.code if user_department else None,
+                } if user_department else None,
+                "departments": depts_list
             }
             
             stats = {"easy": 0, "medium": 0, "hard": 0}
-            weekly_activity = [{"day": day, "count": 0} for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]]
             activity_calendar = []
             
             daily_problem = problems.filter(is_daily=True).first() or problems.first()
+            
+            # For HOD and Institutional roles, include top performers
+            leaderboard = []
+            if profile_type == "hod" and user_department:
+                top_students = students_qs.annotate(
+                    solved=Count('solved_problems', distinct=True)
+                ).order_by('-solved')[:10]
+                for s in top_students:
+                    leaderboard.append({
+                        "id": s.register_number,
+                        "name": s.name,
+                        "score": s.solved,
+                        "rank": 0
+                    })
+            elif profile_type in ["admin", "director", "tpu", "ja"] and inst:
+                top_students = StudentProfile.objects.filter(institution=inst).annotate(
+                    solved=Count('solved_problems', distinct=True)
+                ).order_by('-solved')[:10]
+                for s in top_students:
+                    leaderboard.append({
+                        "id": s.register_number,
+                        "name": s.name,
+                        "score": s.solved,
+                        "rank": 0
+                    })
             
             return Response({
                 "user": user_payload,
@@ -305,27 +601,35 @@ class DashboardView(UnifiedAuthMixin, APIView):
                 "stats": stats,
                 "weeklyActivity": weekly_activity,
                 "activityCalendar": activity_calendar,
-                "consistencyLabel": "Activity calendar",
+                "consistencyLabel": "Department Activity",
                 "tracks": FALLBACK_DASHBOARD["tracks"],
-                "leaderboard": FALLBACK_DASHBOARD["leaderboard"],
+                "leaderboard": leaderboard if leaderboard else FALLBACK_DASHBOARD["leaderboard"],
                 "editor": FALLBACK_DASHBOARD["editor"],
+                "recentActivity": recent_activity,
+                "engagementSummary": engagement_summary,
+                "staff": StaffProfileSerializer(profile).data if profile and profile_type in ["staff", "hod"] else None,
             })
 
         # Student dashboard (original logic)
         activity_calendar = build_activity_calendar(profile)
         stats = build_student_stats(profile)
+        aptitude_stats = build_aptitude_stats(profile)
         weekly_activity = build_weekly_activity(activity_calendar)
+        topic_stats = build_topic_stats(profile)
         
-        # Calculate real campus rank based on all students
+        # Unified Performance Ranking (Coding + Contests + Consistency)
         students_with_counts = (
-            StudentProfile.objects.annotate(
-                solved_count=Count(
+            StudentProfile.objects.filter(institution=profile.institution)
+            .annotate(
+                coding_solved=Count(
                     'solutions',
                     filter=Q(solutions__all_tests_passed=True),
                     distinct=True
-                )
+                ),
+                contests_attended=Count('contest_participations', distinct=True),
+                aptitude_solved=Count('solved_aptitude', distinct=True),
             )
-            .order_by('-solved_count', 'name')
+            .order_by('-coding_solved', '-contests_attended', '-aptitude_solved', '-current_streak', 'name')
         )
         
         campus_rank = 1
@@ -334,6 +638,39 @@ class DashboardView(UnifiedAuthMixin, APIView):
                 campus_rank = idx
                 break
         
+        # Awards & Achievements Logic
+        total_solved = SolvedProblem.objects.filter(student=profile).count()
+        current_streak = profile.current_streak
+        
+        # Check for unearned achievements
+        unearned = Achievement.objects.exclude(userachievement__user=request.user)
+        for ach in unearned:
+            should_award = False
+            if ach.criteria_type == 'solve_count' and total_solved >= ach.criteria_value:
+                should_award = True
+            elif ach.criteria_type == 'streak' and current_streak >= ach.criteria_value:
+                should_award = True
+            
+            if should_award:
+                UserAchievement.objects.get_or_create(user=request.user, achievement=ach)
+        
+        all_achievements = Achievement.objects.all()
+        user_achievements = UserAchievement.objects.filter(user=request.user).select_related('achievement')
+        earned_ids = set(user_achievements.values_list('achievement_id', flat=True))
+
+        achievements_data = []
+        for ach in all_achievements:
+            is_earned = ach.id in earned_ids
+            ua = user_achievements.filter(achievement_id=ach.id).first() if is_earned else None
+            achievements_data.append({
+                "id": ach.id,
+                "name": ach.name,
+                "description": ach.description,
+                "icon": ach.badge_icon,
+                "is_earned": is_earned,
+                "date": ua.awarded_at.strftime("%b %d, %Y") if ua else None
+            })
+
         user_payload = {
             "name": profile.name,
             "title": profile.title,
@@ -343,6 +680,9 @@ class DashboardView(UnifiedAuthMixin, APIView):
             "totalStudents": students_with_counts.count(),
             "registerNumber": profile.register_number,
             "email": profile.personal_email,
+            "total_problems_count": Problem.objects.count(),
+            "total_aptitude_count": AptitudeQuestion.objects.count(),
+            "tracked_companies": profile.tracked_companies,
         }
 
         if not problems.exists():
@@ -351,6 +691,7 @@ class DashboardView(UnifiedAuthMixin, APIView):
                     **FALLBACK_DASHBOARD,
                     "user": user_payload,
                     "stats": stats,
+                    "aptitude_stats": aptitude_stats,
                     "weeklyActivity": weekly_activity,
                     "activityCalendar": activity_calendar,
                     "consistencyLabel": "Activity calendar",
@@ -358,26 +699,121 @@ class DashboardView(UnifiedAuthMixin, APIView):
                 }
             )
 
-        daily_problem = problems.filter(is_daily=True).first() or problems.first()
+        # Daily Problem Logic
+        today = timezone.now().date()
+        daily_instance = DailyProblem.objects.filter(date=today).first()
+        
+        if not daily_instance:
+            # Pick a random problem that is not already a daily problem if possible
+            random_problem = Problem.objects.order_by('?').first()
+            if random_problem:
+                daily_instance = DailyProblem.objects.create(date=today, problem=random_problem)
+        
+        daily_problem = daily_instance.problem if daily_instance else problems.first()
+        
+        # Mark as daily for visibility in list
+        if daily_problem:
+            Problem.objects.filter(id=daily_problem.id).update(is_daily=True)
+
+        # Calculate Preferred Language
+        user_submissions = Submission.objects.filter(student=profile)
+        if user_submissions.exists():
+            lang_stats = user_submissions.values('language').annotate(count=Count('language')).order_by('-count')
+            preferred_language = lang_stats[0]['language']
+        else:
+            preferred_language = "JavaScript"
+
+        # Announcements Logic (Fetch active announcements from last 7 days)
+        seven_days_ago = timezone.now() - timedelta(days=7)
+        announcements = Announcement.objects.filter(
+            is_active=True, 
+            created_at__gte=seven_days_ago
+        ).order_by('-created_at')[:5]
 
         payload = {
             "user": user_payload,
+            "achievements": achievements_data,
             "dailyProblem": {
+                "id": daily_problem.id,
+                "slug": daily_problem.slug,
                 "title": daily_problem.title,
                 "difficulty": daily_problem.difficulty,
                 "description": daily_problem.description,
                 "tags": daily_problem.tags,
+                "preferredLanguage": preferred_language,
             },
             "stats": stats,
             "weeklyActivity": weekly_activity,
             "activityCalendar": activity_calendar,
+            "topicStats": topic_stats,
             "consistencyLabel": "Activity calendar",
-            "tracks": FALLBACK_DASHBOARD["tracks"],
+            "tracks": topic_stats if topic_stats else FALLBACK_DASHBOARD["tracks"],
+            "aptitude_stats": aptitude_stats,
             "leaderboard": FALLBACK_DASHBOARD["leaderboard"],
+            "announcements": [{
+                "id": a.id,
+                "title": a.title,
+                "content": a.content,
+                "category": a.category,
+                "date": a.created_at.strftime("%b %d, %Y")
+            } for a in announcements],
             "editor": FALLBACK_DASHBOARD["editor"],
             "student": StudentProfileSerializer(profile).data,
         }
         return Response(payload)
+
+
+class UpdateTrackedCompaniesView(UnifiedAuthMixin, APIView):
+    """Allow students to update their tracked companies list"""
+    def post(self, request):
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+        
+        if profile_type != "student":
+            return Response({"detail": "Only students can track companies."}, status=status.HTTP_403_FORBIDDEN)
+        
+        companies = request.data.get("companies", [])
+        if not isinstance(companies, list):
+            return Response({"detail": "Companies must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        profile.tracked_companies = [c.strip() for c in companies if isinstance(c, str) and c.strip()]
+        profile.save(update_fields=["tracked_companies"])
+        
+        return Response({"status": "success", "tracked_companies": profile.tracked_companies})
+
+
+class DailyLeaderboardView(UnifiedAuthMixin, APIView):
+    def get(self, request):
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        today = timezone.now().date()
+        daily_instance = DailyProblem.objects.filter(date=today).first()
+        
+        if not daily_instance:
+            return Response({"leaderboard": []})
+
+        # Get successful submissions for this daily problem
+        # Only take the best (earliest) submission per student
+        submissions = Submission.objects.filter(
+            problem=daily_instance.problem,
+            status="Accepted"
+        ).order_by('student', 'submitted_at').distinct('student')
+
+        leaderboard = []
+        for idx, sub in enumerate(submissions, 1):
+            leaderboard.append({
+                "rank": idx,
+                "name": sub.student.name,
+                "registerNumber": sub.student.register_number,
+                "language": sub.language,
+                "time": sub.submitted_at.strftime("%I:%M %p"),
+                "isUser": sub.student.id == profile.id
+            })
+
+        return Response({"leaderboard": leaderboard[:50]})  # Top 50
 
 
 class ProblemListView(UnifiedAuthMixin, APIView):
@@ -479,7 +915,7 @@ class ProblemProgressUpdateView(StudentAuthMixin, APIView):
         progress_state = serializer.validated_data["progress_state"]
         language = (
             serializer.validated_data.get("language")
-            or ("SQL" if "SQL" in (problem.tags or []) else "JavaScript")
+            or "JavaScript"
         )
         status_label = "Accepted" if progress_state == "completed" else "Started"
 
@@ -489,6 +925,14 @@ class ProblemProgressUpdateView(StudentAuthMixin, APIView):
             language=language,
             status=status_label,
         )
+
+        if progress_state == "completed":
+            Notification.objects.create(
+                recipient=profile.account,
+                title="🎯 Problem Solved!",
+                message=f"Congratulations! You've successfully solved '{problem.title}'.",
+                link=f"/problems?slug={problem.slug}"
+            )
 
         activity_type = "solve" if progress_state == "completed" else "practice"
         StudentActivity.objects.get_or_create(
@@ -587,6 +1031,7 @@ class CodeRunView(StudentAuthMixin, APIView):
                     language_id=validated["language_id"],
                     stdin=prepared["stdin"],
                 )
+            
         except Judge0TimeoutError as exc:
             logger.error("Judge0 timeout: %s", exc)
             return Response({"detail": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
@@ -1300,8 +1745,45 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
         if error:
             return error
 
-        messages = get_recent_discussions_queryset()[:100]
-        return Response(DiscussionMessageSerializer(messages, many=True).data)
+        thread_type = request.query_params.get("thread_type", "general")
+        other_user_reg = request.query_params.get("other_user_reg")
+        batch_name = request.query_params.get("batch_name")
+        problem_slug = request.query_params.get("problem_slug")
+
+        # Security check for staff/hod rooms
+        if thread_type in ["staff", "hod_tp_ja"] and profile_type == "student":
+            return Response({"detail": "Access denied to this channel."}, status=403)
+
+        messages_qs = get_discussion_messages(
+            request.user,
+            profile,
+            profile_type,
+            thread_type=thread_type,
+            other_user_reg=other_user_reg,
+            batch_name=batch_name,
+            problem_slug=problem_slug
+        ).order_by("created_at")
+
+        # Mark messages sent TO the current user as read when they view the thread
+        if thread_type == "individual":
+            messages_qs.filter(recipient=request.user, is_read=False).update(is_read=True)
+            # Also clear notifications for this direct message thread
+            Notification.objects.filter(
+                recipient=request.user,
+                is_read=False,
+                link__icontains=f"other_user_reg={other_user_reg}"
+            ).update(is_read=True)
+        elif thread_type in ["general", "staff", "hod_tp_ja"]:
+            # For group channels, just clear all notifications for that channel
+            Notification.objects.filter(
+                recipient=request.user,
+                is_read=False,
+                link=f"/discuss?thread_type={thread_type}"
+            ).update(is_read=True)
+
+        messages = messages_qs[:200]
+
+        return Response(DiscussionMessageSerializer(messages, many=True, context={"request": request}).data)
 
     def post(self, request):
         profile, profile_type, error = self.get_authenticated_profile(request)
@@ -1310,29 +1792,157 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
 
         serializer = DiscussionMessageCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
 
-        problem_slug = serializer.validated_data.get("problem_slug", "").strip()
+        thread_type = data.get("thread_type", "general")
+        recipient_reg = data.get("recipient_reg")
+        batch_name = data.get("batch_name")
+        problem_slug = data.get("problem_slug")
+        body = data["body"]
+
+        # 1. Validation and Security
+        if thread_type == "general" and profile_type == "student":
+            batch_name = profile.batch
+
+        if thread_type == "individual":
+            if not recipient_reg:
+                return Response({"detail": "Recipient required for individual message."}, status=400)
+
+            # Students can only message staff from their department
+            if profile_type == "student":
+                recipient_staff = StaffProfile.objects.filter(
+                    faculty_id__iexact=recipient_reg,
+                    department=profile.department
+                ).first()
+                if not recipient_staff:
+                    recipient_staff = StaffProfile.objects.filter(faculty_id__iexact=recipient_reg, institution=profile.institution).first()
+                    if not recipient_staff:
+                        return Response({"detail": "Staff member not found in your institution."}, status=403)
+                
+                recipient = recipient_staff.account
+            else:
+                recipient = User.objects.filter(
+                    Q(student_profile__register_number__iexact=recipient_reg) |
+                    Q(staff_profile__faculty_id__iexact=recipient_reg) |
+                    Q(username=recipient_reg)
+                ).first()
+
+            if not recipient:
+                return Response({"detail": "Recipient not found."}, status=404)
+
+            # Students cannot DM other students
+            if profile_type == "student" and hasattr(recipient, "student_profile"):
+                return Response({"detail": "Students can only message Staff or HOD."}, status=403)
+        else:
+            recipient = None
+
+        if thread_type in ["staff", "hod_tp_ja"] and profile_type == "student":
+            return Response({"detail": "Students cannot post to this channel."}, status=403)
+
+        # 2. Find problem if applicable
         problem = None
         if problem_slug:
             problem = Problem.objects.filter(slug=problem_slug).first()
 
-        # Only students can post discussions
-        if profile_type != "student" or not profile:
-            return Response(
-                {"detail": "Only students can post discussions."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        is_poll = data.get("is_poll", False)
+        poll_options = data.get("poll_options", [])
 
+        if is_poll and profile_type == "student":
+            return Response({"detail": "Only Staff/HOD/Admin can create polls."}, status=403)
+
+        # 3. Create message
         message = DiscussionMessage.objects.create(
-            student=profile,
+            sender=request.user,
+            recipient=recipient,
+            student=profile if profile_type == "student" else None,
             problem=problem,
-            body=serializer.validated_data["body"],
-        )
-        return Response(
-            DiscussionMessageSerializer(message).data,
-            status=status.HTTP_201_CREATED,
+            thread_type=thread_type,
+            batch_name=batch_name,
+            institution=getattr(profile, 'institution', None),
+            department=getattr(profile, 'department', None),
+            body=body,
+            is_poll=is_poll,
+            poll_options=poll_options
         )
 
+        # 4. Notifications
+        if recipient:
+            # For individual messages, include the sender's reg in the link to allow auto-clearing
+            sender_reg = profile.register_number if profile_type == "student" else (profile.faculty_id if profile else request.user.username)
+            Notification.objects.create(
+                recipient=recipient,
+                title=f"New Message from {profile.name if profile else request.user.username}",
+                message=body[:60] + "..." if len(body) > 60 else body,
+                link=f"/discuss?thread_type=individual&other_user_reg={sender_reg}"
+            )
+        elif thread_type in ["staff", "hod_tp_ja", "general"]:
+            # For group channels, we notify relevant people
+            recipients_qs = User.objects.none()
+            room_name = "General Chat"
+
+            if thread_type == "staff" and profile and profile.department:
+                recipients_qs = User.objects.filter(
+                    staff_profile__department=profile.department
+                )
+                room_name = "Staff Room"
+            elif thread_type == "hod_tp_ja" and profile:
+                recipients_qs = User.objects.filter(
+                    staff_profile__institution=profile.institution,
+                    staff_profile__role__in=["hod", "admin", "ja", "tpu", "director"]
+                )
+                room_name = "HOD & Admin Panel"
+            elif thread_type == "general" and profile:
+                recipients_qs = User.objects.filter(
+                    student_profile__batch=batch_name,
+                    student_profile__institution=profile.institution
+                )
+                if batch_name:
+                    room_name = f"Batch {batch_name} Chat"
+
+            # Filter out the sender
+            recipients = recipients_qs.exclude(id=request.user.id).distinct()
+
+            # Create notifications in bulk
+            notif_link = f"/discuss?thread_type={thread_type}"
+            if thread_type == "general" and batch_name:
+                notif_link += f"&batch_name={batch_name}"
+
+            notifications = [
+                Notification(
+                    recipient=r,
+                    title=f"New Message in {room_name}",
+                    message=f"{profile.name}: {body[:50]}..." if len(body) > 50 else f"{profile.name}: {body}",
+                    link=notif_link
+                )
+                for r in recipients
+            ]
+            Notification.objects.bulk_create(notifications)
+
+        return Response(
+            DiscussionMessageSerializer(message, context={"request": request}).data,
+            status=status.HTTP_201_CREATED
+        )
+
+class DiscussionPollVoteView(UnifiedAuthMixin, APIView):
+    def post(self, request, pk):
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        message = get_object_or_404(DiscussionMessage, pk=pk)
+        if not message.is_poll:
+            return Response({"detail": "This message is not a poll."}, status=400)
+
+        option_index = request.data.get("option_index")
+        if option_index is None or not (0 <= option_index < len(message.poll_options)):
+            return Response({"detail": "Invalid option index."}, status=400)
+
+        # Record or update vote
+        user_id = str(request.user.id)
+        message.poll_votes[user_id] = option_index
+        message.save(update_fields=["poll_votes"])
+
+        return Response(DiscussionMessageSerializer(message, context={"request": request}).data)
 
 class FirstLoginView(APIView):
     def post(self, request):
@@ -2000,15 +2610,22 @@ class StaffDetailView(APIView):
                 return Response({"detail": "You do not have access to this staff member."}, status=status.HTTP_403_FORBIDDEN)
 
         # Get staff activity (days since joining)
-        days_active = 1  # Placeholder
+        days_active = 0
         if target_staff.account and target_staff.account.date_joined:
-            days_active = (timezone.now() - target_staff.account.date_joined).days
+            days_active = (timezone.now() - target_staff.account.date_joined).days + 1
+        else:
+            days_active = (timezone.now() - target_staff.created_at).days + 1 if hasattr(target_staff, 'created_at') else 1
 
-        # Get students in this staff's department
-        department_students = StudentProfile.objects.filter(
-            institution=target_staff.institution,
-            department=target_staff.department
-        ) if target_staff.department else []
+        # Get students in this staff's department or entire institution if no department (Director/TPU)
+        if target_staff.department:
+            department_students = StudentProfile.objects.filter(
+                institution=target_staff.institution,
+                department=target_staff.department
+            )
+        else:
+            department_students = StudentProfile.objects.filter(
+                institution=target_staff.institution
+            )
 
         # Get top performers in department
         top_students = []
@@ -2062,67 +2679,102 @@ class StaffDetailView(APIView):
 
         # Batch-wise grouping with top performers per batch
         batch_wise_data = []
+        # Get distinct batches
+        batch_filter = Q(institution=target_staff.institution, batch__isnull=False)
         if target_staff.department:
-            # Get distinct batches in this department
-            batches = StudentProfile.objects.filter(
-                institution=target_staff.institution,
-                department=target_staff.department,
-                batch__isnull=False
-            ).exclude(batch='').values_list('batch', flat=True).distinct()
+            batch_filter &= Q(department=target_staff.department)
+        
+        batches = StudentProfile.objects.filter(batch_filter).exclude(batch='').values_list('batch', flat=True).distinct()
 
-            for batch in batches:
-                # Get all students for this batch with annotations
-                all_batch_students = StudentProfile.objects.filter(
-                    institution=target_staff.institution,
-                    department=target_staff.department,
-                    batch=batch
-                ).annotate(
-                    solved_count=Count('solved_problems', distinct=True)
-                ).order_by('-solved_count')
+        for batch in batches:
+            # Get all students for this batch with annotations
+            batch_student_filter = Q(institution=target_staff.institution, batch=batch)
+            if target_staff.department:
+                batch_student_filter &= Q(department=target_staff.department)
+                
+            all_batch_students = StudentProfile.objects.filter(batch_student_filter).annotate(
+                solved_count=Count('solved_problems', distinct=True)
+            ).order_by('-solved_count')
 
-                batch_count = all_batch_students.count()
+            batch_count = all_batch_students.count()
 
-                # Get top performers for this batch (first 5)
-                batch_top_performers = []
-                for student in all_batch_students[:5]:
-                    batch_top_performers.append({
-                        "register_number": student.register_number,
-                        "name": student.name,
-                        "solved_count": student.solved_count,
-                        "current_streak": student.current_streak,
-                    })
-
-                # Get all students for the batch (for expanded view)
-                all_students = []
-                for student in all_batch_students:
-                    all_students.append({
-                        "register_number": student.register_number,
-                        "name": student.name,
-                        "solved_count": student.solved_count,
-                        "current_streak": student.current_streak,
-                        "last_active": student.last_login_on.isoformat() if student.last_login_on else None,
-                    })
-
-                batch_wise_data.append({
-                    "batch": batch,
-                    "student_count": batch_count,
-                    "top_performers": batch_top_performers,
-                    "students": all_students,
+            # Get top performers for this batch (first 5)
+            batch_top_performers = []
+            for student in all_batch_students[:5]:
+                batch_top_performers.append({
+                    "register_number": student.register_number,
+                    "name": student.name,
+                    "solved_count": student.solved_count,
+                    "current_streak": student.current_streak,
                 })
+
+            # Get all students for the batch (for expanded view)
+            all_students = []
+            for student in all_batch_students:
+                all_students.append({
+                    "register_number": student.register_number,
+                    "name": student.name,
+                    "solved_count": student.solved_count,
+                    "current_streak": student.current_streak,
+                    "last_active": student.last_login_on.isoformat() if student.last_login_on else None,
+                })
+
+            batch_wise_data.append({
+                "batch": batch,
+                "student_count": batch_count,
+                "top_performers": batch_top_performers,
+                "students": all_students,
+            })
 
         # Calculate weekly progress
         weekly_progress = []
         for i in range(7):
             day = timezone.now() - timedelta(days=i)
-            count = SolvedProblem.objects.filter(
-                student__department=target_staff.department,
-                solved_at__date=day.date()
-            ).count() if target_staff.department else 0
+            solved_filter = Q(solved_at__date=day.date())
+            if target_staff.department:
+                solved_filter &= Q(student__department=target_staff.department)
+            else:
+                solved_filter &= Q(student__institution=target_staff.institution)
+                
+            count = SolvedProblem.objects.filter(solved_filter).count()
             weekly_progress.append({
                 "day": day.strftime("%a"),
                 "count": count,
             })
         weekly_progress.reverse()
+
+        # Recent Activity (Last 10 solved problems)
+        recent_activity = []
+        recent_filter = Q()
+        if target_staff.department:
+            recent_filter = Q(student__department=target_staff.department)
+        else:
+            recent_filter = Q(student__institution=target_staff.institution)
+            
+        recent_solved = SolvedProblem.objects.filter(recent_filter).select_related('student', 'problem').order_by('-solved_at')[:10]
+        
+        for solved in recent_solved:
+            recent_activity.append({
+                "student_name": solved.student.name,
+                "student_id": solved.student.register_number,
+                "problem_title": solved.problem.title,
+                "solved_at": solved.solved_at.isoformat(),
+            })
+
+        # Engagement Summary
+        today = timezone.now().date()
+        active_today = department_students.filter(last_login_on=today).count()
+        total_students = department_students.count()
+        avg_solved = 0
+        if total_students > 0:
+            total_solved_filter = Q()
+            if target_staff.department:
+                total_solved_filter = Q(student__department=target_staff.department)
+            else:
+                total_solved_filter = Q(student__institution=target_staff.institution)
+                
+            total_solved_count = SolvedProblem.objects.filter(total_solved_filter).count()
+            avg_solved = round(total_solved_count / total_students, 1)
 
         return Response({
             "staff": {
@@ -2139,7 +2791,7 @@ class StaffDetailView(APIView):
                     "name": target_staff.institution.name,
                 } if target_staff.institution else None,
                 "days_active": days_active,
-                "assigned_students": department_students.count(),
+                "assigned_students": total_students,
             },
             "analytics": {
                 "total_solved": SolvedProblem.objects.filter(
@@ -2149,6 +2801,191 @@ class StaffDetailView(APIView):
                 "top_performers": top_students,
                 "contests": recent_contests,
                 "batch_wise": batch_wise_data,
+                "recent_activity": recent_activity,
+                "engagement_summary": {
+                    "active_today": active_today,
+                    "avg_solved": avg_solved,
+                    "participation_rate": round((active_today / total_students * 100), 1) if total_students > 0 else 0
+                }
+            },
+        })
+        
+
+class DepartmentDetailView(APIView):
+    """Get detailed analytics for a specific department."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, dept_id):
+        is_staff = hasattr(request.user, 'staff_profile')
+        is_admin = request.user.is_superuser
+        
+        if not is_staff and not is_admin:
+            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        user_profile = request.user.staff_profile if is_staff else None
+        user_role = user_profile.role if user_profile else None
+        inst = user_profile.institution if user_profile else None
+
+        # Get the target department
+        dept = get_object_or_404(Department, id=dept_id)
+        
+        # Check permissions: Institutional roles can view any department in their institution
+        if is_staff:
+            if user_role == "hod" and dept != user_profile.department:
+                return Response({"detail": "You can only view your own department."}, status=status.HTTP_403_FORBIDDEN)
+            if dept.institution != inst:
+                return Response({"detail": "You do not have access to this department."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Get students in this department
+        department_students = StudentProfile.objects.filter(
+            institution=dept.institution,
+            department=dept
+        )
+
+        # Get top performers in department
+        top_students = []
+        for student in department_students.annotate(
+            solved_count=Count('solved_problems', distinct=True)
+        ).order_by('-solved_count')[:10]:
+            top_students.append({
+                "id": student.register_number,
+                "name": student.name,
+                "solved_count": student.solved_count,
+                "current_streak": student.current_streak,
+            })
+
+        # Get contests in department
+        recent_contests = []
+        dept_contests_qs = Contest.objects.filter(
+            institution=dept.institution,
+            department=dept
+        ).order_by('-created_at')[:10]
+
+        for contest in dept_contests_qs:
+            # Get top performers for this contest
+            contest_top_performers = []
+            contest_leaders = ContestSubmission.objects.filter(
+                contest=contest,
+                status='Accepted'
+            ).values('student').annotate(
+                solved_count=Count('id'),
+                total_score=Sum('score')
+            ).order_by('-solved_count', '-total_score')[:5]
+
+            for leader in contest_leaders:
+                student = StudentProfile.objects.filter(id=leader['student']).first()
+                if student:
+                    contest_top_performers.append({
+                        "register_number": student.register_number,
+                        "name": student.name,
+                        "batch": student.batch,
+                        "solved_in_contest": leader['solved_count'],
+                        "score": leader['total_score'] or 0,
+                    })
+
+            recent_contests.append({
+                "id": contest.id,
+                "title": contest.title,
+                "status": contest.status,
+                "created_at": contest.created_at,
+                "total_participants": contest.total_participants,
+                "total_submissions": contest.total_submissions,
+                "top_performers": contest_top_performers,
+            })
+
+        # Batch-wise grouping
+        batch_wise_data = []
+        batches = department_students.filter(batch__isnull=False).exclude(batch='').values_list('batch', flat=True).distinct()
+
+        for batch in batches:
+            all_batch_students = department_students.filter(batch=batch).annotate(
+                solved_count=Count('solved_problems', distinct=True)
+            ).order_by('-solved_count')
+
+            batch_count = all_batch_students.count()
+
+            batch_top_performers = []
+            for student in all_batch_students[:5]:
+                batch_top_performers.append({
+                    "register_number": student.register_number,
+                    "name": student.name,
+                    "solved_count": student.solved_count,
+                    "current_streak": student.current_streak,
+                })
+
+            all_students = []
+            for student in all_batch_students:
+                all_students.append({
+                    "register_number": student.register_number,
+                    "name": student.name,
+                    "solved_count": student.solved_count,
+                    "current_streak": student.current_streak,
+                    "last_active": student.last_login_on.isoformat() if student.last_login_on else None,
+                })
+
+            batch_wise_data.append({
+                "batch": batch,
+                "student_count": batch_count,
+                "top_performers": batch_top_performers,
+                "students": all_students,
+            })
+
+        # Weekly progress
+        weekly_progress = []
+        for i in range(7):
+            day = timezone.now() - timedelta(days=i)
+            count = SolvedProblem.objects.filter(
+                student__department=dept,
+                solved_at__date=day.date()
+            ).count()
+            weekly_progress.append({
+                "day": day.strftime("%a"),
+                "count": count,
+            })
+        weekly_progress.reverse()
+
+        # Recent Activity
+        recent_activity = []
+        recent_solved = SolvedProblem.objects.filter(
+            student__department=dept
+        ).select_related('student', 'problem').order_by('-solved_at')[:10]
+        
+        for solved in recent_solved:
+            recent_activity.append({
+                "student_name": solved.student.name,
+                "student_id": solved.student.register_number,
+                "problem_title": solved.problem.title,
+                "solved_at": solved.solved_at.isoformat(),
+            })
+
+        # Engagement Summary
+        today = timezone.now().date()
+        active_today = department_students.filter(last_login_on=today).count()
+        total_students = department_students.count()
+        avg_solved = 0
+        if total_students > 0:
+            total_solved_count = SolvedProblem.objects.filter(student__department=dept).count()
+            avg_solved = round(total_solved_count / total_students, 1)
+
+        return Response({
+            "department": {
+                "id": dept.id,
+                "name": dept.name,
+                "code": dept.code,
+                "assigned_students": total_students,
+            },
+            "analytics": {
+                "total_solved": SolvedProblem.objects.filter(student__department=dept).count(),
+                "weekly_progress": weekly_progress,
+                "top_performers": top_students,
+                "contests": recent_contests,
+                "batch_wise": batch_wise_data,
+                "recent_activity": recent_activity,
+                "engagement_summary": {
+                    "active_today": active_today,
+                    "avg_solved": avg_solved,
+                    "participation_rate": round((active_today / total_students * 100), 1) if total_students > 0 else 0
+                }
             },
         })
 
@@ -2205,7 +3042,9 @@ class ContestListCreateView(APIView):
                 "rejection_reason": contest.rejection_reason,
                 "submitted_for_approval_at": contest.submitted_for_approval_at,
                 "created_at": contest.created_at,
-                "problem_count": contest.problems.count(),
+                "problem_count": contest.problems.count() if contest.contest_type == "programming" else 0,
+                "aptitude_question_count": contest.aptitude_questions.count() if contest.contest_type == "aptitude" else 0,
+                "contest_type": contest.contest_type,
                 "assigned_student_count": contest.assigned_students.count(),
             })
 
@@ -2270,14 +3109,23 @@ class ContestListCreateView(APIView):
             end_time=end_time,
             duration_minutes=request.data.get('duration_minutes', 60),
             status=initial_status,
+            contest_type=request.data.get('contest_type', 'programming'),
             submitted_for_approval_at=timezone.now() if submit_for_approval else None,
         )
 
-        # Add problems by slugs
-        problem_slugs = request.data.get('problem_slugs', [])
-        if problem_slugs:
-            problems = Problem.objects.filter(slug__in=problem_slugs)
-            contest.problems.set(problems)
+        # Add problems by slugs (for programming)
+        if contest.contest_type == 'programming':
+            problem_slugs = request.data.get('problem_slugs', [])
+            if problem_slugs:
+                problems = Problem.objects.filter(slug__in=problem_slugs)
+                contest.problems.set(problems)
+        
+        # Add aptitude questions (for aptitude)
+        elif contest.contest_type == 'aptitude':
+            aptitude_question_ids = request.data.get('aptitude_question_ids', [])
+            if aptitude_question_ids:
+                questions = AptitudeQuestion.objects.filter(id__in=aptitude_question_ids)
+                contest.aptitude_questions.set(questions)
 
         # Assign batches
         assigned_batches = request.data.get('assigned_batches', [])
@@ -2332,37 +3180,46 @@ class ContestDetailView(APIView):
             return Response({"detail": "You can only view contests in your department."}, status=status.HTTP_403_FORBIDDEN)
 
         problems_data = []
-        for problem in contest.problems.all():
-            problems_data.append({
-                "id": problem.id,
-                "slug": problem.slug,
-                "title": problem.title,
-                "difficulty": problem.difficulty,
-            })
-
-        return Response({
+        if contest.contest_type == 'programming':
+            for problem in contest.problems.all():
+                problems_data.append({
+                    "id": problem.id,
+                    "slug": problem.slug,
+                    "title": problem.title,
+                    "difficulty": problem.difficulty,
+                })
+        else:
+            for q in contest.aptitude_questions.all():
+                problems_data.append({
+                    "id": q.id,
+                    "question_text": q.question_text,
+                    "topic": q.topic.title,
+                    "difficulty": q.difficulty,
+                    "option_a": q.option_a,
+                    "option_b": q.option_b,
+                    "option_c": q.option_c,
+                    "option_d": q.option_d,
+                    "correct_option": q.correct_option,
+                })
+        
+        data = {
             "id": contest.id,
             "title": contest.title,
             "description": contest.description,
-            "created_by": {
-                "faculty_id": contest.created_by.faculty_id,
-                "name": contest.created_by.name or contest.created_by.faculty_id,
-            },
-            "department": {
-                "id": contest.department.id,
-                "code": contest.department.code,
-                "name": contest.department.name,
-            } if contest.department else None,
+            "contest_type": contest.contest_type,
             "status": contest.status,
             "start_time": contest.start_time,
             "end_time": contest.end_time,
             "duration_minutes": contest.duration_minutes,
             "problems": problems_data,
-            "total_participants": contest.total_participants,
-            "total_submissions": contest.total_submissions,
-            "created_at": contest.created_at,
-            "updated_at": contest.updated_at,
-        })
+            "assigned_batches": contest.assigned_batches,
+            "created_by": contest.created_by.name,
+            "department": contest.department.name if contest.department else None,
+            "approved_by": contest.approved_by.name if contest.approved_by else None,
+            "approved_at": contest.approved_at,
+            "rejection_reason": contest.rejection_reason,
+        }
+        return Response(data)
 
 
 class ContestAnalyticsView(APIView):
@@ -2385,23 +3242,41 @@ class ContestAnalyticsView(APIView):
         if profile.role == "hod" and contest.department != profile.department:
             return Response({"detail": "You can only view contests in your department."}, status=status.HTTP_403_FORBIDDEN)
 
-        # Get submission stats
-        submissions = ContestSubmission.objects.filter(contest=contest)
-        
-        # Problem-wise stats
-        problem_stats = []
-        for problem in contest.problems.all():
-            problem_submissions = submissions.filter(problem=problem)
-            accepted = problem_submissions.filter(status='Accepted').count()
-            total = problem_submissions.count()
-            problem_stats.append({
-                "problem_id": problem.id,
-                "title": problem.title,
-                "slug": problem.slug,
-                "total_attempts": total,
-                "accepted": accepted,
-                "success_rate": round((accepted / total) * 100, 1) if total > 0 else 0,
-            })
+        # Get submission stats based on contest type
+        if contest.contest_type == 'aptitude':
+            submissions = AptitudeContestSubmission.objects.filter(contest=contest)
+            
+            # Question-wise stats
+            problem_stats = []
+            for question in contest.aptitude_questions.all():
+                q_submissions = submissions.filter(question=question)
+                accepted = q_submissions.filter(is_correct=True).count()
+                total = q_submissions.count()
+                problem_stats.append({
+                    "problem_id": question.id,
+                    "title": question.question_text[:50] + "...",
+                    "slug": f"q-{question.id}",
+                    "total_attempts": total,
+                    "accepted": accepted,
+                    "success_rate": round((accepted / total) * 100, 1) if total > 0 else 0,
+                })
+        else:
+            submissions = ContestSubmission.objects.filter(contest=contest)
+            
+            # Problem-wise stats
+            problem_stats = []
+            for problem in contest.problems.all():
+                p_submissions = submissions.filter(problem=problem)
+                accepted = p_submissions.filter(status='Accepted').count()
+                total = p_submissions.count()
+                problem_stats.append({
+                    "problem_id": problem.id,
+                    "title": problem.title,
+                    "slug": problem.slug,
+                    "total_attempts": total,
+                    "accepted": accepted,
+                    "success_rate": round((accepted / total) * 100, 1) if total > 0 else 0,
+                })
 
         # Participant stats with detailed information
         participants_data = []
@@ -2409,14 +3284,21 @@ class ContestAnalyticsView(APIView):
         
         for participation in participations:
             student = participation.student
-            student_submissions = submissions.filter(student=student)
+            
+            if contest.contest_type == 'aptitude':
+                student_submissions = AptitudeContestSubmission.objects.filter(contest=contest, student=student)
+                # For aptitude, we use fields from ContestParticipation directly if they were updated during submission
+                # Or recalculate here for accuracy
+                solved_count = student_submissions.filter(is_correct=True).count()
+                total_score = student_submissions.aggregate(total=Sum('score'))['total'] or 0
+            else:
+                student_submissions = ContestSubmission.objects.filter(contest=contest, student=student)
+                solved_count = student_submissions.filter(status='Accepted').values('problem').distinct().count()
+                total_score = student_submissions.aggregate(total=Sum('score'))['total'] or 0
             
             # Only include students who have submitted
             if student_submissions.count() == 0:
                 continue
-            
-            solved_count = student_submissions.filter(status='Accepted').values('problem').distinct().count()
-            total_score = student_submissions.aggregate(total=Sum('score'))['total'] or 0
             
             participants_data.append({
                 "register_number": student.register_number,
@@ -2438,15 +3320,78 @@ class ContestAnalyticsView(APIView):
                 "id": contest.id,
                 "title": contest.title,
                 "status": contest.status,
+                "contest_type": contest.contest_type,
             },
             "summary": {
                 "total_participants": len(participants_data),
                 "total_submissions": submissions.count(),
-                "accepted_submissions": submissions.filter(status='Accepted').count(),
+                "accepted_submissions": submissions.filter(is_correct=True).count() if contest.contest_type == 'aptitude' else submissions.filter(status='Accepted').count(),
             },
             "problem_stats": problem_stats,
             "top_performers": top_performers,
-            "participants": participants_data,  # All participants with submissions
+            "participants": participants_data,
+        })
+
+
+class AptitudeContestSubmitView(APIView):
+    """Submit an answer for an aptitude contest question"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        is_student = hasattr(request.user, 'student_profile')
+        if not is_student:
+            return Response({"detail": "Student access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        student = request.user.student_profile
+        contest = Contest.objects.filter(id=pk).first()
+        
+        if not contest:
+            return Response({"detail": "Contest not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if contest is active for the student
+        if contest.status != "published" or not contest.is_active:
+             return Response({"detail": "Contest is not active."}, status=status.HTTP_400_BAD_REQUEST)
+
+        question_id = request.data.get('question_id')
+        selected_option = request.data.get('selected_option') # A, B, C, D
+        time_taken = request.data.get('time_taken', 0)
+
+        question = contest.aptitude_questions.filter(id=question_id).first()
+        if not question:
+            return Response({"detail": "Question not found in this contest."}, status=status.HTTP_404_NOT_FOUND)
+
+        is_correct = (selected_option == question.correct_option)
+        score = 1 if is_correct else 0 # Simple scoring for now
+
+        submission, created = AptitudeContestSubmission.objects.update_or_create(
+            contest=contest,
+            student=student,
+            question=question,
+            defaults={
+                'selected_option': selected_option,
+                'is_correct': is_correct,
+                'score': score,
+                'time_taken_seconds': time_taken
+            }
+        )
+
+        # Update Participation stats
+        participation, _ = ContestParticipation.objects.get_or_create(
+            contest=contest,
+            student=student,
+            defaults={'has_started': True}
+        )
+        
+        # Recalculate total score and solved count for accuracy
+        all_subs = AptitudeContestSubmission.objects.filter(contest=contest, student=student)
+        participation.total_score = all_subs.aggregate(total=Sum('score'))['total'] or 0
+        participation.problems_solved = all_subs.filter(is_correct=True).count()
+        participation.save(update_fields=['total_score', 'problems_solved'])
+
+        return Response({
+            "success": True,
+            "is_correct": is_correct,
+            "score": score
         })
 
 
@@ -2479,26 +3424,45 @@ class ContestStudentSubmissionsView(APIView):
             return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
 
         # Get all submissions by this student for this contest
-        submissions = ContestSubmission.objects.filter(
-            contest=contest,
-            student=student
-        ).select_related('problem').order_by('-submitted_at')
+        if contest.contest_type == 'aptitude':
+            submissions = AptitudeContestSubmission.objects.filter(
+                contest=contest,
+                student=student
+            ).select_related('question').order_by('-submitted_at')
 
-        submissions_data = []
-        for sub in submissions:
-            submissions_data.append({
-                "id": sub.id,
-                "problem_title": sub.problem.title,
-                "problem_slug": sub.problem.slug,
-                "language": sub.language,
-                "status": sub.status,
-                "passed_cases": sub.passed_cases,
-                "total_cases": sub.total_cases,
-                "score": sub.score,
-                "execution_time": sub.execution_time,
-                "memory": sub.memory,
-                "submitted_at": sub.submitted_at,
-            })
+            submissions_data = []
+            for sub in submissions:
+                submissions_data.append({
+                    "id": sub.id,
+                    "problem_title": sub.question.question_text[:50] + "...",
+                    "problem_slug": f"q-{sub.question.id}",
+                    "status": "Correct" if sub.is_correct else "Incorrect",
+                    "score": sub.score,
+                    "submitted_at": sub.submitted_at,
+                    "selected_option": sub.selected_option,
+                    "time_taken": sub.time_taken_seconds,
+                })
+        else:
+            submissions = ContestSubmission.objects.filter(
+                contest=contest,
+                student=student
+            ).select_related('problem').order_by('-submitted_at')
+
+            submissions_data = []
+            for sub in submissions:
+                submissions_data.append({
+                    "id": sub.id,
+                    "problem_title": sub.problem.title,
+                    "problem_slug": sub.problem.slug,
+                    "language": sub.language,
+                    "status": sub.status,
+                    "passed_cases": sub.passed_cases,
+                    "total_cases": sub.total_cases,
+                    "score": sub.score,
+                    "execution_time": sub.execution_time,
+                    "memory": sub.memory,
+                    "submitted_at": sub.submitted_at,
+                })
 
         return Response({
             "student": {
@@ -2508,6 +3472,7 @@ class ContestStudentSubmissionsView(APIView):
             "contest": {
                 "id": contest.id,
                 "title": contest.title,
+                "contest_type": contest.contest_type,
             },
             "submissions": submissions_data,
         })
@@ -2780,6 +3745,11 @@ class UnifiedUserLookupView(APIView):
         # 1. Check if it's a student (register_number)
         student = StudentProfile.objects.filter(register_number=user_id).first()
         if student:
+            if student.account and not student.account.is_active:
+                return Response(
+                    {"detail": "Your account has been blocked. Please contact your department staff."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             return Response({
                 "user_type": "student",
                 "user": {
@@ -2792,6 +3762,11 @@ class UnifiedUserLookupView(APIView):
         # 2. Check if it's staff (faculty_id) - return role from profile
         staff = StaffProfile.objects.filter(faculty_id=user_id).first()
         if staff:
+            if staff.account and not staff.account.is_active:
+                return Response(
+                    {"detail": "Your account has been blocked. Please contact the system administrator."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
             # Use the role from StaffProfile (staff, hod, or admin)
             return Response({
                 "user_type": staff.role,  # staff, hod, or admin
@@ -3122,6 +4097,40 @@ class StudentDetailView(APIView):
                     'score': cdata['score'],
                 })
 
+        # ── Aptitude Insights ──────────────────────────────────────────────────
+        aptitude_solved = SolvedAptitude.objects.filter(student=student).count()
+        total_aptitude = AptitudeQuestion.objects.count()
+        
+        # ── Company Insights ──────────────────────────────────────────────────
+        company_counts = {}
+        for solved in solved_problems:
+            companies_str = solved.problem.companies or ""
+            if companies_str:
+                # Assuming comma-separated or space-separated list of companies
+                clist = [c.strip() for c in companies_str.replace(',', ' ').split() if c.strip()]
+                for comp in clist:
+                    company_counts[comp] = company_counts.get(comp, 0) + 1
+        
+        sorted_companies = sorted(company_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        company_insights = [{'name': name, 'count': count} for name, count in sorted_companies]
+
+        # ── Project/Skill Insights ─────────────────────────────────────────────
+        skill_counts = {}
+        project_tags = {'project', 'real-world', 'application', 'system', 'database', 'web', 'api', 'full-stack'}
+        for solved in solved_problems:
+            tags = solved.problem.tags or []
+            for tag in tags:
+                tag_lower = tag.lower()
+                skill_counts[tag_lower] = skill_counts.get(tag_lower, 0) + 1
+        
+        # Filter for "project-like" skills
+        project_insights = []
+        for skill, count in sorted(skill_counts.items(), key=lambda x: x[1], reverse=True):
+            if skill in project_tags or any(pt in skill for pt in project_tags):
+                project_insights.append({'skill': skill, 'count': count})
+        
+        project_insights = project_insights[:8]
+
         # ── Recent submissions ────────────────────────────────────────────────
         recent_submissions_qs = ContestSubmission.objects.filter(
             student=student
@@ -3208,6 +4217,13 @@ class StudentDetailView(APIView):
                 'contests_participated': len(participated_contests),
                 'contests_won': contests_won,
                 'participated_contests': participated_contests,
+                'aptitude': {
+                    'solved': aptitude_solved,
+                    'total': total_aptitude,
+                    'percentage': round((aptitude_solved / total_aptitude * 100), 1) if total_aptitude > 0 else 0
+                },
+                'company_insights': company_insights,
+                'project_insights': project_insights,
             },
             'achievements': achievements,
         })
@@ -3473,6 +4489,38 @@ class StudentIndividualAnalyticsView(APIView):
             solved=Count('id', filter=Q(status='Accepted'))
         ).order_by('-contest__id')[:10]
 
+        # ── Aptitude Insights ──────────────────────────────────────────────────
+        aptitude_solved = SolvedAptitude.objects.filter(student=student).count()
+        total_aptitude = AptitudeQuestion.objects.count()
+        
+        # ── Company & Project Insights ────────────────────────────────────────
+        company_counts = {}
+        skill_counts = {}
+        project_tags = {'project', 'real-world', 'application', 'system', 'database', 'web', 'api', 'full-stack'}
+        
+        for sp in solved_problems:
+            # Company
+            companies_str = sp.problem.companies or ""
+            if companies_str:
+                clist = [c.strip() for c in companies_str.replace(',', ' ').split() if c.strip()]
+                for comp in clist:
+                    company_counts[comp] = company_counts.get(comp, 0) + 1
+            
+            # Skills/Projects
+            tags = sp.problem.tags or []
+            for tag in tags:
+                tag_lower = tag.lower()
+                skill_counts[tag_lower] = skill_counts.get(tag_lower, 0) + 1
+
+        sorted_companies = sorted(company_counts.items(), key=lambda x: x[1], reverse=True)[:8]
+        company_insights = [{'name': name, 'count': count} for name, count in sorted_companies]
+
+        project_insights = []
+        for skill, count in sorted(skill_counts.items(), key=lambda x: x[1], reverse=True):
+            if skill in project_tags or any(pt in skill for pt in project_tags):
+                project_insights.append({'skill': skill, 'count': count})
+        project_insights = project_insights[:6]
+
         return Response({
             "student": {
                 "register_number": student.register_number,
@@ -3481,7 +4529,7 @@ class StudentIndividualAnalyticsView(APIView):
                 "department": student.department.name if student.department else None,
                 "current_streak": student.current_streak,
                 "login_days": student.login_days,
-                "campus_rank": student.campus_rank,
+                "campus_rank": f"#{calculate_campus_rank_helper(student)}",
             },
             "analytics": {
                 "solved_count": solved_problems.count(),
@@ -3490,6 +4538,13 @@ class StudentIndividualAnalyticsView(APIView):
                 "time_spent_total": total_time_spent,
                 "time_spent_hours": round(total_time_spent / 3600, 2),
                 "contest_participations": list(contest_participations),
+                "aptitude": {
+                    "solved": aptitude_solved,
+                    "total": total_aptitude,
+                    "percentage": round((aptitude_solved / total_aptitude * 100), 1) if total_aptitude > 0 else 0
+                },
+                "company_insights": company_insights,
+                "project_insights": project_insights,
             }
         })
 
@@ -3594,6 +4649,13 @@ class ContestPublishView(APIView):
             )
 
         contest.publish()
+        
+        # Create Announcement
+        Announcement.objects.create(
+            title=f"🚀 New Contest: {contest.title}",
+            content=f"A new contest '{contest.title}' is now live! Challenge yourself and climb the leaderboard.",
+            category="contest"
+        )
         
         return Response({
             "detail": "Contest published successfully.",
@@ -4272,3 +5334,723 @@ class ProblemsByTopicView(APIView):
             "topics": topics_list,
             "total_problems": problems.count(),
         })
+
+
+class StudentContestWinnersView(APIView):
+    """Get contest winners and participant results"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request, contest_id):
+        try:
+            # Get student profile
+            student_profile = get_object_or_404(StudentProfile, account=request.user)
+            
+            # Get contest and verify student has access
+            contest = get_object_or_404(Contest, id=contest_id)
+            
+            # Check if student is assigned to this contest
+            is_assigned = (
+                contest.assigned_students.filter(id=student_profile.id).exists() or
+                (student_profile.batch in contest.assigned_batches if contest.assigned_batches else False)
+            )
+            
+            if not is_assigned:
+                return Response({
+                    'success': False,
+                    'error': 'You are not assigned to this contest'
+                }, status=403)
+            
+            # Check if contest is completed
+            if not contest.is_ended:
+                return Response({
+                    'success': False,
+                    'error': 'Contest is not yet completed'
+                }, status=400)
+            
+            # Get all participations for this contest, ordered by performance
+            participations = ContestParticipation.objects.filter(
+                contest=contest,
+                has_started=True
+            ).select_related('student').order_by(
+                '-problems_solved',  # More problems solved first
+                'total_time_taken',  # Less time taken second
+                '-total_score'       # Higher score third
+            )
+            
+            # Get winners (top 3)
+            winners = []
+            for i, participation in enumerate(participations[:3]):
+                winners.append({
+                    'id': participation.id,
+                    'student_name': participation.student.name,
+                    'register_number': participation.student.register_number,
+                    'problems_solved': participation.problems_solved,
+                    'total_score': participation.total_score,
+                    'completion_time': participation.total_time_taken,
+                    'rank': i + 1
+                })
+            
+            # Get all participants
+            participants = []
+            for i, participation in enumerate(participations):
+                participants.append({
+                    'id': participation.id,
+                    'student_name': participation.student.name,
+                    'register_number': participation.student.register_number,
+                    'problems_solved': participation.problems_solved,
+                    'total_score': participation.total_score,
+                    'completion_time': participation.total_time_taken,
+                    'rank': i + 1
+                })
+            
+            return Response({
+                'success': True,
+                'contest_title': contest.title,
+                'total_problems': contest.problems.count(),
+                'total_participants': participations.count(),
+                'winners': winners,
+                'participants': participants
+            })
+            
+        except Exception as e:
+            logger.error(f"Error fetching contest winners: {str(e)}")
+            return Response({
+                'success': False,
+                'error': 'Failed to fetch contest results'
+            }, status=500)
+
+
+class AnnouncementListView(UnifiedAuthMixin, APIView):
+    def get(self, request):
+        # Universal Table Refresh logic: 
+        # Only show announcements from the last 7 days
+        seven_days_ago = timezone.now() - timedelta(days=7)
+        
+        announcements = Announcement.objects.filter(
+            is_active=True,
+            created_at__gte=seven_days_ago
+        ).order_by('-created_at')
+        
+        data = [{
+            "id": a.id,
+            "title": a.title,
+            "content": a.content,
+            "category": a.category,
+            "time": a.created_at.strftime("%I:%M %p"),
+            "date": a.created_at.strftime("%b %d")
+        } for a in announcements]
+        
+        return Response({"announcements": data})
+
+
+class NotificationListView(UnifiedAuthMixin, APIView):
+    def get(self, request):
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+            
+        qs = Notification.objects.filter(recipient=request.user).order_by('-created_at')
+        unread_count = qs.filter(is_read=False).count()
+        notifications = qs[:20]
+        
+        data = [{
+            "id": n.id,
+            "title": n.title,
+            "message": n.message,
+            "link": n.link,
+            "is_read": n.is_read,
+            "time": n.created_at.strftime("%b %d, %H:%M")
+        } for n in notifications]
+        
+        return Response({
+            "notifications": data,
+            "unread_count": unread_count
+        })
+
+
+class NotificationMarkReadView(UnifiedAuthMixin, APIView):
+    def post(self, request, notification_id):
+        notification = get_object_or_404(Notification, id=notification_id, recipient=request.user)
+        notification.delete()
+        return Response({"success": True})
+
+
+class AptitudeTopicListView(UnifiedAuthMixin, APIView):
+    """List all available aptitude topics and their questions count"""
+    def get(self, request):
+        # Fetch top-level topics (Categories)
+        categories = AptitudeTopic.objects.filter(parent=None).prefetch_related('subtopics__subtopics')
+        
+        category_list = []
+        for cat in categories:
+            subcategory_list = []
+            for subcat in cat.subtopics.all():
+                topic_list = []
+                for topic in subcat.subtopics.all():
+                    topic_list.append({
+                        "id": topic.id,
+                        "title": topic.title,
+                    })
+                
+                subcategory_list.append({
+                    "id": subcat.id,
+                    "title": subcat.title,
+                    "topics": topic_list,
+                    "question_count": subcat.questions.count()
+                })
+                
+            category_list.append({
+                "id": cat.id,
+                "title": cat.title,
+                "subcategories": subcategory_list,
+                "question_count": cat.questions.count()
+            })
+            
+        return Response({"categories": category_list})
+
+
+class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
+    """List aptitude questions for selection in contest creator"""
+    def get(self, request):
+        topic_id = request.query_params.get('topic_id')
+        difficulty = request.query_params.get('difficulty')
+        search = request.query_params.get('q')
+        
+        topic_ids = request.query_params.getlist('topic_id')
+        if not topic_ids and topic_id:
+            topic_ids = topic_id.split(',')
+
+        qs = AptitudeQuestion.objects.all().select_related('topic')
+        
+        if topic_ids:
+            qs = qs.filter(topic_id__in=topic_ids)
+        if difficulty:
+            qs = qs.filter(difficulty=difficulty)
+        if search:
+            qs = qs.filter(question_text__icontains=search)
+            
+        data = []
+        for q in qs[:100]: # Limit to 100 for performance
+            data.append({
+                "id": q.id,
+                "topic": q.topic.title,
+                "question_text": q.question_text,
+                "difficulty": q.difficulty,
+                "option_a": q.option_a,
+                "option_b": q.option_b,
+                "option_c": q.option_c,
+                "option_d": q.option_d,
+            })
+            
+        return Response(data)
+
+
+# ---------------------------------------------------------------------------
+# PDF Report Generation
+# ---------------------------------------------------------------------------
+
+class StudentReportPDFView(APIView):
+    """Generate a professional PDF performance report for a student."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, register_number):
+        # Check if user is staff (HOD or staff)
+        if not hasattr(request.user, 'staff_profile'):
+            return Response({"detail": "Staff access required."}, status=403)
+
+        staff_profile = request.user.staff_profile
+
+        # Get student
+        student = get_object_or_404(StudentProfile, register_number=register_number)
+        
+        # Access control
+        if student.institution != staff_profile.institution:
+            return Response({"detail": "Access denied."}, status=403)
+        if staff_profile.role == 'hod' and student.department != staff_profile.department:
+            return Response({"detail": "Access denied (Department mismatch)."}, status=403)
+
+        # Gather data (mirroring StudentDetailView logic)
+        solved_problems = SolvedProblem.objects.filter(student=student).select_related('problem')
+        total_solved = solved_problems.count()
+        difficulty_counts = {'Easy': 0, 'Medium': 0, 'Hard': 0}
+        company_counts = {}
+        skill_counts = {}
+        project_tags = {'project', 'real-world', 'application', 'system', 'database', 'web', 'api', 'full-stack'}
+
+        for sp in solved_problems:
+            d = sp.problem.difficulty or 'Medium'
+            difficulty_counts[d] = difficulty_counts.get(d, 0) + 1
+            
+            # Companies
+            comps = sp.problem.companies or ""
+            clist = [c.strip() for c in comps.replace(',', ' ').split() if c.strip()]
+            for c in clist: company_counts[c] = company_counts.get(c, 0) + 1
+            
+            # Skills
+            tags = sp.problem.tags or []
+            for t in tags: skill_counts[t.lower()] = skill_counts.get(t.lower(), 0) + 1
+
+        aptitude_solved = SolvedAptitude.objects.filter(student=student).count()
+        total_aptitude = AptitudeQuestion.objects.count()
+
+        # Create PDF
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=18)
+        styles = getSampleStyleSheet()
+        
+        # Custom styles
+        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=24, spaceAfter=20, color=colors.HexColor('#39482a'))
+        header_style = ParagraphStyle('HeaderStyle', parent=styles['Heading2'], fontSize=16, spaceAfter=12, color=colors.HexColor('#4b5563'))
+        normal_style = styles['Normal']
+        
+        elements = []
+
+        # Header Section
+        elements.append(Paragraph(f"Student Performance Report", title_style))
+        elements.append(Paragraph(f"<b>Name:</b> {student.name}", normal_style))
+        elements.append(Paragraph(f"<b>Register Number:</b> {student.register_number}", normal_style))
+        elements.append(Paragraph(f"<b>Department:</b> {student.department.name if student.department else 'N/A'}", normal_style))
+        elements.append(Paragraph(f"<b>Batch:</b> {student.batch}", normal_style))
+        elements.append(Spacer(1, 0.25 * inch))
+
+        # Coding Performance
+        elements.append(Paragraph("Coding Analytics", header_style))
+        data = [
+            ["Metric", "Value"],
+            ["Total Problems Solved", str(total_solved)],
+            ["Easy Problems", str(difficulty_counts['Easy'])],
+            ["Medium Problems", str(difficulty_counts['Medium'])],
+            ["Hard Problems", str(difficulty_counts['Hard'])],
+            ["Current Solving Streak", f"{student.current_streak} days"],
+            ["Campus Rank", f"#{calculate_campus_rank_helper(student)}"],
+        ]
+        t = Table(data, colWidths=[2.5 * inch, 2.5 * inch])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f3f4f6')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#374151')),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e5e7eb'))
+        ]))
+        elements.append(t)
+        elements.append(Spacer(1, 0.2 * inch))
+
+        # Aptitude Performance
+        elements.append(Paragraph("Aptitude & Skills", header_style))
+        apt_perc = round((aptitude_solved / total_aptitude * 100), 1) if total_aptitude > 0 else 0
+        elements.append(Paragraph(f"Solved <b>{aptitude_solved}</b> out of <b>{total_aptitude}</b> aptitude questions ({apt_perc}% completion).", normal_style))
+        elements.append(Spacer(1, 0.1 * inch))
+
+        # Top Companies
+        top_comps = sorted(company_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+        if top_comps:
+            comp_text = "Target Companies: " + ", ".join([f"{n} ({c})" for n, c in top_comps])
+            elements.append(Paragraph(comp_text, normal_style))
+        
+        elements.append(Spacer(1, 0.25 * inch))
+
+        # Project Readiness
+        elements.append(Paragraph("Project-Based Insights", header_style))
+        proj_skills = []
+        for s, c in sorted(skill_counts.items(), key=lambda x: x[1], reverse=True):
+            if s in project_tags or any(pt in s for pt in project_tags):
+                proj_skills.append(f"{s.capitalize()} ({c})")
+        
+        if proj_skills:
+            elements.append(Paragraph("Demonstrated skills in: " + ", ".join(proj_skills[:6]), normal_style))
+        else:
+            elements.append(Paragraph("No specific project-based tags found in solved problems.", normal_style))
+
+        elements.append(Spacer(1, 0.5 * inch))
+        elements.append(Paragraph(f"Generated by Code-2Day Analytics on {timezone.now().strftime('%Y-%m-%d %H:%M')}", styles['Italic']))
+
+        doc.build(elements)
+        buffer.seek(0)
+        
+        filename = f"Report_{student.register_number}.pdf"
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+
+class StaffReportPDFView(APIView):
+    """Generate a professional PDF performance report for a staff member."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, faculty_id):
+        # Check if user is staff (HOD or self)
+        if not hasattr(request.user, 'staff_profile'):
+            return Response({"detail": "Staff access required."}, status=403)
+
+        user_profile = request.user.staff_profile
+        target_staff = get_object_or_404(StaffProfile, faculty_id=faculty_id)
+
+        # Access control
+        if user_profile.role == 'hod' and target_staff.department != user_profile.department:
+            return Response({"detail": "Access denied."}, status=403)
+        if target_staff.institution != user_profile.institution:
+            return Response({"detail": "Access denied."}, status=403)
+
+        # Gather data
+        contests = target_staff.contests.all()
+        total_contests = contests.count()
+        approved_contests = contests.filter(status='approved').count()
+        published_contests = contests.filter(status='published').count()
+        
+        student_count = StudentProfile.objects.filter(department=target_staff.department).count() if target_staff.department else 0
+        
+        # Create PDF
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        styles = getSampleStyleSheet()
+        
+        elements = []
+        elements.append(Paragraph(f"Faculty Performance Report", styles['Title']))
+        elements.append(Paragraph(f"<b>Name:</b> {target_staff.name}", styles['Normal']))
+        elements.append(Paragraph(f"<b>Faculty ID:</b> {target_staff.faculty_id}", styles['Normal']))
+        elements.append(Paragraph(f"<b>Department:</b> {target_staff.department.name if target_staff.department else 'N/A'}", styles['Normal']))
+        elements.append(Spacer(1, 0.25 * inch))
+
+        elements.append(Paragraph("Engagement Metrics", styles['Heading2']))
+        data = [
+            ["Metric", "Value"],
+            ["Total Contests Created", str(total_contests)],
+            ["Published Contests", str(published_contests)],
+            ["Department Student Base", str(student_count)],
+        ]
+        t = Table(data, colWidths=[3 * inch, 2 * inch])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        elements.append(t)
+
+        elements.append(Spacer(1, 0.5 * inch))
+        elements.append(Paragraph(f"Report generated on {timezone.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
+
+        doc.build(elements)
+        buffer.seek(0)
+        
+        filename = f"Faculty_Report_{target_staff.faculty_id}.pdf"
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+
+# ---------------------------------------------------------------------------
+# System Administration & Multi-Tenancy
+# ---------------------------------------------------------------------------
+
+class SystemAdminDashboardView(APIView):
+    permission_classes = [AllowAny]  # In production, restrict to system admins
+
+    def get(self, request):
+        try:
+            total_students = StudentProfile.objects.count()
+            total_staff = StaffProfile.objects.count()
+            total_problems = Problem.objects.count()
+            total_aptitude = AptitudeQuestion.objects.count()
+            
+            # Fetch all institutions for the management table
+            institutions = Institution.objects.all().values(
+                'id', 'institution_id', 'name', 'short_code', 'is_active',
+                'maintenance_staff', 'maintenance_students', 'maintenance_hod'
+            )
+
+            # Global maintenance config
+            config, _ = SystemConfiguration.objects.get_or_create(id=1)
+            
+            return Response({
+                "metrics": {
+                    "total_users": total_students + total_staff,
+                    "total_staff": total_staff,
+                    "total_problems": total_problems,
+                    "total_aptitude": total_aptitude
+                },
+                "institutions": list(institutions),
+                "global_config": {
+                    "staff": config.global_maintenance_staff,
+                    "student": config.global_maintenance_students,
+                    "hod": config.global_maintenance_hod
+                }
+            })
+        except Exception as e:
+            logger.error(f"Admin dashboard error: {e}")
+            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class InstitutionManagementView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        """Create a new institution and its database"""
+        data = request.data
+        try:
+            inst_id = data.get('institution_id')
+            name = data.get('name')
+            short_code = data.get('short_code', '')
+            address = data.get('address', '')
+            contact_email = data.get('contact_email', '')
+            contact_phone = data.get('contact_phone', '')
+            
+            if not inst_id or not name:
+                return Response({"error": "ID and Name required"}, status=400)
+            
+            # Sanitize DB name
+            db_name = f"code2day_inst_{inst_id}"
+            
+            # Create Institution record
+            institution = Institution.objects.create(
+                institution_id=inst_id,
+                name=name,
+                short_code=short_code,
+                address=address,
+                contact_email=contact_email,
+                contact_phone=contact_phone,
+                database_name=db_name
+            )
+            
+            # Create the actual database
+            create_institution_db(db_name)
+            
+            return Response({"message": "Institution created", "id": institution.id})
+        except Exception as e:
+            logger.error(f"Failed to create institution: {e}")
+            return Response({"error": str(e)}, status=500)
+
+    def delete(self, request, pk):
+        """Delete institution and its database"""
+        try:
+            institution = get_object_or_404(Institution, pk=pk)
+            db_name = institution.database_name
+            
+            # Delete database first
+            if db_name:
+                delete_institution_db(db_name)
+            
+            institution.delete()
+            return Response({"message": "Institution deleted"})
+        except Exception as e:
+            logger.error(f"Failed to delete institution: {e}")
+            return Response({"error": str(e)}, status=500)
+
+class InstitutionDetailManagementView(APIView):
+    """Management within a specific institution"""
+    permission_classes = [AllowAny]
+
+    def get(self, request, pk):
+        institution = get_object_or_404(Institution, pk=pk)
+        
+        # Get actual student count
+        students_count = StudentProfile.objects.filter(institution=institution).count()
+        
+        # Get staff and HODs (Excluding default administrator '0001')
+        staff_list = StaffProfile.objects.filter(institution=institution).exclude(faculty_id='0001').values(
+            'id', 'faculty_id', 'name', 'role', 'department__name', 'department__id', 'department__code'
+        )
+        
+        # Get departments
+        depts = Department.objects.filter(institution=institution).values('id', 'name', 'code')
+        
+        # Get students
+        student_list = []
+        batches = set()
+        for s in StudentProfile.objects.filter(institution=institution).select_related('account', 'department'):
+            if s.batch:
+                batches.add(s.batch)
+            student_list.append({
+                'id': s.id,
+                'name': s.name,
+                'register_number': s.register_number,
+                'personal_email': s.personal_email,
+                'mobile_number': s.mobile_number,
+                'department_id': s.department_id,
+                'batch': s.batch,
+                'is_active': s.account.is_active if s.account else True
+            })
+        
+        return Response({
+            "staff": list(staff_list),
+            "students": list(student_list),
+            "departments": list(depts),
+            "batches": sorted(list(batches)),
+            "maintenance": {
+                "staff": institution.maintenance_staff,
+                "student": institution.maintenance_students,
+                "hod": institution.maintenance_hod,
+                "inst_admin": institution.maintenance_inst_admin,
+                "ja": institution.maintenance_ja
+            },
+            "metrics": {
+                "students": students_count,
+                "staff": StaffProfile.objects.filter(institution=institution).count(),
+                "departments": depts.count()
+            }
+        })
+
+    def patch(self, request, pk):
+        """Update institution maintenance or staff roles/depts"""
+        institution = get_object_or_404(Institution, pk=pk)
+        action = request.data.get('action')
+        
+        if action == 'toggle_maintenance':
+            role = request.data.get('role')
+            value = request.data.get('value')
+            if role == 'staff': institution.maintenance_staff = value
+            elif role == 'student': institution.maintenance_students = value
+            elif role == 'hod': institution.maintenance_hod = value
+            elif role == 'inst_admin': institution.maintenance_inst_admin = value
+            elif role == 'ja': institution.maintenance_ja = value
+            institution.save()
+            return Response({"message": "Maintenance updated"})
+            
+        elif action == 'update_role':
+            staff_id = request.data.get('staff_id')
+            new_role = request.data.get('role')
+            staff = get_object_or_404(StaffProfile, id=staff_id, institution=institution)
+            staff.role = new_role
+            staff.save()
+            return Response({"message": "Role updated"})
+
+        elif action == 'update_dept':
+            staff_id = request.data.get('staff_id')
+            dept_id = request.data.get('dept_id')
+            staff = get_object_or_404(StaffProfile, id=staff_id, institution=institution)
+            if dept_id:
+                dept = get_object_or_404(Department, id=dept_id, institution=institution)
+                staff.department = dept
+            else:
+                staff.department = None
+            staff.save()
+            return Response({"message": "Department updated"})
+            
+        elif action == 'toggle_student_lock':
+            student_id = request.data.get('student_id')
+            student = get_object_or_404(StudentProfile, id=student_id, institution=institution)
+            if student.account:
+                student.account.is_active = not student.account.is_active
+                student.account.save(update_fields=['is_active'])
+            return Response({"message": f"Student {'unlocked' if student.account.is_active else 'locked'}"})
+            
+        elif action == 'delete_batch':
+            batch_name = request.data.get('batch')
+            dept_id = request.data.get('dept_id')
+            
+            queryset = StudentProfile.objects.filter(institution=institution, batch=batch_name)
+            if dept_id:
+                queryset = queryset.filter(department_id=dept_id)
+            
+            # Delete associated users (this will cascade delete profiles)
+            user_ids = queryset.filter(account__isnull=False).values_list('account_id', flat=True)
+            from django.contrib.auth.models import User
+            User.objects.filter(id__in=user_ids).delete()
+            # Delete any remaining profiles that had no account
+            queryset.delete()
+            
+            return Response({"message": f"Batch {batch_name} deleted successfully"})
+            
+        return Response({"error": "Invalid action"}, status=400)
+
+class GlobalMaintenanceControlView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        config, _ = SystemConfiguration.objects.get_or_create(id=1)
+        role = request.data.get('role')
+        value = request.data.get('value')
+        
+        if role == 'staff': config.global_maintenance_staff = value
+        elif role == 'student': config.global_maintenance_students = value
+        elif role == 'hod': config.global_maintenance_hod = value
+        
+        config.save()
+        return Response({"message": "Global maintenance updated"})
+
+class DepartmentManagementView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, inst_pk):
+        institution = get_object_or_404(Institution, pk=inst_pk)
+        name = request.data.get('name')
+        code = request.data.get('code')
+        
+        if Department.objects.filter(code=code).exists():
+            return Response({"error": "Code already exists"}, status=400)
+            
+        dept = Department.objects.create(institution=institution, name=name, code=code)
+        return Response({"message": "Department added", "id": dept.id})
+
+    def delete(self, request, inst_pk, pk):
+        dept = get_object_or_404(Department, pk=pk, institution_id=inst_pk)
+        dept.delete()
+        return Response({"message": "Department deleted"})
+
+class DiscussionThreadListView(UnifiedAuthMixin, APIView):
+    def get(self, request):
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        # Cleanup handled in global messages fetcher usually, but we filter here too
+        cutoff = timezone.now() - timedelta(hours=24)
+        messages = DiscussionMessage.objects.filter(
+            thread_type="individual",
+            created_at__gte=cutoff
+        ).filter(
+            Q(sender=request.user) | Q(recipient=request.user)
+        ).order_by("-created_at")
+
+        threads = {}
+        for msg in messages:
+            other_user = msg.recipient if msg.sender == request.user else msg.sender
+            if not other_user:
+                continue
+            
+            other_id = other_user.id
+            if other_id not in threads:
+                name = "Unknown"
+                identifier = ""
+                if hasattr(other_user, "student_profile"):
+                    name = other_user.student_profile.name
+                    identifier = other_user.student_profile.register_number
+                elif hasattr(other_user, "staff_profile"):
+                    name = other_user.staff_profile.name
+                    identifier = other_user.staff_profile.faculty_id
+                
+                threads[other_id] = {
+                    "other_user_id": other_id,
+                    "other_user_name": name,
+                    "other_user_reg": identifier,
+                    "latest_message": msg.body[:50],
+                    "timestamp": msg.created_at,
+                    "unread_count": 0,
+                    "is_self_latest": msg.sender == request.user
+                }
+            
+            if msg.recipient == request.user and not msg.is_read:
+                threads[other_id]["unread_count"] += 1
+
+        thread_list = list(threads.values())
+        thread_list.sort(key=lambda x: x["timestamp"], reverse=True)
+        return Response(thread_list)
+
+class StaffDeptListView(UnifiedAuthMixin, APIView):
+    """Returns staff from the same department as the student for DM list."""
+    def get(self, request):
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+        if profile_type == "student":
+            staff_qs = StaffProfile.objects.filter(department=profile.department)
+        else:
+            staff_qs = StaffProfile.objects.filter(institution=profile.institution)
+        
+        data = []
+        for s in staff_qs:
+            data.append({
+                "faculty_id": s.faculty_id,
+                "name": s.name,
+                "role": s.get_role_display(),
+                "department": s.department.name if s.department else ""
+            })
+        return Response(data)

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Contest, Department, DiscussionMessage, Problem, ProblemSolution, StudentProfile, Submission, TestCase
+from .models import Contest, Department, DiscussionMessage, Problem, ProblemSolution, StudentProfile, StaffProfile, Submission, TestCase
 from .services.execution_adapter import clean_expected_output
 
 
@@ -11,6 +11,12 @@ DEFAULT_PRACTICE_LANGUAGES = [
     "JavaScript",
     "Python",
 ]
+
+
+class StaffProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StaffProfile
+        fields = ("id", "name", "faculty_id", "role", "department")
 
 
 class StudentProfileSerializer(serializers.ModelSerializer):
@@ -35,6 +41,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             "current_streak",
             "login_days",
             "campus_rank",
+            "tracked_companies",
             "password_is_set",
         )
 
@@ -55,6 +62,7 @@ class ProblemSerializer(serializers.ModelSerializer):
             "is_daily",
             "progress_state",
             "available_languages",
+            "companies",
         )
 
     def get_progress_state(self, obj):
@@ -149,39 +157,88 @@ class StudentLookupListSerializer(serializers.ModelSerializer):
 
 class DiscussionMessageSerializer(serializers.ModelSerializer):
     problem_slug = serializers.CharField(source="problem.slug", read_only=True, default=None)
-    author = serializers.SerializerMethodField()
+    sender_name = serializers.SerializerMethodField()
+    sender_reg = serializers.SerializerMethodField()
+    recipient_name = serializers.SerializerMethodField()
+    is_self = serializers.SerializerMethodField()
+
+    poll_results = serializers.SerializerMethodField()
+    user_vote = serializers.SerializerMethodField()
 
     class Meta:
         model = DiscussionMessage
-        fields = ("id", "author", "body", "problem_slug", "created_at")
+        fields = (
+            "id", "sender_name", "sender_reg", "recipient_name", 
+            "thread_type", "batch_name", "body", "is_read", 
+            "problem_slug", "created_at", "is_self",
+            "is_poll", "poll_options", "poll_results", "user_vote"
+        )
 
-    def get_author(self, obj) -> str:
-        """
-        Returns the student's full name plus the last digit of their register
-        number as a light privacy veil.
+    def get_sender_name(self, obj) -> str:
+        if obj.sender:
+            if hasattr(obj.sender, "student_profile"):
+                return obj.sender.student_profile.name
+            if hasattr(obj.sender, "staff_profile"):
+                return obj.sender.staff_profile.name
+            return obj.sender.username
+        return obj.student.name if obj.student else "Unknown"
 
-        Examples:
-            "Arun Kumar …0"
-            "Meera …7"
-            "Student …"    ← fallback when both fields are blank
-        """
-        name = (obj.student.name or "").strip()
-        reg = (obj.student.register_number or "").strip()
+    def get_sender_reg(self, obj) -> str:
+        if obj.sender:
+            if hasattr(obj.sender, "student_profile"):
+                return obj.sender.student_profile.register_number
+            if hasattr(obj.sender, "staff_profile"):
+                return obj.sender.staff_profile.faculty_id
+        if obj.student:
+            return obj.student.register_number
+        return ""
 
-        last_digit = reg[-1] if reg else ""
-        suffix = f" …{last_digit}" if last_digit else ""
+    def get_recipient_name(self, obj) -> str:
+        if obj.recipient:
+            if hasattr(obj.recipient, "student_profile"):
+                return obj.recipient.student_profile.name
+            if hasattr(obj.recipient, "staff_profile"):
+                return obj.recipient.staff_profile.name
+            return obj.recipient.username
+        return ""
 
-        return f"{name}{suffix}" if name else f"Student{suffix}"
+    def get_is_self(self, obj) -> bool:
+        request = self.context.get("request")
+        if request and request.user.is_authenticated:
+            # Robust comparison using IDs
+            sender_id = obj.sender.id if obj.sender else None
+            return sender_id == request.user.id
+        return False
+
+    def get_poll_results(self, obj):
+        if not obj.is_poll:
+            return None
+        results = [0] * len(obj.poll_options)
+        for vote_idx in obj.poll_votes.values():
+            if 0 <= vote_idx < len(results):
+                results[vote_idx] += 1
+        return results
+
+    def get_user_vote(self, obj):
+        request = self.context.get("request")
+        if not obj.is_poll or not request or not request.user.is_authenticated:
+            return None
+        return obj.poll_votes.get(str(request.user.id))
 
 
 class DiscussionMessageCreateSerializer(serializers.Serializer):
-    body = serializers.CharField(max_length=1200)
-    problem_slug = serializers.CharField(max_length=160, required=False, allow_blank=True)
+    body = serializers.CharField(max_length=2000)
+    thread_type = serializers.ChoiceField(choices=DiscussionMessage.THREAD_TYPES, default="general")
+    recipient_reg = serializers.CharField(required=False, allow_blank=True)
+    batch_name = serializers.CharField(required=False, allow_blank=True)
+    problem_slug = serializers.CharField(required=False, allow_blank=True)
+    is_poll = serializers.BooleanField(default=False)
+    poll_options = serializers.ListField(child=serializers.CharField(), required=False, default=list)
 
     def validate_body(self, value):
         cleaned = value.strip()
-        if len(cleaned) < 4:
-            raise serializers.ValidationError("Enter a clearer doubt or error message.")
+        if len(cleaned) < 2:
+            raise serializers.ValidationError("Message is too short.")
         return cleaned
 
 

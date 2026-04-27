@@ -1,9 +1,10 @@
 // Staff Dashboard - Staff view with contests and batch-wise analytics
 import { useState, useEffect } from 'react';
-import { Users, Trophy, BookOpen, BarChart3, Plus, Eye } from 'lucide-react';
+import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare } from 'lucide-react';
 import EnhancedContestCreator from './EnhancedContestCreator';
 import StudentAnalyticsModal from './StudentAnalyticsModal';
 import ContestDetailModal from '../common/ContestDetailModal';
+import DiscussPage from '../student/pages/DiscussPage';
 
 const StaffDashboard = ({ institutionId }) => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -14,8 +15,10 @@ const StaffDashboard = ({ institutionId }) => {
   const [showContestCreator, setShowContestCreator] = useState(false);
   const [selectedStudentForAnalytics, setSelectedStudentForAnalytics] = useState(null);
   const [showContestDetail, setShowContestDetail] = useState(null);
+  const [selectedDeptId, setSelectedDeptId] = useState(null);
+  const [departments, setDepartments] = useState([]);
 
-  async function loadStaffData() {
+  async function loadStaffData(deptId = null) {
     try {
       setLoading(true);
       // Get current staff profile from dashboard endpoint
@@ -24,22 +27,46 @@ const StaffDashboard = ({ institutionId }) => {
         const data = await res.json();
         console.log('Dashboard data:', data); // Debug log
         
-        // For staff, try facultyId first, then registerNumber as fallback
-        const facultyId = data.user?.facultyId || data.user?.registerNumber;
-        
-        if (facultyId) {
-          // Load detailed staff data
-          const detailRes = await fetch(`/api/staff/${facultyId}/details/`, { credentials: 'include' });
-          if (detailRes.ok) {
-            const detailData = await detailRes.json();
-            console.log('Staff detail data:', detailData); // Debug log
-            setStaffDetail(detailData);
+        if (data.user?.departments) {
+          setDepartments(data.user.departments);
+        }
+
+        if (deptId) {
+          // Load department-specific data
+          const deptRes = await fetch(`/api/departments/${deptId}/details/`, { credentials: 'include' });
+          if (deptRes.ok) {
+            const deptData = await deptRes.json();
+            // Wrap in same structure as staff details
+            setStaffDetail({
+              staff: {
+                ...data.user,
+                department: deptData.department,
+                assigned_students: deptData.department.assigned_students
+              },
+              analytics: deptData.analytics
+            });
           } else {
-            const errorData = await detailRes.json();
-            setError(errorData.detail || 'Failed to load staff details');
+            const errorData = await deptRes.json();
+            setError(errorData.detail || 'Failed to load department details');
           }
         } else {
-          setError('Faculty ID not found in user data');
+          // For staff, try facultyId first, then registerNumber as fallback
+          const facultyId = data.user?.facultyId || data.user?.registerNumber;
+          
+          if (facultyId) {
+            // Load detailed staff data
+            const detailRes = await fetch(`/api/staff/${facultyId}/details/`, { credentials: 'include' });
+            if (detailRes.ok) {
+              const detailData = await detailRes.json();
+              console.log('Staff detail data:', detailData); // Debug log
+              setStaffDetail(detailData);
+            } else {
+              const errorData = await detailRes.json();
+              setError(errorData.detail || 'Failed to load staff details');
+            }
+          } else {
+            setError('Faculty ID not found in user data');
+          }
         }
       } else {
         const errorData = await res.json();
@@ -106,12 +133,21 @@ const StaffDashboard = ({ institutionId }) => {
     loadStaffData(); // Reload data after contest creation
   }
 
+  const sidebarItems = [
+    { id: 'overview', label: 'Overview', icon: BarChart3 },
+    { id: 'performance', label: 'Performance', icon: Trophy },
+    { id: 'contests', label: 'Contests', icon: BookOpen },
+    { id: 'batches', label: 'Batches', icon: Users },
+    { id: 'chat', label: 'Discuss', icon: MessageSquare },
+  ];
+
   return (
-    <div className="admin-dashboard">
+    <div className="admin-dashboard-layout">
       {showContestCreator && (
         <EnhancedContestCreator
           onClose={() => setShowContestCreator(false)}
           onSuccess={handleContestCreated}
+          initialType={showContestCreator.type || 'programming'}
         />
       )}
 
@@ -129,567 +165,756 @@ const StaffDashboard = ({ institutionId }) => {
         />
       )}
 
-      <div className="admin-container">
-        <div className="admin-header">
-          <div>
-            <h1>Staff Dashboard</h1>
-            <p>{staff.name} • {staff.department?.name || 'Department'}</p>
-          </div>
-          <button
-            onClick={() => setShowContestCreator(true)}
-            style={{
-              padding: '10px 20px',
-              borderRadius: 8,
-              border: 'none',
-              background: '#4f46e5',
-              color: 'white',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              fontSize: 14,
-              fontWeight: 500,
-            }}
-          >
-            <Plus size={18} />
-            Create Contest
-          </button>
+      {/* Sidebar Navigation */}
+      <aside className="hod-sidebar">
+        <div className="sidebar-header">
+          <h2>Faculty Panel</h2>
         </div>
+        <nav className="sidebar-nav">
+          {sidebarItems.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`sidebar-item ${activeTab === item.id ? 'active' : ''}`}
+            >
+              <item.icon size={20} className="nav-icon" />
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        
+        <div style={{ padding: '24px', borderTop: '1px solid var(--bg-2)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ 
+              width: 32, height: 32, borderRadius: '50%', 
+              background: 'var(--sage-100)', color: 'var(--olive-700)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '12px', fontWeight: 'bold'
+            }}>
+              {(staff.name || 'F')[0]}
+            </div>
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-hard)', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                {staff.name}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-soft)' }}>{staff.faculty_id}</div>
+            </div>
+          </div>
+        </div>
+      </aside>
 
-        {error && (
-          <div style={{ padding: 16, background: '#fee2e2', borderRadius: 8, color: '#dc2626', marginBottom: 16 }}>
-            Error: {error}
+      <main className={`hod-main-content ${activeTab === 'chat' ? 'no-padding' : ''}`}>
+        {activeTab !== 'chat' && (
+          <div className="admin-header">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+              <div>
+                <h1>{sidebarItems.find(i => i.id === activeTab)?.label || 'Dashboard'}</h1>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <p style={{ margin: 0 }}>Faculty Management Console • {staff.department?.name || staff.institution?.name || 'Overall Institution'}</p>
+                  
+                  {departments.length > 0 && (
+                    <select 
+                      value={selectedDeptId || ''} 
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const newId = val ? parseInt(val) : null;
+                        setSelectedDeptId(newId);
+                        loadStaffData(newId);
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-soft)',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        color: 'var(--olive-700)',
+                        background: 'var(--sage-50)',
+                        cursor: 'pointer',
+                        outline: 'none'
+                      }}
+                    >
+                      <option value="">Overall Institution</option>
+                      {departments.map(d => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button 
+                  onClick={() => window.open(`/api/staff/${staff.faculty_id}/report/`, '_blank')}
+                  style={{ 
+                    padding: '12px 24px', borderRadius: '12px', border: '1px solid var(--border-soft)',
+                    background: 'white', color: 'var(--olive-700)', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 8, fontSize: '14px', fontWeight: '600'
+                  }}
+                >
+                  <FileText size={18} /> Get My Report
+                </button>
+                <button
+                  onClick={() => setShowContestCreator({ type: 'programming' })}
+                  style={{
+                    padding: '12px 20px',
+                    borderRadius: '12px',
+                    border: 'none',
+                    background: '#2563eb',
+                    color: 'white',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    boxShadow: '0 4px 12px rgba(37, 99, 235, 0.2)'
+                  }}
+                >
+                  <Plus size={18} />
+                  New Coding Contest
+                </button>
+                <button
+                  onClick={() => setShowContestCreator({ type: 'aptitude' })}
+                  style={{
+                    padding: '12px 20px',
+                    borderRadius: '12px',
+                    border: 'none',
+                    background: '#9333ea',
+                    color: 'white',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    boxShadow: '0 4px 12px rgba(147, 51, 234, 0.2)'
+                  }}
+                >
+                  <Plus size={18} />
+                  New Aptitude Contest
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
-        {/* Stats Cards */}
-        <div className="admin-stats-grid">
-          <div className="admin-stat-card">
-            <div className="admin-stat-info">
-              <h3>Assigned Students</h3>
-              <p className="stat-value">{staff.assigned_students || 0}</p>
-            </div>
-            <div className="admin-stat-icon blue">
-              <Users size={24} />
-            </div>
+        {error && (
+          <div style={{ padding: 16, background: '#fee2e2', borderRadius: 12, color: '#dc2626', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
+             <Eye size={20} />
+             <strong>Error:</strong> {error}
           </div>
+        )}
 
-          <div className="admin-stat-card">
-            <div className="admin-stat-info">
-              <h3>Contests Created</h3>
-              <p className="stat-value">{analytics.contests?.length || 0}</p>
-            </div>
-            <div className="admin-stat-icon orange">
-              <Trophy size={24} />
-            </div>
-          </div>
+        <div className="tab-container">
 
-          <div className="admin-stat-card">
-            <div className="admin-stat-info">
-              <h3>Problems Solved</h3>
-              <p className="stat-value">{analytics.total_solved || 0}</p>
-            </div>
-            <div className="admin-stat-icon green">
-              <BookOpen size={24} />
-            </div>
-          </div>
-        </div>
 
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 10, marginTop: 24, marginBottom: 16, borderBottom: '1px solid rgba(57, 72, 42, 0.1)', paddingBottom: 8 }}>
-          {['overview', 'contests', 'batches', 'top-performers'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              style={{
-                padding: '8px 16px',
-                borderRadius: 6,
-                border: 'none',
-                background: activeTab === tab ? 'rgba(57, 72, 42, 0.1)' : 'transparent',
-                color: activeTab === tab ? '#39482a' : '#666',
-                fontWeight: activeTab === tab ? 500 : 400,
-                cursor: 'pointer',
-                textTransform: 'capitalize',
-              }}
-            >
-              {tab.replace('-', ' ')}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab Content */}
-        <div style={{ padding: 20, background: 'rgba(57, 72, 42, 0.02)', borderRadius: 8 }}>
-          {/* Overview Tab */}
           {activeTab === 'overview' && (
-            <div>
-              <h3 style={{ marginBottom: 16 }}>Overview</h3>
-              <p style={{ color: 'var(--text-soft)' }}>
-                Your department activity and performance summary.
-              </p>
+            <div className="overview-tab">
+              <div className="metric-grid" style={{ marginBottom: 32 }}>
+                <div className="metric-card premium-card">
+                  <div className="icon-box" style={{ background: '#eff6ff', color: '#2563eb' }}>
+                    <Users size={24} />
+                  </div>
+                  <div>
+                    <h4>ASSIGNED STUDENTS</h4>
+                    <div className="value">{staff.assigned_students || 0}</div>
+                  </div>
+                </div>
 
-              {/* Weekly Progress */}
-              <div style={{ marginTop: 24, marginBottom: 32 }}>
-                <h4 style={{ marginBottom: 16 }}>Weekly Department Activity</h4>
-                <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 120, padding: '0 8px' }}>
-                  {analytics.weekly_progress?.map((day, i) => {
-                    const maxCount = Math.max(...(analytics.weekly_progress?.map(d => d.count) || [1]), 1);
-                    const height = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
-                    return (
-                      <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <div style={{
-                          width: '100%',
-                          height: `${Math.max(height, 5)}%`,
-                          background: height > 50 ? '#059669' : '#10b981',
-                          borderRadius: '4px 4px 0 0',
-                          minHeight: 4,
-                        }} />
-                        <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>{day.day}</div>
-                        <div style={{ fontSize: 10, color: '#999' }}>{day.count}</div>
-                      </div>
-                    );
-                  })}
+                <div className="metric-card premium-card">
+                  <div className="icon-box" style={{ background: '#fff7ed', color: '#ea580c' }}>
+                    <Trophy size={24} />
+                  </div>
+                  <div>
+                    <h4>CONTESTS CREATED</h4>
+                    <div className="value">{analytics.contests?.length || 0}</div>
+                  </div>
+                </div>
+
+                <div className="metric-card premium-card">
+                  <div className="icon-box" style={{ background: '#fef2f2', color: '#dc2626' }}>
+                    <Activity size={24} />
+                  </div>
+                  <div>
+                    <h4>ACTIVE TODAY</h4>
+                    <div className="value">{analytics.engagement_summary?.active_today || 0}</div>
+                  </div>
+                </div>
+
+                <div className="metric-card premium-card">
+                  <div className="icon-box" style={{ background: '#f0fdf4', color: '#16a34a' }}>
+                    <BarChart3 size={24} />
+                  </div>
+                  <div>
+                    <h4>AVG. SOLVED</h4>
+                    <div className="value">{analytics.engagement_summary?.avg_solved || 0}</div>
+                  </div>
                 </div>
               </div>
 
-              {/* Recent Contests Preview */}
-              {analytics.contests && analytics.contests.length > 0 && (
-                <div>
-                  <h4 style={{ marginBottom: 16 }}>Recent Contests</h4>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 32 }}>
+                {/* Weekly Activity */}
+                <div className="premium-card">
+                  <h3 style={{ margin: '0 0 20px', fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-hard)' }}>Weekly Activity Progress</h3>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 160, padding: '0 12px' }}>
+                    {analytics.weekly_progress?.map((day, i) => {
+                      const maxCount = Math.max(...(analytics.weekly_progress?.map(d => d.count) || [1]), 1);
+                      const height = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
+                      return (
+                        <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                          <div 
+                            style={{
+                              width: '100%',
+                              height: `${Math.max(height, 5)}%`,
+                              background: height > 70 ? 'var(--olive-700)' : height > 30 ? 'var(--olive-500)' : 'var(--sage-200)',
+                              borderRadius: '8px 8px 0 0',
+                              transition: 'height 1s ease-out'
+                            }}
+                            title={`${day.count} submissions`}
+                          />
+                          <div style={{ fontSize: '11px', color: 'var(--text-soft)', marginTop: 8, fontWeight: '600' }}>{day.day}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Recent Department Activity Feed */}
+                <div className="premium-card">
+                  <h3 style={{ margin: '0 0 20px', fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-hard)' }}>Live Activity Feed</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {(analytics.recent_activity || []).map((act, idx) => (
+                      <div key={idx} style={{ display: 'flex', gap: 16, paddingBottom: 16, borderBottom: idx === (analytics.recent_activity.length - 1) ? 'none' : '1px solid var(--border-soft)' }}>
+                        <div style={{ 
+                          width: 40, height: 40, borderRadius: '12px', background: 'var(--sage-100)', 
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                          fontSize: '14px', fontWeight: '800', color: 'var(--olive-700)'
+                        }}>
+                          {(act.student_name || 'S')[0]}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '14px', lineHeight: '1.4' }}>
+                            <strong style={{ color: 'var(--text-hard)' }}>{act.student_name || 'Unknown Student'}</strong>
+                            <span style={{ color: 'var(--text-soft)' }}> solved </span>
+                            <strong style={{ color: 'var(--olive-700)' }}>{act.problem_title || 'a problem'}</strong>
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: 4 }}>
+                            {new Date(act.solved_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {(!analytics.recent_activity || analytics.recent_activity.length === 0) && (
+                      <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-soft)' }}>
+                        No recent activity found.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Recent Contests */}
+              <div className="premium-card">
+                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-hard)' }}>Recent Contest Submissions</h3>
+                    <button onClick={() => setActiveTab('contests')} style={{ fontSize: '13px', color: 'var(--olive-700)', background: 'none', border: 'none', fontWeight: '600', cursor: 'pointer' }}>View All →</button>
+                 </div>
+                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+                    {analytics.contests?.slice(0, 3).map(contest => (
+                      <div 
+                        key={contest.id} 
+                        onClick={() => setShowContestDetail(contest.id)}
+                        style={{ 
+                          padding: '20px', 
+                          background: 'white', 
+                          borderRadius: '20px', 
+                          border: '1px solid var(--border-soft)',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease'
+                        }}
+                        className="contest-list-item-hover"
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
+                          <span style={{ 
+                            padding: '2px 10px', 
+                            borderRadius: '8px', 
+                            background: contest.status === 'active' ? '#dcfce7' : '#f1f5f9',
+                            color: contest.status === 'active' ? '#166534' : '#64748b',
+                            fontSize: '11px', 
+                            fontWeight: '800', 
+                            textTransform: 'uppercase' 
+                          }}>
+                            {contest.status}
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--olive-700)', fontWeight: '700', fontSize: '13px' }}>
+                            <Trophy size={14} />
+                            <span>{contest.total_submissions || 0}</span>
+                          </div>
+                        </div>
+                        <div style={{ fontWeight: '800', color: 'var(--text-hard)', fontSize: '16px', marginBottom: 6, lineHeight: '1.4' }}>{contest.title}</div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-soft)', fontWeight: '500' }}>
+                          {new Date(contest.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </div>
+                      </div>
+                    ))}
+                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Performance Tab */}
+          {activeTab === 'performance' && (
+            <div className="performance-tab">
+              <div className="premium-card" style={{ marginBottom: 32 }}>
+                <div style={{ textAlign: 'center', marginBottom: 40 }}>
+                  <h2 style={{ fontSize: '1.75rem', fontWeight: '900', color: 'var(--text-hard)', marginBottom: 8 }}>Department Leaderboard</h2>
+                  <p style={{ color: 'var(--text-soft)' }}>Recognizing the top achievers in {staff.department?.name}.</p>
+                </div>
+
+                {/* Podium Visualization */}
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'flex-end', 
+                  justifyContent: 'center', 
+                  gap: 12, 
+                  marginBottom: 60,
+                  padding: '0 20px',
+                  minHeight: 280
+                }}>
+                  {/* 2nd Place */}
+                  {analytics.top_performers.length > 1 && (
+                    <div 
+                      style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}
+                      onClick={() => setSelectedStudentForAnalytics(analytics.top_performers[1].id)}
+                    >
+                      <div style={{ marginBottom: 12, position: 'relative' }}>
+                        <div style={{ 
+                          width: 64, height: 64, borderRadius: '20px', background: 'white',
+                          margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          border: '3px solid white', boxShadow: '0 8px 16px rgba(0,0,0,0.08)'
+                        }}>
+                          <span style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-hard)' }}>{(analytics.top_performers[1].name || 'S')[0]}</span>
+                        </div>
+                      </div>
+                      <div style={{ 
+                        height: 120, background: 'linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)', 
+                        borderRadius: '16px 16px 0 0', display: 'flex', flexDirection: 'column', 
+                        justifyContent: 'center', padding: '16px', position: 'relative'
+                      }}>
+                        <div style={{ 
+                          position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+                          width: 24, height: 24, background: '#94a3b8', color: 'white', borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '900'
+                        }}>2</div>
+                        <div style={{ fontWeight: '800', fontSize: '14px', color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{analytics.top_performers[1].name}</div>
+                        <div style={{ fontSize: '20px', fontWeight: '900', color: '#1e293b' }}>{analytics.top_performers[1].solved_count || 0}</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 1st Place */}
+                  {analytics.top_performers.length > 0 && (
+                    <div 
+                      style={{ flex: 1.2, textAlign: 'center', position: 'relative', zIndex: 1, cursor: 'pointer' }}
+                      onClick={() => setSelectedStudentForAnalytics(analytics.top_performers[0].id)}
+                    >
+                      <div style={{ marginBottom: 16, position: 'relative' }}>
+                        <div style={{ 
+                          width: 80, height: 80, borderRadius: '24px', background: 'white',
+                          margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          border: '4px solid #fbbf24', boxShadow: '0 12px 24px rgba(251, 191, 36, 0.2)'
+                        }}>
+                          <span style={{ fontSize: '28px', fontWeight: '800', color: '#b45309' }}>{(analytics.top_performers[0].name || 'S')[0]}</span>
+                        </div>
+                        <div style={{ 
+                          position: 'absolute', bottom: -8, left: '50%', transform: 'translateX(-50%)',
+                          background: '#fbbf24', color: '#92400e', padding: '2px 10px', borderRadius: '10px',
+                          fontSize: '10px', fontWeight: '900', textTransform: 'uppercase'
+                        }}>CHAMPION</div>
+                      </div>
+                      <div style={{ 
+                        height: 160, background: 'linear-gradient(180deg, #fef3c7 0%, #fde68a 100%)', 
+                        borderRadius: '20px 20px 0 0', display: 'flex', flexDirection: 'column', 
+                        justifyContent: 'center', padding: '16px', position: 'relative',
+                        boxShadow: '0 -10px 20px rgba(251, 191, 36, 0.1)'
+                      }}>
+                        <div style={{ 
+                          position: 'absolute', top: -16, left: '50%', transform: 'translateX(-50%)',
+                          width: 32, height: 32, background: '#fbbf24', color: 'white', borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '900',
+                          boxShadow: '0 4px 12px rgba(251, 191, 36, 0.3)'
+                        }}>1</div>
+                        <div style={{ fontWeight: '900', fontSize: '16px', color: '#92400e', marginBottom: 4 }}>{analytics.top_performers[0].name}</div>
+                        <div style={{ fontSize: '32px', fontWeight: '900', color: '#78350f' }}>{analytics.top_performers[0].solved_count || 0}</div>
+                        <div style={{ fontSize: '12px', fontWeight: '700', color: '#b45309', textTransform: 'uppercase' }}>Solved</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 3rd Place */}
+                  {analytics.top_performers.length > 2 && (
+                    <div 
+                      style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}
+                      onClick={() => setSelectedStudentForAnalytics(analytics.top_performers[2].id)}
+                    >
+                      <div style={{ marginBottom: 12, position: 'relative' }}>
+                        <div style={{ 
+                          width: 56, height: 56, borderRadius: '18px', background: 'white',
+                          margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          border: '3px solid #fdba74', boxShadow: '0 8px 16px rgba(253, 186, 116, 0.15)'
+                        }}>
+                          <span style={{ fontSize: '20px', fontWeight: '800', color: '#c2410c' }}>{(analytics.top_performers[2].name || 'S')[0]}</span>
+                        </div>
+                      </div>
+                      <div style={{ 
+                        height: 90, background: 'linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%)', 
+                        borderRadius: '16px 16px 0 0', display: 'flex', flexDirection: 'column', 
+                        justifyContent: 'center', padding: '16px', position: 'relative'
+                      }}>
+                        <div style={{ 
+                          position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+                          width: 24, height: 24, background: '#fdba74', color: 'white', borderRadius: '50%',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '900'
+                        }}>3</div>
+                        <div style={{ fontWeight: '800', fontSize: '14px', color: '#9a3412', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{analytics.top_performers[2].name}</div>
+                        <div style={{ fontSize: '18px', fontWeight: '900', color: '#7c2d12' }}>{analytics.top_performers[2].solved_count || 0}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Extended Leaderboard List */}
+                <div style={{ maxWidth: 800, margin: '0 auto' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {analytics.contests.slice(0, 3).map((contest) => (
-                      <div key={contest.id} style={{ padding: 16, background: '#f9fafb', borderRadius: 8, border: '1px solid #e5e7eb' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <strong>{contest.title}</strong>
-                          <span style={{
-                            padding: '2px 8px',
-                            borderRadius: 12,
-                            background: contest.status === 'active' ? '#d1fae5' : '#f3f4f6',
-                            color: contest.status === 'active' ? '#059669' : '#666',
-                            fontSize: 11,
-                            textTransform: 'capitalize',
+                    {analytics.top_performers?.slice(3).map((student, idx) => (
+                      <div 
+                        key={student.id} 
+                        onClick={() => setSelectedStudentForAnalytics(student.id)}
+                        className="performer-item-hover"
+                        style={{ 
+                          display: 'flex', 
+                          justifyContent: 'space-between', 
+                          alignItems: 'center', 
+                          padding: '20px 24px', 
+                          background: 'white', 
+                          borderRadius: '20px',
+                          border: '1px solid var(--border-soft)',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                          <div style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-soft)', width: 24 }}>{idx + 4}</div>
+                          <div style={{ 
+                            width: 48, height: 48, borderRadius: '14px', 
+                            background: 'var(--bg-2)', color: 'var(--olive-700)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '18px', fontWeight: '800'
+                          }}>
+                            {(student.name || 'S')[0]}
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-hard)' }}>{student.name || 'Student'}</div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>{student.id}</div>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
+                           <div style={{ textAlign: 'center' }}>
+                             <div style={{ fontSize: '20px', fontWeight: '900', color: 'var(--olive-700)' }}>{student.solved_count}</div>
+                             <div style={{ fontSize: '10px', color: 'var(--text-soft)', textTransform: 'uppercase', fontWeight: '800' }}>Solved</div>
+                           </div>
+                           <div style={{ textAlign: 'center' }}>
+                             <div style={{ fontSize: '20px', fontWeight: '900', color: '#7c3aed' }}>{student.current_streak}</div>
+                             <div style={{ fontSize: '10px', color: 'var(--text-soft)', textTransform: 'uppercase', fontWeight: '800' }}>Streak</div>
+                           </div>
+                           <ChevronRight size={20} color="var(--text-soft)" />
+                        </div>
+                      </div>
+                    ))}
+                    {(analytics.top_performers || []).length === 0 && (
+                      <div style={{ textAlign: 'center', padding: '60px 20px', background: 'var(--bg-2)', borderRadius: '24px' }}>
+                        <Trophy size={48} color="var(--text-soft)" style={{ opacity: 0.2, marginBottom: 16 }} />
+                        <p style={{ color: 'var(--text-soft)', fontSize: '16px' }}>No performance data available yet.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Contests Tab */}
+          {activeTab === 'contests' && (
+            <div className="contests-tab">
+              <div className="premium-card">
+                <h3 style={{ margin: '0 0 24px', fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Your Contests</h3>
+
+                <div style={{ display: 'grid', gap: 16 }}>
+                  {analytics.contests?.map((contest) => (
+                    <div 
+                      key={contest.id} 
+                      onClick={() => setShowContestDetail(contest.id)}
+                      className="contest-list-item-hover"
+                      style={{
+                        padding: '20px 24px',
+                        background: 'white',
+                        borderRadius: '16px',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        border: '1px solid var(--border-soft)',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+                          <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: 'var(--text-hard)' }}>{contest.title}</h4>
+                          <span style={{ 
+                            padding: '2px 8px', borderRadius: '6px', 
+                            background: contest.status === 'active' ? '#dcfce7' : '#f1f5f9',
+                            color: contest.status === 'active' ? '#166534' : '#475569',
+                            fontSize: '10px', fontWeight: '700', textTransform: 'uppercase'
                           }}>
                             {contest.status}
                           </span>
                         </div>
-                        <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
-                          {contest.total_participants || 0} participants • {contest.total_submissions || 0} submissions
+                        <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>
+                          Created on {new Date(contest.created_at).toLocaleDateString()}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Contests Tab */}
-          {activeTab === 'contests' && (
-            <div>
-              <h3 style={{ marginBottom: 16 }}>Your Contests</h3>
-              <p style={{ color: 'var(--text-soft)' }}>
-                Contests you created with individual top performers.
-              </p>
-
-              {analytics.contests && analytics.contests.length > 0 ? (
-                <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
-                  {analytics.contests.map((contest) => (
-                    <div 
-                      key={contest.id} 
-                      onClick={() => setShowContestDetail(contest.id)}
-                      style={{
-                      padding: 20,
-                      background: 'white',
-                      borderRadius: 12,
-                      border: '1px solid #e5e7eb',
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-                      cursor: 'pointer',
-                      transition: 'transform 0.2s, box-shadow 0.2s',
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.transform = 'translateY(-2px)';
-                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.transform = 'none';
-                      e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.05)';
-                    }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                        <div>
-                          <strong style={{ fontSize: 18 }}>{contest.title}</strong>
-                          <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                            Created {new Date(contest.created_at).toLocaleDateString()}
-                            {contest.end_time && new Date(contest.end_time) < new Date() && (
-                              <span style={{ marginLeft: 8, color: '#dc2626', fontWeight: 600 }}>
-                                • Expired
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <span style={{
-                          padding: '4px 12px',
-                          borderRadius: 12,
-                          background: contest.end_time && new Date(contest.end_time) < new Date() ? '#fee2e2' :
-                                     contest.status === 'active' ? '#d1fae5' :
-                                     contest.status === 'published' ? '#dbeafe' :
-                                     contest.status === 'pending_approval' ? '#fef3c7' :
-                                     contest.status === 'approved' ? '#d1fae5' : '#f3f4f6',
-                          color: contest.end_time && new Date(contest.end_time) < new Date() ? '#dc2626' :
-                                contest.status === 'active' ? '#059669' :
-                                 contest.status === 'published' ? '#1e40af' :
-                                 contest.status === 'pending_approval' ? '#d97706' :
-                                 contest.status === 'approved' ? '#059669' : '#666',
-                          fontSize: 12,
-                          textTransform: 'capitalize',
-                        }}>
-                          {contest.end_time && new Date(contest.end_time) < new Date() ? 'Expired' : contest.status.replace('_', ' ')}
-                        </span>
-                      </div>
-
-                      <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(100px, 1fr))',
-                        gap: 16,
-                        marginBottom: 16,
-                        padding: 12,
-                        background: '#f9fafb',
-                        borderRadius: 8,
-                      }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
                         <div style={{ textAlign: 'center' }}>
-                          <div style={{ fontSize: 20, fontWeight: 'bold', color: '#39482a' }}>{contest.total_participants || 0}</div>
-                          <div style={{ fontSize: 11, color: '#666' }}>Participants</div>
+                          <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-hard)' }}>{contest.total_participants || 0}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Students</div>
                         </div>
                         <div style={{ textAlign: 'center' }}>
-                          <div style={{ fontSize: 20, fontWeight: 'bold', color: '#3b82f6' }}>{contest.total_submissions || 0}</div>
-                          <div style={{ fontSize: 11, color: '#666' }}>Submissions</div>
+                          <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--olive-700)' }}>{contest.total_submissions || 0}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Submissions</div>
                         </div>
+                        <ChevronRight size={20} color="var(--text-soft)" />
                       </div>
-
-                      {contest.top_performers && contest.top_performers.length > 0 && (
-                        <div>
-                          <div style={{ fontSize: 13, fontWeight: 500, color: '#666', marginBottom: 12 }}>
-                            🏆 Top Performers in this Contest
-                          </div>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                            <thead>
-                              <tr style={{ borderBottom: '1px solid #e5e7eb' }}>
-                                <th style={{ textAlign: 'left', padding: '8px', fontWeight: 500, color: '#666' }}>Rank</th>
-                                <th style={{ textAlign: 'left', padding: '8px', fontWeight: 500, color: '#666' }}>Student</th>
-                                <th style={{ textAlign: 'left', padding: '8px', fontWeight: 500, color: '#666' }}>Batch</th>
-                                <th style={{ textAlign: 'center', padding: '8px', fontWeight: 500, color: '#666' }}>Solved</th>
-                                <th style={{ textAlign: 'center', padding: '8px', fontWeight: 500, color: '#666' }}>Score</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {contest.top_performers.map((performer, idx) => (
-                                <tr key={idx} style={{ borderBottom: idx < contest.top_performers.length - 1 ? '1px solid #f3f4f6' : 'none' }}>
-                                  <td style={{ padding: '8px' }}>
-                                    <span style={{
-                                      width: 24,
-                                      height: 24,
-                                      borderRadius: '50%',
-                                      background: idx === 0 ? '#f59e0b' : idx === 1 ? '#9ca3af' : idx === 2 ? '#b45309' : '#e5e7eb',
-                                      color: idx < 3 ? 'white' : '#666',
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      fontSize: 12,
-                                      fontWeight: 600,
-                                    }}>
-                                      {idx + 1}
-                                    </span>
-                                  </td>
-                                  <td style={{ padding: '8px', fontWeight: 500 }}>{performer.name}</td>
-                                  <td style={{ padding: '8px' }}>
-                                    <span style={{
-                                      padding: '2px 6px',
-                                      background: '#e0e7ff',
-                                      color: '#4338ca',
-                                      borderRadius: 4,
-                                      fontSize: 11,
-                                    }}>
-                                      {performer.batch || 'N/A'}
-                                    </span>
-                                  </td>
-                                  <td style={{ padding: '8px', textAlign: 'center', color: '#059669', fontWeight: 600 }}>{performer.solved_in_contest}</td>
-                                  <td style={{ padding: '8px', textAlign: 'center' }}>{performer.score}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
                     </div>
                   ))}
                 </div>
-              ) : (
-                <div style={{ marginTop: 40, textAlign: 'center', color: '#999', padding: 40 }}>
-                  <Trophy size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
-                  <p>No contests created yet</p>
-                </div>
-              )}
+              </div>
             </div>
           )}
 
           {/* Batches Tab */}
           {activeTab === 'batches' && (
-            <div>
-              <h3 style={{ marginBottom: 16 }}>Batch-wise Performance</h3>
-              <p style={{ color: 'var(--text-soft)' }}>
-                Select a batch to view all students. Click a batch card to expand.
-              </p>
+            <div className="batches-tab">
+              <div className="premium-card" style={{ marginBottom: 24 }}>
+                <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Batch Insights</h3>
+                <p style={{ margin: '4px 0 24px', color: 'var(--text-soft)', fontSize: '14px' }}>Analyze performance across different student groups.</p>
 
-              {analytics.batch_wise && analytics.batch_wise.length > 0 ? (
-                <div style={{ marginTop: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  {analytics.batch_wise.map((batch) => {
-                    const isSelected = selectedBatch === batch.batch;
-                    const top3 = batch.top_performers?.slice(0, 3) || [];
-                    const allStudents = batch.students || [];
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+                   {analytics.batch_wise?.map(batch => (
+                     <div 
+                      key={batch.batch}
+                      onClick={() => setSelectedBatch(selectedBatch === batch.batch ? null : batch.batch)}
+                      style={{
+                        padding: '24px',
+                        background: selectedBatch === batch.batch ? 'var(--sage-100)' : 'white',
+                        borderRadius: '24px',
+                        border: selectedBatch === batch.batch ? '2px solid var(--olive-700)' : '1px solid var(--border-soft)',
+                        cursor: 'pointer',
+                        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                        boxShadow: selectedBatch === batch.batch ? '0 12px 24px rgba(57, 72, 42, 0.15)' : 'none',
+                        transform: selectedBatch === batch.batch ? 'translateY(-4px)' : 'none'
+                      }}
+                     >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                           <span style={{ padding: '4px 12px', background: 'var(--olive-900)', color: 'white', borderRadius: '8px', fontSize: '12px', fontWeight: '700' }}>Batch {batch.batch}</span>
+                           <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-hard)' }}>{batch.student_count}</div>
+                              <div style={{ fontSize: '10px', color: 'var(--text-soft)' }}>STUDENTS</div>
+                           </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 12, marginTop: 16 }}>
+                           <div style={{ flex: 1, padding: '8px', background: 'white', borderRadius: '12px', textAlign: 'center' }}>
+                              <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--olive-700)' }}>{batch.top_performers?.[0]?.solved_count || 0}</div>
+                              <div style={{ fontSize: '9px', color: 'var(--text-soft)' }}>TOP SCORE</div>
+                           </div>
+                           <div style={{ flex: 1, padding: '8px', background: 'white', borderRadius: '12px', textAlign: 'center' }}>
+                              <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-hard)' }}>{batch.students?.filter(s => s.current_streak > 0).length || 0}</div>
+                              <div style={{ fontSize: '9px', color: 'var(--text-soft)' }}>STREAKING</div>
+                           </div>
+                        </div>
+                     </div>
+                   ))}
+                </div>
+              </div>
+
+              {selectedBatch && (
+                <div className="premium-card">
+                  <h3 style={{ margin: '0 0 20px', fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-hard)' }}>
+                    Batch {selectedBatch} Students
+                  </h3>
+
+                  {/* Batch Podium */}
+                  {(() => {
+                    const currentBatchData = analytics.batch_wise.find(b => b.batch === selectedBatch);
+                    const top3 = currentBatchData?.top_performers || [];
+                    if (top3.length === 0) return null;
 
                     return (
-                      <div key={batch.batch} style={{
-                        background: 'white',
-                        borderRadius: 12,
-                        border: isSelected ? '2px solid #4f46e5' : '1px solid #e5e7eb',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-                        overflow: 'hidden',
+                      <div style={{ 
+                        marginBottom: 32, padding: '24px', background: '#f8fafc', 
+                        borderRadius: '24px', border: '1px solid #e2e8f0', textAlign: 'center' 
                       }}>
-                        {/* Batch Header - Clickable */}
-                        <div
-                          onClick={() => setSelectedBatch(isSelected ? null : batch.batch)}
-                          style={{
-                            padding: 16,
-                            cursor: 'pointer',
-                            background: isSelected ? '#eef2ff' : '#f9fafb',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            transition: 'background 0.2s',
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <span style={{
-                              padding: '6px 14px',
-                              background: '#4f46e5',
-                              color: 'white',
-                              borderRadius: 8,
-                              fontWeight: 600,
-                              fontSize: 14,
-                            }}>
-                              Batch {batch.batch}
-                            </span>
-                            <span style={{ color: '#666', fontSize: 14 }}>{batch.student_count} students</span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <span style={{ fontSize: 13, color: '#666' }}>
-                              Total Solved: {allStudents.reduce((sum, s) => sum + (s.solved_count || 0), 0)}
-                            </span>
-                            <span style={{
-                              fontSize: 18,
-                              color: '#666',
-                              transform: isSelected ? 'rotate(180deg)' : 'rotate(0deg)',
-                              transition: 'transform 0.2s',
-                            }}>
-                              ▼
-                            </span>
-                          </div>
+                        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-soft)', marginBottom: 24, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          Batch {selectedBatch} Achievers
                         </div>
-
-                        {/* Expanded Content - All Students */}
-                        {isSelected && (
-                          <div style={{ padding: 16 }}>
-                            {/* Top 3 Performers Preview */}
-                            {top3.length > 0 && (
-                              <div style={{ marginBottom: 16 }}>
-                                <div style={{ fontSize: 12, color: '#666', marginBottom: 10, fontWeight: 500 }}>
-                                  🏆 Top 3 Performers
-                                </div>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                                  {top3.map((student, idx) => (
-                                    <div key={student.register_number} style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 8,
-                                      padding: '6px 10px',
-                                      background: idx === 0 ? '#fef3c7' : '#f9fafb',
-                                      borderRadius: 8,
-                                      border: idx === 0 ? '1px solid #fde68a' : '1px solid #e5e7eb',
-                                      fontSize: 12,
-                                    }}>
-                                      <span style={{
-                                        width: 20,
-                                        height: 20,
-                                        borderRadius: '50%',
-                                        background: idx === 0 ? '#f59e0b' : '#9ca3af',
-                                        color: 'white',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontSize: 10,
-                                        fontWeight: 600,
-                                      }}>
-                                        {idx + 1}
-                                      </span>
-                                      <span style={{ fontWeight: 500 }}>{student.name}</span>
-                                      <span style={{ color: '#666' }}>({student.solved_count || 0})</span>
-                                    </div>
-                                  ))}
+                        <div style={{ 
+                          display: 'flex', justifyContent: 'center', alignItems: 'flex-end', 
+                          gap: 0, padding: '10px 0', maxWidth: '500px', margin: '0 auto' 
+                        }}>
+                          {/* 2nd Place */}
+                          {top3[1] && (
+                            <div 
+                              style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}
+                              onClick={() => setSelectedStudentForAnalytics(top3[1].register_number)}
+                            >
+                              <div style={{ marginBottom: 10 }}>
+                                <div style={{ 
+                                  width: 52, height: 52, borderRadius: '16px', background: 'white',
+                                  margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  border: '2px solid white', boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+                                }}>
+                                  <span style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-hard)' }}>{(top3[1].name || 'S')[0]}</span>
                                 </div>
                               </div>
-                            )}
+                              <div style={{ 
+                                height: 80, background: 'linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)', 
+                                borderRadius: '12px 12px 0 0', display: 'flex', flexDirection: 'column', 
+                                justifyContent: 'center', padding: '10px', position: 'relative'
+                              }}>
+                                <div style={{ 
+                                  position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)',
+                                  width: 20, height: 20, background: '#94a3b8', color: 'white', borderRadius: '50%',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '900'
+                                }}>2</div>
+                                <div style={{ fontWeight: '800', fontSize: '12px', color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{top3[1].name}</div>
+                                <div style={{ fontSize: '16px', fontWeight: '900', color: '#1e293b' }}>{top3[1].solved_count || 0}</div>
+                              </div>
+                            </div>
+                          )}
 
-                            {/* All Students Table */}
-                            <div style={{ fontSize: 12, color: '#666', marginBottom: 10, fontWeight: 500 }}>
-                              👥 All Students in Batch {batch.batch}
+                          {/* 1st Place */}
+                          {top3[0] && (
+                            <div 
+                              style={{ flex: 1.2, textAlign: 'center', position: 'relative', zIndex: 1, cursor: 'pointer' }}
+                              onClick={() => setSelectedStudentForAnalytics(top3[0].register_number)}
+                            >
+                              <div style={{ marginBottom: 12 }}>
+                                <div style={{ 
+                                  width: 64, height: 64, borderRadius: '20px', background: 'white',
+                                  margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  border: '3px solid #fbbf24', boxShadow: '0 8px 16px rgba(251, 191, 36, 0.15)'
+                                }}>
+                                  <span style={{ fontSize: '22px', fontWeight: '800', color: '#b45309' }}>{(top3[0].name || 'S')[0]}</span>
+                                </div>
+                              </div>
+                              <div style={{ 
+                                height: 110, background: 'linear-gradient(180deg, #fef3c7 0%, #fde68a 100%)', 
+                                borderRadius: '16px 16px 0 0', display: 'flex', flexDirection: 'column', 
+                                justifyContent: 'center', padding: '12px', position: 'relative',
+                                boxShadow: '0 -5px 15px rgba(251, 191, 36, 0.1)'
+                              }}>
+                                <div style={{ 
+                                  position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)',
+                                  width: 28, height: 28, background: '#fbbf24', color: 'white', borderRadius: '50%',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '900'
+                                }}>1</div>
+                                <div style={{ fontWeight: '900', fontSize: '14px', color: '#92400e', marginBottom: 2 }}>{top3[0].name}</div>
+                                <div style={{ fontSize: '24px', fontWeight: '900', color: '#78350f' }}>{top3[0].solved_count || 0}</div>
+                              </div>
                             </div>
-                            <div style={{ maxHeight: 400, overflow: 'auto' }}>
-                              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                                <thead>
-                                  <tr style={{ borderBottom: '1px solid #e5e7eb', background: '#f9fafb' }}>
-                                    <th style={{ textAlign: 'left', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>#</th>
-                                    <th style={{ textAlign: 'left', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Register Number</th>
-                                    <th style={{ textAlign: 'left', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Name</th>
-                                    <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Solved</th>
-                                    <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Streak</th>
-                                    <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Last Active</th>
-                                    <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Actions</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {allStudents.map((student, idx) => (
-                                    <tr key={student.register_number} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                                      <td style={{ padding: '8px', color: '#666', fontSize: 12 }}>{idx + 1}</td>
-                                      <td style={{ padding: '8px', fontFamily: 'monospace', fontSize: 12 }}>{student.register_number}</td>
-                                      <td style={{ padding: '8px', fontWeight: 500 }}>{student.name || 'Unknown'}</td>
-                                      <td style={{ padding: '8px', textAlign: 'center', color: '#059669', fontWeight: 600 }}>{student.solved_count || 0}</td>
-                                      <td style={{ padding: '8px', textAlign: 'center' }}>
-                                        <span style={{
-                                          padding: '2px 6px',
-                                          borderRadius: 8,
-                                          background: (student.current_streak || 0) > 5 ? '#fef3c7' : '#f3f4f6',
-                                          color: (student.current_streak || 0) > 5 ? '#d97706' : '#666',
-                                          fontSize: 11,
-                                        }}>
-                                          {student.current_streak || 0} 🔥
-                                        </span>
-                                      </td>
-                                      <td style={{ padding: '8px', textAlign: 'center', color: '#666', fontSize: 12 }}>
-                                        {student.last_active ? new Date(student.last_active).toLocaleDateString() : 'Never'}
-                                      </td>
-                                      <td style={{ padding: '8px', textAlign: 'center' }}>
-                                        <button
-                                          onClick={() => setSelectedStudentForAnalytics(student.register_number)}
-                                          style={{
-                                            padding: '4px 10px',
-                                            borderRadius: 6,
-                                            border: '1px solid #d1d5db',
-                                            background: 'white',
-                                            cursor: 'pointer',
-                                            fontSize: 12,
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: 4,
-                                          }}
-                                          title="View detailed analytics"
-                                        >
-                                          <Eye size={14} />
-                                          View
-                                        </button>
-                                      </td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
+                          )}
+
+                          {/* 3rd Place */}
+                          {top3[2] && (
+                            <div 
+                              style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}
+                              onClick={() => setSelectedStudentForAnalytics(top3[2].register_number)}
+                            >
+                              <div style={{ marginBottom: 10 }}>
+                                <div style={{ 
+                                  width: 44, height: 44, borderRadius: '14px', background: 'white',
+                                  margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  border: '2px solid #fdba74', boxShadow: '0 4px 12px rgba(253, 186, 116, 0.1)'
+                                }}>
+                                  <span style={{ fontSize: '16px', fontWeight: '800', color: '#c2410c' }}>{(top3[2].name || 'S')[0]}</span>
+                                </div>
+                              </div>
+                              <div style={{ 
+                                height: 60, background: 'linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%)', 
+                                borderRadius: '12px 12px 0 0', display: 'flex', flexDirection: 'column', 
+                                justifyContent: 'center', padding: '10px', position: 'relative'
+                              }}>
+                                <div style={{ 
+                                  position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)',
+                                  width: 20, height: 20, background: '#fdba74', color: 'white', borderRadius: '50%',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '900'
+                                }}>3</div>
+                                <div style={{ fontWeight: '800', fontSize: '12px', color: '#9a3412', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{top3[2].name}</div>
+                                <div style={{ fontSize: '14px', fontWeight: '900', color: '#7c2d12' }}>{top3[2].solved_count || 0}</div>
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
                     );
-                  })}
-                </div>
-              ) : (
-                <div style={{ marginTop: 40, textAlign: 'center', color: '#999', padding: 40 }}>
-                  <BarChart3 size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
-                  <p>No batch data available</p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Top Performers Tab */}
-          {activeTab === 'top-performers' && (
-            <div>
-              <h3 style={{ marginBottom: 16 }}>Department Top Performers</h3>
-              <p style={{ color: 'var(--text-soft)' }}>
-                Overall top performing students in your department.
-              </p>
-
-              {analytics.top_performers && analytics.top_performers.length > 0 ? (
-                <div style={{ marginTop: 24 }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                        <th style={{ textAlign: 'left', padding: '12px 8px' }}>Rank</th>
-                        <th style={{ textAlign: 'left', padding: '12px 8px' }}>Student</th>
-                        <th style={{ textAlign: 'center', padding: '12px 8px' }}>ID</th>
-                        <th style={{ textAlign: 'center', padding: '12px 8px' }}>Solved</th>
-                        <th style={{ textAlign: 'center', padding: '12px 8px' }}>Streak</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {analytics.top_performers.map((student, i) => (
-                        <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                          <td style={{ padding: '12px 8px' }}>
-                            <span style={{
-                              width: 28,
-                              height: 28,
-                              borderRadius: '50%',
-                              background: i === 0 ? '#f59e0b' : i === 1 ? '#9ca3af' : i === 2 ? '#b45309' : '#e5e7eb',
-                              color: i < 3 ? 'white' : '#666',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 13,
-                              fontWeight: 600,
-                            }}>
-                              {i + 1}
-                            </span>
-                          </td>
-                          <td style={{ padding: '12px 8px' }}>
-                            <strong>{student.name}</strong>
-                          </td>
-                          <td style={{ textAlign: 'center', padding: '12px 8px', color: '#666' }}>
-                            {student.id}
-                          </td>
-                          <td style={{ textAlign: 'center', padding: '12px 8px', color: '#059669', fontWeight: 600 }}>
-                            {student.solved_count}
-                          </td>
-                          <td style={{ textAlign: 'center', padding: '12px 8px' }}>
-                            <span style={{
-                              padding: '2px 8px',
-                              borderRadius: 12,
-                              background: student.current_streak > 5 ? '#fef3c7' : '#f3f4f6',
-                              color: student.current_streak > 5 ? '#d97706' : '#666',
-                              fontSize: 12,
-                            }}>
-                              {student.current_streak} 🔥
-                            </span>
-                          </td>
+                  })()}
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid var(--bg-2)', textAlign: 'left' }}>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600' }}>STUDENT</th>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>SOLVED</th>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>STREAK</th>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'right' }}>ACTION</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <div style={{ marginTop: 40, textAlign: 'center', color: '#999', padding: 40 }}>
-                  <Users size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
-                  <p>No performer data available</p>
+                      </thead>
+                      <tbody>
+                        {analytics.batch_wise.find(b => b.batch === selectedBatch)?.students?.map(student => (
+                          <tr key={student.register_number} style={{ borderBottom: '1px solid var(--bg-1)' }}>
+                            <td style={{ padding: '16px 8px' }}>
+                               <div style={{ fontWeight: '600', color: 'var(--text-hard)' }}>{student.name}</div>
+                               <div style={{ fontSize: '11px', color: 'var(--text-soft)' }}>{student.register_number}</div>
+                            </td>
+                            <td style={{ textAlign: 'center', padding: '16px 8px', fontWeight: '700', color: 'var(--olive-700)' }}>
+                              {student.solved_count}
+                            </td>
+                            <td style={{ textAlign: 'center', padding: '16px 8px' }}>
+                              {student.current_streak} 🔥
+                            </td>
+                            <td style={{ textAlign: 'right', padding: '16px 8px' }}>
+                              <button 
+                                onClick={() => setSelectedStudentForAnalytics(student.register_number)}
+                                style={{ padding: '6px 12px', borderRadius: '8px', border: '1px solid var(--border-soft)', background: 'white', color: 'var(--olive-700)', fontSize: '12px', fontWeight: '600', cursor: 'pointer' }}
+                              >
+                                View Analytics
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
           )}
         </div>
-      </div>
+        
+        {activeTab === 'chat' && (
+          <div className="discuss-tab" style={{ height: 'calc(100vh - 64px)', width: '100%' }}>
+            <DiscussPage
+              userType="staff"
+              staffProfile={staff}
+            />
+          </div>
+        )}
+      </main>
     </div>
   );
 };

@@ -17,11 +17,35 @@ class Institution(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # Database Isolation
+    database_name = models.CharField(max_length=255, blank=True, default="")
+
+    # Maintenance Modes
+    maintenance_staff = models.BooleanField(default=False)
+    maintenance_students = models.BooleanField(default=False)
+    maintenance_hod = models.BooleanField(default=False)
+    maintenance_inst_admin = models.BooleanField(default=False)
+    maintenance_ja = models.BooleanField(default=False)
+
     class Meta:
         db_table = "institutions"
 
     def __str__(self):
         return f"{self.institution_id} - {self.name}"
+
+
+class SystemConfiguration(models.Model):
+    """Global system-wide configurations"""
+    global_maintenance_staff = models.BooleanField(default=False)
+    global_maintenance_students = models.BooleanField(default=False)
+    global_maintenance_hod = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "system_configurations"
+
+    def __str__(self):
+        return "Global System Configuration"
 
 
 class Department(models.Model):
@@ -89,6 +113,7 @@ class StudentProfile(models.Model):
     login_days = models.PositiveIntegerField(default=0)
     last_login_on = models.DateField(null=True, blank=True)
     campus_rank = models.CharField(max_length=60, blank=True, default="")
+    tracked_companies = models.JSONField(default=list, blank=True)
 
     def __str__(self):
         return self.register_number or self.name
@@ -225,6 +250,7 @@ class Problem(models.Model):
     examples = models.JSONField(default=list, blank=True)  # [{input, output, explanation}]
     hints = models.JSONField(default=list, blank=True)  # ["hint1", "hint2"]
     editorial = models.TextField(blank=True, default="")
+    companies = models.TextField(blank=True, default="")
     source_dataset_id = models.CharField(max_length=50, blank=True, default="")
 
     def __str__(self):
@@ -275,6 +301,108 @@ class ExecutionRecord(models.Model):
     def __str__(self):
         owner = self.student.register_number if self.student else "anonymous"
         return f"{owner} - {self.language} - {self.status_description}"
+
+
+class DailyProblem(models.Model):
+    problem = models.ForeignKey(Problem, on_delete=models.CASCADE, related_name="daily_instances")
+    date = models.DateField(unique=True, default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-date",)
+
+    def __str__(self):
+        return f"{self.date} - {self.problem.title}"
+
+
+class Announcement(models.Model):
+    CATEGORY_CHOICES = (
+        ("contest", "New Contest"),
+        ("leaderboard", "Leaderboard Published"),
+        ("general", "General Announcement"),
+        ("maintenance", "System Maintenance"),
+    )
+    title = models.CharField(max_length=200)
+    content = models.TextField()
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default="general")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return self.title
+
+
+class Notification(models.Model):
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    link = models.CharField(max_length=500, blank=True, null=True)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"To {self.recipient.username}: {self.title}"
+
+
+class AptitudeTopic(models.Model):
+    title = models.CharField(max_length=200)
+    parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='subtopics')
+    description = models.TextField(blank=True, null=True)
+    icon_name = models.CharField(max_length=50, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name_plural = "Aptitude Topics"
+
+    def __str__(self):
+        return self.title
+
+
+class AptitudeQuestion(models.Model):
+    topic = models.ForeignKey(AptitudeTopic, on_delete=models.CASCADE, related_name='questions')
+    question_text = models.TextField()
+    option_a = models.CharField(max_length=500)
+    option_b = models.CharField(max_length=500)
+    option_c = models.CharField(max_length=500)
+    option_d = models.CharField(max_length=500)
+    correct_option = models.CharField(max_length=1)  # A, B, C, or D
+    explanation = models.TextField(blank=True, null=True)
+    difficulty = models.CharField(max_length=20, choices=(('Easy', 'Easy'), ('Medium', 'Medium'), ('Hard', 'Hard')), default='Easy')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.topic.title} - {self.question_text[:50]}..."
+
+
+class Achievement(models.Model):
+    name = models.CharField(max_length=100)
+    description = models.TextField()
+    badge_icon = models.CharField(max_length=50, default="Award")
+    criteria_type = models.CharField(max_length=50)  # e.g., 'solve_count', 'streak'
+    criteria_value = models.IntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+
+class UserAchievement(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="achievements")
+    achievement = models.ForeignKey(Achievement, on_delete=models.CASCADE)
+    awarded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('user', 'achievement')
+
+    def __str__(self):
+        return f"{self.user.username} - {self.achievement.name}"
 
 
 class StudentActivity(models.Model):
@@ -406,11 +534,59 @@ class SolvedProblem(models.Model):
         return f"{self.student} solved {self.problem.slug}"
 
 
+class SolvedAptitude(models.Model):
+    """Tracks unique aptitude questions solved by each student"""
+    student = models.ForeignKey(
+        StudentProfile,
+        on_delete=models.CASCADE,
+        related_name='solved_aptitude',
+    )
+    question = models.ForeignKey(
+        AptitudeQuestion,
+        on_delete=models.CASCADE,
+        related_name='solved_by',
+    )
+    solved_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "solved_aptitude"
+        unique_together = ('student', 'question')
+        ordering = ("-solved_at",)
+
+    def __str__(self):
+        return f"{self.student} solved aptitude q#{self.question.id}"
+
+
 class DiscussionMessage(models.Model):
+    THREAD_TYPES = (
+        ("general", "General Discussion"),
+        ("individual", "Direct Message"),
+        ("batch", "Batch Discussion"),
+        ("staff", "Staff Room"),
+        ("hod_tp_ja", "HOD / TPU / JA / TPO Panel"),
+        ("problem", "Problem Specific"),
+    )
+
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="sent_messages",
+        null=True,
+        blank=True
+    )
+    recipient = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="received_messages",
+        null=True,
+        blank=True
+    )
     student = models.ForeignKey(
         StudentProfile,
         on_delete=models.CASCADE,
         related_name="discussion_messages",
+        null=True,
+        blank=True
     )
     problem = models.ForeignKey(
         Problem,
@@ -419,15 +595,35 @@ class DiscussionMessage(models.Model):
         null=True,
         blank=True,
     )
+    thread_type = models.CharField(max_length=20, choices=THREAD_TYPES, default="general")
+    batch_name = models.CharField(max_length=100, null=True, blank=True)
+    institution = models.ForeignKey(
+        'Institution',
+        on_delete=models.CASCADE,
+        related_name="discussion_messages",
+        null=True,
+        blank=True
+    )
+    department = models.ForeignKey(
+        'Department',
+        on_delete=models.CASCADE,
+        related_name="discussion_messages",
+        null=True,
+        blank=True
+    )
     body = models.TextField()
+    is_poll = models.BooleanField(default=False)
+    poll_options = models.JSONField(default=list, blank=True) # list of strings
+    poll_votes = models.JSONField(default=dict, blank=True) # {str(user_id): option_index}
+    is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ("-created_at",)
 
     def __str__(self):
-        target = self.problem.slug if self.problem else "general"
-        return f"{self.student} - {target}"
+        sender_name = self.sender.username if self.sender else str(self.student)
+        return f"{sender_name} -> {self.thread_type}"
 
 
 class ProblemSession(models.Model):
@@ -477,7 +673,10 @@ class StaffProfile(models.Model):
     ROLE_CHOICES = (
         ("staff", "Staff"),
         ("hod", "Head of Department"),
-        ("admin", "Admin"),
+        ("tpu", "TPU (Training & Placement)"),
+        ("director", "Director"),
+        ("ja", "Junior Admin (JA)"),
+        ("admin", "System Admin"),
     )
     
     account = models.OneToOneField(
@@ -577,14 +776,30 @@ class Contest(models.Model):
         blank=True,
     )
     
+    # Contest type
+    CONTEST_TYPE_CHOICES = (
+        ("programming", "Programming"),
+        ("aptitude", "Aptitude"),
+    )
+    contest_type = models.CharField(
+        max_length=20,
+        choices=CONTEST_TYPE_CHOICES,
+        default="programming",
+    )
+    
     # Contest details
     start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
     duration_minutes = models.PositiveIntegerField(default=60)
     
-    # Contest problems (Many-to-Many relationship)
+    # Contest questions
     problems = models.ManyToManyField(
         Problem,
+        related_name="contests",
+        blank=True,
+    )
+    aptitude_questions = models.ManyToManyField(
+        'AptitudeQuestion',
         related_name="contests",
         blank=True,
     )
@@ -625,6 +840,10 @@ class Contest(models.Model):
     total_participants = models.PositiveIntegerField(default=0)
     total_submissions = models.PositiveIntegerField(default=0)
     
+    # Winner allocation
+    winners_allocated = models.BooleanField(default=False)
+    winners_allocated_at = models.DateTimeField(null=True, blank=True)
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -645,6 +864,20 @@ class Contest(models.Model):
         now = timezone.now()
         if self.start_time and self.end_time:
             return self.start_time <= now <= self.end_time
+        return False
+    
+    @property
+    def is_ended(self):
+        """Check if contest has ended"""
+        if self.end_time:
+            return timezone.now() > self.end_time
+        return False
+    
+    @property
+    def is_upcoming(self):
+        """Check if contest is upcoming"""
+        if self.start_time:
+            return timezone.now() < self.start_time
         return False
     
     def submit_for_approval(self):
@@ -674,9 +907,15 @@ class Contest(models.Model):
     
     def update_analytics(self):
         """Update contest analytics based on participant activity"""
-        # Count unique participants from contest submissions
-        self.total_participants = ContestSubmission.objects.filter(contest=self).values('student').distinct().count()
-        self.total_submissions = ContestSubmission.objects.filter(contest=self).count()
+        if self.contest_type == 'aptitude':
+            # Count unique participants from aptitude submissions
+            self.total_participants = AptitudeContestSubmission.objects.filter(contest=self).values('student').distinct().count()
+            self.total_submissions = AptitudeContestSubmission.objects.filter(contest=self).count()
+        else:
+            # Count unique participants from programming contest submissions
+            self.total_participants = ContestSubmission.objects.filter(contest=self).values('student').distinct().count()
+            self.total_submissions = ContestSubmission.objects.filter(contest=self).count()
+        
         self.save(update_fields=['total_participants', 'total_submissions'])
 
 
@@ -716,6 +955,40 @@ class ContestSubmission(models.Model):
         return f"{self.student.register_number} - {self.problem.slug} - {self.status}"
 
 
+class AptitudeContestSubmission(models.Model):
+    """Submissions made during aptitude contests"""
+    contest = models.ForeignKey(
+        Contest,
+        on_delete=models.CASCADE,
+        related_name="aptitude_submissions",
+    )
+    student = models.ForeignKey(
+        StudentProfile,
+        on_delete=models.CASCADE,
+        related_name="aptitude_contest_submissions",
+    )
+    question = models.ForeignKey(
+        AptitudeQuestion,
+        on_delete=models.CASCADE,
+        related_name="contest_submissions",
+    )
+    
+    selected_option = models.CharField(max_length=1, null=True, blank=True) # A, B, C, D
+    is_correct = models.BooleanField(default=False)
+    score = models.IntegerField(default=0)
+    
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    time_taken_seconds = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "aptitude_contest_submissions"
+        unique_together = ("contest", "student", "question")
+        ordering = ["submitted_at"]
+
+    def __str__(self):
+        return f"{self.student.register_number} - Q#{self.question.id} - {self.is_correct}"
+
+
 class ContestParticipation(models.Model):
     """Tracks when students start and complete contests"""
     contest = models.ForeignKey(
@@ -741,6 +1014,11 @@ class ContestParticipation(models.Model):
     # Score
     total_score = models.PositiveIntegerField(default=0)
     problems_solved = models.PositiveIntegerField(default=0)
+    total_time_taken = models.PositiveIntegerField(default=0, help_text="Total time taken in seconds")
+    
+    # Winner allocation
+    final_rank = models.PositiveIntegerField(null=True, blank=True)
+    is_winner = models.BooleanField(default=False)
     
     class Meta:
         db_table = "contest_participations"

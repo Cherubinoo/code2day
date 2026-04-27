@@ -82,10 +82,6 @@ class UnifiedAuthMixin:
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
-        # Check for student profile
-        if hasattr(request.user, "student_profile"):
-            return request.user.student_profile, "student", None
-
         # Check for staff profile - determine specific role
         if hasattr(request.user, "staff_profile"):
             staff_profile = request.user.staff_profile
@@ -100,6 +96,10 @@ class UnifiedAuthMixin:
                 )
             # Return the role from the profile (staff, hod, or admin)
             return staff_profile, staff_profile.role, None
+
+        # Check for student profile
+        if hasattr(request.user, "student_profile"):
+            return request.user.student_profile, "student", None
 
         # Admin superuser without staff profile
         if request.user.is_superuser:

@@ -22,8 +22,11 @@ from .views import (
     ContestPublishView,
     ContestSubmitForApprovalView,
     DashboardView,
+    DailyLeaderboardView,
     DepartmentStudentsFilterView,
     DiscussionMessageListCreateView,
+    DiscussionPollVoteView,
+    DiscussionThreadListView,
     EditorBootstrapView,
     FirstLoginView,
     HealthCheckView,
@@ -41,12 +44,14 @@ from .views import (
     StudentContestStartView,
     StudentContestAutoSubmitView,
     StudentContestSubmitView,
+    StudentContestWinnersView,
     StudentLogoutView,
     StudentLoginView,
     StudentLookupView,
     StudentDetailView,
     StudentBlockToggleView,
     StudentIndividualAnalyticsView,
+    UpdateTrackedCompaniesView,
     StaffLookupView,
     StaffFirstLoginView,
     StaffLoginView,
@@ -54,6 +59,8 @@ from .views import (
     StaffInstitutionDetailView,
     StaffPerformanceView,
     StaffDetailView,
+    DepartmentDetailView,
+    StaffDeptListView,
     StaffLockToggleView,
     ContestListCreateView,
     ContestDetailView,
@@ -62,6 +69,19 @@ from .views import (
     UnifiedUserLookupView,
     Judge0SystemInfoView,
     Judge0SubmitView,
+    AnnouncementListView,
+    NotificationListView,
+    NotificationMarkReadView,
+    AptitudeTopicListView,
+    SystemAdminDashboardView,
+    InstitutionManagementView,
+    InstitutionDetailManagementView,
+    GlobalMaintenanceControlView,
+    DepartmentManagementView,
+    StudentReportPDFView,
+    StaffReportPDFView,
+    AptitudeQuestionListView,
+    AptitudeContestSubmitView,
 )
 
 urlpatterns = [
@@ -69,6 +89,8 @@ urlpatterns = [
 
     # Dashboard & problems
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
+    path("dashboard/tracked-companies/", UpdateTrackedCompaniesView.as_view(), name="update-tracked-companies"),
+    path("dashboard/daily/leaderboard/", DailyLeaderboardView.as_view(), name="daily-leaderboard"),
     path("ranking/", CampusRankingView.as_view(), name="campus-ranking"),
     path("problems/", ProblemListView.as_view(), name="problem-list"),
     path("problems/by-topic/", ProblemsByTopicView.as_view(), name="problems-by-topic"),
@@ -84,8 +106,10 @@ urlpatterns = [
     path("student/contests/<int:contest_id>/", StudentContestDetailView.as_view(), name="student-contest-detail"),
     path("student/contests/<int:contest_id>/start/", StudentContestStartView.as_view(), name="student-contest-start"),
     path("student/contests/<int:contest_id>/auto-submit/", StudentContestAutoSubmitView.as_view(), name="student-contest-auto-submit"),
+    path("student/contests/<int:contest_id>/winners/", StudentContestWinnersView.as_view(), name="student-contest-winners"),
     path("student/contests/<int:contest_id>/problems/<slug:problem_slug>/", StudentContestProblemView.as_view(), name="student-contest-problem"),
     path("student/contests/<int:contest_id>/problems/<slug:problem_slug>/submit/", StudentContestSubmitView.as_view(), name="student-contest-submit"),
+    path("student/contests/<int:contest_id>/aptitude/submit/", AptitudeContestSubmitView.as_view(), name="student-contest-aptitude-submit"),
 
     # Code execution
     path("run/", CodeRunView.as_view(), name="code-run"),
@@ -110,15 +134,15 @@ urlpatterns = [
     path("auth/staff/logout/", StaffLogoutView.as_view(), name="staff-logout"),
 
     # Admin endpoints
-    path("admin/stats/", AdminStatsView.as_view(), name="admin-stats"),
-    path("admin/users/", AdminUserListView.as_view(), name="admin-users"),
-    path("admin/institutions/", AdminInstitutionListCreateView.as_view(), name="admin-institutions"),
-    path("admin/institutions/<int:institution_id>/", AdminInstitutionDetailView.as_view(), name="admin-institution-detail"),
-    path("admin/institutions/<int:institution_id>/details/", AdminInstitutionFullDetailView.as_view(), name="admin-institution-full-detail"),
-    path("admin/institutions/<int:institution_id>/staff/", AdminInstitutionStaffView.as_view(), name="admin-institution-staff"),
-    path("admin/staff/<str:faculty_id>/role/", AdminStaffRoleUpdateView.as_view(), name="admin-staff-role-update"),
-    path("admin/aws-stats/", AdminAWSStatsView.as_view(), name="admin-aws-stats"),
-    path("admin/assign-user/", AdminAssignUserToInstitutionView.as_view(), name="admin-assign-user"),
+    # System Administration V2
+    path("admin/dashboard/", SystemAdminDashboardView.as_view(), name="admin-dashboard-v2"),
+    path("admin/v2/institutions/", InstitutionManagementView.as_view(), name="admin-inst-mgmt"),
+    path("admin/v2/institutions/<int:pk>/", InstitutionManagementView.as_view(), name="admin-inst-mgmt-detail"),
+    path("admin/v2/institutions/<int:pk>/hub/", InstitutionDetailManagementView.as_view(), name="admin-inst-hub"),
+    path("admin/v2/global-maintenance/", GlobalMaintenanceControlView.as_view(), name="admin-global-maintenance"),
+    path("admin/v2/institutions/<int:inst_pk>/departments/", DepartmentManagementView.as_view(), name="admin-dept-mgmt"),
+    path("admin/v2/institutions/<int:inst_pk>/departments/<int:pk>/", DepartmentManagementView.as_view(), name="admin-dept-mgmt-detail"),
+    path("departments/<int:dept_id>/details/", DepartmentDetailView.as_view(), name="department-detail"),
 
     # Staff Institution
     path("staff/institutions/<int:institution_id>/details/", StaffInstitutionDetailView.as_view(), name="staff-institution-detail"),
@@ -156,8 +180,20 @@ urlpatterns = [
 
     # Discussions
     path("discussions/", DiscussionMessageListCreateView.as_view(), name="discussion-messages"),
+    path("discussions/<int:pk>/vote/", DiscussionPollVoteView.as_view(), name="discussion-poll-vote"),
 
+    # Announcements & Notifications
+    path("announcements/", AnnouncementListView.as_view(), name="announcement-list"),
+    path("notifications/", NotificationListView.as_view(), name="notification-list"),
+    path("notifications/<int:notification_id>/read/", NotificationMarkReadView.as_view(), name="notification-mark-read"),
+    path("aptitude/topics/", AptitudeTopicListView.as_view(), name="aptitude-topic-list"),
+    path("aptitude/questions/", AptitudeQuestionListView.as_view(), name="aptitude-question-list"),
+
+    path("students/<str:register_number>/report/", StudentReportPDFView.as_view(), name="student-report-pdf"),
+    path("staff/<str:faculty_id>/report/", StaffReportPDFView.as_view(), name="staff-report-pdf"),
     # Judge0 Direct API
     path("judge0/system_info/", Judge0SystemInfoView.as_view(), name="judge0-system-info"),
     path("judge0/submit/", Judge0SubmitView.as_view(), name="judge0-submit"),
+    path("discussions/staff-dept-list/", StaffDeptListView.as_view(), name="staff-dept-list"),
+    path("discussions/threads/", DiscussionThreadListView.as_view(), name="discussion-threads"),
 ]

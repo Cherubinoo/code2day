@@ -8,6 +8,7 @@ import { starterCodeByLanguage, editorLanguageByChoice } from "../../../lib/appD
 import { formatDuration } from "../../../lib/appUtils";
 import { buildJsonPostOptions } from "../../../lib/appUtils";
 import { validateLanguageMatch, getLanguageMismatchError } from "../../../lib/languageDetector";
+import DoubleConfirmModal from "../../common/DoubleConfirmModal";
 
 loader.config({ monaco });
 
@@ -16,6 +17,11 @@ const POPULAR_LANGUAGES = ["C", "C++", "Java", "JavaScript", "Python"];
 function ContestWorkspacePage({ contestId, onBack }) {
   // Contest data
   const [contest, setContest] = useState(null);
+  const [confirmState, setConfirmState] = useState({ show: false, m1: '', m2: '', onConfirm: null, firstOk: false });
+
+  const askDouble = (onConfirm, m1, m2) => {
+    setConfirmState({ show: true, m1, m2, onConfirm, firstOk: false });
+  };
   const [problems, setProblems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -261,52 +267,55 @@ function ContestWorkspacePage({ contestId, onBack }) {
 
   // Handle finish contest
   const handleFinishContest = useCallback(async () => {
-    if (!confirm("Are you sure you want to finish this contest? This action cannot be undone.")) {
-      return;
-    }
+    askDouble(
+      async () => {
+        try {
+          const response = await fetch(`/api/student/contests/${contestId}/auto-submit/`, {
+            method: "POST",
+            ...buildJsonPostOptions({}),
+          });
 
-    try {
-      const response = await fetch(`/api/student/contests/${contestId}/auto-submit/`, {
-        method: "POST",
-        ...buildJsonPostOptions({}),
-      });
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || "Failed to finish contest");
+          }
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to finish contest");
-      }
-
-      alert("Contest finished successfully!");
-      onBack();
-    } catch (err) {
-      console.error("Error finishing contest:", err);
-      alert(`Failed to finish contest: ${err.message}`);
-    }
+          alert("Contest finished successfully!");
+          onBack();
+        } catch (err) {
+          console.error("Error finishing contest:", err);
+          alert(`Failed to finish contest: ${err.message}`);
+        }
+      },
+      "Are you sure you want to finish this contest?",
+      "WARNING: This action cannot be undone. Your attempt will be submitted for final evaluation."
+    );
   }, [contestId, onBack]);
 
   // Handle leave contest (same as finish but different messaging)
   const handleLeaveContest = useCallback(async () => {
-    if (!confirm("Are you sure you want to leave this contest? Your attempt will be submitted and you cannot return.")) {
-      return;
-    }
+    askDouble(
+      async () => {
+        try {
+          const response = await fetch(`/api/student/contests/${contestId}/auto-submit/`, {
+            method: "POST",
+            ...buildJsonPostOptions({}),
+          });
 
-    try {
-      const response = await fetch(`/api/student/contests/${contestId}/auto-submit/`, {
-        method: "POST",
-        ...buildJsonPostOptions({}),
-      });
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || "Failed to finish contest");
+          }
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || "Failed to leave contest");
-      }
-
-      alert("Contest submitted successfully!");
-      onBack();
-    } catch (err) {
-      console.error("Error leaving contest:", err);
-      alert(`Failed to leave contest: ${err.message}`);
-    }
+          onBack();
+        } catch (err) {
+          console.error("Error leaving contest:", err);
+          alert(`Failed to leave contest: ${err.message}`);
+        }
+      },
+      "Are you sure you want to leave this contest?",
+      "Your attempt will be submitted and you cannot return. Confirm departure?"
+    );
   }, [contestId, onBack]);
 
   const editorLanguage = editorLanguageByChoice[selectedLanguage] || "javascript";
@@ -673,6 +682,21 @@ function ContestWorkspacePage({ contestId, onBack }) {
           </article>
         </section>
       </section>
+      {confirmState.show && (
+        <DoubleConfirmModal 
+          show={confirmState.show}
+          m1={confirmState.m1}
+          m2={confirmState.m2}
+          firstOk={confirmState.firstOk}
+          setFirstOk={(val) => setConfirmState(prev => ({ ...prev, firstOk: val }))}
+          onConfirm={async () => {
+            const cb = confirmState.onConfirm;
+            setConfirmState(prev => ({ ...prev, show: false }));
+            if (cb) await cb();
+          }}
+          onCancel={() => setConfirmState(prev => ({ ...prev, show: false }))}
+        />
+      )}
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { CheckCircle, XCircle, Eye, Clock, Users } from 'lucide-react';
 import { buildJsonPostOptions } from '../../lib/appUtils';
 
-const ContestApprovalPanel = ({ contests, onApprove, onReject, onRefresh }) => {
+const ContestApprovalPanel = ({ contests, onApprove, onReject, onRefresh, onView }) => {
   const [selectedContest, setSelectedContest] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [showRejectModal, setShowRejectModal] = useState(null);
@@ -126,9 +126,11 @@ const ContestApprovalPanel = ({ contests, onApprove, onReject, onRefresh }) => {
               borderRadius: 8,
             }}>
               <div>
-                <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Problems</div>
+                <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
+                  {contest.contest_type === 'aptitude' ? 'Questions' : 'Problems'}
+                </div>
                 <div style={{ fontSize: 16, fontWeight: 600, color: '#4f46e5' }}>
-                  {contest.problem_count}
+                  {contest.contest_type === 'aptitude' ? contest.aptitude_question_count : contest.problem_count}
                 </div>
               </div>
               <div>
@@ -154,6 +156,25 @@ const ContestApprovalPanel = ({ contests, onApprove, onReject, onRefresh }) => {
             </div>
 
             <div style={{ display: 'flex', gap: 12 }}>
+              <button
+                onClick={() => onView(contest.id)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: '1px solid #d1d5db',
+                  background: 'white',
+                  color: '#374151',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6
+                }}
+              >
+                <Eye size={16} />
+                View Details
+              </button>
               <button
                 onClick={() => handleApprove(contest.id)}
                 style={{

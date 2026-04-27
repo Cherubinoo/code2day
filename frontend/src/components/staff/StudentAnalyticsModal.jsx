@@ -1,6 +1,6 @@
 // Student Analytics Modal - Detailed view of individual student performance
 import { useState, useEffect } from 'react';
-import { X, TrendingUp, Clock, Award, Activity } from 'lucide-react';
+import { X, TrendingUp, Clock, Award, Activity, FileText, Briefcase, Layout } from 'lucide-react';
 
 const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
   const [analytics, setAnalytics] = useState(null);
@@ -115,43 +115,73 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
     }}>
       <div style={{
         background: 'white',
-        borderRadius: 12,
-        maxWidth: 900,
+        borderRadius: '24px',
+        maxWidth: 1000,
         width: '100%',
         maxHeight: '90vh',
         overflow: 'auto',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+        boxShadow: '0 32px 64px rgba(0,0,0,0.2)',
+        border: '1px solid var(--border-soft)',
       }}>
         {/* Header */}
         <div style={{
-          padding: '20px 24px',
-          borderBottom: '1px solid #e5e7eb',
+          padding: '32px',
+          borderBottom: '1px solid var(--border-soft)',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
           position: 'sticky',
           top: 0,
-          background: 'white',
-          zIndex: 1,
+          background: 'rgba(255, 255, 255, 0.9)',
+          backdropFilter: 'blur(10px)',
+          zIndex: 10,
         }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: 20 }}>{student.name}</h2>
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: '#666' }}>
-              {student.register_number} • Batch {student.batch} • {student.department}
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+            <div style={{ 
+              width: 64, height: 64, borderRadius: '20px', background: 'var(--sage-100)', 
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '24px', fontWeight: '800', color: 'var(--olive-700)'
+            }}>
+              {student.name[0]}
+            </div>
+            <div>
+              <h2 style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: 'var(--text-hard)' }}>{student.name}</h2>
+              <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <span style={{ fontSize: '13px', color: 'var(--text-soft)', fontWeight: '600' }}>{student.register_number}</span>
+                <span style={{ fontSize: '13px', color: '#94a3b8' }}>•</span>
+                <span style={{ fontSize: '13px', color: 'var(--text-soft)', fontWeight: '600' }}>Batch {student.batch}</span>
+              </div>
+            </div>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              padding: 8,
-              borderRadius: 6,
-            }}
-          >
-            <X size={20} />
-          </button>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <button 
+              onClick={() => window.open(`/api/students/${student.register_number}/report/`, '_blank')}
+              style={{ 
+                padding: '12px 24px', background: 'var(--olive-900)', color: 'white', 
+                border: 'none', borderRadius: '12px', cursor: 'pointer', fontSize: '14px',
+                display: 'flex', alignItems: 'center', gap: 8, fontWeight: '700',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+              }}
+            >
+              <FileText size={18} /> Download Report
+            </button>
+            <button
+              onClick={onClose}
+              style={{
+                background: 'var(--bg-2)',
+                border: 'none',
+                cursor: 'pointer',
+                padding: '12px',
+                borderRadius: '12px',
+                color: 'var(--text-hard)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Content */}
@@ -159,7 +189,7 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
           {/* Stats Grid */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
             gap: 16,
             marginBottom: 32,
           }}>
@@ -200,11 +230,11 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
               border: '1px solid #c7d2fe',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <Clock size={18} style={{ color: '#4f46e5' }} />
-                <span style={{ fontSize: 12, color: '#666', fontWeight: 500 }}>Time Spent</span>
+                <Activity size={18} style={{ color: '#4f46e5' }} />
+                <span style={{ fontSize: 12, color: '#666', fontWeight: 500 }}>Aptitude Score</span>
               </div>
               <div style={{ fontSize: 28, fontWeight: 'bold', color: '#4f46e5' }}>
-                {data.time_spent_hours}h
+                {data.aptitude?.percentage || 0}%
               </div>
             </div>
 
@@ -221,6 +251,44 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
               <div style={{ fontSize: 28, fontWeight: 'bold', color: '#db2777' }}>
                 {student.campus_rank || 'N/A'}
               </div>
+            </div>
+          </div>
+
+          {/* Professional Insights Row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 32 }}>
+            <div style={{ padding: 20, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+               <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#475569', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Briefcase size={16} /> Targeted Companies
+               </h4>
+               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {data.company_insights?.length > 0 ? (
+                    data.company_insights.map((comp, idx) => (
+                      <div key={idx} style={{ padding: '6px 12px', background: 'white', borderRadius: 8, fontSize: 12, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 6 }}>
+                         <strong>{comp.name}</strong>
+                         <span style={{ color: '#94a3b8' }}>{comp.count}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <span style={{ fontSize: 13, color: '#94a3b8' }}>No data available.</span>
+                  )}
+               </div>
+            </div>
+
+            <div style={{ padding: 20, background: '#fdf2f8', borderRadius: 12, border: '1px solid #fce7f3' }}>
+               <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#be185d', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Layout size={16} /> Skill Focus
+               </h4>
+               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {data.project_insights?.length > 0 ? (
+                    data.project_insights.map((proj, idx) => (
+                      <div key={idx} style={{ padding: '6px 12px', background: 'white', borderRadius: 8, fontSize: 12, border: '1px solid #fce7f3', color: '#db2777', fontWeight: 600 }}>
+                         {proj.skill.toUpperCase()}
+                      </div>
+                    ))
+                  ) : (
+                    <span style={{ fontSize: 13, color: '#be185d', opacity: 0.6 }}>No data available.</span>
+                  )}
+               </div>
             </div>
           </div>
 

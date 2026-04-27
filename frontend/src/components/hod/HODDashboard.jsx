@@ -2,20 +2,40 @@
 // Features: Manage staff, view department analytics, approve requests
 
 import { useState, useEffect } from 'react';
-import { Users, Building2, BarChart3, CheckCircle, XCircle, Search, Lock, Unlock, Trophy, ShieldOff, Shield } from 'lucide-react';
+import { 
+  Users, Trophy, BookOpen, BarChart3, Search, Filter, ChevronRight, 
+  Settings, Bell, MoreVertical, ExternalLink, Shield, ShieldOff,
+  UserPlus, Check, X, FileText, Briefcase, Layout, UserCheck, Building2,
+  Calendar, Lock, Unlock, CheckCircle, BarChart, XCircle, Activity, Brain, MessageSquare
+} from 'lucide-react';
+import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import { getCsrfToken } from '../../lib/appUtils';
 import ContestApprovalPanel from './ContestApprovalPanel';
 import ContestDetailModal from '../common/ContestDetailModal';
+import DiscussPage from '../student/pages/DiscussPage';
 
 
 
 const HODDashboard = ({ institutionId }) => {
+  const sidebarItems = [
+    { id: 'overview', label: 'Overview', icon: BarChart3 },
+    { id: 'performance', label: 'Performance', icon: Trophy },
+    { id: 'staff', label: 'Staff Directory', icon: Users },
+    { id: 'students', label: 'Student Directory', icon: UserCheck },
+    { id: 'batches', label: 'Batch Analytics', icon: Building2 },
+    { id: 'contests', label: 'Contest Center', icon: Layout },
+    { id: 'discuss', label: 'Discuss', icon: MessageSquare },
+  ];
+
   const [activeTab, setActiveTab] = useState('overview');
   const [stats, setStats] = useState({
     staffCount: 0,
     studentCount: 0,
+    totalContests: 0,
     pendingApprovals: 0,
   });
+  const [weeklyActivity, setWeeklyActivity] = useState([]);
+  const [leaderboard, setLeaderboard] = useState([]);
   const [staffList, setStaffList] = useState([]);
   const [staffPerformance, setStaffPerformance] = useState([]);
   const [department, setDepartment] = useState(null);
@@ -36,58 +56,143 @@ const HODDashboard = ({ institutionId }) => {
   const [studentDetail, setStudentDetail] = useState(null);
   const [studentDetailLoading, setStudentDetailLoading] = useState(false);
   const [showContestDetail, setShowContestDetail] = useState(null);
+  const [staffData, setStaffData] = useState({});
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [engagementSummary, setEngagementSummary] = useState({ active_today: 0, avg_solved: 0, participation_rate: 0 });
+  const [staffProfile, setStaffProfile] = useState(null);
+  const [unreadDiscussCount, setUnreadDiscussCount] = useState(0);
+  const [departments, setDepartments] = useState([]);
+  const [selectedDeptId, setSelectedDeptId] = useState(null);
 
+  const [confirmState, setConfirmState] = useState({ show: false, m1: '', m2: '', onConfirm: null, firstOk: false });
+
+  const askDouble = (onConfirm, m1, m2) => {
+    setConfirmState({ show: true, m1, m2, onConfirm, firstOk: false });
+  };
+
+  // Poll discuss threads for unread badge
   useEffect(() => {
-    async function loadHODData() {
+    async function fetchUnreadCount() {
       try {
-        setLoading(true);
-        // Fetch dashboard data
-        const dashboardRes = await fetch('/api/dashboard/', { credentials: 'include' });
-        if (dashboardRes.ok) {
-          const dashboardData = await dashboardRes.json();
-          setStats(prev => ({
-            ...prev,
-            studentCount: dashboardData.user?.totalStudents || 0,
-          }));
+        const res = await fetch('/api/discussions/threads/', { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          const threads = Array.isArray(data) ? data : (data.results ?? []);
+          const total = threads.reduce((sum, t) => sum + (t.unread_count || 0), 0);
+          setUnreadDiscussCount(total);
         }
-
-        // Fetch staff list for the department
-        if (institutionId) {
-          const staffRes = await fetch(`/api/staff/institutions/${institutionId}/details/`, { credentials: 'include' });
-          if (staffRes.ok) {
-            const staffData = await staffRes.json();
-            setStaffList(staffData.staff || []);
-            setDepartment(staffData.department || null);
-            setDepartmentStudents(staffData.students || []);
-            setStats(prev => ({
-              ...prev,
-              staffCount: staffData.staff?.length || 0,
-            }));
-          }
-          
-          // Fetch staff performance data
-          const perfRes = await fetch(`/api/staff/institutions/${institutionId}/performance/`, { credentials: 'include' });
-          if (perfRes.ok) {
-            const perfData = await perfRes.json();
-            setStaffPerformance(perfData.staff_performance || []);
-          }
-          
-          // Fetch contests for the department
-          const contestsRes = await fetch(`/api/contests/`, { credentials: 'include' });
-          if (contestsRes.ok) {
-            const contestsData = await contestsRes.json();
-            setContests(contestsData.contests || []);
-            // Count pending approvals
-            const pendingCount = (contestsData.contests || []).filter(c => c.status === 'pending_approval').length;
-            setStats(prev => ({ ...prev, pendingApprovals: pendingCount }));
-          }
-        }
-      } catch (err) {
-        setError(err.message);
-      } finally {
-        setLoading(false);
+      } catch (e) {
+        // silent fail
       }
     }
+    fetchUnreadCount();
+    const interval = setInterval(fetchUnreadCount, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  async function loadHODData(deptId = null) {
+    try {
+      setLoading(true);
+      // Fetch dashboard data
+      const dashboardRes = await fetch('/api/dashboard/', { credentials: 'include' });
+      if (dashboardRes.ok) {
+        const dashboardData = await dashboardRes.json();
+        
+        if (dashboardData.user?.departments) {
+          setDepartments(dashboardData.user.departments);
+        }
+
+        if (deptId) {
+          // Load department-specific data
+          const deptRes = await fetch(`/api/departments/${deptId}/details/`, { credentials: 'include' });
+          if (deptRes.ok) {
+            const deptData = await deptRes.json();
+            
+            // Set stats and analytics from department data
+            setStats({
+              studentCount: deptData.department?.assigned_students || 0,
+              totalContests: deptData.analytics?.contests?.length || 0,
+              pendingApprovals: 0, // Department view might not show approvals or we can fetch them
+              staffCount: 0, // Will load below
+            });
+            setWeeklyActivity(deptData.analytics?.weekly_progress || []);
+            setLeaderboard(deptData.analytics?.top_performers || []);
+            setStaffData(prev => ({
+              ...prev,
+              department: deptData.department,
+              totalStudents: deptData.department?.assigned_students
+            }));
+            setRecentActivity(deptData.analytics?.recent_activity || []);
+            setEngagementSummary(deptData.analytics?.engagement_summary || { active_today: 0, avg_solved: 0, participation_rate: 0 });
+            
+            // Fetch staff list for this specific department
+            const staffRes = await fetch(`/api/staff/institutions/${institutionId}/details/`, { credentials: 'include' });
+            if (staffRes.ok) {
+              const staffData = await staffRes.json();
+              // Filter staff list by department
+              const filteredStaff = staffData.staff?.filter(s => s.department_id === deptId) || [];
+              setStaffList(filteredStaff);
+              setDepartment(deptData.department);
+              setDepartmentStudents(deptData.analytics?.batch_wise?.[0]?.students || []); // Fallback
+              setStats(prev => ({ ...prev, staffCount: filteredStaff.length }));
+            }
+            
+            // Set contests from department data
+            setContests(deptData.analytics?.contests || []);
+          }
+        } else {
+          // Institutional View (Current HOD View)
+          setStats({
+            studentCount: dashboardData.user?.totalStudents || 0,
+            totalContests: dashboardData.user?.totalContests || 0,
+            pendingApprovals: dashboardData.user?.pendingApprovals || 0,
+            staffCount: 0, // Will be updated by staffRes
+          });
+          setWeeklyActivity(dashboardData.weeklyActivity || []);
+          setLeaderboard(dashboardData.leaderboard || []);
+          setStaffData(dashboardData.user || {});
+          setRecentActivity(dashboardData.recentActivity || []);
+          setEngagementSummary(dashboardData.engagementSummary || { active_today: 0, avg_solved: 0, participation_rate: 0 });
+          setStaffProfile(dashboardData.staff || null);
+
+          // Fetch staff list for the department/institution
+          if (institutionId) {
+            const staffRes = await fetch(`/api/staff/institutions/${institutionId}/details/`, { credentials: 'include' });
+            if (staffRes.ok) {
+              const staffData = await staffRes.json();
+              setStaffList(staffData.staff || []);
+              setDepartment(staffData.department || null);
+              setDepartmentStudents(staffData.students || []);
+              setStats(prev => ({
+                ...prev,
+                staffCount: staffData.staff?.length || 0,
+              }));
+            }
+            
+            // Fetch staff performance data
+            const perfRes = await fetch(`/api/staff/institutions/${institutionId}/performance/`, { credentials: 'include' });
+            if (perfRes.ok) {
+              const perfData = await perfRes.json();
+              setStaffPerformance(perfData.staff_performance || []);
+            }
+            
+            // Fetch contests for the department
+            const contestsRes = await fetch(`/api/contests/`, { credentials: 'include' });
+            if (contestsRes.ok) {
+              const contestsData = await contestsRes.json();
+              setContests(contestsData.contests || []);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
     loadHODData();
   }, [institutionId]);
 
@@ -148,59 +253,70 @@ const HODDashboard = ({ institutionId }) => {
   }
 
   async function handleStaffLockToggle(facultyId, currentStatus) {
-    try {
-      const res = await fetch(`/api/staff/${facultyId}/lock/`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'X-CSRFToken': getCsrfToken() },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setStaffList(prev =>
-          prev.map(s =>
-            s.faculty_id === facultyId ? { ...s, is_active: data.is_active } : s
-          )
-        );
-        setError(null);
-      } else {
-        const errData = await res.json();
-        setError(errData.detail || 'Failed to lock/unlock staff');
-      }
-    } catch (err) {
-      setError(err.message);
-    }
+    const action = currentStatus ? 'LOCK' : 'UNLOCK';
+    askDouble(
+      async () => {
+        try {
+          const res = await fetch(`/api/staff/${facultyId}/lock/`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'X-CSRFToken': getCsrfToken() },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setStaffList(prev =>
+              prev.map(s =>
+                s.faculty_id === facultyId ? { ...s, is_active: data.is_active } : s
+              )
+            );
+            setError(null);
+          } else {
+            const errData = await res.json();
+            setError(errData.detail || 'Failed to lock/unlock staff');
+          }
+        } catch (err) {
+          setError(err.message);
+        }
+      },
+      `Are you sure you want to ${action} this staff member?`,
+      `FINAL CONFIRMATION: This will immediately ${action.toLowerCase()} system access for ${facultyId}.`
+    );
   }
 
   async function handleStudentBlockToggle(registerNumber) {
-    try {
-      const res = await fetch(`/api/students/${registerNumber}/block/`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'X-CSRFToken': getCsrfToken() },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        // Update student in departmentStudents list
-        setDepartmentStudents(prev =>
-          prev.map(s =>
-            s.register_number === registerNumber ? { ...s, is_active: data.is_active } : s
-          )
-        );
-        // If student profile modal is open, update it too
-        if (studentDetail && studentDetail.student.register_number === registerNumber) {
-          setStudentDetail(prev => ({
-            ...prev,
-            student: { ...prev.student, is_active: data.is_active },
-          }));
+    askDouble(
+      async () => {
+        try {
+          const res = await fetch(`/api/students/${registerNumber}/block/`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'X-CSRFToken': getCsrfToken() },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setDepartmentStudents(prev =>
+              prev.map(s =>
+                s.register_number === registerNumber ? { ...s, is_active: data.is_active } : s
+              )
+            );
+            if (studentDetail && studentDetail.student.register_number === registerNumber) {
+              setStudentDetail(prev => ({
+                ...prev,
+                student: { ...prev.student, is_active: data.is_active },
+              }));
+            }
+            setError(null);
+          } else {
+            const errData = await res.json();
+            setError(errData.detail || 'Failed to block/unblock student');
+          }
+        } catch (err) {
+          setError(err.message);
         }
-        setError(null);
-      } else {
-        const errData = await res.json();
-        setError(errData.detail || 'Failed to block/unblock student');
-      }
-    } catch (err) {
-      setError(err.message);
-    }
+      },
+      "Toggle student account status?",
+      "Warning: This will prevent the student from logging in and accessing any practice materials. Confirm toggle?"
+    );
   }
 
   async function handleStudentClick(registerNumber) {
@@ -244,7 +360,7 @@ const HODDashboard = ({ institutionId }) => {
   }
 
   return (
-    <div className="admin-dashboard">
+    <div className="admin-dashboard-layout">
       {showContestDetail && (
         <ContestDetailModal
           contestId={showContestDetail}
@@ -252,330 +368,544 @@ const HODDashboard = ({ institutionId }) => {
         />
       )}
 
-      <div className="admin-container">
-        <div className="admin-header">
-          <h1>HOD Dashboard</h1>
-          <p>Head of Department{department ? ` - ${department.name} (${department.code})` : ''}</p>
+      {/* Premium Sidebar */}
+      <aside className="admin-sidebar">
+        <div className="sidebar-header">
+          <div className="logo-container">
+            <Trophy size={28} color="var(--olive-500)" />
+            <div className="logo-text">
+              <span className="logo-main">CODE-2DAY</span>
+              <span className="logo-sub">HOD CONSOLE</span>
+            </div>
+          </div>
         </div>
+        
+        <nav className="sidebar-nav">
+          {sidebarItems.map(item => (
+            <button 
+              key={item.id}
+              onClick={() => {
+                setActiveTab(item.id);
+                if (item.id === 'discuss') setUnreadDiscussCount(0);
+              }}
+              className={`nav-item ${activeTab === item.id ? 'active' : ''}`}
+            >
+              <item.icon size={20} className="nav-icon" />
+              {item.label}
+              {item.id === 'contests' && stats.pendingApprovals > 0 && (
+                <span className="nav-badge">{stats.pendingApprovals}</span>
+              )}
+              {item.id === 'discuss' && unreadDiscussCount > 0 && (
+                <span className="nav-badge">{unreadDiscussCount}</span>
+              )}
+            </button>
+          ))}
+        </nav>
+        
+        <div style={{ padding: '24px', borderTop: '1px solid var(--bg-2)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ 
+              width: 32, height: 32, borderRadius: '50%', 
+              background: 'var(--sage-100)', color: 'var(--olive-700)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '12px', fontWeight: 'bold'
+            }}>
+              {(staffData.name || 'H')[0]}
+            </div>
+            <div style={{ overflow: 'hidden' }}>
+              <div style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-hard)', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>
+                {staffData.name}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-soft)' }}>{staffData.facultyId}</div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main className={`hod-main-content ${activeTab === 'discuss' ? 'no-padding' : ''}`}>
+        {activeTab !== 'discuss' && (
+          <div className="admin-header">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+              <div>
+                <h1>{sidebarItems.find(i => i.id === activeTab)?.label || 'Overview'}</h1>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <p style={{ margin: 0 }}>Management Control Center • {staffData.department?.name || 'Overall Institution'}</p>
+                  
+                  {departments.length > 0 && (
+                    <select 
+                      value={selectedDeptId || ''} 
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const newId = val ? parseInt(val) : null;
+                        setSelectedDeptId(newId);
+                        loadHODData(newId);
+                      }}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-soft)',
+                        fontSize: '13px',
+                        fontWeight: '600',
+                        color: 'var(--olive-700)',
+                        background: 'var(--sage-50)',
+                        cursor: 'pointer',
+                        outline: 'none'
+                      }}
+                    >
+                      <option value="">Overall Institution</option>
+                      {departments.map(d => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <button 
+                  onClick={() => window.open(`/api/staff/${staffData.facultyId}/report/`, '_blank')}
+                  style={{ 
+                    padding: '12px 24px', borderRadius: '12px', border: '1px solid var(--border-soft)',
+                    background: 'white', color: 'var(--olive-700)', cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 8, fontSize: '14px', fontWeight: '600'
+                  }}
+                >
+                  <FileText size={18} /> Get My Report
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {loading && (
-          <div style={{ padding: 20, textAlign: 'center', color: '#666' }}>
-            Loading data...
+          <div style={{ padding: 40, textAlign: 'center', color: '#666' }}>
+            <div className="admin-loading-spinner" style={{ margin: '0 auto 16px' }}></div>
+            Loading department data...
           </div>
         )}
 
         {error && (
-          <div style={{ padding: 16, background: '#fee2e2', borderRadius: 8, color: '#dc2626', marginBottom: 16 }}>
-            Error: {error}
+          <div style={{ padding: 16, background: '#fee2e2', borderRadius: 8, color: '#dc2626', marginBottom: 24, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <XCircle size={20} />
+            <strong>Error:</strong> {error}
           </div>
         )}
 
-        {/* Stats Cards */}
-        <div className="admin-stats-grid">
-          <div className="admin-stat-card">
-            <div className="admin-stat-info">
-              <h3>{department ? `${department.name} Staff` : 'Department Staff'}</h3>
-              <p className="stat-value">{stats.staffCount}</p>
-            </div>
-            <div className="admin-stat-icon indigo">
-              <Users size={24} />
-            </div>
-          </div>
-
-          <div className="admin-stat-card">
-            <div className="admin-stat-info">
-              <h3>{department ? `${department.name} Students` : 'Students'}</h3>
-              <p className="stat-value">{stats.studentCount}</p>
-            </div>
-            <div className="admin-stat-icon blue">
-              <Building2 size={24} />
-            </div>
-          </div>
-
-          <div className="admin-stat-card">
-            <div className="admin-stat-info">
-              <h3>Pending Approvals</h3>
-              <p className="stat-value">{stats.pendingApprovals}</p>
-            </div>
-            <div className="admin-stat-icon orange">
-              <CheckCircle size={24} />
-            </div>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 10, marginTop: 24, marginBottom: 16, borderBottom: '1px solid rgba(57, 72, 42, 0.1)', paddingBottom: 8 }}>
-          {['overview', 'staff', 'contests', 'students', 'batches'].map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              style={{
-                padding: '8px 16px',
-                borderRadius: 6,
-                border: 'none',
-                background: activeTab === tab ? 'rgba(57, 72, 42, 0.1)' : 'transparent',
-                color: activeTab === tab ? '#39482a' : '#666',
-                fontWeight: activeTab === tab ? 500 : 400,
-                cursor: 'pointer',
-                textTransform: 'capitalize',
-              }}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab Content */}
-        <div style={{ padding: 20, background: 'rgba(57, 72, 42, 0.02)', borderRadius: 8 }}>
-          {activeTab === 'overview' && (
-            <div>
-              <h3 style={{ marginBottom: 16 }}>Department Overview</h3>
-              <p style={{ color: 'var(--text-soft)' }}>
-                Monitor staff activity and student engagement across the department.
-              </p>
-              
-              {/* Staff Activity Summary */}
-              <div style={{ 
-                display: 'grid', 
-                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
-                gap: 16,
-                marginTop: 24,
-                marginBottom: 32
-              }}>
-                <div style={{ padding: 20, background: '#f0fdf4', borderRadius: 8, border: '1px solid #bbf7d0' }}>
-                  <div style={{ fontSize: 32, fontWeight: 'bold', color: '#16a34a' }}>
-                    {staffPerformance.length}
-                  </div>
-                  <div style={{ fontSize: 14, color: '#166534', marginTop: 4 }}>Total Staff</div>
-                </div>
-                <div style={{ padding: 20, background: '#eff6ff', borderRadius: 8, border: '1px solid #bfdbfe' }}>
-                  <div style={{ fontSize: 32, fontWeight: 'bold', color: '#2563eb' }}>
-                    {departmentStudents.length}
-                  </div>
-                  <div style={{ fontSize: 14, color: '#1e40af', marginTop: 4 }}>Total Students</div>
-                </div>
-                <div style={{ padding: 20, background: '#fef3c7', borderRadius: 8, border: '1px solid #fde68a' }}>
-                  <div style={{ fontSize: 32, fontWeight: 'bold', color: '#d97706' }}>
-                    {staffPerformance.reduce((sum, s) => sum + s.contests_created, 0)}
-                  </div>
-                  <div style={{ fontSize: 14, color: '#92400e', marginTop: 4 }}>Total Contests</div>
-                </div>
-              </div>
-              
-              {/* Staff Activity Bar Chart */}
-              <div style={{ marginTop: 32 }}>
-                <h4 style={{ marginBottom: 20, fontSize: 16, color: '#39482a' }}>
-                  Staff Activity - Days Active
-                </h4>
-                {staffPerformance.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: '#999', padding: 40 }}>
-                    <BarChart3 size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
-                    <p>No staff data available</p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {staffPerformance.map((staff) => {
-                      const maxDays = Math.max(...staffPerformance.map(s => s.days_active), 1);
-                      const percentage = (staff.days_active / maxDays) * 100;
-                      return (
-                        <div key={staff.faculty_id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                          <div style={{ width: 120, fontSize: 13, textAlign: 'right', flexShrink: 0 }}>
-                            {staff.name || staff.faculty_id}
-                          </div>
-                          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{
-                              height: 24,
-                              width: `${Math.max(percentage, 5)}%`,
-                              background: staff.role === 'hod' ? '#3b82f6' : '#10b981',
-                              borderRadius: 4,
-                              minWidth: percentage > 0 ? 4 : 0,
-                              transition: 'width 0.3s ease',
-                            }} />
-                            <span style={{ fontSize: 12, color: '#666', minWidth: 50 }}>
-                              {staff.days_active} days
-                            </span>
+        <div className="tab-container">
+          {activeTab === 'performance' && (
+            <div className="performance-tab">
+              {/* Department Performance Podium */}
+              <div className="premium-card" style={{ marginBottom: 32, textAlign: 'center', background: 'var(--bg-1)' }}>
+                <h3 style={{ marginBottom: 40, fontSize: '1.5rem', fontWeight: '800', color: 'var(--text-hard)' }}>
+                  Department Achievers
+                </h3>
+                
+                {leaderboard && leaderboard.length > 0 ? (
+                  <div style={{ 
+                    display: 'flex', justifyContent: 'center', alignItems: 'flex-end', 
+                    gap: 0, padding: '20px 0', maxWidth: '600px', margin: '0 auto' 
+                  }}>
+                    {/* 2nd Place */}
+                    {leaderboard.length > 1 && (
+                      <div 
+                        style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}
+                        onClick={() => handleStudentClick(leaderboard[1].id)}
+                      >
+                        <div style={{ marginBottom: 12, position: 'relative' }}>
+                          <div style={{ 
+                            width: 64, height: 64, borderRadius: '20px', background: 'white',
+                            margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            border: '3px solid white', boxShadow: '0 8px 16px rgba(0,0,0,0.08)'
+                          }}>
+                            <span style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text-hard)' }}>{(leaderboard[1].name || 'S')[0]}</span>
                           </div>
                         </div>
-                      );
-                    })}
+                        <div style={{ 
+                          height: 120, background: 'linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)', 
+                          borderRadius: '16px 16px 0 0', display: 'flex', flexDirection: 'column', 
+                          justifyContent: 'center', padding: '16px', position: 'relative'
+                        }}>
+                          <div style={{ 
+                            position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+                            width: 24, height: 24, background: '#94a3b8', color: 'white', borderRadius: '50%',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '900'
+                          }}>2</div>
+                          <div style={{ fontWeight: '800', fontSize: '14px', color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leaderboard[1].name || 'Student'}</div>
+                          <div style={{ fontSize: '20px', fontWeight: '900', color: '#1e293b' }}>{leaderboard[1].score || 0}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 1st Place */}
+                    {leaderboard.length > 0 && (
+                      <div 
+                        style={{ flex: 1.2, textAlign: 'center', position: 'relative', zIndex: 1, cursor: 'pointer' }}
+                        onClick={() => handleStudentClick(leaderboard[0].id)}
+                      >
+                        <div style={{ marginBottom: 16, position: 'relative' }}>
+                          <div style={{ 
+                            width: 80, height: 80, borderRadius: '24px', background: 'white',
+                            margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            border: '4px solid #fbbf24', boxShadow: '0 12px 24px rgba(251, 191, 36, 0.2)'
+                          }}>
+                            <span style={{ fontSize: '28px', fontWeight: '800', color: '#b45309' }}>{(leaderboard[0].name || 'S')[0]}</span>
+                          </div>
+                          <div style={{ 
+                            position: 'absolute', bottom: -8, left: '50%', transform: 'translateX(-50%)',
+                            background: '#fbbf24', color: '#92400e', padding: '2px 10px', borderRadius: '10px',
+                            fontSize: '10px', fontWeight: '900', textTransform: 'uppercase'
+                          }}>CHAMPION</div>
+                        </div>
+                        <div style={{ 
+                          height: 160, background: 'linear-gradient(180deg, #fef3c7 0%, #fde68a 100%)', 
+                          borderRadius: '20px 20px 0 0', display: 'flex', flexDirection: 'column', 
+                          justifyContent: 'center', padding: '16px', position: 'relative',
+                          boxShadow: '0 -10px 20px rgba(251, 191, 36, 0.1)'
+                        }}>
+                          <div style={{ 
+                            position: 'absolute', top: -16, left: '50%', transform: 'translateX(-50%)',
+                            width: 32, height: 32, background: '#fbbf24', color: 'white', borderRadius: '50%',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '900',
+                            boxShadow: '0 4px 12px rgba(251, 191, 36, 0.3)'
+                          }}>1</div>
+                          <div style={{ fontWeight: '900', fontSize: '16px', color: '#92400e', marginBottom: 4 }}>{leaderboard[0].name || 'Student'}</div>
+                          <div style={{ fontSize: '32px', fontWeight: '900', color: '#78350f' }}>{leaderboard[0].score || 0}</div>
+                          <div style={{ fontSize: '12px', fontWeight: '700', color: '#b45309', textTransform: 'uppercase' }}>Solved</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 3rd Place */}
+                    {leaderboard.length > 2 && (
+                      <div 
+                        style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}
+                        onClick={() => handleStudentClick(leaderboard[2].id)}
+                      >
+                        <div style={{ marginBottom: 12, position: 'relative' }}>
+                          <div style={{ 
+                            width: 56, height: 56, borderRadius: '18px', background: 'white',
+                            margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            border: '3px solid #fdba74', boxShadow: '0 8px 16px rgba(253, 186, 116, 0.15)'
+                          }}>
+                            <span style={{ fontSize: '20px', fontWeight: '800', color: '#c2410c' }}>{(leaderboard[2].name || 'S')[0]}</span>
+                          </div>
+                        </div>
+                        <div style={{ 
+                          height: 90, background: 'linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%)', 
+                          borderRadius: '16px 16px 0 0', display: 'flex', flexDirection: 'column', 
+                          justifyContent: 'center', padding: '16px', position: 'relative'
+                        }}>
+                          <div style={{ 
+                            position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+                            width: 24, height: 24, background: '#fdba74', color: 'white', borderRadius: '50%',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '900'
+                          }}>3</div>
+                          <div style={{ fontWeight: '800', fontSize: '14px', color: '#9a3412', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{leaderboard[2].name || 'Student'}</div>
+                          <div style={{ fontSize: '18px', fontWeight: '900', color: '#7c2d12' }}>{leaderboard[2].score || 0}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ padding: '40px 0', color: 'var(--text-soft)' }}>
+                    No performance data available yet.
                   </div>
                 )}
               </div>
-              
-              {/* Staff Management Table */}
-              {staffPerformance.length > 0 && (
-                <div style={{ marginTop: 32, overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-                    <thead>
-                      <tr style={{ borderBottom: '2px solid #e5e7eb' }}>
-                        <th style={{ textAlign: 'left', padding: '12px 8px' }}>Staff</th>
-                        <th style={{ textAlign: 'center', padding: '12px 8px' }}>Role</th>
-                        <th style={{ textAlign: 'center', padding: '12px 8px' }}>Days Active</th>
-                        <th style={{ textAlign: 'center', padding: '12px 8px' }}>Students</th>
-                        <th style={{ textAlign: 'center', padding: '12px 8px' }}>Contests</th>
-                        <th style={{ textAlign: 'left', padding: '12px 8px' }}>Recent Contests & Top Performers</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {staffPerformance.map((staff) => (
-                        <tr key={staff.faculty_id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                          <td style={{ padding: '12px 8px' }}>
-                            <strong>{staff.name || staff.faculty_id}</strong>
-                          </td>
-                          <td style={{ textAlign: 'center', padding: '12px 8px' }}>
-                            <span style={{
-                              padding: '4px 12px',
-                              borderRadius: 12,
-                              background: staff.role === 'hod' ? '#dbeafe' : '#f3f4f6',
-                              color: staff.role === 'hod' ? '#1e40af' : '#374151',
-                              fontSize: 12,
-                              textTransform: 'capitalize',
-                            }}>
-                              {staff.role}
-                            </span>
-                          </td>
-                          <td style={{ textAlign: 'center', padding: '12px 8px', color: '#666' }}>
-                            {staff.days_active}
-                          </td>
-                          <td style={{ textAlign: 'center', padding: '12px 8px', color: '#666' }}>
-                            {staff.assigned_students}
-                          </td>
-                          <td style={{ textAlign: 'center', padding: '12px 8px', fontWeight: 600, color: '#d97706' }}>
-                            {staff.contests_created || 0}
-                          </td>
-                          <td style={{ padding: '12px 8px' }}>
-                            {staff.contests && staff.contests.length > 0 ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                {staff.contests.slice(0, 2).map((contest) => (
-                                  <div key={contest.id} style={{ fontSize: 12 }}>
-                                    <span style={{ fontWeight: 500 }}>{contest.title}</span>
-                                    <span style={{
-                                      marginLeft: 6,
-                                      padding: '1px 6px',
-                                      borderRadius: 8,
-                                      background: contest.status === 'active' ? '#d1fae5' : '#f3f4f6',
-                                      color: contest.status === 'active' ? '#059669' : '#666',
-                                      fontSize: 10,
-                                    }}>
-                                      {contest.status}
-                                    </span>
-                                    {contest.top_performers && contest.top_performers.length > 0 && (
-                                      <div style={{ marginTop: 4, color: '#666', fontSize: 11 }}>
-                                        🏆 {contest.top_performers[0].name} ({contest.top_performers[0].solved_in_contest})
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                                {staff.contests.length > 2 && (
-                                  <div style={{ fontSize: 11, color: '#999', fontStyle: 'italic' }}>
-                                    +{staff.contests.length - 2} more contests
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <span style={{ color: '#999', fontSize: 12 }}>No contests</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
 
-          {activeTab === 'staff' && (
-            <div>
-              <h3 style={{ marginBottom: 16 }}>Department Staff</h3>
-              <p style={{ color: 'var(--text-soft)' }}>
-                Click on a staff member to view their detailed analytics.
-              </p>
-              {staffList.length === 0 ? (
-                <div style={{ marginTop: 24, textAlign: 'center', color: '#999', padding: 40 }}>
-                  <Users size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
-                  <p>No staff found in your department</p>
+              {/* Department Leaderboard Table */}
+              <div className="premium-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                  <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Department Rankings</h3>
+                  <div style={{ color: 'var(--text-soft)', fontSize: '13px' }}>Updated Real-time</div>
                 </div>
-              ) : (
-                <div style={{ marginTop: 24 }}>
-                  {staffList.map((staff) => (
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {(leaderboard || []).slice(3, 15).map((student, idx) => (
                     <div 
-                      key={staff.faculty_id} 
+                      key={student.id}
+                      className="leaderboard-item"
+                      onClick={() => handleStudentClick(student.id)}
                       style={{
-                        padding: '12px 16px',
-                        background: staff.is_active === false ? '#fee2e2' : 'white',
-                        borderRadius: 8,
-                        marginBottom: 8,
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-                        opacity: staff.is_active === false ? 0.7 : 1,
+                        padding: '16px 20px', background: 'white', borderRadius: '16px',
+                        display: 'flex', alignItems: 'center', gap: 20,
+                        border: '1px solid var(--border-soft)', cursor: 'pointer',
+                        transition: 'all 0.2s ease'
                       }}
                     >
-                      <div 
-                        onClick={() => handleStaffClick(staff.faculty_id)}
-                        style={{ flex: 1, cursor: 'pointer' }}
-                      >
-                        <strong>{staff.name || staff.faculty_id}</strong>
-                        <span style={{ color: '#666', marginLeft: 8 }}>({staff.faculty_id})</span>
-                        {staff.is_active === false && (
-                          <span style={{
-                            marginLeft: 8,
-                            padding: '2px 8px',
-                            background: '#dc2626',
-                            color: 'white',
-                            borderRadius: 4,
-                            fontSize: 11,
-                          }}>
-                            LOCKED
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        {/* Lock/Unlock Button - Only for non-HOD staff */}
-                        {staff.role !== 'hod' && staff.role !== 'admin' && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleStaffLockToggle(staff.faculty_id, staff.is_active);
-                            }}
-                            style={{
-                              padding: '6px 12px',
-                              borderRadius: 6,
-                              border: 'none',
-                              background: staff.is_active === false ? '#059669' : '#dc2626',
-                              color: 'white',
-                              fontSize: 12,
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: 4,
-                            }}
-                            title={staff.is_active === false ? 'Unlock staff' : 'Lock staff'}
-                          >
-                            {staff.is_active === false ? <Unlock size={14} /> : <Lock size={14} />}
-                            {staff.is_active === false ? 'Unlock' : 'Lock'}
-                          </button>
-                        )}
-                        <span style={{ color: '#666', fontSize: 12, cursor: 'pointer' }} onClick={() => handleStaffClick(staff.faculty_id)}>
-                          View →
-                        </span>
-                        <span style={{
-                          padding: '4px 12px',
-                          borderRadius: 12,
-                          background: staff.role === 'hod' ? '#dbeafe' : '#f3f4f6',
-                          color: staff.role === 'hod' ? '#1e40af' : '#374151',
-                          fontSize: 12,
-                          textTransform: 'capitalize',
+                      <div style={{ width: 28, fontSize: '14px', fontWeight: '800', color: 'var(--text-soft)' }}>{idx + 4}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1 }}>
+                        <div style={{ 
+                          width: 48, height: 48, borderRadius: '14px', 
+                          background: 'var(--bg-2)', color: 'var(--olive-700)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: '18px', fontWeight: '800'
                         }}>
-                          {staff.role}
-                        </span>
+                          {(student.name || 'S')[0]}
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-hard)' }}>{student.name || 'Student'}</div>
+                          <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>{student.id}</div>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '20px', fontWeight: '900', color: 'var(--olive-700)' }}>{student.score || 0}</div>
+                        <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Solved</div>
                       </div>
                     </div>
                   ))}
                 </div>
-              )}
+              </div>
+            </div>
+          )}
+
+
+
+        {activeTab === 'overview' && (
+            <div className="overview-tab">
+              {/* Premium Metric Grid */}
+              <div className="metric-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 24, marginBottom: 32 }}>
+                <div className="metric-card premium-card">
+                  <div className="icon-box" style={{ background: '#eff6ff', color: '#2563eb' }}>
+                    <Users size={24} />
+                  </div>
+                  <div>
+                    <h4>TOTAL STUDENTS</h4>
+                    <div className="value">{stats.studentCount}</div>
+                  </div>
+                </div>
+
+                <div className="metric-card premium-card">
+                  <div className="icon-box" style={{ background: '#f5f3ff', color: '#7c3aed' }}>
+                    <Shield size={24} />
+                  </div>
+                  <div>
+                    <h4>FACULTY MEMBERS</h4>
+                    <div className="value">{stats.staffCount}</div>
+                  </div>
+                </div>
+
+                <div className="metric-card premium-card">
+                  <div className="icon-box" style={{ background: '#ecfdf5', color: '#059669' }}>
+                    <Activity size={24} />
+                  </div>
+                  <div>
+                    <h4>ACTIVE TODAY</h4>
+                    <div className="value">{engagementSummary.active_today}</div>
+                    <div style={{ fontSize: '12px', color: '#059669', fontWeight: '700' }}>
+                      {engagementSummary.participation_rate}% Participation
+                    </div>
+                  </div>
+                </div>
+                <div className="metric-card premium-card">
+                  <div className="icon-box" style={{ background: '#fff7ed', color: '#ea580c' }}>
+                    <Trophy size={24} />
+                  </div>
+                  <div>
+                    <h4>AVG. SOLVED</h4>
+                    <div className="value">{engagementSummary.avg_solved}</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-soft)', fontWeight: '600' }}>Problems / Student</div>
+                  </div>
+                </div>
+
+                <div className="metric-card premium-card">
+                  <div className="icon-box" style={{ background: stats.pendingApprovals > 0 ? '#fef2f2' : '#f0fdf4', color: stats.pendingApprovals > 0 ? '#dc2626' : '#16a34a' }}>
+                    {stats.pendingApprovals > 0 ? <Calendar size={24} /> : <CheckCircle size={24} />}
+                  </div>
+                  <div>
+                    <h4>PENDING</h4>
+                    <div className="value" style={{ color: stats.pendingApprovals > 0 ? '#dc2626' : 'inherit' }}>
+                      {stats.pendingApprovals}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-soft)', fontWeight: '600' }}>Approvals Needed</div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 32, alignItems: 'start' }}>
+                {/* Department Activity Graph */}
+                <div className="premium-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Weekly Solving Activity</h3>
+                    <div style={{ color: 'var(--text-soft)', fontSize: '13px' }}>Problem Solutions</div>
+                  </div>
+                  
+                  <div style={{ height: 240, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', padding: '0 10px' }}>
+                    {weeklyActivity.map((day) => {
+                      const maxCount = Math.max(...weeklyActivity.map(d => d.count), 1);
+                      const height = (day.count / maxCount) * 180;
+                      return (
+                        <div key={day.day} style={{ textAlign: 'center', flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                          <div style={{ 
+                            width: '60%', 
+                            height: `${height}px`, 
+                            background: 'linear-gradient(180deg, var(--olive-600) 0%, var(--olive-900) 100%)', 
+                            borderRadius: '8px 8px 4px 4px',
+                            minHeight: day.count > 0 ? 8 : 2,
+                            transition: 'height 0.3s ease',
+                            position: 'relative'
+                          }}>
+                            {day.count > 0 && (
+                              <div style={{ 
+                                position: 'absolute', top: -24, left: '50%', transform: 'translateX(-50%)',
+                                fontSize: '11px', fontWeight: '800', color: 'var(--olive-900)'
+                              }}>{day.count}</div>
+                            )}
+                          </div>
+                          <div style={{ marginTop: 12, fontSize: '12px', fontWeight: '700', color: 'var(--text-soft)' }}>{day.day}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Live Activity Feed */}
+                <div className="premium-card">
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-hard)', marginBottom: 20 }}>Department Activity</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                    {(recentActivity || []).length > 0 ? recentActivity.map((act, idx) => (
+                      <div key={idx} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                        <div style={{ 
+                          width: 40, height: 40, borderRadius: '12px', background: 'var(--sage-100)', 
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                          fontSize: '14px', fontWeight: '800', color: 'var(--olive-700)'
+                        }}>
+                          {(act.student_name || 'S')[0]}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                            <strong style={{ color: 'var(--text-hard)' }}>{act.student_name || 'Student'}</strong>
+                            <span style={{ color: 'var(--text-soft)' }}> solved </span>
+                            <strong style={{ color: 'var(--olive-700)' }}>{act.problem_title || 'a problem'}</strong>
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: 4 }}>
+                            {new Date(act.solved_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+                      </div>
+                    )) : (
+                      <div style={{ textAlign: 'center', color: '#999', padding: '20px 0', fontSize: '14px' }}>
+                        No recent activity recorded.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'staff' && (
+            <div className="staff-tab">
+              <div className="premium-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Department Staff</h3>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '14px' }}>
+                      Oversee and manage faculty access for {department?.name || 'your department'}.
+                    </p>
+                  </div>
+                  <div style={{ padding: '8px 16px', background: 'var(--bg-2)', borderRadius: '12px', fontSize: '13px', fontWeight: '600', color: 'var(--olive-700)' }}>
+                    {staffList.length} Total Members
+                  </div>
+                </div>
+
+                {staffList.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: '#999', padding: '60px 0' }}>
+                    <Users size={64} style={{ marginBottom: 20, opacity: 0.2, color: 'var(--olive-900)' }} />
+                    <p>No staff accounts found in this department.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    {staffList.map((staff) => (
+                      <div 
+                        key={staff.faculty_id} 
+                        className="staff-list-item"
+                        style={{
+                          padding: '16px 20px',
+                          background: staff.is_active === false ? '#fff1f2' : 'white',
+                          borderRadius: '16px',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          border: '1px solid var(--border-soft)',
+                          transition: 'all 0.2s ease',
+                          opacity: staff.is_active === false ? 0.8 : 1,
+                        }}
+                      >
+                        <div 
+                          onClick={() => handleStaffClick(staff.faculty_id)}
+                          style={{ display: 'flex', alignItems: 'center', gap: 16, cursor: 'pointer', flex: 1 }}
+                        >
+                          <div style={{
+                            width: 44, height: 44, borderRadius: '12px',
+                            background: staff.is_active === false ? '#fda4af' : 'var(--sage-100)',
+                            color: staff.is_active === false ? '#9f1239' : 'var(--olive-700)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: '16px', fontWeight: '700'
+                          }}>
+                            {(staff.name || '?')[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: '700', color: 'var(--text-hard)', fontSize: '15px' }}>
+                              {staff.name || 'Unnamed Faculty'}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+                              <span style={{ color: 'var(--text-soft)', fontSize: '12px' }}>ID: {staff.faculty_id}</span>
+                              <span style={{ 
+                                padding: '2px 8px', borderRadius: '6px', 
+                                background: staff.role === 'hod' ? '#e0e7ff' : '#f3f4f6', 
+                                color: staff.role === 'hod' ? '#4338ca' : '#64748b',
+                                fontSize: '10px', fontWeight: '700', textTransform: 'uppercase'
+                              }}>
+                                {staff.role}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                          {staff.role !== 'hod' && staff.role !== 'admin' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStaffLockToggle(staff.faculty_id, staff.is_active);
+                              }}
+                              style={{
+                                padding: '8px 16px',
+                                borderRadius: '10px',
+                                border: 'none',
+                                background: staff.is_active === false ? '#10b981' : '#ef4444',
+                                color: 'white',
+                                fontSize: '12px',
+                                fontWeight: '600',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6,
+                                boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                              }}
+                            >
+                              {staff.is_active === false ? <Unlock size={14} /> : <Lock size={14} />}
+                              {staff.is_active === false ? 'Unlock Access' : 'Lock Access'}
+                            </button>
+                          )}
+                          
+                          <button 
+                            onClick={() => handleStaffClick(staff.faculty_id)}
+                            style={{ 
+                              padding: '8px', borderRadius: '10px', 
+                              background: 'var(--bg-2)', border: 'none', 
+                              color: 'var(--olive-700)', cursor: 'pointer',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center'
+                            }}
+                          >
+                            <ChevronRight size={18} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -663,12 +993,24 @@ const HODDashboard = ({ institutionId }) => {
                           )}
                         </div>
                       </div>
-                      <button
-                        onClick={closeStaffDetail}
-                        style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: '#f3f4f6', cursor: 'pointer', fontSize: 14 }}
-                      >
-                        Close ✕
-                      </button>
+                      <div style={{ display: 'flex', gap: 10 }}>
+                        <button 
+                          onClick={() => window.open(`/api/staff/${staffDetail.staff.faculty_id}/report/`, '_blank')}
+                          style={{ 
+                            padding: '8px 16px', background: 'var(--olive-900)', color: 'white', 
+                            border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                            display: 'flex', alignItems: 'center', gap: 6
+                          }}
+                        >
+                          <FileText size={14} /> Download Report
+                        </button>
+                        <button
+                          onClick={closeStaffDetail}
+                          style={{ padding: '8px 16px', borderRadius: 6, border: 'none', background: '#f3f4f6', cursor: 'pointer', fontSize: 14 }}
+                        >
+                          Close ✕
+                        </button>
+                      </div>
                     </div>
 
                     {/* Contests Created — the only section shown */}
@@ -724,7 +1066,20 @@ const HODDashboard = ({ institutionId }) => {
                                         }}>
                                           {idx + 1}
                                         </span>
-                                        <span style={{ fontWeight: 600, fontSize: 14, flex: 1 }}>{p.name}</span>
+                                        <button
+                                          onClick={() => {
+                                            closeStaffDetail();
+                                            handleStudentClick(p.register_number || p.id);
+                                          }}
+                                          style={{
+                                            background: 'none', border: 'none', padding: 0,
+                                            color: 'var(--olive-700)', fontWeight: 600,
+                                            cursor: 'pointer', textDecoration: 'underline',
+                                            fontSize: 14, flex: 1, textAlign: 'left'
+                                          }}
+                                        >
+                                          {p.name}
+                                        </button>
                                         <span style={{ fontSize: 12, color: '#666' }}>
                                           {p.solved_in_contest} solved
                                         </span>
@@ -923,7 +1278,19 @@ const HODDashboard = ({ institutionId }) => {
                             {contestAnalytics.top_performers.map((student, i) => (
                               <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
                                 <td style={{ padding: '12px 8px' }}>
-                                  <strong>{student.name}</strong>
+                                  <button
+                                    onClick={() => {
+                                      closeContestDetail();
+                                      handleStudentClick(student.register_number);
+                                    }}
+                                    style={{
+                                      background: 'none', border: 'none', padding: 0,
+                                      color: 'var(--olive-700)', fontWeight: 600,
+                                      cursor: 'pointer', textDecoration: 'underline'
+                                    }}
+                                  >
+                                    {student.name}
+                                  </button>
                                 </td>
                                 <td style={{ textAlign: 'center', padding: '12px 8px', color: '#666' }}>
                                   {student.register_number}
@@ -960,20 +1327,30 @@ const HODDashboard = ({ institutionId }) => {
 
           {/* Contests Tab */}
           {activeTab === 'contests' && (
-            <div>
-              <h3 style={{ marginBottom: 16 }}>Department Contests</h3>
-              
-              {/* Pending Approvals Section */}
-              <div style={{ marginBottom: 32 }}>
+            <div className="contests-tab">
+              <div className="premium-card" style={{ marginBottom: 32 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Pending Approvals</h3>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '14px' }}>
+                      Review and approve new contest requests from your faculty.
+                    </p>
+                  </div>
+                  {stats.pendingApprovals > 0 && (
+                    <div style={{ padding: '8px 16px', background: '#fee2e2', color: '#b91c1c', borderRadius: '12px', fontSize: '13px', fontWeight: '700' }}>
+                      {stats.pendingApprovals} Action Required
+                    </div>
+                  )}
+                </div>
+                
                 <ContestApprovalPanel 
                   contests={contests}
+                  onView={setShowContestDetail}
                   onRefresh={() => {
-                    // Reload contests after approval/rejection
                     fetch(`/api/contests/`, { credentials: 'include' })
                       .then(res => res.json())
                       .then(data => {
                         setContests(data.contests || []);
-                        // Update pending count
                         const pendingCount = (data.contests || []).filter(c => c.status === 'pending_approval').length;
                         setStats(prev => ({ ...prev, pendingApprovals: pendingCount }));
                       });
@@ -981,94 +1358,73 @@ const HODDashboard = ({ institutionId }) => {
                 />
               </div>
 
-              {/* All Contests Section */}
-              <div style={{ marginTop: 32 }}>
-                <h4 style={{ marginBottom: 12, fontSize: 15, color: '#666' }}>All Department Contests</h4>
-                <p style={{ color: 'var(--text-soft)', fontSize: 13, marginBottom: 16 }}>
-                  Contests published by staff in your department. Click to view analytics.
-                </p>
+              <div className="premium-card">
+                <div style={{ marginBottom: 24 }}>
+                  <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Department Contest History</h3>
+                  <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '14px' }}>
+                    All past and scheduled contests for {department?.name || 'the department'}.
+                  </p>
+                </div>
+
                 {contests.length === 0 ? (
-                  <div style={{ marginTop: 24, textAlign: 'center', color: '#999', padding: 40 }}>
-                    <Trophy size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
-                    <p>No contests created yet</p>
+                  <div style={{ textAlign: 'center', color: '#999', padding: '60px 0' }}>
+                    <Trophy size={64} style={{ marginBottom: 20, opacity: 0.2, color: 'var(--olive-900)' }} />
+                    <p>No contests have been created yet.</p>
                   </div>
                 ) : (
-                  <div style={{ marginTop: 16 }}>
+                  <div style={{ display: 'grid', gap: 16 }}>
                     {contests.map((contest) => (
                       <div 
                         key={contest.id} 
                         onClick={() => setShowContestDetail(contest.id)}
                         style={{
-                          padding: '16px 20px',
+                          padding: '20px 24px',
                           background: 'white',
-                          borderRadius: 8,
-                          marginBottom: 12,
+                          borderRadius: '16px',
                           display: 'flex',
                           justifyContent: 'space-between',
                           alignItems: 'center',
-                          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                          border: '1px solid var(--border-soft)',
                           cursor: 'pointer',
-                          transition: 'transform 0.2s, box-shadow 0.2s',
-                          borderLeft: contest.status === 'active' ? '4px solid #10b981' : 
-                                      contest.status === 'published' ? '4px solid #3b82f6' :
-                                      contest.status === 'pending_approval' ? '4px solid #f59e0b' :
-                                      contest.status === 'approved' ? '4px solid #059669' : '4px solid #9ca3af',
+                          transition: 'all 0.2s ease',
+                          borderLeft: `4px solid ${
+                            contest.status === 'active' ? '#10b981' : 
+                            contest.status === 'published' ? '#3b82f6' :
+                            contest.status === 'pending_approval' ? '#f59e0b' :
+                            '#94a3b8'
+                          }`
                         }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.transform = 'translateX(4px)';
-                          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.transform = 'none';
-                          e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.1)';
-                        }}
+                        className="contest-list-item-hover"
                       >
-                        <div>
-                          <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 4 }}>
-                            {contest.title}
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+                            <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: 'var(--text-hard)' }}>
+                              {contest.title}
+                            </h4>
+                            <span style={{ 
+                              padding: '2px 8px', borderRadius: '6px', 
+                              background: contest.status === 'active' ? '#dcfce7' : '#f1f5f9',
+                              color: contest.status === 'active' ? '#166534' : '#475569',
+                              fontSize: '10px', fontWeight: '700', textTransform: 'uppercase'
+                            }}>
+                              {contest.status.replace('_', ' ')}
+                            </span>
                           </div>
-                          <div style={{ color: '#666', fontSize: 13 }}>
-                            Created by {contest.created_by?.name || contest.created_by?.faculty_id} • {new Date(contest.created_at).toLocaleDateString()}
+                          <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>
+                            By {contest.created_by?.name || 'Faculty'} • {new Date(contest.created_at).toLocaleDateString()}
                           </div>
-                          {contest.start_time && (
-                            <div style={{ color: '#666', fontSize: 12, marginTop: 4 }}>
-                              {new Date(contest.start_time).toLocaleString()} - {new Date(contest.end_time).toLocaleString()}
-                            </div>
-                          )}
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
                           <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: 18, fontWeight: 'bold', color: '#39482a' }}>
-                              {contest.total_participants || 0}
-                            </div>
-                            <div style={{ fontSize: 11, color: '#666' }}>Participants</div>
+                            <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-hard)' }}>{contest.total_participants || 0}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Students</div>
                           </div>
                           <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: 18, fontWeight: 'bold', color: '#059669' }}>
-                              {contest.total_submissions || 0}
-                            </div>
-                            <div style={{ fontSize: 11, color: '#666' }}>Submissions</div>
+                            <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--olive-700)' }}>{contest.total_submissions || 0}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Submissions</div>
                           </div>
-                          <span style={{
-                            padding: '4px 12px',
-                            borderRadius: 12,
-                            background: contest.status === 'active' ? '#d1fae5' :
-                                       contest.status === 'published' ? '#dbeafe' :
-                                       contest.status === 'pending_approval' ? '#fef3c7' :
-                                       contest.status === 'approved' ? '#d1fae5' :
-                                       contest.status === 'rejected' ? '#fee2e2' : '#f3f4f6',
-                            color: contest.status === 'active' ? '#059669' :
-                                  contest.status === 'published' ? '#1e40af' :
-                                  contest.status === 'pending_approval' ? '#d97706' :
-                                  contest.status === 'approved' ? '#059669' :
-                                  contest.status === 'rejected' ? '#dc2626' : '#374151',
-                            fontSize: 12,
-                            textTransform: 'capitalize',
-                            fontWeight: 600,
-                          }}>
-                            {contest.status.replace('_', ' ')}
-                          </span>
-                          <span style={{ color: '#666', fontSize: 12 }}>View →</span>
+                          <ChevronRight size={20} color="var(--text-soft)" />
                         </div>
                       </div>
                     ))}
@@ -1080,149 +1436,124 @@ const HODDashboard = ({ institutionId }) => {
 
           {/* Students Tab */}
           {activeTab === 'students' && (
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 12 }}>
-                <div>
-                  <h3 style={{ marginBottom: 4 }}>
-                    {department ? `${department.name} Students` : 'Department Students'}
-                  </h3>
-                  <p style={{ color: 'var(--text-soft)', fontSize: 14 }}>
-                    Click a student to view profile. Use Block to restrict access.
-                  </p>
+            <div className="students-tab">
+              <div className="premium-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Student Directory</h3>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '14px' }}>
+                      Listing all students in {department?.name || 'the department'}.
+                    </p>
+                  </div>
+                  
+                  <div style={{ position: 'relative', width: '300px' }}>
+                    <Search 
+                      size={18} 
+                      style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-soft)' }} 
+                    />
+                    <input
+                      type="text"
+                      placeholder="Search by name or ID..."
+                      value={studentSearchQuery}
+                      onChange={(e) => setStudentSearchQuery(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px 10px 40px',
+                        borderRadius: '12px',
+                        border: '1px solid var(--border-soft)',
+                        background: 'var(--bg-1)',
+                        fontSize: '14px',
+                        outline: 'none',
+                        transition: 'border-color 0.2s',
+                      }}
+                    />
+                  </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 280 }}>
-                  <Search size={18} color="#666" />
-                  <input
-                    type="text"
-                    placeholder="Search by name or register #..."
-                    value={studentSearchQuery}
-                    onChange={(e) => setStudentSearchQuery(e.target.value)}
-                    style={{
-                      flex: 1, padding: '8px 12px',
-                      border: '1px solid #e5e7eb', borderRadius: 6,
-                      fontSize: 14, outline: 'none',
-                    }}
-                  />
-                  {studentSearchQuery && (
-                    <button onClick={() => setStudentSearchQuery('')}
-                      style={{ padding: '6px 10px', background: '#f3f4f6', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12 }}
-                    >Clear</button>
-                  )}
-                </div>
-              </div>
 
-              {(() => {
-                const filtered = studentSearchQuery
-                  ? departmentStudents.filter(s =>
-                      (s.name && s.name.toLowerCase().includes(studentSearchQuery.toLowerCase())) ||
-                      (s.register_number && s.register_number.toLowerCase().includes(studentSearchQuery.toLowerCase()))
-                    )
-                  : departmentStudents;
-
-                if (filtered.length === 0) {
-                  return (
-                    <div style={{ marginTop: 24, textAlign: 'center', color: '#999', padding: 40 }}>
-                      <Users size={48} style={{ marginBottom: 16, opacity: 0.5 }} />
-                      <p>{studentSearchQuery ? 'No students match your search.' : 'No students found in your department.'}</p>
-                    </div>
-                  );
-                }
-
-                return (
-                  <div style={{ marginTop: 16, overflowX: 'auto' }}>
+                {departmentStudents.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: '#999', padding: '60px 0' }}>
+                    <UserCheck size={64} style={{ marginBottom: 20, opacity: 0.2, color: 'var(--olive-900)' }} />
+                    <p>No students found in this department.</p>
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
                       <thead>
-                        <tr style={{ borderBottom: '2px solid #e5e7eb', background: '#f9fafb' }}>
-                          <th style={{ textAlign: 'left', padding: '12px 8px' }}>#</th>
-                          <th style={{ textAlign: 'left', padding: '12px 8px' }}>Register No.</th>
-                          <th style={{ textAlign: 'left', padding: '12px 8px' }}>Name</th>
-                          <th style={{ textAlign: 'center', padding: '12px 8px' }}>Batch</th>
-                          <th style={{ textAlign: 'center', padding: '12px 8px' }}>Solved</th>
-                          <th style={{ textAlign: 'center', padding: '12px 8px' }}>Streak</th>
-                          <th style={{ textAlign: 'center', padding: '12px 8px' }}>Last Active</th>
-                          <th style={{ textAlign: 'center', padding: '12px 8px' }}>Status</th>
-                          <th style={{ textAlign: 'center', padding: '12px 8px' }}>Actions</th>
+                        <tr style={{ borderBottom: '2px solid var(--bg-2)', textAlign: 'left' }}>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600' }}>STUDENT</th>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>BATCH</th>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>SOLVED</th>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>STREAK</th>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>STATUS</th>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'right' }}>ACTION</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {[...filtered]
-                          .sort((a, b) => (b.solved_count || 0) - (a.solved_count || 0))
-                          .map((student, idx) => (
-                          <tr key={student.register_number}
-                            style={{
-                              borderBottom: '1px solid #f3f4f6',
-                              background: student.is_active === false ? '#fff5f5' : 'transparent',
-                              opacity: student.is_active === false ? 0.8 : 1,
-                            }}
-                          >
-                            <td style={{ padding: '10px 8px', color: '#999', fontSize: 12 }}>{idx + 1}</td>
-                            <td style={{ padding: '10px 8px', fontFamily: 'monospace', fontSize: 12 }}>{student.register_number}</td>
-                            <td style={{ padding: '10px 8px' }}>
-                              <span
-                                onClick={() => handleStudentClick(student.register_number)}
-                                style={{ fontWeight: 500, color: '#4f46e5', cursor: 'pointer', textDecoration: 'underline' }}
-                              >
-                                {student.name || 'Unknown'}
-                              </span>
-                            </td>
-                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                              <span style={{ padding: '2px 8px', borderRadius: 8, background: '#e0e7ff', color: '#4338ca', fontSize: 11 }}>
-                                {student.batch || 'N/A'}
-                              </span>
-                            </td>
-                            <td style={{ padding: '10px 8px', textAlign: 'center', color: '#059669', fontWeight: 600 }}>
-                              {student.solved_count || 0}
-                            </td>
-                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                              <span style={{
-                                padding: '2px 6px', borderRadius: 8,
-                                background: (student.current_streak || 0) > 5 ? '#fef3c7' : '#f3f4f6',
-                                color: (student.current_streak || 0) > 5 ? '#d97706' : '#666',
-                                fontSize: 11,
-                              }}>
-                                {student.current_streak || 0} 🔥
-                              </span>
-                            </td>
-                            <td style={{ padding: '10px 8px', textAlign: 'center', color: '#666', fontSize: 12 }}>
-                              {student.last_active ? new Date(student.last_active).toLocaleDateString() : 'Never'}
-                            </td>
-                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                              {student.is_active === false ? (
-                                <span style={{ padding: '2px 8px', borderRadius: 4, background: '#fee2e2', color: '#dc2626', fontSize: 11, fontWeight: 600 }}>BLOCKED</span>
-                              ) : (
-                                <span style={{ padding: '2px 8px', borderRadius: 4, background: '#d1fae5', color: '#059669', fontSize: 11, fontWeight: 600 }}>ACTIVE</span>
-                              )}
-                            </td>
-                            <td style={{ padding: '10px 8px', textAlign: 'center' }}>
-                              <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                                <button
-                                  onClick={() => handleStudentClick(student.register_number)}
-                                  style={{ padding: '4px 10px', borderRadius: 5, border: 'none', background: '#e0e7ff', color: '#4338ca', fontSize: 12, cursor: 'pointer' }}
-                                >
-                                  View
-                                </button>
-                                <button
-                                  onClick={() => handleStudentBlockToggle(student.register_number)}
-                                  style={{
-                                    padding: '4px 10px', borderRadius: 5, border: 'none',
-                                    background: student.is_active === false ? '#d1fae5' : '#fee2e2',
-                                    color: student.is_active === false ? '#059669' : '#dc2626',
-                                    fontSize: 12, cursor: 'pointer',
-                                    display: 'flex', alignItems: 'center', gap: 4,
-                                  }}
-                                >
-                                  {student.is_active === false ? <Shield size={12} /> : <ShieldOff size={12} />}
-                                  {student.is_active === false ? 'Unblock' : 'Block'}
-                                </button>
+                        {departmentStudents
+                          .filter(s => 
+                            s.name?.toLowerCase().includes(studentSearchQuery.toLowerCase()) || 
+                            s.register_number?.includes(studentSearchQuery)
+                          )
+                          .map((student) => (
+                          <tr key={student.register_number} style={{ borderBottom: '1px solid var(--bg-1)' }}>
+                            <td style={{ padding: '16px 8px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                <div style={{ 
+                                  width: 36, height: 36, borderRadius: '10px', 
+                                  background: 'var(--olive-50)', color: 'var(--olive-700)',
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                  fontWeight: '700', fontSize: '13px'
+                                }}>
+                                  {(student.name || '?')[0].toUpperCase()}
+                                </div>
+                                <div>
+                                  <div style={{ fontWeight: '600', color: 'var(--text-hard)' }}>{student.name}</div>
+                                  <div style={{ fontSize: '11px', color: 'var(--text-soft)' }}>{student.register_number}</div>
+                                </div>
                               </div>
+                            </td>
+                            <td style={{ textAlign: 'center', padding: '16px 8px' }}>
+                              <span style={{ padding: '4px 8px', borderRadius: '6px', background: 'var(--bg-2)', color: 'var(--text-hard)', fontSize: '12px', fontWeight: '500' }}>
+                                {student.batch}
+                              </span>
+                            </td>
+                            <td style={{ textAlign: 'center', padding: '16px 8px', fontWeight: '700', color: 'var(--olive-700)' }}>
+                              {student.solved_count}
+                            </td>
+                            <td style={{ textAlign: 'center', padding: '16px 8px' }}>
+                              <span style={{ fontSize: '12px' }}>{student.current_streak} 🔥</span>
+                            </td>
+                            <td style={{ textAlign: 'center', padding: '16px 8px' }}>
+                              <span style={{
+                                width: 8, height: 8, borderRadius: '50%',
+                                display: 'inline-block',
+                                background: student.is_active ? '#10b981' : '#ef4444',
+                                marginRight: 6
+                              }} />
+                              <span style={{ fontSize: '12px', fontWeight: '500', color: student.is_active ? '#059669' : '#b91c1c' }}>
+                                {student.is_active ? 'Active' : 'Blocked'}
+                              </span>
+                            </td>
+                            <td style={{ textAlign: 'right', padding: '16px 8px' }}>
+                              <button 
+                                onClick={() => handleStudentClick(student.register_number)}
+                                style={{ 
+                                  padding: '6px 12px', borderRadius: '8px', 
+                                  border: '1px solid var(--border-soft)', background: 'white',
+                                  color: 'var(--olive-800)', fontSize: '12px', fontWeight: '600',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                View Profile
+                              </button>
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                );
-              })()}
+                )}
+              </div>
             </div>
           )}
 
@@ -1373,41 +1704,111 @@ const HODDashboard = ({ institutionId }) => {
                           {/* Expanded Content - All Students */}
                           {isSelected && (
                             <div style={{ padding: 16 }}>
-                              {/* Top 3 Performers Preview */}
-                              <div style={{ marginBottom: 16 }}>
-                                <div style={{ fontSize: 12, color: '#666', marginBottom: 10, fontWeight: 500 }}>
-                                  🏆 Top 3 Performers
+                              {/* High-Fidelity Batch Podium */}
+                              <div style={{ 
+                                marginBottom: 32, padding: '24px', background: '#f8fafc', 
+                                borderRadius: '16px', border: '1px solid #e2e8f0', textAlign: 'center' 
+                              }}>
+                                <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-soft)', marginBottom: 24, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                  Batch {batch} Top Achievers
                                 </div>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                                  {topPerformers.map((student, idx) => (
-                                    <div key={student.register_number} style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 8,
-                                      padding: '6px 10px',
-                                      background: idx === 0 ? '#fef3c7' : '#f9fafb',
-                                      borderRadius: 8,
-                                      border: idx === 0 ? '1px solid #fde68a' : '1px solid #e5e7eb',
-                                      fontSize: 12,
-                                    }}>
-                                      <span style={{
-                                        width: 20,
-                                        height: 20,
-                                        borderRadius: '50%',
-                                        background: idx === 0 ? '#f59e0b' : '#9ca3af',
-                                        color: 'white',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        fontSize: 10,
-                                        fontWeight: 600,
+                                <div style={{ 
+                                  display: 'flex', justifyContent: 'center', alignItems: 'flex-end', 
+                                  gap: 0, padding: '10px 0', maxWidth: '500px', margin: '0 auto' 
+                                }}>
+                                  {/* 2nd Place */}
+                                  {topPerformers[1] && (
+                                    <div 
+                                      style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}
+                                      onClick={() => handleStudentClick(topPerformers[1].register_number)}
+                                    >
+                                      <div style={{ marginBottom: 10 }}>
+                                        <div style={{ 
+                                          width: 52, height: 52, borderRadius: '16px', background: 'white',
+                                          margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                          border: '2px solid white', boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+                                        }}>
+                                          <span style={{ fontSize: '16px', fontWeight: '800', color: 'var(--text-hard)' }}>{(topPerformers[1].name || 'S')[0]}</span>
+                                        </div>
+                                      </div>
+                                      <div style={{ 
+                                        height: 80, background: 'linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%)', 
+                                        borderRadius: '12px 12px 0 0', display: 'flex', flexDirection: 'column', 
+                                        justifyContent: 'center', padding: '10px', position: 'relative'
                                       }}>
-                                        {idx + 1}
-                                      </span>
-                                      <span style={{ fontWeight: 500 }}>{student.name}</span>
-                                      <span style={{ color: '#666' }}>({student.solved_count || 0})</span>
+                                        <div style={{ 
+                                          position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)',
+                                          width: 20, height: 20, background: '#94a3b8', color: 'white', borderRadius: '50%',
+                                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '900'
+                                        }}>2</div>
+                                        <div style={{ fontWeight: '800', fontSize: '12px', color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{topPerformers[1].name}</div>
+                                        <div style={{ fontSize: '16px', fontWeight: '900', color: '#1e293b' }}>{topPerformers[1].solved_count || 0}</div>
+                                      </div>
                                     </div>
-                                  ))}
+                                  )}
+
+                                  {/* 1st Place */}
+                                  {topPerformers[0] && (
+                                    <div 
+                                      style={{ flex: 1.2, textAlign: 'center', position: 'relative', zIndex: 1, cursor: 'pointer' }}
+                                      onClick={() => handleStudentClick(topPerformers[0].register_number)}
+                                    >
+                                      <div style={{ marginBottom: 12 }}>
+                                        <div style={{ 
+                                          width: 64, height: 64, borderRadius: '20px', background: 'white',
+                                          margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                          border: '3px solid #fbbf24', boxShadow: '0 8px 16px rgba(251, 191, 36, 0.15)'
+                                        }}>
+                                          <span style={{ fontSize: '22px', fontWeight: '800', color: '#b45309' }}>{(topPerformers[0].name || 'S')[0]}</span>
+                                        </div>
+                                      </div>
+                                      <div style={{ 
+                                        height: 110, background: 'linear-gradient(180deg, #fef3c7 0%, #fde68a 100%)', 
+                                        borderRadius: '16px 16px 0 0', display: 'flex', flexDirection: 'column', 
+                                        justifyContent: 'center', padding: '12px', position: 'relative',
+                                        boxShadow: '0 -5px 15px rgba(251, 191, 36, 0.1)'
+                                      }}>
+                                        <div style={{ 
+                                          position: 'absolute', top: -14, left: '50%', transform: 'translateX(-50%)',
+                                          width: 28, height: 28, background: '#fbbf24', color: 'white', borderRadius: '50%',
+                                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '900'
+                                        }}>1</div>
+                                        <div style={{ fontWeight: '900', fontSize: '14px', color: '#92400e', marginBottom: 2 }}>{topPerformers[0].name}</div>
+                                        <div style={{ fontSize: '24px', fontWeight: '900', color: '#78350f' }}>{topPerformers[0].solved_count || 0}</div>
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* 3rd Place */}
+                                  {topPerformers[2] && (
+                                    <div 
+                                      style={{ flex: 1, textAlign: 'center', cursor: 'pointer' }}
+                                      onClick={() => handleStudentClick(topPerformers[2].register_number)}
+                                    >
+                                      <div style={{ marginBottom: 10 }}>
+                                        <div style={{ 
+                                          width: 44, height: 44, borderRadius: '14px', background: 'white',
+                                          margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                          border: '2px solid #fdba74', boxShadow: '0 4px 12px rgba(253, 186, 116, 0.1)'
+                                        }}>
+                                          <span style={{ fontSize: '16px', fontWeight: '800', color: '#c2410c' }}>{(topPerformers[2].name || 'S')[0]}</span>
+                                        </div>
+                                      </div>
+                                      <div style={{ 
+                                        height: 60, background: 'linear-gradient(180deg, #fff7ed 0%, #ffedd5 100%)', 
+                                        borderRadius: '12px 12px 0 0', display: 'flex', flexDirection: 'column', 
+                                        justifyContent: 'center', padding: '10px', position: 'relative'
+                                      }}>
+                                        <div style={{ 
+                                          position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)',
+                                          width: 20, height: 20, background: '#fdba74', color: 'white', borderRadius: '50%',
+                                          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: '900'
+                                        }}>3</div>
+                                        <div style={{ fontWeight: '800', fontSize: '12px', color: '#9a3412', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{topPerformers[2].name}</div>
+                                        <div style={{ fontSize: '14px', fontWeight: '900', color: '#7c2d12' }}>{topPerformers[2].solved_count || 0}</div>
+                                      </div>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
 
@@ -1486,8 +1887,22 @@ const HODDashboard = ({ institutionId }) => {
               })()}
             </div>
           )}
+
         </div>
-      </div>
+        
+        {activeTab === 'discuss' && (
+          <div className="discuss-tab" style={{ height: 'calc(100vh - 64px)', width: '100%' }}>
+            <DiscussPage
+              userType="hod"
+              staffProfile={staffProfile || {
+                name: staffData.name,
+                faculty_id: staffData.facultyId || staffData.faculty_id,
+                role: 'hod'
+              }}
+            />
+          </div>
+        )}
+      </main>
 
       {/* Student Detail Modal - Rich Profile */}
       {selectedStudent && (
@@ -1540,11 +1955,23 @@ const HODDashboard = ({ institutionId }) => {
                     </div>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'flex-end' }}>
-                    <button onClick={closeStudentDetail}
-                      style={{ padding: '8px 16px', background: '#f3f4f6', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14 }}
-                    >
-                      Close ✕
-                    </button>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button 
+                        onClick={() => window.open(`/api/students/${studentDetail.student.register_number}/report/`, '_blank')}
+                        style={{ 
+                          padding: '8px 16px', background: 'var(--olive-900)', color: 'white', 
+                          border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+                          display: 'flex', alignItems: 'center', gap: 6
+                        }}
+                      >
+                        <FileText size={14} /> Report
+                      </button>
+                      <button onClick={closeStudentDetail}
+                        style={{ padding: '8px 16px', background: '#f3f4f6', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 14 }}
+                      >
+                        Close ✕
+                      </button>
+                    </div>
                     <button
                       onClick={() => handleStudentBlockToggle(studentDetail.student.register_number)}
                       style={{
@@ -1568,14 +1995,54 @@ const HODDashboard = ({ institutionId }) => {
                     { label: 'Medium', value: studentDetail.analytics.difficulty_breakdown?.Medium || 0, color: '#f59e0b' },
                     { label: 'Hard', value: studentDetail.analytics.difficulty_breakdown?.Hard || 0, color: '#ef4444' },
                     { label: 'Streak 🔥', value: studentDetail.student.current_streak, color: '#d97706' },
-                    { label: 'Contests', value: studentDetail.analytics.contests_participated, color: '#4f46e5' },
+                    { label: 'Aptitude %', value: `${studentDetail.analytics.aptitude?.percentage || 0}%`, color: '#4f46e5' },
                     { label: 'Won 🏆', value: studentDetail.analytics.contests_won?.length || 0, color: '#f59e0b' },
                   ].map(({ label, value, color }) => (
                     <div key={label} style={{ padding: 14, background: '#f9fafb', borderRadius: 10, textAlign: 'center', border: '1px solid #f3f4f6' }}>
-                      <div style={{ fontSize: 22, fontWeight: 700, color }}>{value}</div>
+                      <div style={{ fontSize: 20, fontWeight: 700, color }}>{value}</div>
                       <div style={{ fontSize: 11, color: '#666', marginTop: 3 }}>{label}</div>
                     </div>
                   ))}
+                </div>
+
+                {/* ── Aptitude & Professional Insights ─────────────────── */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+                   {/* Company Insights */}
+                   <div style={{ padding: 20, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                      <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#475569', display: 'flex', alignItems: 'center', gap: 8 }}>
+                         <Briefcase size={16} /> Target Company Insights
+                      </h4>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                         {studentDetail.analytics.company_insights?.length > 0 ? (
+                           studentDetail.analytics.company_insights.map((comp, idx) => (
+                             <div key={idx} style={{ padding: '6px 12px', background: 'white', borderRadius: 8, fontSize: 12, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <strong>{comp.name}</strong>
+                                <span style={{ color: '#94a3b8' }}>{comp.count}</span>
+                             </div>
+                           ))
+                         ) : (
+                           <span style={{ fontSize: 13, color: '#94a3b8' }}>No company-specific problems solved.</span>
+                         )}
+                      </div>
+                   </div>
+
+                   {/* Project Insights */}
+                   <div style={{ padding: 20, background: '#fdf2f8', borderRadius: 12, border: '1px solid #fce7f3' }}>
+                      <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#be185d', display: 'flex', alignItems: 'center', gap: 8 }}>
+                         <Layout size={16} /> Project-Based Skills
+                      </h4>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                         {studentDetail.analytics.project_insights?.length > 0 ? (
+                           studentDetail.analytics.project_insights.map((proj, idx) => (
+                             <div key={idx} style={{ padding: '6px 12px', background: 'white', borderRadius: 8, fontSize: 12, border: '1px solid #fce7f3', color: '#db2777', fontWeight: 600 }}>
+                                {proj.skill.toUpperCase()}
+                             </div>
+                           ))
+                         ) : (
+                           <span style={{ fontSize: 13, color: '#be185d', opacity: 0.6 }}>No project-based skills detected.</span>
+                         )}
+                      </div>
+                   </div>
                 </div>
 
                 {/* ── Difficulty Progress Bar ─────────────────────────── */}
@@ -1735,6 +2202,21 @@ const HODDashboard = ({ institutionId }) => {
             )}
           </div>
         </div>
+      )}
+      {confirmState.show && (
+        <DoubleConfirmModal 
+          show={confirmState.show}
+          m1={confirmState.m1}
+          m2={confirmState.m2}
+          firstOk={confirmState.firstOk}
+          setFirstOk={(val) => setConfirmState(prev => ({ ...prev, firstOk: val }))}
+          onConfirm={async () => {
+            const cb = confirmState.onConfirm;
+            setConfirmState(prev => ({ ...prev, show: false }));
+            if (cb) await cb();
+          }}
+          onCancel={() => setConfirmState(prev => ({ ...prev, show: false }))}
+        />
       )}
     </div>
   );

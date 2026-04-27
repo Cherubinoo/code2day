@@ -21,14 +21,21 @@ def build_function_name_candidates(slug: str, source_code: str = "") -> list[str
             if name and name not in candidates:
                 candidates.append(name)
     
-    # Also extract actual function names from source code
+    # Also extract actual function names from source code based on common patterns
     if source_code:
-        # Find all function definitions
-        func_pattern = re.compile(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(')
-        found_functions = func_pattern.findall(source_code)
-        for func_name in found_functions:
-            if func_name not in candidates and not func_name.startswith('__'):
-                candidates.append(func_name)
+        patterns = [
+            r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',             # Python
+            r'func\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',            # Go, Swift
+            r'fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',              # Rust
+            r'function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',        # JS, PHP
+            r'(?:public|private|static|internal)\s+(?:[\w<>[\]]+\s+)+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', # Java, C#, C++
+            r'fun\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',             # Kotlin
+        ]
+        for pattern in patterns:
+            found_functions = re.findall(pattern, source_code)
+            for func_name in found_functions:
+                if func_name not in candidates and not func_name.startswith('__') and func_name != "main":
+                    candidates.append(func_name)
     
     return candidates
 
@@ -47,6 +54,8 @@ def clean_expected_output(value: str) -> str:
             return lines[0]
 
     return cleaned
+
+
 
 
 def _coerce_literal(value: str):
@@ -99,7 +108,7 @@ def _split_top_level_arguments(raw_input: str) -> list[str]:
             current.append(char)
             continue
 
-        if char == "," and depth == 0:
+        if (char == "," or char == "\n") and depth == 0:
             part = "".join(current).strip()
             if part:
                 parts.append(part)
@@ -410,37 +419,7 @@ def _looks_like_cpp_solution(source_code: str, candidates: list[str]) -> bool:
     return False
 
 
-def _looks_like_c_solution(source_code: str, candidates: list[str]) -> bool:
-    # Check for C function definitions
-    for name in candidates:
-        if re.search(rf'\b(?:int|long|float|double|char|void|bool)\s+{re.escape(name)}\s*\(', source_code):
-            return True
-    # Also check for any function pattern
-    if re.search(r'\b(?:int|long|float|double|char|void)\s+\w+\s*\([^)]*\)\s*\{', source_code):
-        return True
-    return False
 
-
-def _looks_like_csharp_solution(source_code: str, candidates: list[str]) -> bool:
-    if "class Solution" in source_code or "public class" in source_code or "static class" in source_code:
-        return True
-    # Check for method definitions
-    for name in candidates:
-        if re.search(rf'\s+(?:public|private|static|internal)?\s*{re.escape(name)}\s*\([^)]*\)', source_code):
-            return True
-    return False
-
-
-def _looks_like_go_solution(source_code: str, candidates: list[str]) -> bool:
-    if "package main" in source_code:
-        return True
-    for name in candidates:
-        if re.search(rf'func\s+(?:\([^)]*\)\s*)?{re.escape(name)}\s*\(', source_code):
-            return True
-    # Check for any func definition
-    if re.search(r'func\s+\w+\s*\(', source_code):
-        return True
-    return False
 
 
 def _looks_like_javascript_solution(source_code: str, candidates: list[str]) -> bool:
@@ -691,6 +670,13 @@ done:
 '''.strip()
 
 
+def _build_cpp_wrapper(source_code: str, candidates: list[str]) -> str:
+    """Build C++ wrapper that reads from stdin and calls the solution function."""
+    # Simple C++ wrapper - for now just return source code as most users include main
+    # or the problem uses a simpler interface. A full JSON wrapper for C++ is complex.
+    return source_code.strip()
+
+
 def _build_csharp_wrapper(source_code: str, candidates: list[str]) -> str:
     """Build C# wrapper that reads from stdin and calls the solution method."""
     candidate_list = json.dumps(candidates)
@@ -843,8 +829,18 @@ if __name__ == "__main__":
 
 def _build_go_wrapper(source_code: str, candidates: list[str]) -> str:
     """Build Go wrapper that reads from stdin and calls the solution function."""
-    # Generate explicit calls for each candidate - pass args as single JSON value
-    candidate_calls = '\n    '.join([f'try {{ return {name}(args), true }} catch {{ }}' for name in candidates])
+    # Only include candidates that actually appear in the source code to avoid compilation errors
+    present_candidates = [c for c in candidates if f"func {c}" in source_code]
+    
+    candidate_calls = []
+    for name in present_candidates:
+        candidate_calls.append(f'''
+    case "{name}":
+        result = {name}(args)
+        ok = true''')
+    
+    switch_body = '\n'.join(candidate_calls)
+    
     return f'''
 package main
 
@@ -858,16 +854,24 @@ import (
 
 {source_code}
 
-func findAndCallSolver(args interface{{}}) (interface{{}}, bool) {{
-    // Try each candidate function with the entire args
-    {candidate_calls}
-    return nil, false
+func findAndCallSolver(args interface{{}}, name string) (interface{{}}, bool) {{
+    var result interface{{}}
+    var ok bool
+    
+    switch name {{
+    {switch_body}
+    }}
+    return result, ok
 }}
 
 func main() {{
-    reader := bufio.NewReader(os.Stdin)
-    line, _ := reader.ReadString('\n')
-    line = strings.TrimSpace(line)
+    // Read all input from stdin
+    scanner := bufio.NewScanner(os.Stdin)
+    var input strings.Builder
+    for scanner.Scan() {{
+        input.WriteString(scanner.Text() + "\\n")
+    }}
+    line := strings.TrimSpace(input.String())
     if line == "" {{
         line = "[]"
     }}
@@ -875,54 +879,62 @@ func main() {{
     var args interface{{}}
     json.Unmarshal([]byte(line), &args)
     
-    result, ok := findAndCallSolver(args)
-    if ok {{
-        output, _ := json.Marshal(result)
-        fmt.Println(string(output))
-    }} else {{
-        fmt.Println("Error: Could not find matching solver function")
+    // We need the function name to call. Since we don't have it in the input,
+    // we try all present candidates.
+    candidates := []string{{{", ".join([f'"{c}"' for c in present_candidates])}}}
+    
+    for _, name := range candidates {{
+        result, ok := findAndCallSolver(args, name)
+        if ok {{
+            output, _ := json.Marshal(result)
+            fmt.Println(string(output))
+            return
+        }}
     }}
+    
+    fmt.Println("Error: Could not find matching solver function")
 }}
 '''.strip()
 
 
 def _build_rust_wrapper(source_code: str, candidates: list[str]) -> str:
     """Build Rust wrapper that reads from stdin and calls the solution function."""
-    candidate_list = json.dumps(candidates)
-    # Generate match arms for common function names
-    match_arms = '\n        '.join([f'"{name}" => {{ let r = {name}(&args); return Some(r); }}' for name in candidates])
+    # Only include candidates that actually appear in the source code
+    present_candidates = [c for c in candidates if f"fn {c}" in source_code]
+    
+    # Generate match arms for present candidate functions
+    match_arms = '\n        '.join([f'"{name}" => {{ let r = {name}(&args); return Some(serde_json::to_value(r).unwrap()); }}' for name in present_candidates])
+    
     return f'''
 use std::io::{{self, BufRead}};
 use serde_json::Value;
 
 {source_code}
 
-fn find_and_call_solver(args: Value) -> Option<Value> {{
-    let candidates: Vec<&str> = serde_json::from_str(r#"{candidate_list}"#).unwrap();
-    
-    for name in &candidates {{
-        match *name {{
-            {match_arms}
-            _ => {{}}
-        }}
+fn find_and_call_solver(args: Value, name: &str) -> Option<Value> {{
+    match name {{
+        {match_arms}
+        _ => None
     }}
-    None
 }}
 
 fn main() {{
-    let stdin = io::stdin();
-    let line = stdin.lock().lines().next().unwrap().unwrap();
-    let args: Value = if line.trim().is_empty() {{
-        serde_json::json!([])
-    }} else {{
-        serde_json::from_str(&line).unwrap()
-    }};
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input).unwrap();
     
-    if let Some(result) = find_and_call_solver(args) {{
-        println!("{{}}", result);
-    }} else {{
-        println!("Error: Could not find matching solver function");
+    let input_trimmed = if input.trim().is_empty() {{ "[]" }} else {{ input.trim() }};
+    let args: Value = serde_json::from_str(input_trimmed).unwrap();
+    
+    let candidates = vec![{", ".join([f'"{c}"' for c in present_candidates])}];
+    
+    for name in candidates {{
+        if let Some(result) = find_and_call_solver(args.clone(), name) {{
+            println!("{{}}", serde_json::to_string(&result).unwrap());
+            return;
+        }}
     }}
+    
+    println!("Error: Could not find matching solver function");
 }}
 '''.strip()
 
@@ -1617,7 +1629,7 @@ const rl = readline.createInterface({{
 
 let input = '';
 rl.on('line', (line) => {{
-    input += line;
+    input += line + '\n';
 }});
 
 rl.on('close', () => {{
@@ -1692,9 +1704,17 @@ def prepare_execution_payload(*, problem, source_code: str, language: str, stdin
     
     # C
     if language == "C":
-        # Don't wrap C code - users must write their own main() function
-        # Just pass through as-is with the raw stdin
-        return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        if not _looks_like_c_solution(source_code, candidates):
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        try:
+            args = parse_argument_list(stdin)
+        except Exception:
+            return {"source_code": source_code, "stdin": stdin, "adapted": False}
+        return {
+            "source_code": _build_c_wrapper(source_code, candidates),
+            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
+            "adapted": True,
+        }
     
     # C++
     if language in ("C++", "CPP"):

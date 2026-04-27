@@ -1,9 +1,9 @@
 // Enhanced Contest Creator with Student Selection and Filtering
 import { useState, useEffect } from 'react';
-import { Plus, X, Calendar, Clock, Search, Users, CheckCircle } from 'lucide-react';
+import { Plus, X, Calendar, Clock, Search, Users, CheckCircle, Trophy, Brain } from 'lucide-react';
 import { buildJsonPostOptions } from '../../lib/appUtils';
 
-const EnhancedContestCreator = ({ onClose, onSuccess }) => {
+const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming' }) => {
   const [step, setStep] = useState(1); // 1: Basic Info, 2: Problems, 3: Students
   const [formData, setFormData] = useState({
     title: '',
@@ -12,12 +12,16 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
     end_time: '',
     duration_minutes: 60,
     problem_slugs: [],
+    aptitude_question_ids: [],
     assigned_batches: [],
     assigned_student_ids: [],
     submit_for_approval: false,
+    contest_type: initialType, // 'programming' or 'aptitude'
   });
   
   const [problems, setProblems] = useState([]);
+  const [aptitudeTopics, setAptitudeTopics] = useState([]);
+  const [aptitudeQuestions, setAptitudeQuestions] = useState([]);
   const [batches, setBatches] = useState([]);
   const [students, setStudents] = useState([]);
   const [filteredStudents, setFilteredStudents] = useState([]);
@@ -26,7 +30,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
   const [error, setError] = useState(null);
   
   // Problem filtering states
-  const [selectedTopic, setSelectedTopic] = useState('all');
+  const [selectedTopics, setSelectedTopics] = useState([]);
   const [selectedDifficulty, setSelectedDifficulty] = useState('all');
   const [problemView, setProblemView] = useState('browse'); // 'browse' or 'selected'
   
@@ -48,43 +52,29 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
   async function loadInitialData() {
     setLoadingData(true);
     try {
-      console.log('Starting to load initial data...');
-      const [problemsRes, batchesRes] = await Promise.all([
+      const [problemsRes, batchesRes, aptitudeTopicsRes] = await Promise.all([
         fetch('/api/problems/', { credentials: 'include' }),
         fetch('/api/batches/', { credentials: 'include' }),
+        fetch('/api/aptitude/topics/', { credentials: 'include' }),
       ]);
-
-      console.log('Problems response status:', problemsRes.status);
-      console.log('Batches response status:', batchesRes.status);
 
       if (problemsRes.ok) {
         const data = await problemsRes.json();
-        console.log('Raw problems data:', data);
-        console.log('Is array?', Array.isArray(data));
-        console.log('Data type:', typeof data);
-        
-        // The API returns an array directly, not wrapped in {problems: [...]}
-        const problemsArray = Array.isArray(data) ? data : (data.problems || []);
-        console.log('Problems array length:', problemsArray.length);
-        console.log('First problem:', problemsArray[0]);
-        
-        setProblems(problemsArray);
-      } else {
-        const errorText = await problemsRes.text();
-        console.error('Failed to load problems. Status:', problemsRes.status, 'Error:', errorText);
+        setProblems(Array.isArray(data) ? data : (data.problems || []));
       }
 
       if (batchesRes.ok) {
         const data = await batchesRes.json();
-        console.log('Batches loaded:', data);
         setBatches(data.batches || []);
-      } else {
-        const errorText = await batchesRes.text();
-        console.error('Failed to load batches. Status:', batchesRes.status, 'Error:', errorText);
+      }
+
+      if (aptitudeTopicsRes.ok) {
+        const data = await aptitudeTopicsRes.json();
+        // The API returns {categories: [...]} or just [...]
+        setAptitudeTopics(data.categories || data || []);
       }
     } catch (err) {
-      console.error('Failed to load data:', err);
-      console.error('Error stack:', err.stack);
+      console.error('Failed to load initial data:', err);
     } finally {
       setLoadingData(false);
     }
@@ -146,6 +136,73 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
     }));
   }
 
+  function toggleAptitudeQuestion(id) {
+    setFormData(prev => ({
+      ...prev,
+      aptitude_question_ids: prev.aptitude_question_ids.includes(id)
+        ? prev.aptitude_question_ids.filter(i => i !== id)
+        : [...prev.aptitude_question_ids, id],
+    }));
+  }
+
+  async function loadAptitudeQuestions() {
+    if (formData.contest_type !== 'aptitude') return;
+    
+    setLoadingData(true);
+    try {
+      const params = new URLSearchParams();
+      if (selectedTopics.length > 0) {
+        selectedTopics.forEach(id => params.append('topic_id', id));
+      }
+      if (selectedDifficulty !== 'all') params.append('difficulty', selectedDifficulty);
+      if (searchQuery) params.append('q', searchQuery);
+      
+      const res = await fetch(`/api/aptitude/questions/?${params}`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setAptitudeQuestions(data || []);
+      }
+    } finally {
+      setLoadingData(false);
+    }
+  }
+
+  function selectRandomAptitude(count) {
+    if (!aptitudeQuestions.length) return;
+    
+    // Shuffle copy of questions
+    const shuffled = [...aptitudeQuestions].sort(() => 0.5 - Math.random());
+    const selected = shuffled.slice(0, Math.min(count, shuffled.length));
+    const selectedIds = selected.map(q => q.id.toString());
+    
+    setFormData(prev => ({
+      ...prev,
+      aptitude_question_ids: [...new Set([...prev.aptitude_question_ids, ...selectedIds])],
+    }));
+    
+    alert(`✅ Randomly selected ${selected.length} questions from the current filters.`);
+  }
+
+  function selectRandomByTopic(topicId, count) {
+    const topicQuestions = aptitudeQuestions.filter(q => q.topic_id.toString() === topicId.toString());
+    if (!topicQuestions.length) return;
+
+    const shuffled = [...topicQuestions].sort(() => 0.5 - Math.random());
+    const selected = shuffled.slice(0, Math.min(count, shuffled.length));
+    const selectedIds = selected.map(q => q.id.toString());
+
+    setFormData(prev => ({
+      ...prev,
+      aptitude_question_ids: [...new Set([...prev.aptitude_question_ids, ...selectedIds])],
+    }));
+  }
+
+  useEffect(() => {
+    if (formData.contest_type === 'aptitude') {
+      loadAptitudeQuestions();
+    }
+  }, [formData.contest_type, selectedTopics, selectedDifficulty, searchQuery]);
+
   // Get unique topics from problems
   function getUniqueTopics() {
     const topicsSet = new Set();
@@ -160,8 +217,8 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
   // Filter problems based on topic and difficulty
   function getFilteredProblems() {
     return problems.filter(problem => {
-      const topicMatch = selectedTopic === 'all' || 
-        (problem.tags && problem.tags.includes(selectedTopic));
+      const topicMatch = selectedTopics.length === 0 || 
+        (problem.tags && problem.tags.some(tag => selectedTopics.includes(tag)));
       const difficultyMatch = selectedDifficulty === 'all' || 
         problem.difficulty === selectedDifficulty;
       return topicMatch && difficultyMatch;
@@ -306,6 +363,58 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
           {step === 1 && (
             <div>
               <div style={{ marginBottom: 20 }}>
+                <label style={{ display: 'block', marginBottom: 8, fontWeight: 500, fontSize: 14 }}>
+                  Contest Type
+                </label>
+                <div style={{ display: 'flex', gap: 12 }}>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, contest_type: 'programming' })}
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      borderRadius: 8,
+                      border: formData.contest_type === 'programming' ? '2px solid #4f46e5' : '1px solid #d1d5db',
+                      background: formData.contest_type === 'programming' ? '#eef2ff' : 'white',
+                      color: formData.contest_type === 'programming' ? '#4f46e5' : '#666',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      fontWeight: formData.contest_type === 'programming' ? 600 : 400,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 4
+                    }}
+                  >
+                    <Trophy size={20} />
+                    <span>Programming Contest</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, contest_type: 'aptitude' })}
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      borderRadius: 8,
+                      border: formData.contest_type === 'aptitude' ? '2px solid #4f46e5' : '1px solid #d1d5db',
+                      background: formData.contest_type === 'aptitude' ? '#eef2ff' : 'white',
+                      color: formData.contest_type === 'aptitude' ? '#4f46e5' : '#666',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      fontWeight: formData.contest_type === 'aptitude' ? 600 : 400,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 4
+                    }}
+                  >
+                    <Brain size={20} />
+                    <span>Aptitude Contest</span>
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 20 }}>
                 <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 14 }}>
                   Contest Title *
                 </label>
@@ -410,7 +519,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
             </div>
           )}
 
-          {/* Step 2: Select Problems */}
+          {/* Step 2: Select Content */}
           {step === 2 && (
             <div>
               {/* Tab Navigation */}
@@ -435,7 +544,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
                     marginBottom: -2,
                   }}
                 >
-                  Browse Problems
+                  Browse {formData.contest_type === 'programming' ? 'Problems' : 'Questions'}
                 </button>
                 <button
                   type="button"
@@ -452,7 +561,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
                     marginBottom: -2,
                   }}
                 >
-                  Selected ({formData.problem_slugs.length})
+                  Selected ({formData.contest_type === 'programming' ? formData.problem_slugs.length : formData.aptitude_question_ids.length})
                 </button>
               </div>
 
@@ -471,25 +580,73 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
                   }}>
                     <div>
                       <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13 }}>
-                        Topic
+                        {formData.contest_type === 'programming' ? 'Topic' : 'Topic / Category'}
                       </label>
-                      <select
-                        value={selectedTopic}
-                        onChange={(e) => setSelectedTopic(e.target.value)}
-                        style={{
-                          width: '100%',
-                          padding: '8px 10px',
-                          border: '1px solid #d1d5db',
-                          borderRadius: 6,
-                          fontSize: 13,
-                          background: 'white',
-                        }}
-                      >
-                        <option value="all">All Topics</option>
-                        {getUniqueTopics().map(topic => (
-                          <option key={topic} value={topic}>{topic}</option>
-                        ))}
-                      </select>
+                      <div style={{
+                        width: '100%',
+                        maxHeight: 150,
+                        overflow: 'auto',
+                        border: '1px solid #d1d5db',
+                        borderRadius: 6,
+                        padding: '4px 8px',
+                        background: 'white',
+                      }}>
+                        {formData.contest_type === 'programming' ? (
+                          getUniqueTopics().map(topic => (
+                            <label key={topic} style={{ display: 'flex', alignItems: 'center', padding: '4px 0', cursor: 'pointer', fontSize: 13 }}>
+                              <input
+                                type="checkbox"
+                                checked={selectedTopics.includes(topic)}
+                                onChange={(e) => {
+                                  if (e.target.checked) setSelectedTopics([...selectedTopics, topic]);
+                                  else setSelectedTopics(selectedTopics.filter(t => t !== topic));
+                                }}
+                                style={{ marginRight: 8 }}
+                              />
+                              {topic}
+                            </label>
+                          ))
+                        ) : (
+                          aptitudeTopics.map(cat => (
+                            <div key={cat.id}>
+                              <div style={{ fontSize: 11, fontWeight: 700, color: '#666', marginTop: 8, marginBottom: 4, textTransform: 'uppercase' }}>
+                                {cat.title}
+                              </div>
+                              {(cat.subcategories || []).map(sub => (
+                                <div key={sub.id} style={{ marginLeft: 8 }}>
+                                  <div style={{ fontSize: 11, fontWeight: 600, color: '#4f46e5', marginBottom: 2 }}>
+                                    {sub.title}
+                                  </div>
+                                  {(sub.topics || []).map(topic => (
+                                    <label key={topic.id} style={{ display: 'flex', alignItems: 'center', padding: '3px 0', cursor: 'pointer', fontSize: 13, marginLeft: 8 }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedTopics.includes(topic.id.toString())}
+                                        onChange={(e) => {
+                                          const idStr = topic.id.toString();
+                                          if (e.target.checked) setSelectedTopics([...selectedTopics, idStr]);
+                                          else setSelectedTopics(selectedTopics.filter(t => t !== idStr));
+                                        }}
+                                        style={{ marginRight: 8 }}
+                                      />
+                                      {topic.title}
+                                    </label>
+                                  ))}
+                                </div>
+                              ))}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      {selectedTopics.length > 0 && (
+                        <button 
+                          type="button"
+                          onClick={() => setSelectedTopics([])}
+                          style={{ background: 'none', border: 'none', color: '#4f46e5', fontSize: 11, marginTop: 4, cursor: 'pointer', fontWeight: 600 }}
+                        >
+                          Clear Selection
+                        </button>
+                      )}
                     </div>
                     <div>
                       <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 13 }}>
@@ -515,7 +672,115 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
                     </div>
                   </div>
 
-                  {/* Problems List */}
+                  {/* Random Selection Option */}
+                  {formData.contest_type === 'aptitude' && selectedTopics.length > 0 && (
+                    <div style={{ 
+                      marginBottom: 16, 
+                      padding: 16, 
+                      background: '#f0f9ff', 
+                      borderRadius: 12, 
+                      border: '1px solid #bae6fd',
+                    }}>
+                      <div style={{ marginBottom: 12 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: '#0369a1' }}>Topic-wise Random Selection</div>
+                        <div style={{ fontSize: 12, color: '#0c4a6e' }}>Specify how many questions to pick from each selected topic</div>
+                      </div>
+                      
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {selectedTopics.map(topicId => {
+                          // Find topic name from aptitudeTopics
+                          let topicName = 'Unknown Topic';
+                          aptitudeTopics.forEach(cat => {
+                            (cat.subcategories || []).forEach(sub => {
+                              const found = (sub.topics || []).find(t => t.id.toString() === topicId.toString());
+                              if (found) topicName = `${sub.title}: ${found.title}`;
+                            });
+                          });
+
+                          const availableCount = aptitudeQuestions.filter(q => q.topic_id.toString() === topicId.toString()).length;
+
+                          return (
+                            <div key={topicId} style={{ 
+                              display: 'flex', 
+                              alignItems: 'center', 
+                              gap: 12, 
+                              justifyContent: 'space-between',
+                              background: 'white',
+                              padding: '8px 12px',
+                              borderRadius: 8,
+                              border: '1px solid #e0f2fe'
+                            }}>
+                              <div style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{topicName}</div>
+                              <div style={{ fontSize: 11, color: '#666' }}>({availableCount} available)</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <input
+                                  type="number"
+                                  id={`count-${topicId}`}
+                                  placeholder="0"
+                                  min={0}
+                                  max={availableCount}
+                                  defaultValue={0}
+                                  style={{
+                                    width: 50,
+                                    padding: '4px 6px',
+                                    border: '1px solid #3b82f6',
+                                    borderRadius: 4,
+                                    fontSize: 12,
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const val = parseInt(document.getElementById(`count-${topicId}`).value);
+                                    if (val > 0) selectRandomByTopic(topicId, val);
+                                  }}
+                                  style={{
+                                    padding: '4px 10px',
+                                    background: '#3b82f6',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Pick
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div style={{ marginTop: 12, textAlign: 'right' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            selectedTopics.forEach(topicId => {
+                              const val = parseInt(document.getElementById(`count-${topicId}`).value);
+                              if (val > 0) selectRandomByTopic(topicId, val);
+                            });
+                            alert('✅ Topic-wise random selection applied.');
+                          }}
+                          style={{
+                            padding: '8px 16px',
+                            background: '#0369a1',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: 8,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Pick All at Once
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Content List */}
                   <div style={{
                     maxHeight: 350,
                     overflow: 'auto',
@@ -524,84 +789,101 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
                     padding: 8,
                   }}>
                     {loadingData ? (
-                      <div style={{
-                        padding: '40px 20px',
-                        textAlign: 'center',
-                        color: '#666',
-                      }}>
-                        <p style={{ fontSize: 14 }}>Loading problems...</p>
-                      </div>
-                    ) : getFilteredProblems().length === 0 ? (
-                      <div style={{
-                        padding: '40px 20px',
-                        textAlign: 'center',
-                        color: '#666',
-                      }}>
-                        <p style={{ fontSize: 14, marginBottom: 8 }}>
-                          {problems.length === 0 ? 'No problems available' : 'No problems match the selected filters'}
-                        </p>
-                        {problems.length === 0 && (
-                          <p style={{ fontSize: 12, color: '#999' }}>
-                            Please add problems to the database first.
-                          </p>
-                        )}
+                      <div style={{ padding: '40px 20px', textAlign: 'center', color: '#666' }}>
+                        <p style={{ fontSize: 14 }}>Loading content...</p>
                       </div>
                     ) : (
-                      getFilteredProblems().map((problem) => (
-                        <label
-                          key={problem.slug}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: '10px 12px',
-                            cursor: 'pointer',
-                            borderRadius: 6,
-                            marginBottom: 4,
-                            background: formData.problem_slugs.includes(problem.slug) ? '#f0fdf4' : 'transparent',
-                            border: formData.problem_slugs.includes(problem.slug) ? '1px solid #bbf7d0' : '1px solid transparent',
-                            transition: 'all 0.2s',
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={formData.problem_slugs.includes(problem.slug)}
-                            onChange={() => toggleProblem(problem.slug)}
-                            style={{ marginRight: 12, width: 16, height: 16, cursor: 'pointer' }}
-                          />
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>
-                              {problem.title}
-                            </div>
-                            {problem.tags && problem.tags.length > 0 && (
-                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                {problem.tags.slice(0, 3).map(tag => (
-                                  <span key={tag} style={{
-                                    fontSize: 11,
-                                    padding: '2px 6px',
-                                    background: '#e0e7ff',
-                                    color: '#4338ca',
-                                    borderRadius: 4,
-                                  }}>
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
+                      formData.contest_type === 'programming' ? (
+                        getFilteredProblems().length === 0 ? (
+                          <div style={{ padding: '40px 20px', textAlign: 'center', color: '#666' }}>
+                            <p style={{ fontSize: 14 }}>No problems found matching your filters.</p>
                           </div>
-                          <span style={{
-                            padding: '4px 10px',
-                            borderRadius: 12,
-                            fontSize: 11,
-                            fontWeight: 600,
-                            background: problem.difficulty === 'Easy' ? '#d1fae5' :
-                                       problem.difficulty === 'Medium' ? '#fef3c7' : '#fee2e2',
-                            color: problem.difficulty === 'Easy' ? '#059669' :
-                                   problem.difficulty === 'Medium' ? '#d97706' : '#dc2626',
-                          }}>
-                            {problem.difficulty}
-                          </span>
-                        </label>
-                      ))
+                        ) : (
+                          getFilteredProblems().map((problem) => (
+                            <label
+                              key={problem.slug}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                padding: '10px 12px',
+                                cursor: 'pointer',
+                                borderRadius: 6,
+                                marginBottom: 4,
+                                background: formData.problem_slugs.includes(problem.slug) ? '#f0fdf4' : 'transparent',
+                                border: formData.problem_slugs.includes(problem.slug) ? '1px solid #bbf7d0' : '1px solid transparent',
+                                transition: 'all 0.2s',
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={formData.problem_slugs.includes(problem.slug)}
+                                onChange={() => toggleProblem(problem.slug)}
+                                style={{ marginRight: 12, width: 16, height: 16, cursor: 'pointer' }}
+                              />
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>{problem.title}</div>
+                                {problem.tags && problem.tags.length > 0 && (
+                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                    {problem.tags.slice(0, 3).map(tag => (
+                                      <span key={tag} style={{
+                                        fontSize: 11, padding: '2px 6px', background: '#e0e7ff', color: '#4338ca', borderRadius: 4,
+                                      }}>{tag}</span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              <span style={{
+                                padding: '4px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+                                background: problem.difficulty === 'Easy' ? '#d1fae5' : problem.difficulty === 'Medium' ? '#fef3c7' : '#fee2e2',
+                                color: problem.difficulty === 'Easy' ? '#059669' : problem.difficulty === 'Medium' ? '#d97706' : '#dc2626',
+                              }}>{problem.difficulty}</span>
+                            </label>
+                          ))
+                        )
+                      ) : (
+                        aptitudeQuestions.length === 0 ? (
+                          <div style={{ padding: '40px 20px', textAlign: 'center', color: '#666' }}>
+                            <p style={{ fontSize: 14 }}>No aptitude questions found matching your filters.</p>
+                          </div>
+                        ) : (
+                          aptitudeQuestions.map((q) => (
+                            <label
+                              key={q.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'flex-start',
+                                padding: '12px',
+                                cursor: 'pointer',
+                                borderRadius: 6,
+                                marginBottom: 4,
+                                background: formData.aptitude_question_ids.includes(q.id) ? '#f0fdf4' : 'transparent',
+                                border: formData.aptitude_question_ids.includes(q.id) ? '1px solid #bbf7d0' : '1px solid transparent',
+                                transition: 'all 0.2s',
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={formData.aptitude_question_ids.includes(q.id)}
+                                onChange={() => toggleAptitudeQuestion(q.id)}
+                                style={{ marginRight: 12, marginTop: 4, width: 16, height: 16, cursor: 'pointer' }}
+                              />
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4, color: '#333', lineHeight: 1.4 }}>
+                                  {q.question_text}
+                                </div>
+                                <div style={{ display: 'flex', gap: 12, fontSize: 11, color: '#666' }}>
+                                  <span>Topic: {q.topic}</span>
+                                  <span style={{ 
+                                    color: q.difficulty === 'Easy' ? '#059669' : q.difficulty === 'Medium' ? '#d97706' : '#dc2626'
+                                  }}>
+                                    {q.difficulty}
+                                  </span>
+                                </div>
+                              </div>
+                            </label>
+                          ))
+                        )
+                      )
                     )}
                   </div>
                 </div>
@@ -617,97 +899,46 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
                     borderRadius: 8,
                     padding: 8,
                   }}>
-                    {formData.problem_slugs.length === 0 ? (
-                      <div style={{
-                        padding: '40px 20px',
-                        textAlign: 'center',
-                        color: '#666',
-                      }}>
-                        <p style={{ fontSize: 14, marginBottom: 8 }}>No problems selected</p>
-                        <p style={{ fontSize: 12, color: '#999' }}>
-                          Switch to "Browse Problems" tab to select problems
-                        </p>
-                      </div>
-                    ) : (
-                      getSelectedProblems().map((problem, index) => (
-                        <div
-                          key={problem.slug}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: '12px',
-                            borderRadius: 6,
-                            marginBottom: 6,
-                            background: '#f9fafb',
-                            border: '1px solid #e5e7eb',
-                          }}
-                        >
-                          <span style={{
-                            width: 24,
-                            height: 24,
-                            borderRadius: '50%',
-                            background: '#4f46e5',
-                            color: 'white',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: 12,
-                            fontWeight: 600,
-                            marginRight: 12,
-                          }}>
-                            {index + 1}
-                          </span>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 2 }}>
-                              {problem.title}
-                            </div>
-                            {problem.tags && problem.tags.length > 0 && (
-                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                {problem.tags.map(tag => (
-                                  <span key={tag} style={{
-                                    fontSize: 11,
-                                    padding: '2px 6px',
-                                    background: '#e0e7ff',
-                                    color: '#4338ca',
-                                    borderRadius: 4,
-                                  }}>
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <span style={{
-                            padding: '4px 10px',
-                            borderRadius: 12,
-                            fontSize: 11,
-                            fontWeight: 600,
-                            marginRight: 8,
-                            background: problem.difficulty === 'Easy' ? '#d1fae5' :
-                                       problem.difficulty === 'Medium' ? '#fef3c7' : '#fee2e2',
-                            color: problem.difficulty === 'Easy' ? '#059669' :
-                                   problem.difficulty === 'Medium' ? '#d97706' : '#dc2626',
-                          }}>
-                            {problem.difficulty}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => toggleProblem(problem.slug)}
-                            style={{
-                              padding: '6px 10px',
-                              background: '#fee2e2',
-                              color: '#dc2626',
-                              border: 'none',
-                              borderRadius: 6,
-                              fontSize: 12,
-                              fontWeight: 500,
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Remove
-                          </button>
+                    {formData.contest_type === 'programming' ? (
+                      formData.problem_slugs.length === 0 ? (
+                        <div style={{ padding: '40px 20px', textAlign: 'center', color: '#666' }}>
+                          <p style={{ fontSize: 14 }}>No problems selected</p>
                         </div>
-                      ))
+                      ) : (
+                        getSelectedProblems().map((problem, index) => (
+                          <div key={problem.slug} style={{
+                            display: 'flex', alignItems: 'center', padding: '12px', borderRadius: 6, marginBottom: 6, background: '#f9fafb', border: '1px solid #e5e7eb',
+                          }}>
+                            <span style={{
+                              width: 24, height: 24, borderRadius: '50%', background: '#4f46e5', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, marginRight: 12,
+                            }}>{index + 1}</span>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 14, fontWeight: 500 }}>{problem.title}</div>
+                            </div>
+                            <button type="button" onClick={() => toggleProblem(problem.slug)} style={{ padding: '6px 10px', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer' }}>Remove</button>
+                          </div>
+                        ))
+                      )
+                    ) : (
+                      formData.aptitude_question_ids.length === 0 ? (
+                        <div style={{ padding: '40px 20px', textAlign: 'center', color: '#666' }}>
+                          <p style={{ fontSize: 14 }}>No questions selected</p>
+                        </div>
+                      ) : (
+                        aptitudeQuestions.filter(q => formData.aptitude_question_ids.includes(q.id)).map((q, index) => (
+                          <div key={q.id} style={{
+                            display: 'flex', alignItems: 'flex-start', padding: '12px', borderRadius: 6, marginBottom: 6, background: '#f9fafb', border: '1px solid #e5e7eb',
+                          }}>
+                            <span style={{
+                              width: 24, height: 24, borderRadius: '50%', background: '#4f46e5', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 600, marginRight: 12, marginTop: 2
+                            }}>{index + 1}</span>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.4 }}>{q.question_text}</div>
+                            </div>
+                            <button type="button" onClick={() => toggleAptitudeQuestion(q.id)} style={{ padding: '6px 10px', background: '#fee2e2', color: '#dc2626', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer', marginLeft: 12 }}>Remove</button>
+                          </div>
+                        ))
+                      )
                     )}
                   </div>
                 </div>
@@ -943,7 +1174,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
                   📊 Contest Summary
                 </div>
                 <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
-                  • {formData.problem_slugs.length} problems selected<br />
+                  • {formData.contest_type === 'programming' ? `${formData.problem_slugs.length} problems` : `${formData.aptitude_question_ids.length} questions`} selected<br />
                   • {totalAssignedStudents} students will be assigned
                 </div>
               </div>
@@ -1026,14 +1257,14 @@ const EnhancedContestCreator = ({ onClose, onSuccess }) => {
                   <button
                     type="submit"
                     onClick={() => setFormData({ ...formData, submit_for_approval: true })}
-                    disabled={loading || formData.problem_slugs.length === 0}
+                    disabled={loading || (formData.contest_type === 'programming' ? formData.problem_slugs.length === 0 : formData.aptitude_question_ids.length === 0)}
                     style={{
                       padding: '10px 20px',
                       borderRadius: 8,
                       border: 'none',
-                      background: (loading || formData.problem_slugs.length === 0) ? '#d1d5db' : '#059669',
+                      background: (loading || (formData.contest_type === 'programming' ? formData.problem_slugs.length === 0 : formData.aptitude_question_ids.length === 0)) ? '#d1d5db' : '#059669',
                       color: 'white',
-                      cursor: (loading || formData.problem_slugs.length === 0) ? 'not-allowed' : 'pointer',
+                      cursor: (loading || (formData.contest_type === 'programming' ? formData.problem_slugs.length === 0 : formData.aptitude_question_ids.length === 0)) ? 'not-allowed' : 'pointer',
                       fontSize: 14,
                       fontWeight: 500,
                     }}

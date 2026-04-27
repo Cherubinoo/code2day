@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import Footer from './Footer';
 
 /**
  * AuthScreen
@@ -36,6 +37,7 @@ function AuthScreen({
   staffMatches,
   setStudentMatches,
   studentMatches,
+  onNavigate
 }) {
   const passwordRef = useRef(null);
 
@@ -219,11 +221,66 @@ function AuthScreen({
         : identifyStep;
 
   return (
-    <div className="auth-shell">
-      <div className="auth-background auth-left" />
-      <div className="auth-background auth-right" />
+    <div className="auth-shell" style={{ 
+      background: '#f9fafb', 
+      display: 'flex', 
+      flexDirection: 'column',
+      justifyContent: 'flex-start',
+      padding: 0,
+      minHeight: '100vh',
+      overflowY: 'auto'
+    }}>
+      <div style={{
+        width: '100%',
+        background: 'white',
+        padding: '15px 20px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '24px',
+        borderBottom: '1px solid #e5e7eb',
+        zIndex: 10,
+        boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+      }}>
+        <img 
+          src="/logo/logo.jpeg" 
+          alt="RIT Logo" 
+          style={{ height: '100px', width: 'auto', objectFit: 'contain' }} 
+        />
+        <div style={{ textAlign: 'center' }}>
+          <h1 style={{ 
+            color: '#dc2626', 
+            margin: 0, 
+            fontSize: '28px', 
+            fontWeight: '800',
+            letterSpacing: '0.5px',
+            textTransform: 'uppercase'
+          }}>
+            RAMCO INSTITUTE OF TECHNOLOGY
+          </h1>
+          <h2 style={{ 
+            color: '#eab308', 
+            margin: '4px 0', 
+            fontSize: '18px', 
+            fontWeight: '700',
+            textTransform: 'uppercase'
+          }}>
+            (AN AUTONOMOUS INSTITUTION)
+          </h2>
+          <div style={{ 
+            fontSize: '14px', 
+            color: '#4b5563', 
+            lineHeight: '1.5',
+            fontWeight: '500'
+          }}>
+            <p style={{ margin: 0 }}>Approved By AICTE, New Delhi & Affiliated to Anna University</p>
+            <p style={{ margin: 0 }}>NAAC Accredited with ‘A+’ Grade & An ISO 9001:2015 Certified Institution</p>
+            <p style={{ margin: 0 }}>Rajapalayam, Tamil Nadu, India - 626 117.</p>
+          </div>
+        </div>
+      </div>
 
-      <section className="auth-card">
+      <section className="auth-card" style={{ marginTop: '40px', alignSelf: 'center' }}>
         <div className="auth-copy">
           <p className="brand-label">code-2day</p>
           <h1>code2day practice for your campus.</h1>
@@ -275,6 +332,8 @@ function AuthScreen({
           {authError && <p className="auth-error">{authError}</p>}
         </div>
       </section>
+
+      <Footer onNavigate={onNavigate} />
     </div>
   );
 }

@@ -1,334 +1,829 @@
+import { useState, useMemo } from 'react';
+import { 
+  TrendingUp, 
+  Brain, 
+  Target, 
+  Clock, 
+  Award, 
+  ChevronRight, 
+  Building2, 
+  CheckCircle2, 
+  Zap, 
+  Hash, 
+  X, 
+  MapPin, 
+  Calendar,
+  Settings,
+  Plus,
+  Minus,
+  Search,
+  Trophy,
+  Users
+} from 'lucide-react';
 import ContestDashboardWidget from '../ContestDashboardWidget';
 
-function ProgressPage({ contestCards, contestHistory, dashboard, onNavigateToContest }) {
-  // Stats are nested in dashboard.stats
+const shimmerStyles = `
+  @keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+`;
+
+const getBadgeVisuals = (name) => {
+  const n = name.toLowerCase();
+  if (n.includes('master') || n.includes('guru') || n.includes('ace')) 
+    return { color: '#b45309', icon: <Trophy size={20} />, bg: 'linear-gradient(135deg, #fef3c7, #fde68a)' };
+  if (n.includes('specialist') || n.includes('adept') || n.includes('practitioner')) 
+    return { color: '#334155', icon: <Award size={20} />, bg: 'linear-gradient(135deg, #e2e8f0, #cbd5e1)' };
+  if (n.includes('explorer') || n.includes('warrior') || n.includes('initiate')) 
+    return { color: '#7c2d12', icon: <Target size={20} />, bg: 'linear-gradient(135deg, #ffedd5, #fed7aa)' };
+  if (n.includes('streak')) 
+    return { color: '#991b1b', icon: <TrendingUp size={20} />, bg: 'linear-gradient(135deg, #fee2e2, #fecaca)' };
+  if (n.includes('contest')) 
+    return { color: '#1e40af', icon: <Users size={20} />, bg: 'linear-gradient(135deg, #dbeafe, #bfdbfe)' };
+  return { color: '#3730a3', icon: <CheckCircle2 size={20} />, bg: 'linear-gradient(135deg, #e0e7ff, #c7d2fe)' };
+};
+
+const BadgeCard = ({ badge, earned, setSelectedBadge }) => {
+  const visuals = getBadgeVisuals(badge.name);
+  return (
+    <article 
+      onClick={() => setSelectedBadge({
+        name: badge.name,
+        description: badge.description,
+        icon: visuals.icon,
+        date: badge.date || "In Progress",
+        visuals: visuals,
+        is_earned: earned
+      })}
+      style={{ 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '1rem', 
+        padding: '1rem',
+        background: earned ? 'white' : 'var(--bg-2)',
+        border: earned ? '2px solid var(--accent)' : '1px solid var(--border-soft)',
+        borderRadius: '20px',
+        cursor: 'pointer',
+        opacity: earned ? 1 : 0.5,
+        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        boxShadow: earned ? '0 10px 20px rgba(196, 151, 67, 0.1)' : 'none',
+        transform: earned ? 'scale(1.02)' : 'scale(1)'
+      }}
+    >
+      <div style={{ 
+        width: '48px', 
+        height: '48px', 
+        background: earned ? visuals.bg : 'var(--text-muted)', 
+        borderRadius: '14px', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center', 
+        color: earned ? visuals.color : '#fff',
+        flexShrink: 0
+      }}>
+        {visuals.icon}
+      </div>
+      <div style={{ overflow: 'hidden' }}>
+        <strong style={{ display: 'block', fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {badge.name}
+        </strong>
+        <span style={{ fontSize: '0.75rem', color: 'var(--text-soft)', fontWeight: 600 }}>
+          {earned ? `Earned ${badge.date}` : 'Locked Milestone'}
+        </span>
+      </div>
+    </article>
+  );
+};
+
+function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, onNavigateToContest, problemSet }) {
+  const [activeTab, setActiveTab] = useState("overall"); 
+  const [selectedBadge, setSelectedBadge] = useState(null);
+  const [selectedCompanyDetail, setSelectedCompanyDetail] = useState(null);
+  const [isTrackingModalOpen, setIsTrackingModalOpen] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [companySearchTerm, setCompanySearchTerm] = useState("");
+  const [modalSearchTerm, setModalSearchTerm] = useState("");
+
+  if (!dashboard) {
+    return <div style={{ padding: 40, textAlign: 'center' }}>Loading unified progress...</div>;
+  }
+
+  const user = dashboard?.user || {};
   const stats = dashboard?.stats || {};
-  const easy = stats.easy || 0;
-  const medium = stats.medium || 0;
-  const hard = stats.hard || 0;
-  const totalSolved = easy + medium + hard;
+  const easy = Number(stats.easy) || 0;
+  const medium = Number(stats.medium) || 0;
+  const hard = Number(stats.hard) || 0;
+  const totalCodingSolved = easy + medium + hard;
+  const totalSqlSolved = Number(stats.sql) || 0;
+  const totalCodingInSystem = user.total_problems_count || 1; // Prevent div by 0
+
+
+  // Company Track - Real tracked logic (includes solved problem titles)
+  const trackedCompaniesList = user.tracked_companies || [];
   
-  const { streak = 0, loginDays = 0, rank = "Beginner" } = dashboard?.user || {};
+  const allAvailableCompanies = useMemo(() => {
+    if (!problemSet) return [];
+    const comps = new Set();
+    problemSet.forEach(p => {
+      if (p.companies) {
+        p.companies.split(',').forEach(c => {
+          const trimmed = c.trim();
+          if (trimmed) comps.add(trimmed);
+        });
+      }
+    });
+    return Array.from(comps).sort();
+  }, [problemSet]);
 
-  const difficultyData = [
-    { label: "Easy", count: easy, color: "#22c55e", bg: "#dcfce7" },
-    { label: "Medium", count: medium, color: "#f59e0b", bg: "#fef3c7" },
-    { label: "Hard", count: hard, color: "#ef4444", bg: "#fee2e2" },
-  ];
-
-  const maxCount = Math.max(easy, medium, hard, 1);
-  const joinedContests = contestHistory?.length || 0;
-
-  // Calculate dynamic rank based on total solved
-  const getRank = (solved) => {
-    if (solved >= 200) return { title: "Campus Legend 🏆", color: "#ffd700" };
-    if (solved >= 100) return { title: "Campus Master 🥇", color: "#c0c0c0" };
-    if (solved >= 50) return { title: "Campus Expert 🥈", color: "#cd7f32" };
-    if (solved >= 30) return { title: "Campus Advanced 🥉", color: "#8b4513" };
-    if (solved >= 15) return { title: "Campus Intermediate ⭐", color: "#4169e1" };
-    if (solved >= 5) return { title: "Campus Novice 🌟", color: "#32cd32" };
-    return { title: "Campus Beginner 🌱", color: "#808080" };
-  };
-
-  const userRank = getRank(totalSolved);
-  
-  // Use real campus rank from dashboard if available, otherwise calculate
-  const campusRankNumber = dashboard?.user?.rank || Math.max(1, Math.ceil(100 - totalSolved * 0.5));
-  const totalStudents = dashboard?.user?.totalStudents || 100;
-  const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  const currentDay = new Date().getDay();
-
-  // Achievements with medals and badges
-  const achievements = [
-    // Streak Achievements
-    { id: "streak-3", icon: "🔥", title: "3-Day Streak", desc: "Solve problems for 3 consecutive days", target: 3, current: Math.min(streak, 3), type: "streak" },
-    { id: "streak-7", icon: "🔥🔥", title: "Week Warrior", desc: "Solve problems for 7 consecutive days", target: 7, current: Math.min(streak, 7), type: "streak" },
-    { id: "streak-30", icon: "🔥🔥🔥", title: "Monthly Master", desc: "Solve problems for 30 consecutive days", target: 30, current: Math.min(streak, 30), type: "streak" },
+  const companyProgress = useMemo(() => {
+    if (!problemSet) return [];
+    const solvedComps = {};
+    problemSet.forEach(p => {
+      if (p.companies && p.progress_state === 'completed') {
+        const comps = p.companies.split(',').map(c => c.trim()).filter(Boolean);
+        comps.forEach(c => {
+          // Only show if user has explicitly tracked this company
+          if (trackedCompaniesList.includes(c)) {
+            if (!solvedComps[c]) solvedComps[c] = [];
+            solvedComps[c].push({ title: p.title, difficulty: p.difficulty, slug: p.slug });
+          }
+        });
+      }
+    });
     
-    // Easy Problem Achievements
-    { id: "easy-5", icon: "🥉", title: "Easy Bronze", desc: "Solve 5 Easy problems", target: 5, current: Math.min(easy, 5), type: "easy" },
-    { id: "easy-10", icon: "🥈", title: "Easy Silver", desc: "Solve 10 Easy problems", target: 10, current: Math.min(easy, 10), type: "easy" },
-    { id: "easy-25", icon: "🥇", title: "Easy Gold", desc: "Solve 25 Easy problems", target: 25, current: Math.min(easy, 25), type: "easy" },
-    { id: "easy-50", icon: "💎", title: "Easy Diamond", desc: "Solve 50 Easy problems", target: 50, current: Math.min(easy, 50), type: "easy" },
-    
-    // Medium Problem Achievements
-    { id: "medium-5", icon: "🥉", title: "Medium Bronze", desc: "Solve 5 Medium problems", target: 5, current: Math.min(medium, 5), type: "medium" },
-    { id: "medium-10", icon: "🥈", title: "Medium Silver", desc: "Solve 10 Medium problems", target: 10, current: Math.min(medium, 10), type: "medium" },
-    { id: "medium-25", icon: "🥇", title: "Medium Gold", desc: "Solve 25 Medium problems", target: 25, current: Math.min(medium, 25), type: "medium" },
-    { id: "medium-50", icon: "💎", title: "Medium Diamond", desc: "Solve 50 Medium problems", target: 50, current: Math.min(medium, 50), type: "medium" },
-    
-    // Hard Problem Achievements
-    { id: "hard-3", icon: "🥉", title: "Hard Bronze", desc: "Solve 3 Hard problems", target: 3, current: Math.min(hard, 3), type: "hard" },
-    { id: "hard-5", icon: "🥈", title: "Hard Silver", desc: "Solve 5 Hard problems", target: 5, current: Math.min(hard, 5), type: "hard" },
-    { id: "hard-10", icon: "🥇", title: "Hard Gold", desc: "Solve 10 Hard problems", target: 10, current: Math.min(hard, 10), type: "hard" },
-    { id: "hard-25", icon: "💎", title: "Hard Diamond", desc: "Solve 25 Hard problems", target: 25, current: Math.min(hard, 25), type: "hard" },
-    
-    // Total Solved Achievements
-    { id: "total-10", icon: "🌱", title: "First Steps", desc: "Solve 10 problems total", target: 10, current: Math.min(totalSolved, 10), type: "total" },
-    { id: "total-25", icon: "🌿", title: "Growing Coder", desc: "Solve 25 problems total", target: 25, current: Math.min(totalSolved, 25), type: "total" },
-    { id: "total-50", icon: "🌳", title: "Code Tree", desc: "Solve 50 problems total", target: 50, current: Math.min(totalSolved, 50), type: "total" },
-    { id: "total-100", icon: "🏆", title: "Century Club", desc: "Solve 100 problems total", target: 100, current: Math.min(totalSolved, 100), type: "total" },
-    { id: "total-200", icon: "👑", title: "Code King/Queen", desc: "Solve 200 problems total", target: 200, current: Math.min(totalSolved, 200), type: "total" },
-    
-    // Special Achievements
-    { id: "balanced", icon: "⚖️", title: "Balanced Coder", desc: "Solve at least 5 of each difficulty", target: 5, current: easy >= 5 && medium >= 5 && hard >= 5 ? 5 : Math.min(easy, medium, hard), type: "special" },
-    { id: "night-owl", icon: "🦉", title: "Night Owl", desc: "Solve problems after midnight", target: 1, current: 0, type: "special" },
-    { id: "early-bird", icon: "🐦", title: "Early Bird", desc: "Solve problems before 6 AM", target: 1, current: 0, type: "special" },
-    { id: "speed-demon", icon: "⚡", title: "Speed Demon", desc: "Solve a problem in under 5 minutes", target: 1, current: 0, type: "special" },
-    { id: "perfect-run", icon: "✨", title: "Perfect Run", desc: "Get all test cases passed on first try", target: 1, current: 0, type: "special" },
-    { id: "polyglot", icon: "🌐", title: "Polyglot", desc: "Solve problems in 5+ languages", target: 5, current: 1, type: "special" },
-    { id: "contributor", icon: "🤝", title: "Helper", desc: "Post 5 helpful discussions", target: 5, current: 0, type: "special" },
-    { id: "consistent", icon: "📅", title: "Consistent", desc: "Log in for 7 days", target: 7, current: Math.min(loginDays, 7), type: "special" },
-  ];
+    // Ensure all tracked companies are represented even if 0 solved
+    trackedCompaniesList.forEach(c => {
+      if (!solvedComps[c]) solvedComps[c] = [];
+    });
 
-  const getAchievementColor = (type) => {
-    switch (type) {
-      case "easy": return "#22c55e";
-      case "medium": return "#f59e0b";
-      case "hard": return "#ef4444";
-      case "streak": return "#ff6b35";
-      case "total": return "#8b5cf6";
-      default: return "#6366f1";
+    return Object.entries(solvedComps)
+      .map(([name, problems]) => ({ name, count: problems.length, problems }))
+      .filter(comp => comp.name.toLowerCase().includes(companySearchTerm.toLowerCase()))
+      .sort((a, b) => b.count - a.count);
+  }, [problemSet, trackedCompaniesList, companySearchTerm]);
+
+  const filteredModalCompanies = useMemo(() => {
+    return allAvailableCompanies.filter(c => 
+      c.toLowerCase().includes(modalSearchTerm.toLowerCase())
+    );
+  }, [allAvailableCompanies, modalSearchTerm]);
+
+  const toggleTrackedCompany = async (companyName) => {
+    if (isUpdating) return;
+    
+    // 1. Calculate the new state optimistically
+    const currentTracked = dashboard?.user?.tracked_companies || [];
+    const isCurrentlyTracked = currentTracked.includes(companyName);
+    const newList = isCurrentlyTracked 
+      ? currentTracked.filter(c => c !== companyName)
+      : [...currentTracked, companyName];
+    
+    // Keep a reference to the old dashboard for rollback
+    const previousDashboard = { ...dashboard };
+
+    // 2. Update UI immediately (Optimistic Update)
+    if (setDashboard) {
+      setDashboard(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          user: { ...prev.user, tracked_companies: newList },
+          student: { ...(prev.student || {}), tracked_companies: newList }
+        };
+      });
+    }
+
+    setIsUpdating(true);
+    try {
+      const getCookie = (name) => {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+          const cookies = document.cookie.split(';');
+          for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+              cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+              break;
+            }
+          }
+        }
+        return cookieValue;
+      };
+      
+      const csrftoken = getCookie('csrftoken') || "";
+
+      const response = await fetch('/api/dashboard/tracked-companies/', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrftoken 
+        },
+        body: JSON.stringify({ companies: newList }),
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        throw new Error("Server rejected update");
+      }
+      
+      // Successfully updated on server, no need to do anything as UI is already updated
+    } catch (error) {
+      console.error("Failed to update tracked companies, rolling back:", error);
+      // Rollback to previous state on failure
+      if (setDashboard) {
+        setDashboard(previousDashboard);
+      }
+    } finally {
+      setIsUpdating(false);
     }
   };
 
-  return (
-    <div className="page-stack">
-      {/* Hero Section */}
-      <section className="hero-grid">
-        <article className="hero-card hero-card-wide">
-          <div className="eyebrow-row">
-            <span className="badge badge-strong">Progress</span>
-            <span className="badge" style={{ background: userRank.color + "20", color: userRank.color, border: `1px solid ${userRank.color}` }}>
-              {userRank.title}
-            </span>
-            <span className="badge" style={{ background: "#ffd70020", color: "#b8860b", border: "1px solid #ffd700" }}>
-              🏆 Campus Rank #{campusRankNumber}
-            </span>
-          </div>
-          <h1>Track your growth, level by level.</h1>
-          <p>
-            See your solved problems by difficulty, active streaks, and contest progress.
-            All your practice insights in one place.
-          </p>
-          <div className="hero-summary-grid">
-            <div className="hero-summary-card" style={{ background: "rgba(34, 197, 94, 0.1)" }}>
-              <span style={{ color: "#22c55e" }}>Easy Solved</span>
-              <strong style={{ color: "#22c55e" }}>{easy}</strong>
-            </div>
-            <div className="hero-summary-card" style={{ background: "rgba(245, 158, 11, 0.1)" }}>
-              <span style={{ color: "#f59e0b" }}>Medium Solved</span>
-              <strong style={{ color: "#f59e0b" }}>{medium}</strong>
-            </div>
-            <div className="hero-summary-card" style={{ background: "rgba(239, 68, 68, 0.1)" }}>
-              <span style={{ color: "#ef4444" }}>Hard Solved</span>
-              <strong style={{ color: "#ef4444" }}>{hard}</strong>
-            </div>
-          </div>
+  const totalAptitudeInSystem = user.total_aptitude_count || 100;
+  const totalAptitudeSolved = (dashboard?.aptitude_stats || []).reduce((sum, s) => sum + (s.solved || 0), 0);
 
-          {/* Progress Bars */}
-          <div style={{ marginTop: "1.5rem" }}>
-            <h3 style={{ fontSize: "1rem", marginBottom: "1rem" }}>Problems by Difficulty</h3>
-            {difficultyData.map(({ label, count, color, bg }) => (
-              <div key={label} style={{ marginBottom: "0.75rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.25rem" }}>
-                  <span style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}>{label}</span>
-                  <span style={{ fontSize: "0.875rem", fontWeight: 600, color }}>{count}</span>
+  const codingRate = Math.min((totalCodingSolved / totalCodingInSystem) * 100, 100);
+  const aptitudeRate = (dashboard?.aptitude_stats || []).length > 0 
+    ? (dashboard.aptitude_stats.reduce((sum, s) => sum + (s.percentage || 0), 0) / dashboard.aptitude_stats.length)
+    : 0;
+  
+  const contestsAttended = (contestHistory || []).length;
+  const contestWins = (contestHistory || []).filter(c => c.solved > 0).length;
+
+  const tabs = [
+    { id: "overall", label: "Dashboard", icon: <TrendingUp size={18} /> },
+    { id: "coding", label: "Coding", icon: <Brain size={18} /> },
+    { id: "company", label: "Companies", icon: <Building2 size={18} /> },
+    { id: "aptitude", label: "Aptitude", icon: <Target size={18} /> },
+  ];
+
+  return (
+    <div className="page-stack animate-fade-in" style={{ padding: '40px 60px', background: '#f8f9fa' }}>
+      <style>{shimmerStyles}</style>
+
+      {/* Brighter Hero / Readiness Gauge */}
+      <section style={{ marginBottom: 40 }}>
+        <article className="surface-card" style={{ 
+          background: 'white', 
+          borderRadius: '32px', 
+          padding: '48px', 
+          border: '1px solid var(--border-soft)',
+          boxShadow: '0 20px 40px rgba(0,0,0,0.04)',
+          position: 'relative',
+          overflow: 'hidden'
+        }}>
+          {/* Decorative accent */}
+          <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '8px', background: 'linear-gradient(90deg, var(--accent), #fcd34d)' }} />
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ maxWidth: '60%' }}>
+              <p className="kicker" style={{ color: 'var(--accent)', fontWeight: 800, letterSpacing: '0.1em', marginBottom: 16 }}>PREPARATION OVERVIEW</p>
+              <h1 style={{ fontSize: '3rem', fontWeight: 950, marginBottom: 16, color: 'var(--olive-950)', lineHeight: 1.1 }}>
+                Analyze Your <br/><span style={{ color: 'var(--accent)' }}>Placement Performance</span>
+              </h1>
+              <p style={{ color: 'var(--text-soft)', fontSize: '1.2rem', marginBottom: 32, fontWeight: 500, maxWidth: 600 }}>
+                Your preparation progress is measured by <strong>problems solved</strong> across coding and aptitude modules against the campus question bank.
+              </p>
+              
+              <div style={{ display: 'flex', gap: 40 }}>
+                <div style={{ textAlign: 'left' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Coding Solved</span>
+                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}>{totalCodingSolved}</div>
                 </div>
-                <div
-                  style={{
-                    height: "8px",
-                    background: bg,
-                    borderRadius: "4px",
-                    overflow: "hidden",
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${(count / maxCount) * 100}%`,
-                      height: "100%",
-                      background: color,
-                      borderRadius: "4px",
-                      transition: "width 0.8s ease",
+                <div style={{ textAlign: 'left' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Aptitude Solved</span>
+                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}>{totalAptitudeSolved}</div>
+                </div>
+                <div style={{ textAlign: 'left' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>SQL Solved</span>
+                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}>{totalSqlSolved}</div>
+                </div>
+                <div style={{ textAlign: 'left' }}>
+                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Companies Tracked</span>
+                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}>{companyProgress.length}</div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+              <div style={{ position: 'relative', width: 220, height: 220 }}>
+                <svg width="220" height="220" viewBox="0 0 100 100" style={{ transform: 'rotate(-90deg)' }}>
+                  {/* Background Track */}
+                  <circle
+                    cx="50" cy="50" r="40"
+                    fill="transparent"
+                    stroke="#f1f5f9"
+                    strokeWidth="10"
+                  />
+                  {/* Coding Segment (Accent Color) */}
+                  <circle
+                    cx="50" cy="50" r="40"
+                    fill="transparent"
+                    stroke="var(--accent)"
+                    strokeWidth="10"
+                    strokeDasharray={`${codingRate * 2.51} 251`}
+                    strokeLinecap="round"
+                    style={{ transition: 'stroke-dasharray 1s ease-out' }}
+                  />
+                  {/* Aptitude Segment (Blue) */}
+                  <circle
+                    cx="50" cy="50" r="40"
+                    fill="transparent"
+                    stroke="#0ea5e9"
+                    strokeWidth="10"
+                    strokeDasharray={`${aptitudeRate * 2.51} 251`}
+                    strokeLinecap="round"
+                    style={{ 
+                      transition: 'stroke-dasharray 1s ease-out',
+                      transform: `rotate(${(codingRate / 100) * 360}deg)`,
+                      transformOrigin: '50% 50%'
                     }}
                   />
+                </svg>
+                {/* Center Percentage */}
+                <div style={{ 
+                  position: 'absolute', 
+                  inset: 0, 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  textAlign: 'center'
+                }}>
+                  <span style={{ fontSize: '3rem', fontWeight: 950, color: 'var(--olive-950)', lineHeight: 1 }}>
+                    {Math.round((codingRate * 0.75) + (aptitudeRate * 0.25))}%
+                  </span>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginTop: 4 }}>
+                    Ready
+                  </span>
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 20 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--accent)' }} />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-soft)' }}>Coding</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#0ea5e9' }} />
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-soft)' }}>Aptitude</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      {/* Bright Tab Switcher */}
+      <section className="surface-card" style={{ padding: 8, borderRadius: 24, marginBottom: 40, background: 'white', border: '1px solid var(--border-soft)', boxShadow: '0 10px 20px rgba(0,0,0,0.02)' }}>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                flex: 1,
+                padding: '16px 24px',
+                borderRadius: 18,
+                border: 'none',
+                background: activeTab === tab.id ? 'var(--olive-900)' : 'transparent',
+                color: activeTab === tab.id ? 'white' : 'var(--text-soft)',
+                fontWeight: 800,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 10,
+                cursor: 'pointer',
+                transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                fontSize: '1rem'
+              }}
+            >
+              {tab.icon} {tab.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* Main Content Areas */}
+      {activeTab === "overall" && (
+        <div className="tab-fade" style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 40 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 40 }}>
+            <div className="surface-card" style={{ background: 'white', borderRadius: 32, padding: 40, boxShadow: '0 15px 35px rgba(0,0,0,0.03)' }}>
+              <div className="section-head">
+                <h2 style={{ fontSize: '1.6rem', fontWeight: 900 }}>Performance Distribution</h2>
+                <span style={{ fontWeight: 600, color: 'var(--text-soft)' }}>Detailed breakdown of mastered areas</span>
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32, marginTop: 24 }}>
+                <div style={{ padding: 32, borderRadius: 24, background: '#fffbeb', border: '2px solid #fef3c7' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                    <div style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--accent)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Brain size={24} />
+                    </div>
+                    <span style={{ fontSize: '1.2rem', fontWeight: 950, color: 'var(--olive-900)' }}>{Math.round(codingRate)}%</span>
+                  </div>
+                  <h4 style={{ margin: '0 0 12px 0', fontSize: '1.1rem', fontWeight: 900 }}>Coding Mastery</h4>
+                  <div style={{ height: 10, width: '100%', background: '#fef3c7', borderRadius: 5, overflow: 'hidden' }}>
+                    <div style={{ width: `${codingRate}%`, background: 'var(--accent)', height: '100%' }} />
+                  </div>
+                  <p style={{ margin: '16px 0 0 0', fontSize: '0.85rem', color: '#b45309', fontWeight: 700 }}>{totalCodingSolved} solved / {totalCodingInSystem} total</p>
+                </div>
+
+                <div style={{ padding: 32, borderRadius: 24, background: '#f0f9ff', border: '2px solid #e0f2fe' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                    <div style={{ width: 48, height: 48, borderRadius: 12, background: '#0ea5e9', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Target size={24} />
+                    </div>
+                    <span style={{ fontSize: '1.2rem', fontWeight: 950, color: 'var(--olive-900)' }}>{Math.round(aptitudeRate)}%</span>
+                  </div>
+                  <h4 style={{ margin: '0 0 12px 0', fontSize: '1.1rem', fontWeight: 900 }}>Aptitude Mastery</h4>
+                  <div style={{ height: 10, width: '100%', background: '#e0f2fe', borderRadius: 5, overflow: 'hidden' }}>
+                    <div style={{ width: `${aptitudeRate}%`, background: '#0ea5e9', height: '100%' }} />
+                  </div>
+                  <p style={{ margin: '16px 0 0 0', fontSize: '0.85rem', color: '#0369a1', fontWeight: 700 }}>{totalAptitudeSolved} solved / {totalAptitudeInSystem} total</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="surface-card" style={{ background: 'white', borderRadius: 32, padding: 40, boxShadow: '0 15px 35px rgba(0,0,0,0.03)' }}>
+              <div className="section-head">
+                <h2 style={{ fontSize: '1.6rem', fontWeight: 900 }}>Recent Achievements</h2>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 20, marginTop: 24 }}>
+                {(dashboard?.achievements || []).filter(a => a.is_earned).slice(0, 4).map(badge => (
+                  <BadgeCard key={badge.id} badge={badge} earned={true} setSelectedBadge={setSelectedBadge} />
+                ))}
+              </div>
+            </div>
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 40 }}>
+            <div className="surface-card" style={{ background: 'white', borderRadius: 32, padding: 40, boxShadow: '0 15px 35px rgba(0,0,0,0.03)' }}>
+              <div className="section-head">
+                <h2 style={{ fontSize: '1.4rem', fontWeight: 900 }}>Contest Stats</h2>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24, marginTop: 24 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 700, color: 'var(--text-soft)' }}>Attended</span>
+                  <span style={{ fontSize: '1.4rem', fontWeight: 950 }}>{contestsAttended}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 700, color: 'var(--text-soft)' }}>Wins / Podiums</span>
+                  <span style={{ fontSize: '1.4rem', fontWeight: 950, color: '#059669' }}>{contestWins}</span>
+                </div>
+                <div style={{ height: 1, background: 'var(--border-soft)' }} />
+                <div style={{ textAlign: 'center' }}>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: 12 }}>Keep participating to boost your skills!</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Coding Tab */}
+      {activeTab === "coding" && (
+        <div className="tab-fade surface-card" style={{ background: 'white', borderRadius: 32, padding: 48, boxShadow: '0 15px 35px rgba(0,0,0,0.03)' }}>
+          <div className="section-head">
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 950 }}>Detailed Coding Analytics</h2>
+            <span>Solved {totalCodingSolved} out of {totalCodingInSystem} problems</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 32, marginBottom: 48, marginTop: 32 }}>
+            {['Easy', 'Medium', 'Hard'].map((diff, i) => {
+               const val = diff === 'Easy' ? easy : diff === 'Medium' ? medium : hard;
+               const color = diff === 'Easy' ? '#22c55e' : diff === 'Medium' ? '#f59e0b' : '#ef4444';
+               const bg = diff === 'Easy' ? '#f0fdf4' : diff === 'Medium' ? '#fffbeb' : '#fef2f2';
+               return (
+                 <div key={diff} style={{ padding: 32, borderRadius: 28, background: bg, border: `1px solid ${color}22` }}>
+                   <span style={{ fontSize: '0.85rem', color: color, fontWeight: 900, letterSpacing: '0.1em' }}>{diff.toUpperCase()}</span>
+                   <div style={{ fontSize: '3rem', fontWeight: 950, marginTop: 8 }}>{val}</div>
+                 </div>
+               );
+            })}
+          </div>
+          <div className="section-head">
+            <h3>Topic Wise Performance</h3>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 24, marginTop: 24 }}>
+            {(dashboard?.topicStats || []).map(topic => (
+              <div key={topic.name} style={{ padding: 24, borderRadius: 20, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--olive-900)' }}>{topic.name}</span>
+                  <span style={{ color: 'var(--accent)', fontWeight: 950 }}>{topic.count}</span>
+                </div>
+                <div style={{ height: 6, width: '100%', background: '#e2e8f0', borderRadius: 3, marginTop: 16 }}>
+                  <div style={{ width: `${Math.min(topic.count * 10, 100)}%`, height: '100%', background: 'var(--accent)', borderRadius: 3 }} />
                 </div>
               </div>
             ))}
           </div>
-        </article>
+        </div>
+      )}
 
-        {/* Stats Card */}
-        <article className="hero-card hero-card-side">
-          <div className="section-head">
-            <h2>Your Stats</h2>
-            <span>Practice Overview</span>
-          </div>
-          
-          <div style={{ textAlign: "center", padding: "1.5rem 0" }}>
-            <div style={{ fontSize: "4rem", fontWeight: 700, color: "var(--accent)", lineHeight: 1 }}>
-              {totalSolved}
-            </div>
-            <div style={{ color: "var(--text-muted)", fontSize: "0.875rem", marginTop: "0.5rem" }}>
-              Total Problems Solved
-            </div>
-          </div>
 
-          <div className="calendar-summary-grid" style={{ marginTop: "1rem" }}>
-            <div className="calendar-summary-card">
-              <span>Current streak</span>
-              <strong>{streak} days</strong>
+      {/* Company Tab */}
+      {activeTab === "company" && (
+        <div className="tab-fade surface-card" style={{ background: 'white', borderRadius: 32, padding: 48 }}>
+          <div className="section-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <h2 style={{ fontSize: '1.8rem', fontWeight: 950 }}>Placement Preparation Track</h2>
+              <span style={{ display: 'block', marginTop: 8, color: 'var(--text-soft)', fontWeight: 500 }}>
+                {trackedCompaniesList.length > 0 
+                  ? `Focusing on ${trackedCompaniesList.length} companies. Track your progress against company-specific question banks.`
+                  : "Select companies you're interested in to start tracking your preparation progress."}
+              </span>
             </div>
-            <div className="calendar-summary-card">
-              <span>Days logged</span>
-              <strong>{loginDays}</strong>
-            </div>
-          </div>
-
-          {/* Weekly Activity */}
-          <div style={{ marginTop: "1.5rem" }}>
-            <p className="kicker" style={{ marginBottom: "0.75rem" }}>This Week</p>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem" }}>
-              {days.map((day, i) => {
-                const isToday = i === currentDay;
-                const hasActivity = [1, 3, 5].includes(i); // Mock activity
-                return (
-                  <div key={day} style={{ textAlign: "center", flex: 1 }}>
-                    <div
-                      style={{
-                        height: "40px",
-                        background: hasActivity ? "var(--accent)" : "var(--bg-2)",
-                        borderRadius: "0.25rem",
-                        opacity: isToday ? 1 : 0.7,
-                        border: isToday ? "2px solid var(--accent)" : "none",
-                      }}
-                    />
-                    <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem", display: "block" }}>
-                      {day}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </article>
-      </section>
-
-      {/* Difficulty Breakdown Cards */}
-      <section className="content-grid three-column">
-        {difficultyData.map(({ label, count, color, bg }) => (
-          <article
-            key={label}
-            className="surface-card"
-            style={{ background: bg, borderLeft: `4px solid ${color}` }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
-              <span
-                style={{
-                  width: "12px",
-                  height: "12px",
-                  borderRadius: "50%",
-                  background: color,
-                }}
-              />
-              <span style={{ fontSize: "0.875rem", color: "var(--text-muted)" }}>{label}</span>
-            </div>
-            <strong style={{ fontSize: "2rem", color, display: "block" }}>{count}</strong>
-            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>problems solved</span>
-            <div style={{ marginTop: "1rem" }}>
-              <div style={{ height: "4px", background: "rgba(255,255,255,0.5)", borderRadius: "2px" }}>
-                <div
-                  style={{
-                    width: `${totalSolved > 0 ? (count / totalSolved) * 100 : 0}%`,
-                    height: "100%",
-                    background: color,
-                    borderRadius: "2px",
-                  }}
+            <div style={{ display: 'flex', gap: 16 }}>
+              <div style={{ position: 'relative' }}>
+                <Search size={18} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                <input 
+                  type="text"
+                  placeholder="Search tracked..."
+                  value={companySearchTerm}
+                  onChange={(e) => setCompanySearchTerm(e.target.value)}
+                  style={{ padding: '12px 16px 12px 48px', borderRadius: 16, border: '2px solid #f1f5f9', background: '#f8fafc', fontSize: '0.9rem', fontWeight: 600, width: 220 }}
                 />
               </div>
-            </div>
-          </article>
-        ))}
-      </section>
-
-      {/* Contest Section */}
-      <section className="surface-card">
-        <div className="section-head">
-          <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-            <h2>My Contests</h2>
-            <span
-              style={{
-                padding: "0.25rem 0.75rem",
-                background: "var(--accent)",
-                color: "#fff",
-                borderRadius: "9999px",
-                fontSize: "0.875rem",
-                fontWeight: 600,
-              }}
-            >
-              {joinedContests} Joined
-            </span>
-          </div>
-          <span>Your contest participation and performance</span>
-        </div>
-
-        <ContestDashboardWidget onNavigateToContest={onNavigateToContest} />
-      </section>
-
-      {/* Achievement Section */}
-      <section className="surface-card">
-        <div className="section-head">
-          <h2>Achievements & Badges</h2>
-          <span>{achievements.filter(a => a.current >= a.target).length} of {achievements.length} unlocked</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1rem" }}>
-          {achievements.map((achievement) => {
-            const isUnlocked = achievement.current >= achievement.target;
-            const progress = (achievement.current / achievement.target) * 100;
-            return (
-              <article
-                key={achievement.id}
-                className="surface-card"
-                style={{
-                  padding: "1rem",
-                  opacity: isUnlocked ? 1 : 0.6,
-                  borderLeft: `4px solid ${getAchievementColor(achievement.type)}`,
-                  background: isUnlocked ? `${getAchievementColor(achievement.type)}10` : undefined,
-                }}
+              <button 
+                onClick={() => setIsTrackingModalOpen(true)}
+                className="primary-button" 
+                style={{ padding: '12px 24px', borderRadius: 16, display: 'flex', alignItems: 'center', gap: 10 }}
               >
-                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.5rem" }}>
-                  <span style={{ fontSize: "1.5rem" }}>{achievement.icon}</span>
-                  <div>
-                    <strong style={{ fontSize: "0.9rem", display: "block" }}>{achievement.title}</strong>
-                    <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{achievement.desc}</span>
-                  </div>
+                <Settings size={18} />
+                Manage Tracks
+              </button>
+            </div>
+          </div>
+
+          {companyProgress.length === 0 ? (
+            <div style={{ padding: '80px 40px', textAlign: 'center', background: '#f8fafc', borderRadius: 32, marginTop: 40, border: '2px dashed #e2e8f0' }}>
+              <div style={{ width: 80, height: 80, borderRadius: '50%', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
+                <Building2 size={40} color="#94a3b8" />
+              </div>
+              <h3 style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--olive-950)' }}>No Companies Tracked</h3>
+              <p style={{ color: 'var(--text-soft)', fontSize: '1.1rem', margin: '12px auto 32px', maxWidth: 400 }}>
+                Select companies from the question bank to start measuring your readiness for specific recruitment drives.
+              </p>
+              <button 
+                onClick={() => setIsTrackingModalOpen(true)}
+                className="primary-button" 
+                style={{ padding: '16px 32px', borderRadius: 18 }}
+              >
+                Choose Companies to Track
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 32, marginTop: 40 }}>
+              {companyProgress.map(comp => (
+                <div key={comp.name} style={{ position: 'relative' }}>
+                  <button
+                    onClick={() => setSelectedCompanyDetail(comp)}
+                    style={{ padding: 32, borderRadius: 28, background: 'white', border: '2px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 24, boxShadow: '0 10px 20px rgba(0,0,0,0.02)', cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'all 0.2s ease' }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.boxShadow = '0 20px 40px rgba(196, 151, 67, 0.12)'; e.currentTarget.style.transform = 'translateY(-3px)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = '0 10px 20px rgba(0,0,0,0.02)'; e.currentTarget.style.transform = 'none'; }}
+                  >
+                    <div style={{ width: 64, height: 64, borderRadius: 18, background: 'linear-gradient(135deg, #fef9c3, #fef3c7)', color: '#92400e', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.6rem', fontWeight: 950, flexShrink: 0 }}>
+                      {comp.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <h4 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 900, color: 'var(--olive-950)' }}>{comp.name}</h4>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 12 }}>
+                        <span style={{ fontSize: '0.9rem', color: 'var(--text-soft)', fontWeight: 700 }}>Problems Solved</span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 950, color: 'var(--accent)' }}>{comp.count}</span>
+                      </div>
+                      <div style={{ height: 8, width: '100%', background: '#f1f5f9', borderRadius: 4, marginTop: 16 }}>
+                        <div style={{ width: `${Math.min(comp.count * 20, 100)}%`, height: '100%', background: 'var(--accent)', borderRadius: 4 }} />
+                      </div>
+                      <p style={{ margin: '12px 0 0 0', fontSize: '0.8rem', color: '#92400e', fontWeight: 700 }}>Click to view solved problems →</p>
+                    </div>
+                  </button>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleTrackedCompany(comp.name);
+                    }}
+                    title="Remove from tracking"
+                    style={{ position: 'absolute', top: 12, right: 12, padding: 8, borderRadius: '50%', background: '#fff1f2', border: '1px solid #fecaca', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', zIndex: 10 }}
+                    onMouseEnter={e => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = 'white'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = '#fff1f2'; e.currentTarget.style.color = '#ef4444'; }}
+                  >
+                    <X size={14} />
+                  </button>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <div style={{ flex: 1, height: "6px", background: "var(--bg-2)", borderRadius: "3px", overflow: "hidden" }}>
-                    <div
-                      style={{
-                        width: `${progress}%`,
-                        height: "100%",
-                        background: getAchievementColor(achievement.type),
-                        borderRadius: "3px",
-                        transition: "width 0.3s ease",
-                      }}
-                    />
-                  </div>
-                  <span style={{ fontSize: "0.75rem", fontWeight: 600, minWidth: "50px", textAlign: "right" }}>
-                    {achievement.current}/{achievement.target}
-                  </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Aptitude Tab Content */}
+      {activeTab === "aptitude" && (
+        <div className="tab-fade surface-card" style={{ background: 'white', borderRadius: 32, padding: 48, boxShadow: '0 15px 35px rgba(0,0,0,0.03)' }}>
+          <div className="section-head">
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 950 }}>Aptitude Mastery Track</h2>
+            <span>Solved {totalAptitudeSolved} out of {totalAptitudeInSystem} questions</span>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32, marginTop: 32 }}>
+            <div style={{ padding: 32, borderRadius: 28, background: '#f0f9ff', border: '1px solid #0ea5e922' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <div style={{ width: 56, height: 56, borderRadius: 16, background: '#0ea5e9', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Brain size={28} />
                 </div>
-                {isUnlocked && (
-                  <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: getAchievementColor(achievement.type), fontWeight: 600 }}>
-                    ✓ Unlocked!
+                <span style={{ fontSize: '1.8rem', fontWeight: 950, color: 'var(--olive-900)' }}>{Math.round(aptitudeRate)}%</span>
+              </div>
+              <h4 style={{ margin: '0 0 12px 0', fontSize: '1.2rem', fontWeight: 900 }}>Module Progress</h4>
+              <div style={{ height: 12, width: '100%', background: '#e0f2fe', borderRadius: 6, overflow: 'hidden' }}>
+                <div style={{ width: `${aptitudeRate}%`, background: '#0ea5e9', height: '100%' }} />
+              </div>
+              <p style={{ margin: '20px 0 0 0', fontSize: '0.9rem', color: '#0369a1', fontWeight: 700 }}>
+                {totalAptitudeSolved} units completed / {totalAptitudeInSystem} available
+              </p>
+            </div>
+
+            <div style={{ padding: 32, borderRadius: 28, background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)', border: '1px solid #e2e8f0' }}>
+               <h4 style={{ margin: '0 0 16px 0', fontSize: '1.1rem', fontWeight: 800 }}>Mastery Insights</h4>
+               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                 {(dashboard?.aptitude_stats || []).length > 0 ? (
+                   dashboard.aptitude_stats.map(stat => (
+                     <div key={stat.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                       <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>{stat.name}</span>
+                       <span style={{ fontWeight: 800 }}>{Math.round(stat.percentage || 0)}%</span>
+                     </div>
+                   ))
+                 ) : (
+                   <>
+                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                       <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>Quantitative</span>
+                       <span style={{ fontWeight: 800 }}>0%</span>
+                     </div>
+                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                       <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>Logical Reasoning</span>
+                       <span style={{ fontWeight: 800 }}>0%</span>
+                     </div>
+                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                       <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>Verbal Ability</span>
+                       <span style={{ fontWeight: 800 }}>0%</span>
+                     </div>
+                   </>
+                 )}
+               </div>
+               <p style={{ marginTop: 24, fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 500 }}>
+                 {(dashboard?.aptitude_stats || []).some(s => s.solved > 0) 
+                   ? "Consistent practice in these areas will strengthen your placement profile."
+                   : "Solve more modules in the Aptitude Masterclass to see detailed insights."}
+               </p>
+            </div>
+          </div>
+          
+          <div style={{ marginTop: 48, textAlign: 'center' }}>
+            <button 
+              className="primary-button" 
+              style={{ padding: '16px 32px', borderRadius: 16, fontSize: '1rem', fontWeight: 800 }}
+              onClick={() => (window.location.href = '/aptitude')}
+            >
+              Continue Masterclass
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Company Detail Popup */}
+      {selectedCompanyDetail && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(57, 72, 42, 0.45)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001, padding: 24 }}
+          onClick={() => setSelectedCompanyDetail(null)}
+        >
+          <div
+            style={{ background: 'white', maxWidth: 520, width: '100%', borderRadius: 40, boxShadow: '0 40px 80px rgba(0,0,0,0.25)', overflow: 'hidden' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{ background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', padding: '36px 40px 28px', position: 'relative' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                <div style={{ width: 72, height: 72, borderRadius: 20, background: 'rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '2rem', fontWeight: 950, color: 'white' }}>
+                  {selectedCompanyDetail.name.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '1.8rem', fontWeight: 950, color: 'white' }}>{selectedCompanyDetail.name}</h2>
+                  <p style={{ margin: '6px 0 0 0', color: 'rgba(255,255,255,0.85)', fontWeight: 700 }}>{selectedCompanyDetail.count} problem{selectedCompanyDetail.count !== 1 ? 's' : ''} solved</p>
+                </div>
+              </div>
+            </div>
+            {/* Problem List */}
+            <div style={{ padding: '28px 40px 40px', maxHeight: '55vh', overflowY: 'auto' }}>
+              <h3 style={{ margin: '0 0 20px 0', fontSize: '1rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Solved Problems</h3>
+              <ol style={{ margin: 0, padding: '0 0 0 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {selectedCompanyDetail.problems.map((prob, idx) => {
+                  const diffColor = prob.difficulty === 'Easy' ? '#22c55e' : prob.difficulty === 'Medium' ? '#f59e0b' : '#ef4444';
+                  return (
+                    <li key={prob.slug} style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--olive-950)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                      <span>{prob.title}</span>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 900, color: diffColor, background: `${diffColor}15`, padding: '3px 12px', borderRadius: 20, whiteSpace: 'nowrap', flexShrink: 0 }}>{prob.difficulty}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+            <div style={{ padding: '0 40px 36px' }}>
+              <button className="primary-button" style={{ width: '100%', padding: '16px', borderRadius: 20, fontSize: '1rem', fontWeight: 800 }} onClick={() => setSelectedCompanyDetail(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal for badges */}
+      {selectedBadge && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(57, 72, 42, 0.4)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
+          <div style={{ background: 'white', maxWidth: 440, width: '100%', padding: 48, borderRadius: 40, textAlign: 'center', boxShadow: '0 40px 80px rgba(0,0,0,0.2)' }}>
+            <div style={{ 
+              width: 100, 
+              height: 100, 
+              background: selectedBadge.visuals.bg, 
+              borderRadius: 32, 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              color: selectedBadge.visuals.color,
+              margin: '0 auto 32px'
+            }}>
+              {selectedBadge.icon}
+            </div>
+            <h2 style={{ fontSize: '1.8rem', fontWeight: 950, marginBottom: 16, color: 'var(--olive-950)' }}>{selectedBadge.name}</h2>
+            <p style={{ color: 'var(--text-soft)', fontSize: '1.1rem', lineHeight: 1.6, marginBottom: 40, fontWeight: 500 }}>{selectedBadge.description}</p>
+            <button className="primary-button" style={{ width: '100%', padding: '18px', borderRadius: 20, fontSize: '1.1rem', fontWeight: 800 }} onClick={() => setSelectedBadge(null)}>Great, Thanks!</button>
+          </div>
+        </div>
+      )}
+      {/* Tracking Management Modal */}
+      {isTrackingModalOpen && (
+        <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+          <div className="tab-fade" style={{ background: 'white', borderRadius: 32, width: '100%', maxWidth: 700, maxHeight: '80vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 30px 60px rgba(0,0,0,0.15)' }}>
+            <div style={{ padding: 32, borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 950, color: 'var(--olive-950)' }}>Select Placement Tracks</h3>
+                <p style={{ margin: '4px 0 16px 0', color: 'var(--text-soft)', fontWeight: 500 }}>Choose the companies you are targeting for placements.</p>
+                <div style={{ position: 'relative' }}>
+                  <Search size={18} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                  <input 
+                    type="text"
+                    placeholder="Search all companies..."
+                    value={modalSearchTerm}
+                    onChange={(e) => setModalSearchTerm(e.target.value)}
+                    style={{ width: '100%', padding: '14px 16px 14px 48px', borderRadius: 16, border: '2px solid #f1f5f9', background: '#f8fafc', fontSize: '1rem', fontWeight: 600 }}
+                  />
+                </div>
+              </div>
+              <button onClick={() => setIsTrackingModalOpen(false)} style={{ padding: 12, borderRadius: '50%', background: '#f8fafc', border: 'none', cursor: 'pointer' }}><X size={20} /></button>
+            </div>
+            
+            <div style={{ padding: 32, overflowY: 'auto', flex: 1 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16 }}>
+                {filteredModalCompanies.length > 0 ? (
+                  filteredModalCompanies.map(comp => {
+                    const isTracked = trackedCompaniesList.includes(comp);
+                    return (
+                      <button
+                        key={comp}
+                        onClick={() => toggleTrackedCompany(comp)}
+                        disabled={isUpdating}
+                        style={{ 
+                          padding: '16px 20px', 
+                          borderRadius: 16, 
+                          border: `2px solid ${isTracked ? 'var(--accent)' : '#f1f5f9'}`,
+                          background: isTracked ? '#fefce8' : 'white',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          opacity: isUpdating ? 0.7 : 1
+                        }}
+                      >
+                        <span style={{ fontWeight: 800, color: isTracked ? 'var(--accent-dark)' : 'var(--olive-950)' }}>{comp}</span>
+                        {isTracked ? <CheckCircle2 size={18} color="var(--accent)" /> : <Plus size={18} color="#94a3b8" />}
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px 0', color: 'var(--text-soft)' }}>
+                    No companies found matching "{modalSearchTerm}"
                   </div>
                 )}
-              </article>
-            );
-          })}
+              </div>
+            </div>
+            
+            <div style={{ padding: 24, borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'center', background: '#f8fafc' }}>
+              <button 
+                onClick={() => setIsTrackingModalOpen(false)} 
+                className="primary-button" 
+                style={{ padding: '12px 48px', borderRadius: 16 }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
         </div>
-      </section>
+      )}
     </div>
   );
 }

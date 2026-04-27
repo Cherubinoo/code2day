@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { ChevronDown, LayoutGrid } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { ChevronDown, LayoutGrid, Bell, X, MessageSquare, ExternalLink, Mail } from "lucide-react";
+import { buildJsonPostOptions } from "../../lib/appUtils";
 
 function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, userType }) {
   const [manageOpen, setManageOpen] = useState(false);
@@ -23,11 +24,21 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
   const getNavItems = () => {
     if (userType === "admin") return adminNavItems;
     if (userType === "hod") return hodNavItems;
-    if (userType === "staff") return staffNavItems;
+    if (userType === "staff" || userType === "director" || userType === "tpu" || userType === "ja") return staffNavItems;
     return navItems;
   };
   
   const items = getNavItems();
+
+  const getDashboardTitle = () => {
+    if (userType === "admin") return "Admin Console";
+    if (userType === "director") return "Director Dashboard";
+    if (userType === "tpu") return "TPU Dashboard";
+    if (userType === "ja") return "Admin Console";
+    if (userType === "hod") return "HOD Dashboard";
+    if (userType === "staff") return "Staff Dashboard";
+    return "Meaningful campus coding practice";
+  };
 
   return (
     <header className="topbar">
@@ -35,7 +46,7 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
         <div className="brand-badge">C2D</div>
         <div>
           <strong>code-2day</strong>
-          <p>{userType === "admin" ? "Admin Console" : userType === "hod" ? "HOD Dashboard" : userType === "staff" ? "Staff Dashboard" : "Meaningful campus coding practice"}</p>
+          <p>{getDashboardTitle()}</p>
         </div>
       </div>
 
@@ -87,15 +98,121 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
       </nav>
 
       <div className="account-block">
-        <div>
-          <strong>{dashboard.user?.name || "Admin"}</strong>
-          <p>{dashboard.user?.registerNumber || dashboard.user?.id || "0001"} | {userType === "admin" ? "Admin access" : userType === "hod" ? "HOD access" : userType === "staff" ? "Staff access" : "Private workspace"}</p>
+        <NotificationInbox />
+
+
+        <div className="account-info">
+          <strong>{dashboard.user?.name || "User"}</strong>
+          <p>
+            {dashboard.user?.facultyId || dashboard.user?.registerNumber || "N/A"}
+            {" | "}
+            {userType?.toUpperCase()} Access
+          </p>
         </div>
         <button type="button" className="ghost-button" onClick={handleLogout}>
           Logout
         </button>
       </div>
     </header>
+  );
+}
+
+function NotificationInbox() {
+  const [isOpen, setIsOpen] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    fetchNotifications();
+    const poller = setInterval(fetchNotifications, 60000); // Poll every minute
+    return () => clearInterval(poller);
+  }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  async function fetchNotifications() {
+    try {
+      const res = await fetch("/api/notifications/", { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data.notifications || []);
+        setUnreadCount(data.unread_count || 0);
+      }
+    } catch (err) {
+      console.error("Failed to fetch notifications", err);
+    }
+  }
+
+  async function markAsRead(id) {
+    try {
+      const res = await fetch(`/api/notifications/${id}/read/`, buildJsonPostOptions({}));
+      if (res.ok) {
+        setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
+        setUnreadCount(prev => Math.max(0, prev - 1));
+      }
+    } catch (err) {
+      console.error("Failed to mark as read", err);
+    }
+  }
+
+  return (
+    <div className="notification-wrapper" ref={dropdownRef}>
+      <button 
+        className={`inbox-trigger ${unreadCount > 0 ? 'has-unread' : ''}`}
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <Bell size={20} />
+        {unreadCount > 0 && <span className="unread-dot">{unreadCount}</span>}
+      </button>
+
+      {isOpen && (
+        <div className="inbox-dropdown surface-card">
+          <div className="inbox-header">
+            <h3>Notifications</h3>
+            {unreadCount > 0 && <span className="unread-label">{unreadCount} new</span>}
+          </div>
+          
+          <div className="inbox-list scroll-column">
+            {notifications.length > 0 ? (
+              notifications.map((n) => (
+                <div key={n.id} className={`inbox-item ${n.is_read ? '' : 'unread'}`} onClick={() => markAsRead(n.id)}>
+                  <div className="inbox-item-icon">
+                    {n.is_read ? <Mail size={16} /> : <MessageSquare size={16} />}
+                  </div>
+                  <div className="inbox-item-content">
+                    <div className="inbox-item-top">
+                      <strong>{n.title}</strong>
+                      <span>{n.time}</span>
+                    </div>
+                    <p>{n.message}</p>
+                    {n.link && (
+                      <a href={n.link} className="inbox-link">
+                        View Detail <ExternalLink size={10} />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="inbox-empty">
+                <Bell size={32} />
+                <p>No messages yet</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

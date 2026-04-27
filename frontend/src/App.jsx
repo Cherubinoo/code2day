@@ -5,13 +5,18 @@ import InstitutionDetail from "./components/admin/InstitutionDetail";
 import HODDashboard from "./components/hod/HODDashboard";
 import StaffDashboard from "./components/staff/StaffDashboard";
 import AuthScreen from "./components/common/AuthScreen";
+import MaintenanceScreen from "./components/common/MaintenanceScreen";
 import TopBar from "./components/common/TopBar";
 import ContestContainer from "./components/student/pages/ContestContainer";
+import AptitudePage from "./components/student/pages/AptitudePage";
 import DiscussPage from "./components/student/pages/DiscussPage";
 import ExplorePage from "./components/student/pages/ExplorePage";
 import ProblemsPage from "./components/student/pages/ProblemsPage";
+import CompanyPage from "./components/student/pages/CompanyPage";
 import ProgressPage from "./components/student/pages/ProgressPage";
 import RoadmapsPage from "./components/student/pages/RoadmapsPage";
+import DevelopersProfile from "./components/common/DevelopersProfile";
+import Footer from "./components/common/Footer";
 import {
   authStorageKey,
   conceptOptions,
@@ -39,13 +44,15 @@ import { useHistoryNav } from "./lib/useHistoryNav";
 
 function App() {
   const [activePage, navigate] = useHistoryNav(() => {
-    // Restore saved page from localStorage on init
-    return window.localStorage.getItem("code2day-active-page") || "explore";
+    // useHistoryNav reads from the URL path first; only fallback to explore
+    return "explore";
   });
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState("");
   const [dashboard, setDashboard] = useState(fallbackDashboard);
   const [problemSet, setProblemSet] = useState(normalizeProblems(fallbackProblems));
   const [selectedDifficulty, setSelectedDifficulty] = useState("All Levels");
-  const [selectedConcept, setSelectedConcept] = useState("All Topics");
+  const [selectedConcept, setSelectedConcept] = useState("All Concepts");
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     return window.localStorage.getItem("code2day-language") || "JavaScript";
   });
@@ -81,9 +88,6 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [studentMatches, setStudentMatches] = useState([]);
   const [staffMatches, setStaffMatches] = useState([]);
-  const [discussionDraft, setDiscussionDraft] = useState("");
-  const [discussionFeed, setDiscussionFeed] = useState([]);
-  const [discussionBusy, setDiscussionBusy] = useState(false);
   const [outputLog, setOutputLog] = useState(
     "Output panel ready. Run the code to see sample execution results here.",
   );
@@ -95,34 +99,51 @@ function App() {
   });
   const [executionBusy, setExecutionBusy] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [expandedSections, setExpandedSections] = useState({
-    open: true,
-    completed: false,
-    not_completed: true,
+
+  useEffect(() => {
+    if (selectedProblemSlug) {
+      setSidebarOpen(false);
+    } else {
+      setSidebarOpen(true);
+    }
+  }, [selectedProblemSlug]);
+  const [expandedSections, setExpandedSections] = useState(() => {
+    const saved = window.localStorage.getItem("code2day-expanded-sections");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error("Error parsing expanded sections:", e);
+      }
+    }
+    return { "batch-1": true, completed: false };
   });
   const [sessionMode, setSessionMode] = useState("practice");
   const [activeContestId, setActiveContestId] = useState("");
   const [contestSecondsLeft, setContestSecondsLeft] = useState(null);
   const [problemSecondsElapsed, setProblemSecondsElapsed] = useState(0);
+  const [sessionSecondsElapsed, setSessionSecondsElapsed] = useState(0);
   const [contestHistory, setContestHistory] = useState([]);
+  const [realContestData, setRealContestData] = useState([]);
   const [selectedRoadmapId, setSelectedRoadmapId] = useState("");
   const [selectedInstitutionId, setSelectedInstitutionId] = useState(
     () => window.localStorage.getItem("code2day-institution-id") || null,
   );
 
+  const [targetContestId, setTargetContestId] = useState(null);
   const isLoggedIn = Boolean(activeRegisterNumber);
 
   function resetStudentSession() {
     window.localStorage.removeItem(authStorageKey);
     window.localStorage.removeItem("code2day-user-type");
     window.localStorage.removeItem("code2day-institution-id");
+    window.localStorage.removeItem("code2day-active-page"); // clean up legacy key if present
     setActiveRegisterNumber("");
     setRegisterNumber("");
     setPassword("");
     setAuthStudent(null);
     setUserType(null);
     setSelectedInstitutionId(null);
-    setDiscussionFeed([]);
     setAuthMode("identify");
     setAuthError("");
     setAuthMessage("");
@@ -142,6 +163,7 @@ function App() {
     setActiveContestId("");
     setContestSecondsLeft(null);
     setProblemSecondsElapsed(0);
+    setSessionSecondsElapsed(0);
     setContestHistory([]);
     setSelectedRoadmapId("");
     navigate("explore", { replace: true });
@@ -177,6 +199,17 @@ function App() {
           return;
         }
 
+        // Maintenance Mode — show full screen
+        if (response.status === 503) {
+          if (isMounted) {
+            const data = await response.json().catch(() => ({}));
+            const msg = data.message || data.detail || 'System is under maintenance. Please try again later.';
+            setMaintenanceMessage(msg);
+            setMaintenanceMode(true);
+          }
+          return;
+        }
+
         if (!response.ok) {
           throw new Error("Dashboard request failed");
         }
@@ -200,15 +233,39 @@ function App() {
       }
     }
 
-    loadDashboard();
+    async function loadRealContestData() {
+      try {
+        const response = await fetch("/api/student/contests/", {
+          credentials: "include",
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (isMounted) {
+            setRealContestData(data.contests || []);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load contest data:", error);
+        if (isMounted) {
+          setRealContestData([]);
+        }
+      }
+    }
+
+    if (isLoggedIn) {
+      loadDashboard();
+      if (userType === "student") {
+        loadRealContestData();
+      }
+    }
 
     return () => {
       isMounted = false;
     };
-  }, [activeRegisterNumber]);
+  }, [activeRegisterNumber, userType]);
 
   useEffect(() => {
-    if (!isLoggedIn) {
+    if (!isLoggedIn || userType !== "student") {
       setProblemSet(normalizeProblems(fallbackProblems));
       return undefined;
     }
@@ -248,10 +305,10 @@ function App() {
     return () => {
       isMounted = false;
     };
-  }, [isLoggedIn]);
+  }, [isLoggedIn, userType]);
 
   useEffect(() => {
-    if (!isLoggedIn || !selectedProblemSlug) {
+    if (!isLoggedIn || !selectedProblemSlug || userType !== "student") {
       return undefined;
     }
 
@@ -303,7 +360,7 @@ function App() {
     return () => {
       isMounted = false;
     };
-  }, [isLoggedIn, problemSet, selectedProblemSlug]);
+  }, [isLoggedIn, problemSet, selectedProblemSlug, userType]);
 
   useEffect(() => {
     if (isLoggedIn || registerNumber.trim().length < 2) {
@@ -349,7 +406,6 @@ function App() {
     if (sessionMode === "contest" && activeContest) {
       return problemSet.filter((problem) => activeContest.problems.includes(problem.slug));
     }
-
     return problemSet;
   }, [activeContest, problemSet, sessionMode]);
 
@@ -358,7 +414,7 @@ function App() {
       const matchesDifficulty =
         selectedDifficulty === "All Levels" || problem.difficulty === selectedDifficulty;
       const matchesTag =
-        selectedConcept === "All Topics" || (problem.tags ?? []).includes(selectedConcept);
+        selectedConcept === "All Concepts" || (problem.tags ?? []).includes(selectedConcept);
       return matchesDifficulty && matchesTag;
     });
   }, [baseProblemPool, selectedConcept, selectedDifficulty]);
@@ -385,11 +441,11 @@ function App() {
     baseProblemPool.forEach((problem) => {
       (problem.tags ?? []).forEach((tag) => allTags.add(tag));
     });
-    return ["All Topics", ...Array.from(allTags).sort()];
+    return ["All Concepts", ...Array.from(allTags).sort()];
   }, [baseProblemPool]);
 
   const tagCounts = useMemo(() => {
-    const counts = { "All Topics": baseProblemPool.length };
+    const counts = { "All Concepts": baseProblemPool.length };
     dynamicTags.slice(1).forEach((tag) => {
       counts[tag] = baseProblemPool.filter((problem) =>
         (problem.tags ?? []).includes(tag),
@@ -398,21 +454,6 @@ function App() {
     return counts;
   }, [baseProblemPool, dynamicTags]);
 
-  useEffect(() => {
-    // Skip if user just manually changed language
-    if (userChangedLanguage.current) {
-      userChangedLanguage.current = false;
-      return;
-    }
-    
-    const availableLanguages =
-      filteredProblemSet.find((problem) => problem.slug === selectedProblemSlug)
-        ?.available_languages ?? languageOptions;
-
-    if (!availableLanguages.includes(selectedLanguage)) {
-      setSelectedLanguage(availableLanguages[0] ?? "JavaScript");
-    }
-  }, [filteredProblemSet, selectedProblemSlug]);
 
   // Ref to track initial load - prevents overwriting saved code on refresh
   const isInitialLoad = useRef(true);
@@ -460,8 +501,24 @@ function App() {
     setExecutionMeta({ status: "Idle", time: "", memory: "" });
   }, [selectedProblemSlug, selectedLanguage]);
 
+  // Session Timer - Tracks total time in the problems section
+  useEffect(() => {
+    if (activePage !== "problems") {
+      setSessionSecondsElapsed(0);
+      return undefined;
+    }
+    
+    const timer = window.setInterval(() => {
+      setSessionSecondsElapsed((current) => current + 1);
+    }, 1000);
+    
+    return () => window.clearInterval(timer);
+  }, [activePage]);
+
+  // Problem Timer - Resets when problem changes
   useEffect(() => {
     if (activePage !== "problems" || !selectedProblemSlug) {
+      setProblemSecondsElapsed(0);
       return undefined;
     }
 
@@ -473,7 +530,7 @@ function App() {
     return () => {
       window.clearInterval(timer);
     };
-  }, [activePage, selectedProblemSlug, sessionMode, activeContestId]);
+  }, [activePage, selectedProblemSlug]);
 
   useEffect(() => {
     if (activePage !== "problems" || sessionMode !== "contest" || contestSecondsLeft == null) {
@@ -514,51 +571,9 @@ function App() {
     };
   }, [activeContest, activePage, contestSecondsLeft, problemSet, sessionMode]);
 
-  useEffect(() => {
-    if (!isLoggedIn || activePage !== "discuss") {
-      return undefined;
-    }
 
-    let isMounted = true;
-
-    async function loadDiscussions() {
-      try {
-        const response = await fetch("/api/discussions/", {
-          credentials: "include",
-        });
-        if (response.status === 401) {
-          if (isMounted) {
-            resetStudentSession();
-          }
-          return;
-        }
-
-        if (!response.ok) {
-          throw new Error("Discussion request failed");
-        }
-
-        const payload = await response.json();
-        if (isMounted) {
-          setDiscussionFeed(payload);
-        }
-      } catch (error) {
-        console.error("Could not load anonymous discussions", error);
-      }
-    }
-
-    loadDiscussions();
-    const poller = window.setInterval(loadDiscussions, 60000);
-
-    return () => {
-      isMounted = false;
-      window.clearInterval(poller);
-    };
-  }, [activePage, isLoggedIn]);
-
-  // Save active page to localStorage whenever it changes
-  useEffect(() => {
-    window.localStorage.setItem("code2day-active-page", activePage);
-  }, [activePage]);
+  // NOTE: activePage is synced via useHistoryNav (URL), not localStorage.
+  // Removed localStorage save to prevent stale page on next visit causing blank screen.
 
   // Save code to localStorage whenever it changes
   useEffect(() => {
@@ -580,11 +595,22 @@ function App() {
   }, [selectedLanguage]);
 
   const selectedProblem = useMemo(() => {
+    if (activePage === "sql-shell") {
+      return {
+        title: "Interactive SQL Shell",
+        slug: "sql-shell",
+        description: "## SQL Playground\nUse this interactive shell to run PostgreSQL queries. You can explore table structures using the **Schema** tab or try complex joins and aggregations here.",
+        difficulty: "Practice",
+        tags: ["SQL", "Shell"],
+        available_languages: ["SQL"],
+        schema_description: "## Database Schema\nTables available for practice: \n- `problems`\n- `submissions`\n- `users`\n\nRun `SELECT * FROM problems LIMIT 5;` to start exploring."
+      };
+    }
     if (!selectedProblemSlug) {
       return null;
     }
     return filteredProblemSet.find((problem) => problem.slug === selectedProblemSlug) ?? null;
-  }, [filteredProblemSet, selectedProblemSlug]);
+  }, [filteredProblemSet, selectedProblemSlug, activePage]);
 
   const activityCalendar = dashboard.activityCalendar ?? fallbackDashboard.activityCalendar;
   const filteredPreviewProblems = filteredProblemSet.slice(0, 5);
@@ -615,6 +641,11 @@ function App() {
       const payload = await response.json();
 
       if (!response.ok) {
+        if (response.status === 503) {
+          setMaintenanceMessage(payload.message || payload.detail || "System is under maintenance.");
+          setMaintenanceMode(true);
+          return;
+        }
         throw new Error(extractApiError(payload, "User lookup failed."));
       }
 
@@ -667,7 +698,7 @@ function App() {
         admin_id: registerNumber.trim(),
         password,
       };
-    } else if (authStudent?.user_type === "staff" || authStudent?.user_type === "hod") {
+    } else if (authStudent?.user_type === "staff" || authStudent?.user_type === "hod" || authStudent?.user_type === "director" || authStudent?.user_type === "tpu" || authStudent?.user_type === "ja") {
       endpoint = isFirstLogin ? "/api/auth/staff/first-login/" : "/api/auth/staff/login/";
       requestBody = {
         faculty_id: registerNumber.trim(),
@@ -692,6 +723,11 @@ function App() {
       const payload = await response.json();
 
       if (!response.ok) {
+        if (response.status === 503) {
+          setMaintenanceMessage(payload.message || payload.detail || "System is under maintenance.");
+          setMaintenanceMode(true);
+          return;
+        }
         throw new Error(extractApiError(payload, "Authentication failed."));
       }
 
@@ -719,7 +755,9 @@ function App() {
       setPassword("");
       setAuthMessage(payload.detail);
       // Navigate to role-specific dashboard
-      const targetPage = type === "admin" ? "admin" : type === "hod" ? "hod" : type === "staff" ? "staff" : "explore";
+      const targetPage = (type === "admin" || type === "director" || type === "tpu" || type === "ja") ? "hod" : 
+                         type === "hod" ? "hod" : 
+                         type === "staff" ? "staff" : "explore";
       navigate(targetPage, { replace: true });
     } catch (error) {
       setAuthError(error.message);
@@ -741,10 +779,14 @@ function App() {
   }
 
   function toggleProblemSection(sectionKey) {
-    setExpandedSections((current) => ({
-      ...current,
-      [sectionKey]: !current[sectionKey],
-    }));
+    setExpandedSections((current) => {
+      const next = {
+        ...current,
+        [sectionKey]: !current[sectionKey],
+      };
+      window.localStorage.setItem("code2day-expanded-sections", JSON.stringify(next));
+      return next;
+    });
   }
 
   function updateProblemProgress(nextState) {
@@ -844,9 +886,12 @@ function App() {
     try {
       const result = await executeCurrentCode(false);
       if (result.status !== "Unsupported Language") {
-        const isSaved = await persistProblemProgress("open");
-        if (!isSaved) {
-          setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
+        // Skip global progress update for daily problems and contests
+        if (!selectedProblem?.is_daily && sessionMode !== "contest") {
+          const isSaved = await persistProblemProgress("open");
+          if (!isSaved) {
+            setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
+          }
         }
       }
     } catch (error) {
@@ -867,14 +912,23 @@ function App() {
     try {
       const result = await executeCurrentCode(true);
       if (result.status === "Accepted") {
-        const isSaved = await persistProblemProgress("completed");
-        if (!isSaved) {
-          setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
+        // Skip global progress update for daily problems and contests
+        if (!selectedProblem?.is_daily && sessionMode !== "contest") {
+          const isSaved = await persistProblemProgress("completed");
+          if (!isSaved) {
+            setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
+          }
+        } else {
+          const context = selectedProblem?.is_daily ? "Daily Problem" : "Contest";
+          setOutputLog((current) => `${current}\n\n[${context}] Solution accepted! Progress for ${context.toLowerCase()}s is tracked separately.`);
         }
       } else if (result.status !== "Unsupported Language") {
-        const isSaved = await persistProblemProgress("open");
-        if (!isSaved) {
-          setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
+        // Skip global progress update for daily problems and contests
+        if (!selectedProblem?.is_daily && sessionMode !== "contest") {
+          const isSaved = await persistProblemProgress("open");
+          if (!isSaved) {
+            setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
+          }
         }
       }
     } catch (error) {
@@ -906,8 +960,7 @@ function App() {
   }
 
   function handleNavigateToContest(contestId) {
-    // Navigate to contest page - this will be handled by the new contest system
-    // For now, just navigate to the contest page
+    setTargetContestId(contestId);
     navigate("contest");
   }
 
@@ -939,46 +992,23 @@ function App() {
     navigate("progress");
   }
 
-  async function handlePostDiscussion(event) {
-    event.preventDefault();
-    if (!discussionDraft.trim()) {
-      return;
-    }
-
-    setDiscussionBusy(true);
-    try {
-      const response = await fetch("/api/discussions/", {
-        ...buildJsonPostOptions({
-          body: discussionDraft.trim(),
-          problem_slug: selectedProblem?.slug ?? "",
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(extractApiError(payload, "Could not post your doubt."));
-      }
-
-      setDiscussionFeed((current) => [payload, ...current].slice(0, 100));
-      setDiscussionDraft("");
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setDiscussionBusy(false);
-    }
-  }
 
   function handleSelectConcept(nextTag, context = "general") {
     setSelectedConcept(nextTag);
-    if (context === "problems" && nextTag !== "All Topics") {
+    if (context === "problems" && nextTag !== "All Concepts") {
       setSelectedProblemSlug("");
       setOutputLog("Choose a problem from the filtered list to open the coding workspace.");
     }
   }
 
-  const groupedProblems = progressSections.map((section) => ({
-    ...section,
-    items: filteredProblemSet.filter((problem) => problem.progress_state === section.key),
-  }));
+  // Unified flat list instead of batches
+  const groupedProblems = [
+    { 
+      key: 'all', 
+      label: activePage === "sql-problems" ? "SQL Problems" : "All Problems", 
+      items: filteredProblemSet 
+    }
+  ];
 
   if (!isLoggedIn) {
     return (
@@ -1003,6 +1033,7 @@ function App() {
         staffMatches={staffMatches}
         setStudentMatches={setStudentMatches}
         studentMatches={studentMatches}
+        onNavigate={navigate}
       />
     );
   }
@@ -1057,11 +1088,19 @@ function App() {
           toggleProblemSection={toggleProblemSection}
           totalSolved={totalSolved}
           dynamicTags={dynamicTags}
+          sessionSecondsElapsed={sessionSecondsElapsed}
+          activePage={activePage}
         />
       );
       break;
+
     case "contest":
-      activeView = <ContestContainer />;
+      activeView = (
+        <ContestContainer
+          targetContestId={targetContestId}
+          setTargetContestId={setTargetContestId}
+        />
+      );
       break;
     case "progress":
       // Redirect staff and admin to their dashboards
@@ -1076,11 +1115,13 @@ function App() {
       activeView = (
         <ProgressPage
           contestCards={contestCards}
-          contestHistory={contestHistory}
+          contestHistory={realContestData}
           dashboard={dashboard}
+          setDashboard={setDashboard}
           handleJoinContest={handleJoinContest}
           onNavigateToContest={handleNavigateToContest}
           resultCards={resultCards}
+          problemSet={problemSet}
         />
       );
       break;
@@ -1095,9 +1136,21 @@ function App() {
       );
       break;
     case "discuss":
-      // Redirect staff, hod, and admin to their dashboards
-      if (userType === "staff" || userType === "hod") {
+      activeView = (
+        <DiscussPage
+          userType={userType}
+          studentProfile={dashboard?.student}
+          staffProfile={dashboard?.staff}
+        />
+      );
+      break;
+    case "company":
+      if (userType === "staff") {
         navigate("staff", { replace: true });
+        break;
+      }
+      if (userType === "hod") {
+        navigate("hod", { replace: true });
         break;
       }
       if (userType === "admin") {
@@ -1105,16 +1158,52 @@ function App() {
         break;
       }
       activeView = (
-        <DiscussPage
-          discussionDraft={discussionDraft}
-          discussionBusy={discussionBusy}
-          discussionThreads={discussionFeed}
-          handlePostDiscussion={handlePostDiscussion}
+        <CompanyPage
+          problemSet={problemSet}
+          activeContest={activeContest}
+          code={code}
+          tagCounts={tagCounts}
+          complexityInsight={complexityInsight}
+          contestSecondsLeft={contestSecondsLeft}
+          dashboard={dashboard}
+          handleSelectTag={handleSelectConcept}
+          difficultyOrder={difficultyOrder}
+          editorLanguage={editorLanguageMap[selectedLanguage] ?? "javascript"}
+          executionBusy={executionBusy}
+          executionInput={executionInput}
+          executionMeta={executionMeta}
+          expandedSections={expandedSections}
+          handleFinishContest={handleFinishContest}
+          handleRunCode={handleRunCode}
+          handleSubmitCode={handleSubmitCode}
+          outputLog={outputLog}
+          problemSecondsElapsed={problemSecondsElapsed}
+          problemDetailTab={problemDetailTab}
+          selectedTag={selectedConcept}
+          selectedDifficulty={selectedDifficulty}
+          selectedLanguage={selectedLanguage}
           selectedProblem={selectedProblem}
-          setDiscussionDraft={setDiscussionDraft}
+          sessionMode={sessionMode}
+          setCode={setCode}
+          setExecutionInput={setExecutionInput}
+          setProblemDetailTab={setProblemDetailTab}
+          setSelectedDifficulty={setSelectedDifficulty}
+          setSelectedLanguage={setSelectedLanguage}
+          setSelectedProblemSlug={setSelectedProblemSlug}
+          setSidebarOpen={setSidebarOpen}
+          sidebarOpen={sidebarOpen}
+          toggleProblemSection={toggleProblemSection}
+          totalSolved={totalSolved}
+          dynamicTags={dynamicTags}
+          sessionSecondsElapsed={sessionSecondsElapsed}
+          activePage={activePage}
         />
       );
       break;
+    case "aptitude":
+      activeView = <AptitudePage />;
+      break;
+
     case "admin":
       activeView = userType === "admin" ? (
         <AdminDashboard />
@@ -1126,7 +1215,7 @@ function App() {
       );
       break;
     case "hod":
-      activeView = userType === "hod" ? (
+      activeView = (userType === "hod" || userType === "director" || userType === "tpu" || userType === "ja" || userType === "admin") ? (
         <HODDashboard institutionId={selectedInstitutionId} />
       ) : (
         <div style={{ padding: 40 }}>
@@ -1194,12 +1283,8 @@ function App() {
         navigate("staff", { replace: true });
         break;
       }
-      if (userType === "hod") {
+      if (userType === "hod" || userType === "director" || userType === "tpu" || userType === "ja" || userType === "admin") {
         navigate("hod", { replace: true });
-        break;
-      }
-      if (userType === "admin") {
-        navigate("admin", { replace: true });
         break;
       }
       activeView = (
@@ -1222,12 +1307,28 @@ function App() {
           setSelectedLanguage={setSelectedLanguage}
           setSelectedProblemSlug={setSelectedProblemSlug}
           totalSolved={totalSolved}
-          conceptOptions={conceptOptions}
+          conceptOptions={dynamicTags}
         />
       );
       break;
+    case "developers":
+      activeView = <DevelopersProfile onBack={() => navigate("explore")} />;
+      break;
   }
 
+  const handleMaintenanceBack = () => {
+    resetStudentSession();
+    setMaintenanceMode(false);
+    setMaintenanceMessage("");
+    setAuthMessage("");
+  };
+
+  if (maintenanceMode) {
+    return <MaintenanceScreen message={maintenanceMessage} onRetry={() => window.location.reload()} onBack={handleMaintenanceBack} />;
+  }
+
+  // If a redirect branch fired (activeView still null), render nothing visible
+  // while the navigate() call triggers the next render with the correct page.
   return (
     <div className="app-shell">
       <TopBar
@@ -1238,7 +1339,15 @@ function App() {
         setActivePage={navigate}
         userType={userType}
       />
-      <main className="main-shell">{activeView}</main>
+      <main className="main-shell">
+        {activeView ?? (
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh", color: "var(--text-soft)" }}>
+            Loading…
+          </div>
+        )}
+      </main>
+
+      <Footer onNavigate={navigate} />
     </div>
   );
 }

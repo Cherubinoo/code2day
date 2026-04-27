@@ -1,3 +1,6 @@
+import { useState, useEffect } from 'react';
+import { Trophy, Clock, Target, Award, Users, ChevronRight, X, MessageSquare } from 'lucide-react';
+
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function toCalendarDate(date) {
@@ -108,7 +111,6 @@ function ExplorePage({
         <article className="hero-card hero-card-wide">
           <div className="eyebrow-row">
             <span className="badge badge-strong">Explore</span>
-            <span className="badge">{dashboard.user.rank}</span>
           </div>
           <h1>Meaningful practice, not random scrolling.</h1>
           <p>
@@ -151,17 +153,23 @@ function ExplorePage({
                 ))}
               </div>
             </div>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => {
-                setSelectedConcept("All Concepts");
-                setSelectedDifficulty(dashboard.dailyProblem.difficulty);
-                setActivePage("problems");
-              }}
-            >
-              Solve Now
-            </button>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() => {
+                  setSelectedConcept("All Concepts");
+                  setSelectedDifficulty(dashboard.dailyProblem.difficulty);
+                  setSelectedProblemSlug(dashboard.dailyProblem.slug);
+                  if (dashboard.dailyProblem.preferredLanguage) {
+                    setSelectedLanguage(dashboard.dailyProblem.preferredLanguage);
+                  }
+                  setActivePage("problems");
+                }}
+              >
+                Solve Now
+              </button>
+            </div>
           </div>
         </article>
 
@@ -376,13 +384,26 @@ function ExplorePage({
             <span>Important practice updates and roadmap notes</span>
           </div>
           <div className="featured-path-list">
-            {featuredPaths.map((path) => (
-              <article key={path.title} className={`lane-card lane-${path.accent}`}>
-                <span>{path.title}</span>
-                <strong>{path.subtitle}</strong>
-                <p>{path.detail}</p>
-              </article>
-            ))}
+            {(dashboard.announcements && dashboard.announcements.length > 0) ? (
+              dashboard.announcements.map((announcement) => (
+                <article key={announcement.id} className={`lane-card lane-${
+                  announcement.category === 'contest' ? 'olive' : 
+                  announcement.category === 'leaderboard' ? 'purple' : 'neutral'
+                }`}>
+                  <div className="lane-header">
+                    <span>{announcement.category.toUpperCase()}</span>
+                    <span className="lane-date">{announcement.date}</span>
+                  </div>
+                  <strong>{announcement.title}</strong>
+                  <p>{announcement.content}</p>
+                </article>
+              ))
+            ) : (
+              <div className="inbox-empty" style={{ gridColumn: '1 / -1', background: 'var(--bg-2)', borderRadius: '16px', padding: '40px', textAlign: 'center', width: '100%' }}>
+                <MessageSquare size={32} style={{ marginBottom: '12px', color: 'var(--text-soft)', margin: '0 auto' }} />
+                <p style={{ color: 'var(--text-soft)', margin: 0 }}>No active announcements for today.</p>
+              </div>
+            )}
           </div>
         </article>
       </section>

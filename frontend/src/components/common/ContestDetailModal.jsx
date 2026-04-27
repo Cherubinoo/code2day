@@ -28,13 +28,11 @@ const ContestDetailModal = ({ contestId, onClose }) => {
         throw new Error('Failed to load contest details');
       }
 
-      // Fetch contest analytics
+      // Fetch contest analytics (optional, might not exist for pending contests)
       const analyticsRes = await fetch(`/api/contests/${contestId}/analytics/`, { credentials: 'include' });
       if (analyticsRes.ok) {
         const analyticsData = await analyticsRes.json();
         setAnalytics(analyticsData);
-      } else {
-        throw new Error('Failed to load contest analytics');
       }
     } catch (err) {
       setError(err.message);
@@ -92,7 +90,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
     );
   }
 
-  if (error || !contest || !analytics) {
+  if (error || !contest) {
     return (
       <div style={{
         position: 'fixed',
@@ -128,7 +126,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
   }
 
   // Filter to only show students who have submitted
-  const participantsWithSubmissions = (analytics.participants || []).filter(p => p.total_submissions > 0);
+  const participantsWithSubmissions = (analytics?.participants || []).filter(p => p.total_submissions > 0);
 
   return (
     <div style={{
@@ -197,9 +195,11 @@ const ContestDetailModal = ({ contestId, onClose }) => {
           background: '#f9fafb',
         }}>
           <div style={{ padding: 16, background: 'white', borderRadius: 8, border: '1px solid #e5e7eb' }}>
-            <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Total Problems</div>
+            <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
+              {contest.contest_type === 'aptitude' ? 'Total Questions' : 'Total Problems'}
+            </div>
             <div style={{ fontSize: 24, fontWeight: 'bold', color: '#4f46e5' }}>
-              {contest.problem_count || 0}
+              {contest.contest_type === 'aptitude' ? contest.aptitude_question_count : contest.problem_count}
             </div>
           </div>
           <div style={{ padding: 16, background: 'white', borderRadius: 8, border: '1px solid #e5e7eb' }}>
@@ -228,8 +228,55 @@ const ContestDetailModal = ({ contestId, onClose }) => {
           </div>
         </div>
 
+        {/* Contest Content */}
+        <div style={{ padding: '24px 32px', borderBottom: '1px solid #e5e7eb' }}>
+          <h3 style={{ margin: '0 0 16px', fontSize: 18 }}>
+            Contest {contest.contest_type === 'aptitude' ? 'Questions' : 'Problems'}
+          </h3>
+          <div style={{ display: 'grid', gap: 12 }}>
+            {(contest.problems || []).map((item, idx) => (
+              <div key={idx} style={{
+                padding: 16,
+                background: '#f9fafb',
+                borderRadius: 8,
+                border: '1px solid #e5e7eb',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}>
+                <div>
+                  <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
+                    {contest.contest_type === 'aptitude' ? `Question ${idx + 1}` : `Problem ${idx + 1}`}
+                  </div>
+                  <div style={{ fontWeight: 600 }}>
+                    {contest.contest_type === 'aptitude' ? item.question_text : item.title}
+                  </div>
+                  {contest.contest_type === 'aptitude' && (
+                    <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                      Topic: {item.topic} • Difficulty: {item.difficulty}
+                    </div>
+                  )}
+                </div>
+                <div style={{
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  background: item.difficulty === 'Easy' ? '#dcfce7' : item.difficulty === 'Medium' ? '#fef3c7' : '#fee2e2',
+                  color: item.difficulty === 'Easy' ? '#166534' : item.difficulty === 'Medium' ? '#92400e' : '#991b1b',
+                }}>
+                  {item.difficulty}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Student Submissions Table */}
-        <div style={{ padding: '24px 32px' }}>
+        {analytics && (
+          <>
+            <div style={{ padding: '24px 32px' }}>
           <h3 style={{ margin: '0 0 16px', fontSize: 18 }}>
             Student Submissions ({participantsWithSubmissions.length})
           </h3>
@@ -260,7 +307,9 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                     <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 600 }}>Rank</th>
                     <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 600 }}>Student</th>
                     <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 600 }}>Register No</th>
-                    <th style={{ textAlign: 'center', padding: '12px 16px', fontWeight: 600 }}>Solved</th>
+                    <th style={{ textAlign: 'center', padding: '12px 16px', fontWeight: 600 }}>
+                      {contest.contest_type === 'aptitude' ? 'Answered' : 'Solved'}
+                    </th>
                     <th style={{ textAlign: 'center', padding: '12px 16px', fontWeight: 600 }}>Score</th>
                     <th style={{ textAlign: 'center', padding: '12px 16px', fontWeight: 600 }}>Submissions</th>
                     <th style={{ textAlign: 'center', padding: '12px 16px', fontWeight: 600 }}>Time Spent</th>
@@ -304,7 +353,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                           fontSize: 13,
                           fontWeight: 600,
                         }}>
-                          {participant.problems_solved} / {contest.problem_count}
+                          {participant.problems_solved} / {contest.contest_type === 'aptitude' ? contest.aptitude_question_count : contest.problem_count}
                         </span>
                       </td>
                       <td style={{ padding: '12px 16px', textAlign: 'center', fontSize: 16, fontWeight: 600, color: '#4f46e5' }}>
@@ -405,7 +454,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                         </p>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {submission.status === 'Accepted' ? (
+                        {submission.status === 'Accepted' || submission.status === 'Correct' ? (
                           <span style={{
                             padding: '4px 12px',
                             borderRadius: 12,
@@ -418,7 +467,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                             gap: 4,
                           }}>
                             <CheckCircle size={14} />
-                            Accepted
+                            {submission.status}
                           </span>
                         ) : (
                           <span style={{
@@ -447,18 +496,30 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                       background: '#f9fafb',
                       borderRadius: 8,
                     }}>
-                      <div>
-                        <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Language</div>
-                        <div style={{ fontSize: 14, fontWeight: 500, color: '#374151' }}>
-                          {submission.language}
+                      {contest.contest_type !== 'aptitude' && (
+                        <>
+                          <div>
+                            <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Language</div>
+                            <div style={{ fontSize: 14, fontWeight: 500, color: '#374151' }}>
+                              {submission.language}
+                            </div>
+                          </div>
+                          <div>
+                            <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Test Cases</div>
+                            <div style={{ fontSize: 14, fontWeight: 500, color: '#374151' }}>
+                              {submission.passed_cases} / {submission.total_cases}
+                            </div>
+                          </div>
+                        </>
+                      )}
+                      {contest.contest_type === 'aptitude' && (
+                        <div>
+                          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Selected Option</div>
+                          <div style={{ fontSize: 14, fontWeight: 600, color: '#374151' }}>
+                            Option {submission.selected_option}
+                          </div>
                         </div>
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Test Cases</div>
-                        <div style={{ fontSize: 14, fontWeight: 500, color: '#374151' }}>
-                          {submission.passed_cases} / {submission.total_cases}
-                        </div>
-                      </div>
+                      )}
                       {submission.execution_time && (
                         <div>
                           <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Execution Time</div>
@@ -490,6 +551,8 @@ const ContestDetailModal = ({ contestId, onClose }) => {
             )}
           </div>
         )}
+      </>
+    )}
       </div>
     </div>
   );

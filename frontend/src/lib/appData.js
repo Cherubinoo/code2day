@@ -1,3 +1,5 @@
+import { LayoutGrid, Map, Code2, Building2, Brain, FolderCode, Trophy, BarChart3, MessageSquare, Database, Terminal } from "lucide-react";
+
 function buildFallbackCalendar() {
   const base = [
     1, 2, 0, 3, 2, 1, 4,
@@ -22,6 +24,10 @@ function buildFallbackCalendar() {
 }
 
 export const starterCodeByLanguage = {
+  "SQL": `-- SQL Practice Problem
+-- Write your PostgreSQL query below
+SELECT * FROM table_name;
+`,
   "C": `#include <stdio.h>
 #include <string.h>
 
@@ -153,116 +159,42 @@ export const fallbackDashboard = {
     { name: "Meera", solved: 132 },
     { name: "Kavin", solved: 118 },
   ],
+  announcements: [],
   editor: {
     starter_code: starterCodeByLanguage.JavaScript,
   },
 };
 
+function generateMoreProblems(count = 150) {
+  const difficulties = ["Easy", "Medium", "Hard"];
+  const tags = ["Array", "String", "Hash Map", "Stack", "Binary Search", "Heap", "Linked List", "SQL"];
+  const states = ["not_completed", "open", "completed"];
+  
+  return Array.from({ length: count }, (_, i) => {
+    const id = i + 1;
+    const difficulty = difficulties[i % 3];
+    const state = i < 45 ? "completed" : i < 60 ? "open" : "not_completed";
+    const tag = tags[i % tags.length];
+    
+    return {
+      title: `Problem ${id}: ${difficulty} Challenge`,
+      slug: `problem-${id}`,
+      description: `This is a generated description for problem ${id}. Solve this ${difficulty} challenge using ${tag} concepts.\\n\\n1. Read input.\\n2. Process data.\\n3. Print result.`,
+      difficulty,
+      tags: [tag, "Practice"],
+      is_daily: i % 10 === 0,
+      progress_state: state,
+      available_languages: ["JavaScript", "Python", "Java", "C++", "C"],
+      examples: [
+        { input: "example input", output: "example output", explanation: "Explanation for example" }
+      ],
+      hints: ["Try to think about the constraints", "Use efficient data structures"],
+    };
+  });
+}
+
 export const fallbackProblems = [
-  {
-    title: "Two Sum Variants",
-    slug: "two-sum-variants",
-    description: "Given an array of integers `nums` and an integer `target`, return **indices** of the two numbers such that they add up to `target`. You may assume that each input would have **exactly one solution**, and you may not use the same element twice.",
-    difficulty: "Easy",
-    tags: ["Array", "Hash Map"],
-    is_daily: true,
-    progress_state: "open",
-    available_languages: ["JavaScript", "Python", "Java", "C++", "C", "C#", "Go", "Rust", "TypeScript", "PHP", "Ruby", "Swift", "Kotlin"],
-    examples: [
-      { input: "nums = [2,7,11,15], target = 9", output: "[0,1]", explanation: "Because nums[0] + nums[1] == 9, we return [0, 1]." },
-      { input: "nums = [3,2,4], target = 6", output: "[1,2]", explanation: "Because nums[1] + nums[2] == 6, we return [1, 2]." },
-      { input: "nums = [3,3], target = 6", output: "[0,1]", explanation: "Because nums[0] + nums[1] == 6, we return [0, 1]." }
-    ],
-    hints: ["Try using a hash map to store complement values", "For each number, check if (target - current) exists in the map", "Return the indices when you find the complement"],
-    sample_output: "Input: nums = [2,7,11,15], target = 9\nOutput: [0,1]\n\nInput: nums = [3,2,4], target = 6\nOutput: [1,2]"
-  },
-  {
-    title: "Binary Search Basics",
-    slug: "binary-search-basics",
-    description: "Given an array of integers `nums` which is sorted in **ascending order**, and an integer `target`, write a function to search `target` in `nums`. If `target` exists, then return its index. Otherwise, return `-1`. You must write an algorithm with `O(log n)` runtime complexity.",
-    difficulty: "Easy",
-    tags: ["Binary Search", "Array"],
-    is_daily: false,
-    progress_state: "not_completed",
-    available_languages: ["JavaScript", "Python", "Java", "C++", "C", "C#", "Go", "Rust", "TypeScript", "PHP", "Ruby", "Swift", "Kotlin"],
-    examples: [
-      { input: "nums = [-1,0,3,5,9,12], target = 9", output: "4", explanation: "9 exists in nums and its index is 4" },
-      { input: "nums = [-1,0,3,5,9,12], target = 2", output: "-1", explanation: "2 does not exist in nums so return -1" }
-    ],
-    hints: ["Calculate the middle index of the current search range", "Compare the middle element with the target", "Eliminate half of the search space based on comparison"],
-    sample_output: "Input: nums = [-1,0,3,5,9,12], target = 9\nOutput: 4\n\nInput: nums = [-1,0,3,5,9,12], target = 2\nOutput: -1"
-  },
-  {
-    title: "Customer Order Summary",
-    slug: "customer-order-summary",
-    description: "Write a SQL query to summarize orders by customer and total amount.",
-    difficulty: "Easy",
-    tags: ["SQL"],
-    is_daily: false,
-    progress_state: "not_completed",
-    available_languages: ["SQL"],
-  },
-  {
-    title: "Balanced Brackets",
-    slug: "balanced-brackets",
-    description: "Given a string `s` containing just the characters `'('`, `')'`, `'{'`, `'}'`, `'['` and `']'`, determine if the input string is **valid**.\\n\\nAn input string is **valid** if:\\n1. Open brackets must be closed by the same type of brackets.\\n2. Open brackets must be closed in the correct order.\\n3. Every close bracket has a corresponding open bracket of the same type.",
-    difficulty: "Medium",
-    tags: ["Stack", "String"],
-    is_daily: false,
-    progress_state: "not_completed",
-    available_languages: ["JavaScript", "Python", "Java", "C++", "C", "C#", "Go", "Rust", "TypeScript", "PHP", "Ruby", "Swift", "Kotlin"],
-    examples: [
-      { input: "s = \"()\"", output: "true", explanation: "Simple valid parentheses" },
-      { input: "s = \"()[]{}\"", output: "true", explanation: "Multiple valid bracket types" },
-      { input: "s = \"(]\"", output: "false", explanation: "Mismatched bracket types" },
-      { input: "s = \"([)]\"", output: "false", explanation: "Wrong closing order" }
-    ],
-    hints: ["Use a stack data structure", "Push opening brackets onto the stack", "When you see a closing bracket, check if it matches the top of stack"],
-    sample_output: "Input: s = \"()\"\\nOutput: true\\n\\nInput: s = \"(]\"\\nOutput: false"
-  },
-  {
-    title: "Monthly Revenue Report",
-    slug: "monthly-revenue-report",
-    description: "Build an aggregate SQL report that groups monthly revenue by product line.",
-    difficulty: "Medium",
-    tags: ["SQL"],
-    is_daily: false,
-    progress_state: "open",
-    available_languages: ["SQL"],
-  },
-  {
-    title: "Merge K Lists",
-    slug: "merge-k-lists",
-    description: "You are given an array of `k` linked-lists `lists`, each linked-list is sorted in **ascending order**. Merge all the linked-lists into **one sorted** linked-list and return it.",
-    difficulty: "Hard",
-    tags: ["Heap", "Linked List"],
-    is_daily: false,
-    progress_state: "completed",
-    available_languages: ["JavaScript", "Python", "Java", "C++", "C", "C#", "Go", "Rust", "TypeScript", "PHP", "Ruby", "Swift", "Kotlin"],
-    examples: [
-      { input: "lists = [[1,4,5],[1,3,4],[2,6]]", output: "[1,1,2,3,4,4,5,6]", explanation: "The linked-lists are: [1->4->5, 1->3->4, 2->6] Merging them into one sorted list: 1->1->2->3->4->4->5->6" },
-      { input: "lists = []", output: "[]", explanation: "Empty list of lists" },
-      { input: "lists = [[]]", output: "[]", explanation: "List containing empty list" }
-    ],
-    hints: ["Consider using a min-heap/priority queue", "Compare the head of each list to find the minimum", "Add the next element from the same list after extracting min"],
-    sample_output: "Input: lists = [[1,4,5],[1,3,4],[2,6]]\nOutput: [1,1,2,3,4,4,5,6]\n\nInput: lists = []\nOutput: []"
-  },
-  {
-    title: "Median of Two Sorted Arrays",
-    slug: "median-of-two-sorted-arrays",
-    description: "Given two sorted arrays `nums1` and `nums2` of size `m` and `n` respectively, return the median of the two sorted arrays.",
-    difficulty: "Hard",
-    tags: ["Array", "Binary Search", "Divide and Conquer"],
-    is_daily: false,
-    progress_state: "not_completed",
-    available_languages: ["JavaScript", "Python", "Java", "C++", "C", "C#", "Go", "Rust", "TypeScript", "PHP", "Ruby", "Swift", "Kotlin"],
-    examples: [
-      { input: "nums1 = [1,3], nums2 = [2]", output: "2.00000", explanation: "Merged array = [1,2,3] and median is 2." },
-      { input: "nums1 = [1,2], nums2 = [3,4]", output: "2.50000", explanation: "Merged array = [1,2,3,4] and median is (2 + 3) / 2 = 2.5." },
-      { input: "nums1 = [], nums2 = [1]", output: "1.00000", explanation: "Only element is 1, median is 1." }
-    ],
-    hints: ["Think about binary search on the smaller array", "Partition both arrays such that left half contains half of total elements", "Find the correct partition where all left elements <= all right elements"],
-  },
+  ...generateMoreProblems(155)
 ];
 
 export const roleTracks = [
@@ -415,12 +347,14 @@ export const discussionThreads = [
 ];
 
 export const navItems = [
-  { id: "explore", label: "Explore" },
-  { id: "roadmaps", label: "Roadmaps" },
-  { id: "problems", label: "Problems" },
-  { id: "contest", label: "Contest" },
-  { id: "progress", label: "Progress" },
-  { id: "discuss", label: "Discuss" },
+  { id: "explore", label: "Explore", icon: LayoutGrid },
+  { id: "roadmaps", label: "Roadmaps", icon: Map },
+  { id: "problems", label: "Problems", icon: Code2 },
+  { id: "company", label: "Companies", icon: Building2 },
+
+  { id: "contest", label: "Contest", icon: Trophy },
+  { id: "progress", label: "Progress", icon: BarChart3 },
+  { id: "discuss", label: "Discuss", icon: MessageSquare },
 ];
 
 export const difficultyOrder = ["All Levels", "Easy", "Medium", "Hard"];

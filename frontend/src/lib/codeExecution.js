@@ -7,6 +7,7 @@ export const executionLanguageMap = {
   "Java": 62,
   "JavaScript": 63,
   "Python": 71,
+  "SQL": 82,
 };
 
 // Map clean names to Monaco editor language modes
@@ -16,6 +17,7 @@ export const editorLanguageMap = {
   "Java": "java",
   "JavaScript": "javascript",
   "Python": "python",
+  "SQL": "sql",
 };
 
 export function getLanguageIdForChoice(language) {
