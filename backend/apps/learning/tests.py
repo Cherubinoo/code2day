@@ -43,7 +43,10 @@ class DashboardApiTests(TestCase):
         response = self.client.get(reverse("dashboard"))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["user"]["registerNumber"], self.profile.register_number)
-        self.assertEqual(len(response.json()["activityCalendar"]), 35)
+        # Activity calendar should contain current month + padding days (28-42 days depending on month)
+        calendar_length = len(response.json()["activityCalendar"])
+        self.assertGreaterEqual(calendar_length, 28)  # Minimum: Feb in non-leap year
+        self.assertLessEqual(calendar_length, 42)  # Maximum: 31 days + 6 days padding on each side
 
     def test_problem_list_requires_login(self):
         response = self.client.get(reverse("problem-list"))

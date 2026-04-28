@@ -1,26 +1,46 @@
 import { LayoutGrid, Map, Code2, Building2, Brain, FolderCode, Trophy, BarChart3, MessageSquare, Database, Terminal } from "lucide-react";
 
 function buildFallbackCalendar() {
-  const base = [
-    1, 2, 0, 3, 2, 1, 4,
-    0, 1, 3, 2, 1, 0, 2,
-    3, 2, 2, 4, 1, 0, 1,
-    2, 4, 3, 2, 1, 1, 0,
-    3, 1, 2, 4, 2, 3, 1,
-  ];
   const today = new Date();
-
-  return base.map((count, index) => {
-    const current = new Date(today);
-    current.setDate(today.getDate() - (base.length - index - 1));
-
-    return {
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  
+  // Get first and last day of current month
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month + 1, 0);
+  
+  // Calculate padding to fill calendar grid (start from Sunday)
+  const startWeekday = monthStart.getDay(); // Sunday=0
+  const calendarStart = new Date(monthStart);
+  calendarStart.setDate(monthStart.getDate() - startWeekday);
+  
+  const endWeekday = monthEnd.getDay();
+  const endPadding = 6 - endWeekday;
+  const calendarEnd = new Date(monthEnd);
+  calendarEnd.setDate(monthEnd.getDate() + endPadding);
+  
+  // Generate random activity pattern for demo
+  const calendar = [];
+  const current = new Date(calendarStart);
+  
+  while (current <= calendarEnd) {
+    // Random activity count (0-4) with higher probability for current month
+    const isCurrentMonth = current.getMonth() === month;
+    const count = isCurrentMonth 
+      ? Math.floor(Math.random() * 5) // 0-4 for current month
+      : Math.floor(Math.random() * 3); // 0-2 for padding days
+    
+    calendar.push({
       date: current.toISOString().slice(0, 10),
       count,
       weekday: current.toLocaleDateString("en-US", { weekday: "short" }),
       day: current.getDate(),
-    };
-  });
+    });
+    
+    current.setDate(current.getDate() + 1);
+  }
+  
+  return calendar;
 }
 
 export const starterCodeByLanguage = {

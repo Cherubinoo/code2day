@@ -85,11 +85,44 @@ logger = logging.getLogger(__name__)
 # Helper builders (pure functions — no HTTP side-effects)
 # ---------------------------------------------------------------------------
 
-def build_activity_calendar(profile, window_days=35):
+def build_activity_calendar(profile):
+    """
+    Build a monthly activity calendar for the current month.
+    Returns activity data for the entire current month plus padding days
+    to fill the calendar grid (previous/next month days).
+    """
     today = timezone.localdate()
-    start_day = today - timedelta(days=window_days - 1)
+    
+    # Get the first and last day of the current month
+    month_start = today.replace(day=1)
+    if today.month == 12:
+        month_end = today.replace(year=today.year + 1, month=1, day=1) - timedelta(days=1)
+    else:
+        month_end = today.replace(month=today.month + 1, day=1) - timedelta(days=1)
+    
+    # Calculate padding days to fill the calendar grid
+    # Start from the Sunday before the first day of the month
+    start_weekday = month_start.weekday()  # Monday=0, Sunday=6
+    # Adjust to make Sunday=0
+    start_offset = (start_weekday + 1) % 7
+    calendar_start = month_start - timedelta(days=start_offset)
+    
+    # End on the Saturday after the last day of the month
+    end_weekday = month_end.weekday()  # Monday=0, Sunday=6
+    # Calculate days to add to reach Saturday (weekday=5)
+    # If month ends on Saturday (5), add 0 days
+    # If month ends on Sunday (6), add 6 days
+    # If month ends on Monday (0), add 5 days, etc.
+    end_offset = (5 - end_weekday) % 7
+    calendar_end = month_end + timedelta(days=end_offset)
+    
+    # Fetch activity data for the entire range (including padding days)
     activity_rows = (
-        StudentActivity.objects.filter(student=profile, activity_date__gte=start_day)
+        StudentActivity.objects.filter(
+            student=profile,
+            activity_date__gte=calendar_start,
+            activity_date__lte=calendar_end
+        )
         .values("activity_date")
         .annotate(total=Count("id"))
         .order_by("activity_date")
@@ -97,16 +130,18 @@ def build_activity_calendar(profile, window_days=35):
 
     daily_totals = {row["activity_date"]: row["total"] for row in activity_rows}
 
+    # If no activity data exists but user has a streak, infer recent activity
     if not daily_totals and profile.last_login_on:
-        inferred_days = min(max(profile.current_streak, 1), window_days)
+        inferred_days = min(max(profile.current_streak, 1), 30)
         for offset in range(inferred_days):
             inferred_day = profile.last_login_on - timedelta(days=offset)
-            if inferred_day >= start_day:
+            if calendar_start <= inferred_day <= calendar_end:
                 daily_totals[inferred_day] = 1
 
+    # Build the calendar array
     calendar = []
-    for offset in range(window_days):
-        current_day = start_day + timedelta(days=offset)
+    current_day = calendar_start
+    while current_day <= calendar_end:
         count = daily_totals.get(current_day, 0)
         calendar.append(
             {
@@ -116,6 +151,8 @@ def build_activity_calendar(profile, window_days=35):
                 "day": current_day.day,
             }
         )
+        current_day += timedelta(days=1)
+    
     return calendar
 
 

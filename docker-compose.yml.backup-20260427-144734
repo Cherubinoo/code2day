@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  judge0-server:
+    build:
+      context: ./judge0-custom
+      dockerfile: Dockerfile
+    image: code2day-judge0:latest
+    container_name: judge0-server
+    volumes:
+      - ./judge0.conf:/judge0.conf:ro
+    ports:
+      - "2358:2358"
+    privileged: true
+    restart: unless-stopped
+    environment:
+      - REDIS_HOST=judge0-redis
+      - POSTGRES_HOST=judge0-db
+      - POSTGRES_USER=judge0
+      - POSTGRES_PASSWORD=psql11042026
+      - POSTGRES_DB=judge0
+      - REDIS_PASSWORD=judge0redis
+    depends_on:
+      - judge0-db
+      - judge0-redis
+    networks:
+      - judge0-network
+
+  judge0-workers:
+    build:
+      context: ./judge0-custom
+      dockerfile: Dockerfile
+    image: code2day-judge0:latest
+    container_name: judge0-workers
+    command: ["./scripts/workers"]
+    volumes:
+      - ./judge0.conf:/judge0.conf:ro
+    privileged: true
+    restart: unless-stopped
+    environment:
+      - REDIS_HOST=judge0-redis
+      - POSTGRES_HOST=judge0-db
+      - POSTGRES_USER=judge0
+      - POSTGRES_PASSWORD=psql11042026
+      - POSTGRES_DB=judge0
+      - REDIS_PASSWORD=judge0redis
+    depends_on:
+      - judge0-db
+      - judge0-redis
+    networks:
+      - judge0-network
+
+  judge0-db:
+    image: postgres:13-alpine
+    container_name: judge0-db
+    environment:
+      - POSTGRES_USER=judge0
+      - POSTGRES_PASSWORD=psql11042026
+      - POSTGRES_DB=judge0
+    volumes:
+      - judge0-postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - judge0-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U judge0"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  judge0-redis:
+    image: redis:6-alpine
+    container_name: judge0-redis
+    command: redis-server --requirepass judge0redis
+    volumes:
+      - judge0-redis-data:/data
+    restart: unless-stopped
+    networks:
+      - judge0-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  judge0-network:
+    driver: bridge
+
+volumes:
+  judge0-postgres-data:
+    driver: local
+  judge0-redis-data:
+    driver: local

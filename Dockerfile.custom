@@ -1,0 +1,51 @@
+# Custom Judge0 Image with Pre-installed Packages
+# Based on official Judge0 image with additional libraries for competitive programming
+
+FROM judge0/judge0:latest
+
+# Switch to root user to install packages
+USER root
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install pip using get-pip.py (works without apt repositories)
+RUN curl -sS https://bootstrap.pypa.io/pip/3.7/get-pip.py | python3
+
+# Install Python packages that don't require heavy compilation
+# Using --no-deps and simpler versions where possible
+RUN python3 -m pip install --no-cache-dir \
+    numpy \
+    requests \
+    sortedcontainers \
+    more-itertools \
+    networkx
+
+# Try to install scipy, pandas, etc. (may take time)
+RUN python3 -m pip install --no-cache-dir \
+    scipy \
+    pandas \
+    sympy \
+    scikit-learn \
+    beautifulsoup4 \
+    lxml || echo "Some packages failed to install"
+
+# Install Node.js packages globally (for JavaScript/Node.js)
+RUN npm install -g \
+    lodash \
+    axios \
+    moment \
+    underscore
+
+# Create a marker file to identify custom image
+RUN echo "Custom Judge0 with packages - Built $(date)" > /custom-packages-installed.txt
+
+# Display installed packages for verification
+RUN echo "=== Python Packages ===" && python3 -m pip list || true
+RUN echo "=== Node.js Packages ===" && npm list -g --depth=0 || true
+
+# Switch back to judge0 user for security
+USER judge0
+
+# Keep the original Judge0 entrypoint
+# No need to override CMD or ENTRYPOINT
