@@ -17,6 +17,7 @@ import ProgressPage from "./components/student/pages/ProgressPage";
 import RoadmapsPage from "./components/student/pages/RoadmapsPage";
 import DevelopersProfile from "./components/common/DevelopersProfile";
 import Footer from "./components/common/Footer";
+import "./layout-fix.css";
 import {
   authStorageKey,
   conceptOptions,
@@ -1010,8 +1011,13 @@ function App() {
     }
   ];
 
-  if (!isLoggedIn) {
-    return (
+  let activeView = null;
+
+  // Handle views that don't require login or are special
+  if (activePage === "developers") {
+    activeView = <DevelopersProfile isLoggedIn={isLoggedIn} onBack={() => navigate("explore")} />;
+  } else if (!isLoggedIn) {
+    activeView = (
       <AuthScreen
         authBusy={authBusy}
         authError={authError}
@@ -1036,10 +1042,8 @@ function App() {
         onNavigate={navigate}
       />
     );
-  }
-
-  let activeView = null;
-  switch (activePage) {
+  } else {
+    switch (activePage) {
     case "problems":
       // Redirect staff and admin to their dashboards
       if (userType === "staff") {
@@ -1135,6 +1139,9 @@ function App() {
         />
       );
       break;
+    case "aptitude":
+      activeView = <AptitudePage />;
+      break;
     case "discuss":
       activeView = (
         <DiscussPage
@@ -1200,10 +1207,6 @@ function App() {
         />
       );
       break;
-    case "aptitude":
-      activeView = <AptitudePage />;
-      break;
-
     case "admin":
       activeView = userType === "admin" ? (
         <AdminDashboard />
@@ -1311,9 +1314,7 @@ function App() {
         />
       );
       break;
-    case "developers":
-      activeView = <DevelopersProfile onBack={() => navigate("explore")} />;
-      break;
+    }
   }
 
   const handleMaintenanceBack = () => {
@@ -1331,14 +1332,16 @@ function App() {
   // while the navigate() call triggers the next render with the correct page.
   return (
     <div className="app-shell">
-      <TopBar
-        activePage={activePage}
-        dashboard={dashboard}
-        handleLogout={handleLogout}
-        navItems={navItems}
-        setActivePage={navigate}
-        userType={userType}
-      />
+      {isLoggedIn && (
+        <TopBar
+          activePage={activePage}
+          dashboard={dashboard}
+          handleLogout={handleLogout}
+          navItems={navItems}
+          setActivePage={navigate}
+          userType={userType}
+        />
+      )}
       <main className="main-shell">
         {activeView ?? (
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh", color: "var(--text-soft)" }}>

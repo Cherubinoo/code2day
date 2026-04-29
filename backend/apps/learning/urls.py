@@ -81,6 +81,7 @@ from .views import (
     StudentReportPDFView,
     StaffReportPDFView,
     AptitudeQuestionListView,
+    AptitudeQuestionSubmitView,
     AptitudeContestSubmitView,
 )
 
@@ -188,6 +189,7 @@ urlpatterns = [
     path("notifications/<int:notification_id>/read/", NotificationMarkReadView.as_view(), name="notification-mark-read"),
     path("aptitude/topics/", AptitudeTopicListView.as_view(), name="aptitude-topic-list"),
     path("aptitude/questions/", AptitudeQuestionListView.as_view(), name="aptitude-question-list"),
+    path("aptitude/questions/submit/", AptitudeQuestionSubmitView.as_view(), name="aptitude-question-submit"),
 
     path("students/<str:register_number>/report/", StudentReportPDFView.as_view(), name="student-report-pdf"),
     path("staff/<str:faculty_id>/report/", StaffReportPDFView.as_view(), name="staff-report-pdf"),

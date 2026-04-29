@@ -1,0 +1,22 @@
+
+.app-shell {
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 100vh !important;
+  width: 100%;
+}
+
+.main-shell {
+  flex: 1 !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+footer {
+  margin-top: auto !important;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}

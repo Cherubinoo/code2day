@@ -44,6 +44,7 @@ from .models import (
     SystemConfiguration,
     Department,
     SolvedAptitude,
+    AptitudeContestSubmission,
 )
 from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
@@ -677,35 +678,44 @@ class DashboardView(UnifiedAuthMixin, APIView):
         
         # Awards & Achievements Logic
         total_solved = SolvedProblem.objects.filter(student=profile).count()
+        total_aptitude_solved = SolvedAptitude.objects.filter(student=profile).count()
         current_streak = profile.current_streak
         
         # Check for unearned achievements
         unearned = Achievement.objects.exclude(userachievement__user=request.user)
         for ach in unearned:
             should_award = False
-            if ach.criteria_type == 'solve_count' and total_solved >= ach.criteria_value:
-                should_award = True
-            elif ach.criteria_type == 'streak' and current_streak >= ach.criteria_value:
-                should_award = True
+            if ach.category == 'coding':
+                if ach.criteria_type == 'solve_count' and total_solved >= ach.criteria_value:
+                    should_award = True
+                elif ach.criteria_type == 'streak' and current_streak >= ach.criteria_value:
+                    should_award = True
+            elif ach.category == 'aptitude':
+                if ach.criteria_type == 'aptitude_solve_count' and total_aptitude_solved >= ach.criteria_value:
+                    should_award = True
+                elif ach.criteria_type == 'quant_solve_count':
+                    quant_solved = SolvedAptitude.objects.filter(student=profile, question__topic__parent__parent__title__icontains='QUANTITATIVE').count()
+                    if quant_solved >= ach.criteria_value:
+                        should_award = True
             
             if should_award:
                 UserAchievement.objects.get_or_create(user=request.user, achievement=ach)
         
         all_achievements = Achievement.objects.all()
         user_achievements = UserAchievement.objects.filter(user=request.user).select_related('achievement')
-        earned_ids = set(user_achievements.values_list('achievement_id', flat=True))
+        earned_ids = {ua.achievement_id: ua.awarded_at for ua in user_achievements}
 
         achievements_data = []
         for ach in all_achievements:
             is_earned = ach.id in earned_ids
-            ua = user_achievements.filter(achievement_id=ach.id).first() if is_earned else None
             achievements_data.append({
                 "id": ach.id,
                 "name": ach.name,
                 "description": ach.description,
                 "icon": ach.badge_icon,
+                "category": ach.category,
                 "is_earned": is_earned,
-                "date": ua.awarded_at.strftime("%b %d, %Y") if ua else None
+                "date": earned_ids[ach.id].strftime("%b %d, %Y") if is_earned else None
             })
 
         user_payload = {
@@ -3374,16 +3384,19 @@ class AptitudeContestSubmitView(APIView):
     """Submit an answer for an aptitude contest question"""
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, pk):
+    def post(self, request, contest_id):
         is_student = hasattr(request.user, 'student_profile')
         if not is_student:
             return Response({"detail": "Student access required."}, status=status.HTTP_403_FORBIDDEN)
 
         student = request.user.student_profile
-        contest = Contest.objects.filter(id=pk).first()
+        contest = Contest.objects.filter(
+            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
+            id=contest_id
+        ).first()
         
         if not contest:
-            return Response({"detail": "Contest not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"detail": "Contest not found or not accessible."}, status=status.HTTP_404_NOT_FOUND)
 
         # Check if contest is active for the student
         if contest.status != "published" or not contest.is_active:
@@ -4624,8 +4637,10 @@ class ContestApprovalView(APIView):
         
         if action == 'approve':
             contest.approve(profile)
+            # Auto-publish on approval
+            publish_contest_helper(contest)
             return Response({
-                "detail": "Contest approved successfully.",
+                "detail": "Contest approved and published successfully.",
                 "contest_id": contest.id,
                 "status": contest.status,
             })
@@ -4643,6 +4658,45 @@ class ContestApprovalView(APIView):
                 {"detail": "Invalid action. Use 'approve' or 'reject'."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+
+def publish_contest_helper(contest):
+    """Helper to publish a contest and notify students"""
+    contest.publish()
+    
+    # Create Announcement
+    Announcement.objects.create(
+        title=f"🚀 New Contest: {contest.title}",
+        content=f"A new contest '{contest.title}' is now live! Challenge yourself and climb the leaderboard.",
+        category="contest"
+    )
+
+    # Create Notifications for assigned students
+    # 1. Direct assignments
+    student_users = list(contest.assigned_students.values_list('account', flat=True))
+    
+    # 2. Batch assignments
+    if contest.assigned_batches:
+        batch_students = StudentProfile.objects.filter(
+            batch__in=contest.assigned_batches,
+            institution=contest.institution
+        ).values_list('account', flat=True)
+        student_users.extend(list(batch_students))
+    
+    # Unique users
+    unique_user_ids = set(filter(None, student_users))
+    
+    notifications = []
+    for user_id in unique_user_ids:
+        notifications.append(Notification(
+            recipient_id=user_id,
+            title="New Contest Assigned",
+            message=f"You have been assigned to a new contest: {contest.title}. Check it out now!",
+            link=f"/contests/{contest.id}" if contest.contest_type == 'programming' else f"/aptitude-contest/{contest.id}"
+        ))
+    
+    if notifications:
+        Notification.objects.bulk_create(notifications, ignore_conflicts=True)
 
 
 class ContestPublishView(APIView):
@@ -4685,14 +4739,7 @@ class ContestPublishView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        contest.publish()
-        
-        # Create Announcement
-        Announcement.objects.create(
-            title=f"🚀 New Contest: {contest.title}",
-            content=f"A new contest '{contest.title}' is now live! Challenge yourself and climb the leaderboard.",
-            category="contest"
-        )
+        publish_contest_helper(contest)
         
         return Response({
             "detail": "Contest published successfully.",
@@ -4832,11 +4879,11 @@ class StudentContestListView(APIView):
 
         student = request.user.student_profile
 
-        # Get contests where student is assigned and status is published
+        # Get contests where student is assigned (directly or via batch) and status is published
         contests = Contest.objects.filter(
-            assigned_students=student,
+            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
             status='published'
-        ).select_related('created_by', 'department').prefetch_related('problems')
+        ).distinct().select_related('created_by', 'department').prefetch_related('problems')
 
         data = []
         for contest in contests:
@@ -4870,14 +4917,20 @@ class StudentContestListView(APIView):
                 else:
                     is_ended = True
 
+            # Get question counts
+            problem_count = contest.problems.count()
+            aptitude_count = contest.aptitude_questions.count()
+
             data.append({
                 "id": contest.id,
                 "title": contest.title,
                 "description": contest.description,
+                "contest_type": contest.contest_type,
                 "start_time": contest.start_time,
                 "end_time": contest.end_time,
                 "duration_minutes": contest.duration_minutes,
-                "problem_count": contest.problems.count(),
+                "problem_count": problem_count,
+                "aptitude_question_count": aptitude_count,
                 "is_active": is_active,
                 "is_upcoming": is_upcoming,
                 "is_ended": is_ended,
@@ -4907,10 +4960,10 @@ class StudentContestDetailView(APIView):
         student = request.user.student_profile
 
         contest = Contest.objects.filter(
+            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
             id=contest_id,
-            assigned_students=student,
             status='published'
-        ).select_related('created_by', 'department').prefetch_related('problems').first()
+        ).select_related('created_by', 'department').prefetch_related('problems', 'aptitude_questions').first()
 
         if not contest:
             return Response(
@@ -4952,33 +5005,59 @@ class StudentContestDetailView(APIView):
             elif now > contest.end_time:
                 is_ended = True
 
-        # Get problems with submission status
+        # Get questions/problems with status
         problems_data = []
-        for problem in contest.problems.all():
-            # Check if student has solved this problem in the contest
-            submission = ContestSubmission.objects.filter(
-                contest=contest,
-                student=student,
-                problem=problem,
-                status='Accepted'
-            ).first()
+        if contest.contest_type == 'aptitude':
+            for q in contest.aptitude_questions.all():
+                # Check if student has answered this question in the contest
+                submission = AptitudeContestSubmission.objects.filter(
+                    contest=contest,
+                    student=student,
+                    question=q
+                ).first()
 
-            problems_data.append({
-                "id": problem.id,
-                "slug": problem.slug,
-                "title": problem.title,
-                "difficulty": problem.difficulty,
-                "tags": problem.tags,
-                "is_solved": submission is not None,
-            })
+                problems_data.append({
+                    "id": q.id,
+                    "question_text": q.question_text,
+                    "option_a": q.option_a,
+                    "option_b": q.option_b,
+                    "option_c": q.option_c,
+                    "option_d": q.option_d,
+                    "explanation": q.explanation,
+                    "difficulty": q.difficulty,
+                    "is_solved": submission is not None,
+                    "student_answer": submission.selected_option if submission else None,
+                    "score": submission.score if submission else 0,
+                })
+        else:
+            for problem in contest.problems.all():
+                # Check if student has solved this problem in the contest
+                submission = ContestSubmission.objects.filter(
+                    contest=contest,
+                    student=student,
+                    problem=problem,
+                    status='Accepted'
+                ).first()
+
+                problems_data.append({
+                    "id": problem.id,
+                    "slug": problem.slug,
+                    "title": problem.title,
+                    "difficulty": problem.difficulty,
+                    "tags": problem.tags,
+                    "is_solved": submission is not None,
+                })
 
         return Response({
             "id": contest.id,
             "title": contest.title,
             "description": contest.description,
+            "contest_type": contest.contest_type,
             "start_time": contest.start_time,
             "end_time": contest.end_time,
             "duration_minutes": contest.duration_minutes,
+            "problem_count": contest.problems.count(),
+            "aptitude_question_count": contest.aptitude_questions.count(),
             "is_active": is_active,
             "is_ended": is_ended,
             "has_started": participation is not None,
@@ -5006,8 +5085,8 @@ class StudentContestStartView(APIView):
         student = request.user.student_profile
 
         contest = Contest.objects.filter(
+            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
             id=contest_id,
-            assigned_students=student,
             status='published'
         ).first()
 
@@ -5128,8 +5207,8 @@ class StudentContestProblemView(APIView):
         student = request.user.student_profile
 
         contest = Contest.objects.filter(
+            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
             id=contest_id,
-            assigned_students=student,
             status='published'
         ).first()
 
@@ -5211,8 +5290,8 @@ class StudentContestSubmitView(APIView):
         student = request.user.student_profile
 
         contest = Contest.objects.filter(
+            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
             id=contest_id,
-            assigned_students=student,
             status='published'
         ).first()
 
@@ -5513,34 +5592,70 @@ class NotificationMarkReadView(UnifiedAuthMixin, APIView):
 
 
 class AptitudeTopicListView(UnifiedAuthMixin, APIView):
-    """List all available aptitude topics and their questions count"""
+    """List all available aptitude topics and their questions count + student progress"""
     def get(self, request):
+        profile, _, _ = self.get_authenticated_profile(request)
+        is_student = hasattr(profile, 'register_number')
+        
+        # Optimization: Get solved question counts per topic for this student
+        solved_counts = {}
+        if is_student:
+            from django.db.models import Count
+            solved_qs = SolvedAptitude.objects.filter(student=profile).values('question__topic_id').annotate(count=Count('id'))
+            solved_counts = {item['question__topic_id']: item['count'] for item in solved_qs}
+
         # Fetch top-level topics (Categories)
         categories = AptitudeTopic.objects.filter(parent=None).prefetch_related('subtopics__subtopics')
         
         category_list = []
         for cat in categories:
             subcategory_list = []
+            cat_total_questions = 0
+            cat_solved_questions = 0
+            
             for subcat in cat.subtopics.all():
                 topic_list = []
+                subcat_total_questions = 0
+                subcat_solved_questions = 0
+                
                 for topic in subcat.subtopics.all():
+                    q_count = topic.questions.count()
+                    s_count = solved_counts.get(topic.id, 0)
+                    
+                    subcat_total_questions += q_count
+                    subcat_solved_questions += s_count
+                    
                     topic_list.append({
                         "id": topic.id,
                         "title": topic.title,
+                        "question_count": q_count,
+                        "solved_count": s_count
                     })
+                
+                # If there are no Level 3 topics, check if questions are directly on Level 2
+                if not topic_list:
+                    q_count = subcat.questions.count()
+                    s_count = solved_counts.get(subcat.id, 0)
+                    subcat_total_questions = q_count
+                    subcat_solved_questions = s_count
+                
+                cat_total_questions += subcat_total_questions
+                cat_solved_questions += subcat_solved_questions
                 
                 subcategory_list.append({
                     "id": subcat.id,
                     "title": subcat.title,
                     "topics": topic_list,
-                    "question_count": subcat.questions.count()
+                    "question_count": subcat_total_questions,
+                    "solved_count": subcat_solved_questions
                 })
                 
             category_list.append({
                 "id": cat.id,
                 "title": cat.title,
                 "subcategories": subcategory_list,
-                "question_count": cat.questions.count()
+                "question_count": cat_total_questions,
+                "solved_count": cat_solved_questions
             })
             
         return Response({"categories": category_list})
@@ -5551,7 +5666,11 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
     def get(self, request):
         topic_id = request.query_params.get('topic_id')
         difficulty = request.query_params.get('difficulty')
+        solved_status = request.query_params.get('status') # 'solved', 'unsolved', 'all'
         search = request.query_params.get('q')
+        
+        profile, _, _ = self.get_authenticated_profile(request)
+        is_student = hasattr(profile, 'register_number')
         
         topic_ids = request.query_params.getlist('topic_id')
         if not topic_ids and topic_id:
@@ -5561,10 +5680,18 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
         
         if topic_ids:
             qs = qs.filter(topic_id__in=topic_ids)
-        if difficulty:
-            qs = qs.filter(difficulty=difficulty)
+        if difficulty and difficulty != 'All':
+            qs = qs.filter(difficulty__iexact=difficulty)
         if search:
             qs = qs.filter(question_text__icontains=search)
+            
+        solved_ids = []
+        if is_student:
+            solved_ids = list(SolvedAptitude.objects.filter(student=profile).values_list('question_id', flat=True))
+            if solved_status == 'solved':
+                qs = qs.filter(id__in=solved_ids)
+            elif solved_status == 'unsolved':
+                qs = qs.exclude(id__in=solved_ids)
             
         data = []
         for q in qs[:100]: # Limit to 100 for performance
@@ -5577,9 +5704,67 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
                 "option_b": q.option_b,
                 "option_c": q.option_c,
                 "option_d": q.option_d,
+                "is_solved": q.id in solved_ids
             })
             
         return Response(data)
+
+class AptitudeQuestionSubmitView(APIView):
+    """Verify an aptitude question answer and record progress"""
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        question_id = request.data.get('question_id')
+        selected_option = request.data.get('selected_option')
+        
+        if not question_id or not selected_option:
+            return Response({"error": "question_id and selected_option are required"}, status=400)
+            
+        question = get_object_or_404(AptitudeQuestion, id=question_id)
+        is_correct = question.correct_option.upper() == selected_option.upper()
+        
+        if is_correct:
+            if hasattr(request.user, 'student_profile'):
+                profile = request.user.student_profile
+                SolvedAptitude.objects.get_or_create(
+                    student=profile,
+                    question=question
+                )
+                
+                # Check for aptitude achievements
+                total_aptitude_solved = SolvedAptitude.objects.filter(student=profile).count()
+                unearned = Achievement.objects.filter(category='aptitude').exclude(userachievement__user=request.user)
+                for ach in unearned:
+                    should_award = False
+                    if ach.criteria_type == 'aptitude_solve_count' and total_aptitude_solved >= ach.criteria_value:
+                        should_award = True
+                    elif ach.criteria_type == 'quant_solve_count':
+                        # Check if category is quantitative
+                        # Using topic__parent__parent because QUANTITATIVE is at the root (Level 1)
+                        is_quant = False
+                        t = question.topic
+                        while t:
+                            if 'QUANTITATIVE' in t.title.upper():
+                                is_quant = True
+                                break
+                            t = t.parent
+                        
+                        if is_quant:
+                            quant_solved = SolvedAptitude.objects.filter(
+                                student=profile, 
+                                question__topic__id__in=AptitudeTopic.objects.filter(title__icontains='QUANTITATIVE').values_list('id', flat=True)
+                            ).count()
+                            if quant_solved >= ach.criteria_value:
+                                should_award = True
+                    
+                    if should_award:
+                        UserAchievement.objects.get_or_create(user=request.user, achievement=ach)
+        
+        return Response({
+            "is_correct": is_correct,
+            "correct_option": question.correct_option,
+            "explanation": question.explanation
+        })
 
 
 # ---------------------------------------------------------------------------

@@ -371,7 +371,7 @@ export const navItems = [
   { id: "roadmaps", label: "Roadmaps", icon: Map },
   { id: "problems", label: "Problems", icon: Code2 },
   { id: "company", label: "Companies", icon: Building2 },
-
+  { id: "aptitude", label: "Aptitude", icon: Brain },
   { id: "contest", label: "Contest", icon: Trophy },
   { id: "progress", label: "Progress", icon: BarChart3 },
   { id: "discuss", label: "Discuss", icon: MessageSquare },

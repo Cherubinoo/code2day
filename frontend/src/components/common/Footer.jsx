@@ -3,11 +3,13 @@ import React from 'react';
 const Footer = ({ onNavigate }) => {
   return (
     <footer style={{
-      background: '#f8fafc',
-      borderTop: '1px solid #e5e7eb',
-      padding: '30px 20px',
+      background: 'rgba(255, 255, 255, 0.8)',
+      backdropFilter: 'blur(10px)',
+      borderTop: '1px solid var(--border-soft)',
+      padding: '24px 20px',
       marginTop: 'auto',
-      width: '100%'
+      width: '100%',
+      zIndex: 100
     }}>
       <div style={{
         maxWidth: '1200px',

@@ -99,9 +99,9 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": os.getenv("DB_NAME", "code2day"),
-        "USER": os.getenv("DB_USER", "judge0"),
-        "PASSWORD": os.getenv("DB_PASSWORD", "psql11042026"),
-        "HOST": os.getenv("DB_HOST", "172.18.0.1"),
+        "USER": os.getenv("DB_USER", "postgres" if DEBUG else "judge0"),
+        "PASSWORD": os.getenv("DB_PASSWORD", "123" if DEBUG else "psql11042026"),
+        "HOST": os.getenv("DB_HOST", "localhost" if DEBUG else "172.18.0.1"),
         "PORT": os.getenv("DB_PORT", "5432"),
     }
 }
@@ -204,7 +204,7 @@ REST_FRAMEWORK = {
 # Example: JUDGE0_BASE_URL=http://your-server-ip:2358
 # For local testing: JUDGE0_BASE_URL=http://localhost:2358
 # If not set, code execution will be disabled (mock responses)
-JUDGE0_BASE_URL = os.getenv("JUDGE0_BASE_URL", "http://172.16.4.111:2358")
+JUDGE0_BASE_URL = os.getenv("JUDGE0_BASE_URL", "" if DEBUG else "http://172.16.4.111:2358")
 JUDGE0_TIMEOUT_SECONDS = int(os.getenv("JUDGE0_TIMEOUT_SECONDS", "30"))
 
 # ---------------------------------------------------------------------------

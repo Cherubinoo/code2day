@@ -1,6 +1,6 @@
 import React from 'react';
 
-const DevelopersProfile = ({ onBack }) => {
+const DevelopersProfile = ({ onBack, isLoggedIn }) => {
   return (
     <div style={{
       maxWidth: '800px',
@@ -27,7 +27,7 @@ const DevelopersProfile = ({ onBack }) => {
           <div style={{ fontSize: '14px', color: '#334155' }}>
             <div style={{ marginBottom: '6px' }}><strong>📞 Contact:</strong> +91 8220789878</div>
             <div style={{ marginBottom: '6px' }}><strong>📧 Mail:</strong> delightcherubino@gmail.com</div>
-            <div style={{ marginBottom: '6px' }}><strong>🌐 Domain:</strong> delightcherubino.com</div>
+            <div style={{ marginBottom: '6px' }}><strong>🌐 Domain:</strong> <a href="https://delightcherubino.com" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', textDecoration: 'none', fontWeight: '600' }}>delightcherubino.com</a></div>
             <div style={{ marginBottom: '6px' }}><strong>🎓 Batch:</strong> 2023 - 2027</div>
           </div>
         </div>
@@ -74,10 +74,13 @@ const DevelopersProfile = ({ onBack }) => {
             border: 'none',
             borderRadius: '8px',
             cursor: 'pointer',
-            fontWeight: '600'
+            fontWeight: '600',
+            transition: 'all 0.2s ease'
           }}
+          onMouseOver={(e) => e.currentTarget.style.background = '#374151'}
+          onMouseOut={(e) => e.currentTarget.style.background = '#1f2937'}
         >
-          ← Back to Dashboard
+          ← {isLoggedIn ? 'Back to Dashboard' : 'Back to Login'}
         </button>
       </div>
     </div>

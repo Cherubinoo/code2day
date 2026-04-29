@@ -1,28 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronRight, Brain, Calculator, MessageSquare, BookOpen, ChevronDown } from 'lucide-react';
+import AptitudeQuizPage from './AptitudeQuizPage';
 
 export default function AptitudePage() {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCats, setExpandedCats] = useState({});
   const [expandedSubcats, setExpandedSubcats] = useState({});
+  const [practiceTopicId, setPracticeTopicId] = useState(null);
 
   useEffect(() => {
-    fetch('/api/aptitude/topics/', { credentials: 'include' })
-      .then(res => res.json())
-      .then(data => {
-        setCategories(data.categories || []);
-        // Expand first category by default
-        if (data.categories && data.categories.length > 0) {
-          setExpandedCats({ [data.categories[0].id]: true });
-        }
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error("Error fetching aptitude topics:", err);
-        setLoading(false);
-      });
-  }, []);
+    const fetchTopics = () => {
+      setLoading(true);
+      fetch('/api/aptitude/topics/', { credentials: 'include' })
+        .then(res => res.json())
+        .then(data => {
+          setCategories(data.categories || []);
+          // Expand first category if nothing expanded yet
+          if (data.categories && data.categories.length > 0 && Object.keys(expandedCats).length === 0) {
+            setExpandedCats({ [data.categories[0].id]: true });
+          }
+          setLoading(false);
+        })
+        .catch(err => {
+          console.error("Error fetching aptitude topics:", err);
+          setLoading(false);
+        });
+    };
+
+    if (!practiceTopicId) {
+      fetchTopics();
+    }
+  }, [practiceTopicId]);
 
   const toggleCat = (id) => {
     setExpandedCats(prev => ({ ...prev, [id]: !prev[id] }));
@@ -31,6 +40,10 @@ export default function AptitudePage() {
   const toggleSubcat = (id) => {
     setExpandedSubcats(prev => ({ ...prev, [id]: !prev[id] }));
   };
+
+  if (practiceTopicId) {
+    return <AptitudeQuizPage topicId={practiceTopicId} onBack={() => setPracticeTopicId(null)} />;
+  }
 
   if (loading) {
     return (
@@ -102,12 +115,27 @@ export default function AptitudePage() {
                 </div>
                 <div>
                   <h2 style={{ fontSize: '1.8rem', fontWeight: '800', margin: 0, color: 'var(--olive-900)' }}>{cat.title}</h2>
-                  <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
+                  <div style={{ display: 'flex', gap: '12px', marginTop: '4px', alignItems: 'center' }}>
                     <span className="badge" style={{ background: 'var(--sage-200)', color: 'var(--olive-900)', padding: '4px 12px', borderRadius: '20px', fontSize: '0.85rem', fontWeight: '600' }}>
                       {cat.subcategories.length} Modules
                     </span>
+                    {cat.question_count > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <div style={{ width: '100px', height: '6px', background: 'var(--sage-200)', borderRadius: '3px', overflow: 'hidden' }}>
+                          <div style={{ 
+                            width: `${(cat.solved_count / cat.question_count) * 100}%`, 
+                            height: '100%', 
+                            background: 'var(--olive-900)',
+                            transition: 'width 0.6s ease'
+                          }}></div>
+                        </div>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: '600' }}>
+                          {Math.round((cat.solved_count / cat.question_count) * 100)}%
+                        </span>
+                      </div>
+                    )}
                     <span style={{ fontSize: '0.9rem', color: 'var(--text-soft)', alignSelf: 'center' }}>
-                      Complete training track
+                      {cat.question_count > 0 ? `${cat.solved_count}/${cat.question_count} Solved` : 'Coming Soon'}
                     </span>
                   </div>
                 </div>
@@ -147,7 +175,14 @@ export default function AptitudePage() {
                         style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', marginBottom: '16px' }}
                         onClick={() => toggleSubcat(subcat.id)}
                       >
-                        <h3 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0, color: 'var(--text-main)' }}>{subcat.title}</h3>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <h3 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0, color: 'var(--text-main)' }}>{subcat.title}</h3>
+                          {subcat.question_count > 0 && (
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-soft)', marginTop: '4px' }}>
+                              {subcat.solved_count}/{subcat.question_count} Questions Solved
+                            </span>
+                          )}
+                        </div>
                         <div style={{ 
                           width: '32px', 
                           height: '32px', 
@@ -181,6 +216,7 @@ export default function AptitudePage() {
                           {subcat.topics.map((topic) => (
                             <button 
                               key={topic.id}
+                              onClick={() => setPracticeTopicId(topic.id)}
                               style={{ 
                                 display: 'flex', 
                                 alignItems: 'center', 
@@ -208,6 +244,11 @@ export default function AptitudePage() {
                             >
                               <BookOpen size={16} style={{ color: 'var(--olive-600)' }} />
                               <span style={{ fontSize: '1rem' }}>{topic.title}</span>
+                              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '0.8rem', color: 'var(--text-soft)' }}>
+                                  {topic.solved_count}/{topic.question_count}
+                                </span>
+                              </div>
                             </button>
                           ))}
                         </div>

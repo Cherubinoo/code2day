@@ -197,11 +197,58 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     }));
   }
 
+  const [randomConfig, setRandomConfig] = useState({
+    total: 10,
+    easy: 5,
+    medium: 3,
+    hard: 2
+  });
+
+  function applySmartRandomSelection() {
+    const available = [...aptitudeQuestions];
+    if (available.length === 0) {
+      alert("No questions available matching current filters.");
+      return;
+    }
+
+    const easyPool = available.filter(q => q.difficulty === 'Easy').sort(() => 0.5 - Math.random());
+    const mediumPool = available.filter(q => q.difficulty === 'Medium').sort(() => 0.5 - Math.random());
+    const hardPool = available.filter(q => q.difficulty === 'Hard').sort(() => 0.5 - Math.random());
+
+    const selectedIds = [
+      ...easyPool.slice(0, randomConfig.easy).map(q => q.id.toString()),
+      ...mediumPool.slice(0, randomConfig.medium).map(q => q.id.toString()),
+      ...hardPool.slice(0, randomConfig.hard).map(q => q.id.toString()),
+    ];
+
+    setFormData(prev => ({
+      ...prev,
+      aptitude_question_ids: [...new Set([...prev.aptitude_question_ids, ...selectedIds])],
+    }));
+
+    alert(`✅ Smart selection complete! Added ${selectedIds.length} questions matching your distribution.`);
+  }
+
   useEffect(() => {
     if (formData.contest_type === 'aptitude') {
       loadAptitudeQuestions();
     }
   }, [formData.contest_type, selectedTopics, selectedDifficulty, searchQuery]);
+
+  // Auto-calculate duration from start and end times
+  useEffect(() => {
+    if (formData.start_time && formData.end_time) {
+      const start = new Date(formData.start_time);
+      const end = new Date(formData.end_time);
+      if (end > start) {
+        const diffMs = end - start;
+        const diffMins = Math.floor(diffMs / 60000);
+        if (diffMins !== formData.duration_minutes) {
+          setFormData(prev => ({ ...prev, duration_minutes: diffMins }));
+        }
+      }
+    }
+  }, [formData.start_time, formData.end_time]);
 
   // Get unique topics from problems
   function getUniqueTopics() {
@@ -456,10 +503,21 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
                 <div>
-                  <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 14 }}>
-                    <Calendar size={14} style={{ display: 'inline', marginRight: 4 }} />
-                    Start Time
-                  </label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label style={{ fontWeight: 500, fontSize: 14 }}>
+                      <Calendar size={14} style={{ display: 'inline', marginRight: 4 }} />
+                      Access Starts (Student can begin)
+                    </label>
+                    {formData.start_time && (
+                      <button 
+                        type="button" 
+                        onClick={() => setFormData({...formData, start_time: ''})}
+                        style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="datetime-local"
                     value={formData.start_time}
@@ -474,10 +532,21 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 14 }}>
-                    <Calendar size={14} style={{ display: 'inline', marginRight: 4 }} />
-                    End Time
-                  </label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <label style={{ fontWeight: 500, fontSize: 14 }}>
+                      <Calendar size={14} style={{ display: 'inline', marginRight: 4 }} />
+                      Deadline (Exam link expires)
+                    </label>
+                    {formData.end_time && (
+                      <button 
+                        type="button" 
+                        onClick={() => setFormData({...formData, end_time: ''})}
+                        style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: 11, cursor: 'pointer', fontWeight: 600 }}
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="datetime-local"
                     value={formData.end_time}
@@ -496,14 +565,18 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
               <div style={{ marginBottom: 20 }}>
                 <label style={{ display: 'block', marginBottom: 6, fontWeight: 500, fontSize: 14 }}>
                   <Clock size={14} style={{ display: 'inline', marginRight: 4 }} />
-                  Duration (minutes)
+                  Session Time (Actual exam timer in minutes)
                 </label>
                 <input
                   type="number"
-                  value={formData.duration_minutes}
-                  onChange={(e) => setFormData({ ...formData, duration_minutes: parseInt(e.target.value) })}
-                  min={15}
+                  value={formData.duration_minutes === 0 ? '' : formData.duration_minutes}
+                  onChange={(e) => {
+                    const val = e.target.value === '' ? 0 : parseInt(e.target.value);
+                    setFormData({ ...formData, duration_minutes: val });
+                  }}
+                  min={1}
                   max={480}
+                  placeholder="Enter minutes"
                   style={{
                     width: '100%',
                     padding: '10px 12px',
@@ -690,14 +763,16 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                         {selectedTopics.map(topicId => {
                           // Find topic name from aptitudeTopics
                           let topicName = 'Unknown Topic';
-                          aptitudeTopics.forEach(cat => {
-                            (cat.subcategories || []).forEach(sub => {
-                              const found = (sub.topics || []).find(t => t.id.toString() === topicId.toString());
-                              if (found) topicName = `${sub.title}: ${found.title}`;
+                          if (Array.isArray(aptitudeTopics)) {
+                            aptitudeTopics.forEach(cat => {
+                              (cat.subcategories || []).forEach(sub => {
+                                const found = (sub.topics || []).find(t => t?.id?.toString() === topicId?.toString());
+                                if (found) topicName = `${sub.title}: ${found.title}`;
+                              });
                             });
-                          });
+                          }
 
-                          const availableCount = aptitudeQuestions.filter(q => q.topic_id.toString() === topicId.toString()).length;
+                          const availableCount = (aptitudeQuestions || []).filter(q => q?.topic_id?.toString() === topicId?.toString()).length;
 
                           return (
                             <div key={topicId} style={{ 
@@ -774,7 +849,71 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                             cursor: 'pointer',
                           }}
                         >
-                          Pick All at Once
+                          Pick Selected Counts
+                        </button>
+                      </div>
+
+                      {/* Difficulty Distribution Section */}
+                      <div style={{ 
+                        marginTop: 20, 
+                        paddingTop: 20, 
+                        borderTop: '1px solid #bae6fd'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                          <Brain size={18} color="#0369a1" />
+                          <div style={{ fontSize: 14, fontWeight: 700, color: '#0369a1' }}>Difficulty Distribution</div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginBottom: 16 }}>
+                          <div>
+                            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#059669', marginBottom: 4 }}>EASY</label>
+                            <input 
+                              type="number" 
+                              value={randomConfig.easy}
+                              onChange={(e) => setRandomConfig({...randomConfig, easy: parseInt(e.target.value) || 0})}
+                              style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#d97706', marginBottom: 4 }}>MEDIUM</label>
+                            <input 
+                              type="number" 
+                              value={randomConfig.medium}
+                              onChange={(e) => setRandomConfig({...randomConfig, medium: parseInt(e.target.value) || 0})}
+                              style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+                            />
+                          </div>
+                          <div>
+                            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: '#dc2626', marginBottom: 4 }}>HARD</label>
+                            <input 
+                              type="number" 
+                              value={randomConfig.hard}
+                              onChange={(e) => setRandomConfig({...randomConfig, hard: parseInt(e.target.value) || 0})}
+                              style={{ width: '100%', padding: '8px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+                            />
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={applySmartRandomSelection}
+                          style={{
+                            width: '100%',
+                            padding: '12px',
+                            background: 'var(--olive-900)',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: 10,
+                            fontSize: 13,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 8,
+                            boxShadow: '0 4px 12px rgba(57, 72, 42, 0.2)'
+                          }}
+                        >
+                          <Plus size={16} />
+                          Apply Difficulty Distribution
                         </button>
                       </div>
                     </div>

@@ -31,6 +31,10 @@ const shimmerStyles = `
 
 const getBadgeVisuals = (name) => {
   const n = name.toLowerCase();
+  if (n.includes('grandmaster')) 
+    return { color: '#7e22ce', icon: <Award size={22} />, bg: 'linear-gradient(135deg, #f3e8ff, #e9d5ff)' };
+  if (n.includes('veteran')) 
+    return { color: '#0369a1', icon: <Award size={20} />, bg: 'linear-gradient(135deg, #e0f2fe, #bae6fd)' };
   if (n.includes('master') || n.includes('guru') || n.includes('ace')) 
     return { color: '#b45309', icon: <Trophy size={20} />, bg: 'linear-gradient(135deg, #fef3c7, #fde68a)' };
   if (n.includes('specialist') || n.includes('adept') || n.includes('practitioner')) 
@@ -295,10 +299,6 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                   <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}>{totalAptitudeSolved}</div>
                 </div>
                 <div style={{ textAlign: 'left' }}>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>SQL Solved</span>
-                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}>{totalSqlSolved}</div>
-                </div>
-                <div style={{ textAlign: 'left' }}>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Companies Tracked</span>
                   <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}>{companyProgress.length}</div>
                 </div>
@@ -501,6 +501,15 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
             })}
           </div>
           <div className="section-head">
+            <h3 style={{ fontSize: '1.4rem', fontWeight: 900 }}>Coding Badges</h3>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 20, marginTop: 24, marginBottom: 48 }}>
+            {(dashboard?.achievements || []).filter(a => a.category === 'coding').map(badge => (
+              <BadgeCard key={badge.id} badge={badge} earned={badge.is_earned} setSelectedBadge={setSelectedBadge} />
+            ))}
+          </div>
+
+          <div className="section-head">
             <h3>Topic Wise Performance</h3>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 24, marginTop: 24 }}>
@@ -651,28 +660,19 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                      </div>
                    ))
                  ) : (
-                   <>
-                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                       <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>Quantitative</span>
-                       <span style={{ fontWeight: 800 }}>0%</span>
-                     </div>
-                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                       <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>Logical Reasoning</span>
-                       <span style={{ fontWeight: 800 }}>0%</span>
-                     </div>
-                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                       <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>Verbal Ability</span>
-                       <span style={{ fontWeight: 800 }}>0%</span>
-                     </div>
-                   </>
+                   <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem' }}>No modules completed yet. Start practicing to see insights!</p>
                  )}
                </div>
-               <p style={{ marginTop: 24, fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 500 }}>
-                 {(dashboard?.aptitude_stats || []).some(s => s.solved > 0) 
-                   ? "Consistent practice in these areas will strengthen your placement profile."
-                   : "Solve more modules in the Aptitude Masterclass to see detailed insights."}
-               </p>
             </div>
+          </div>
+
+          <div className="section-head" style={{ marginTop: 48 }}>
+            <h3 style={{ fontSize: '1.4rem', fontWeight: 900 }}>Aptitude Badges</h3>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 20, marginTop: 24, marginBottom: 48 }}>
+            {(dashboard?.achievements || []).filter(a => a.category === 'aptitude').map(badge => (
+              <BadgeCard key={badge.id} badge={badge} earned={badge.is_earned} setSelectedBadge={setSelectedBadge} />
+            ))}
           </div>
           
           <div style={{ marginTop: 48, textAlign: 'center' }}>

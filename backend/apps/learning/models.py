@@ -382,9 +382,14 @@ class AptitudeQuestion(models.Model):
 
 
 class Achievement(models.Model):
+    CATEGORY_CHOICES = [
+        ('coding', 'Coding'),
+        ('aptitude', 'Aptitude'),
+    ]
     name = models.CharField(max_length=100)
     description = models.TextField()
     badge_icon = models.CharField(max_length=50, default="Award")
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='coding')
     criteria_type = models.CharField(max_length=50)  # e.g., 'solve_count', 'streak'
     criteria_value = models.IntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
