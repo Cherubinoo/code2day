@@ -7,7 +7,7 @@ x-logging:
 
 services:
 
-  # ── Judge0 Redis ─────────────────────────────────────────────────────────────
+  # ── Redis ─────────────────────────────────────────────────────────────────────
   judge0-redis:
     image: redis:7-alpine
     container_name: judge0-redis
@@ -19,38 +19,26 @@ services:
     networks:
       - code2day-network
 
-  # ── Judge0 Server ─────────────────────────────────────────────────────────────
+  # ── Code Executor (Judge0-compatible, Docker-based, no cgroup v1 needed) ─────
   judge0-server:
     build:
-      context: ./judge0-custom
+      context: ./code-executor
       dockerfile: Dockerfile
-    image: code2day-judge0:latest
+    image: code2day-executor:latest
     container_name: judge0-server
-    volumes:
-      - ./judge0-ce/judge0.conf:/judge0.conf:ro
     ports:
       - "2358:2358"
-    privileged: true
-    restart: unless-stopped
-    <<: *default-logging
-    depends_on:
-      - judge0-redis
-    networks:
-      - code2day-network
-
-  # ── Judge0 Workers ────────────────────────────────────────────────────────────
-  judge0-workers:
-    image: code2day-judge0:latest
-    container_name: judge0-workers
-    command: ["/api/scripts/workers"]
     volumes:
-      - ./judge0-ce/judge0.conf:/judge0.conf:ro
-    privileged: true
+      # Mount Docker socket so executor can spawn containers
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp:/tmp
     restart: unless-stopped
     <<: *default-logging
-    depends_on:
-      - judge0-redis
-      - judge0-server
+    environment:
+      - MAX_WORKERS=40
+      - CPU_TIME_LIMIT=10
+      - WALL_TIME_LIMIT=15
+      - MEMORY_LIMIT_MB=256
     networks:
       - code2day-network
 
