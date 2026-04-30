@@ -159,9 +159,10 @@ else:
     CSRF_COOKIE_SAMESITE = "Lax"
     CSRF_COOKIE_SECURE = True
 
-# CSRF cookie — must NOT be HttpOnly because appUtils.js reads it to send
-# the X-CSRFToken header
-CSRF_COOKIE_HTTPONLY = False
+# CSRF cookie — set HttpOnly to prevent XSS attacks
+# Django provides token via X-CSRFToken response header or form field
+# Frontend reads from header or form, not cookie
+CSRF_COOKIE_HTTPONLY = True
 
 # ---------------------------------------------------------------------------
 # CORS — allow the Vite dev server

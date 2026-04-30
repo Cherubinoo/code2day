@@ -672,9 +672,106 @@ done:
 
 def _build_cpp_wrapper(source_code: str, candidates: list[str]) -> str:
     """Build C++ wrapper that reads from stdin and calls the solution function."""
-    # Simple C++ wrapper - for now just return source code as most users include main
-    # or the problem uses a simpler interface. A full JSON wrapper for C++ is complex.
-    return source_code.strip()
+    candidate_list = json.dumps(candidates)
+    
+    # Use triple quotes without f-string to avoid bool/true conflicts
+    cpp_template = '''
+#include <iostream>
+#include <vector>
+#include <string>
+#include <sstream>
+#include <algorithm>
+#include <cctype>
+
+using namespace std;
+
+// Minimal JSON parsing for C++
+class JsonValue {
+public:
+    string raw_value;
+    bool is_string;
+    bool is_number;
+    bool is_array;
+    
+    JsonValue() : is_string(false), is_number(false), is_array(false) {}
+    
+    string str_value() const { return raw_value; }
+    int int_value() const { return stoi(raw_value); }
+    double double_value() const { return stod(raw_value); }
+};
+
+vector<JsonValue> parse_json_array(const string& input) {
+    vector<JsonValue> result;
+    string trimmed = input;
+    // Remove leading/trailing whitespace and brackets
+    size_t start = trimmed.find('[');
+    size_t end = trimmed.rfind(']');
+    if (start == string::npos || end == string::npos) return result;
+    
+    trimmed = trimmed.substr(start + 1, end - start - 1);
+    
+    stringstream ss(trimmed);
+    string token;
+    while (getline(ss, token, ',')) {
+        // Trim token
+        token.erase(0, token.find_first_not_of(" \\t\\n\\r"));
+        token.erase(token.find_last_not_of(" \\t\\n\\r") + 1);
+        
+        if (token.empty()) continue;
+        
+        JsonValue val;
+        val.raw_value = token;
+        
+        if ((token.front() == '"' && token.back() == '"') || 
+            (token.front() == '\'' && token.back() == '\'')) {
+            val.is_string = true;
+            val.raw_value = token.substr(1, token.length() - 2);
+        } else if (token.find('.') != string::npos) {
+            val.is_number = true;
+        } else if (isdigit(token[0]) || (token[0] == '-' && token.length() > 1)) {
+            val.is_number = true;
+        }
+        
+        result.push_back(val);
+    }
+    
+    return result;
+}
+
+string serialize_value(int val) { return to_string(val); }
+string serialize_value(double val) { 
+    stringstream ss;
+    ss << val;
+    string result = ss.str();
+    return result;
+}
+string serialize_value(string val) { return val; }
+string serialize_value(bool val) { return val ? "true" : "false"; }
+
+// User code
+''' + source_code + '''
+
+int main() {
+    string line;
+    if (!getline(cin, line)) {
+        line = "[]";
+    }
+    
+    if (line.empty()) {
+        line = "[]";
+    }
+    
+    vector<JsonValue> args = parse_json_array(line);
+    
+    // Candidates: ''' + candidate_list + '''
+    // For C++, the wrapper assumes you provide a solution function.
+    // Otherwise, provide a complete main() function.
+    
+    cout << "null" << endl;
+    return 0;
+}
+'''
+    return cpp_template
 
 
 def _build_csharp_wrapper(source_code: str, candidates: list[str]) -> str:

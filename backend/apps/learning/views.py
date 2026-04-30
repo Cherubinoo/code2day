@@ -71,6 +71,7 @@ from .services.execution_adapter import (
 )
 from .services.problem_testcases import build_runtime_test_cases
 from .services.complexity_analyzer import calculate_complexity
+from .services.code_validator import validate_submission
 
 # ReportLab imports for PDF generation
 from reportlab.lib import colors
@@ -1017,11 +1018,24 @@ class CodeRunView(StudentAuthMixin, APIView):
         problem_slug = (validated.get("problem_slug") or "").strip()
         is_submit = validated.get("is_submit", False)
         stdin = validated.get("stdin", "")
+        source_code = validated["source_code"]
+        language = validated.get("language", "")
 
         logger.debug(
             "CodeRunView: lang=%s, lang_id=%s, problem=%s, is_submit=%s, stdin=%r, source_len=%d",
-            validated.get("language"), validated["language_id"], problem_slug, is_submit, stdin, len(validated["source_code"])
+            language, validated["language_id"], problem_slug, is_submit, stdin, len(source_code)
         )
+
+        # ─────────────────────────────────────────────────────────────────
+        # VALIDATION: Check code before execution
+        # ─────────────────────────────────────────────────────────────────
+        is_valid, validation_error = validate_submission(language, source_code, stdin)
+        if not is_valid:
+            logger.warning("Code validation failed for %s: %s", profile.student_id, validation_error)
+            return Response(
+                {"detail": f"Code validation failed: {validation_error}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if problem_slug:
             problem = Problem.objects.filter(slug=problem_slug).first()

@@ -18,11 +18,33 @@ export function extractApiError(payload, fallbackMessage) {
 }
 
 export function getCsrfToken() {
-  const csrfCookie = document.cookie
-    .split("; ")
-    .find((entry) => entry.startsWith("csrftoken="));
+  // Try to get CSRF token from meta tag first (set by Django in HTML)
+  const metaTag = document.querySelector('meta[name="csrf-token"]');
+  if (metaTag && metaTag.content) {
+    return metaTag.content;
+  }
 
-  return csrfCookie ? decodeURIComponent(csrfCookie.split("=").slice(1).join("=")) : "";
+  // Fallback: Try to get from X-CSRFToken response header (if available)
+  // This would need to be stored after first API call
+  const storedToken = sessionStorage.getItem('csrftoken');
+  if (storedToken) {
+    return storedToken;
+  }
+
+  // Last resort: Try old method (for backward compatibility, though cookie is HttpOnly now)
+  try {
+    const csrfCookie = document.cookie
+      .split("; ")
+      .find((entry) => entry.startsWith("csrftoken="));
+    if (csrfCookie) {
+      const token = decodeURIComponent(csrfCookie.split("=").slice(1).join("="));
+      return token;
+    }
+  } catch (e) {
+    // Cookie is HttpOnly, can't read
+  }
+
+  return "";
 }
 
 export function buildJsonPostOptions(payload) {
