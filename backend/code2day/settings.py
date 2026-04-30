@@ -199,14 +199,10 @@ REST_FRAMEWORK = {
 }
 
 # ---------------------------------------------------------------------------
-# Piston Code Execution (replaces Judge0 — works on cgroup v2)
+# Judge0 Code Execution Engine
 # ---------------------------------------------------------------------------
-PISTON_BASE_URL = os.getenv("PISTON_BASE_URL", "http://piston:2000")
-PISTON_TIMEOUT_SECONDS = int(os.getenv("PISTON_TIMEOUT_SECONDS", "15"))
-
-# Judge0 aliases kept for backward compatibility
-JUDGE0_BASE_URL = PISTON_BASE_URL
-JUDGE0_TIMEOUT_SECONDS = PISTON_TIMEOUT_SECONDS
+JUDGE0_BASE_URL = os.getenv("JUDGE0_BASE_URL", "http://judge0-server:2358")
+JUDGE0_TIMEOUT_SECONDS = int(os.getenv("JUDGE0_TIMEOUT_SECONDS", "30"))
 
 # ---------------------------------------------------------------------------
 # Auth rate limiting (InMemoryRateLimiter in auth_utils.py)
