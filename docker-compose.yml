@@ -7,21 +7,6 @@ x-logging:
 
 services:
 
-  # ── Judge0 Database ──────────────────────────────────────────────────────────
-  judge0-db:
-    image: postgres:13-alpine
-    container_name: judge0-db
-    environment:
-      POSTGRES_USER: judge0
-      POSTGRES_PASSWORD: psql11042026
-      POSTGRES_DB: judge0
-    volumes:
-      - judge0-db-data:/var/lib/postgresql/data
-    restart: unless-stopped
-    <<: *default-logging
-    networks:
-      - code2day-network
-
   # ── Judge0 Redis ─────────────────────────────────────────────────────────────
   judge0-redis:
     image: redis:7-alpine
@@ -34,7 +19,7 @@ services:
     networks:
       - code2day-network
 
-  # ── Judge0 Server (custom image with extra packages) ─────────────────────────
+  # ── Judge0 Server ─────────────────────────────────────────────────────────────
   judge0-server:
     build:
       context: ./judge0-custom
@@ -49,12 +34,11 @@ services:
     restart: unless-stopped
     <<: *default-logging
     depends_on:
-      - judge0-db
       - judge0-redis
     networks:
       - code2day-network
 
-  # ── Judge0 Workers (same custom image, no extra build needed) ─────────────────
+  # ── Judge0 Workers ────────────────────────────────────────────────────────────
   judge0-workers:
     image: code2day-judge0:latest
     container_name: judge0-workers
@@ -65,13 +49,12 @@ services:
     restart: unless-stopped
     <<: *default-logging
     depends_on:
-      - judge0-db
       - judge0-redis
       - judge0-server
     networks:
       - code2day-network
 
-  # ── Django Backend (port 8000, always on) ────────────────────────────────────
+  # ── Django Backend (port 8000) ────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -87,14 +70,13 @@ services:
     restart: unless-stopped
     <<: *default-logging
     depends_on:
-      - judge0-db
       - judge0-redis
       - judge0-server
     networks:
       - code2day-network
-    command: gunicorn code2day.wsgi:application --bind 0.0.0.0:8000 --workers 4 --timeout 120
+    command: gunicorn code2day.wsgi:application --bind 0.0.0.0:8000 --workers 12 --timeout 120 --max-requests 1000 --max-requests-jitter 100
 
-  # ── React Frontend (port 5001, always on) ────────────────────────────────────
+  # ── React Frontend (port 5001) ────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -109,7 +91,6 @@ services:
       - code2day-network
 
 volumes:
-  judge0-db-data:
   judge0-redis-data:
 
 networks:

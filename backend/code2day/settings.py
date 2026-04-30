@@ -199,13 +199,14 @@ REST_FRAMEWORK = {
 }
 
 # ---------------------------------------------------------------------------
-# Judge0 Configuration - External Docker Instance
-# Set JUDGE0_BASE_URL environment variable to your external Judge0 URL
-# Example: JUDGE0_BASE_URL=http://your-server-ip:2358
-# For local testing: JUDGE0_BASE_URL=http://localhost:2358
-# If not set, code execution will be disabled (mock responses)
-JUDGE0_BASE_URL = os.getenv("JUDGE0_BASE_URL", "" if DEBUG else "http://172.16.4.111:2358")
-JUDGE0_TIMEOUT_SECONDS = int(os.getenv("JUDGE0_TIMEOUT_SECONDS", "30"))
+# Piston Code Execution (replaces Judge0 — works on cgroup v2)
+# ---------------------------------------------------------------------------
+PISTON_BASE_URL = os.getenv("PISTON_BASE_URL", "http://piston:2000")
+PISTON_TIMEOUT_SECONDS = int(os.getenv("PISTON_TIMEOUT_SECONDS", "15"))
+
+# Judge0 aliases kept for backward compatibility
+JUDGE0_BASE_URL = PISTON_BASE_URL
+JUDGE0_TIMEOUT_SECONDS = PISTON_TIMEOUT_SECONDS
 
 # ---------------------------------------------------------------------------
 # Auth rate limiting (InMemoryRateLimiter in auth_utils.py)
