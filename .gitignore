@@ -1,24 +1,68 @@
-frontend/node_modules/
-frontend/dist/
-backend/__pycache__/
-backend/db.sqlite3
-backend/staticfiles/
-
-# Environment secrets — never commit the real .env
-backend/.env
-
-# Python
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
 
-# Env files
+# ── Django ────────────────────────────────────────────────────────────────────
+backend/db.sqlite3
+backend/staticfiles/
+backend/__pycache__/
+backend/.env
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# ── Environment secrets — NEVER commit ───────────────────────────────────────
 .env
 .env.*
+*.env
 
-# VS Code
+# ── Judge0 (server-only, not in repo) ────────────────────────────────────────
+judge0-ce/
+judge0-custom/
+judge0_install.sh
+judge0_setup.sh
+
+# ── Old deployment scripts (server-only) ─────────────────────────────────────
+deploy.sh
+deploy-judge0.sh
+build-custom-judge0.sh
+fix-db-connection.sh
+fix-deployment.sh
+full-deploy.sh
+quick-redeploy.sh
+rebuild-judge0.sh
+redeploy-app.sh
+setup-auto-restart.sh
+setup-dns.sh
+verify-packages.sh
+code2day.service
+start_dev.ps1
+
+# ── Docs (server-only) ───────────────────────────────────────────────────────
+DEPLOYMENT_GUIDE.md
+CALENDAR_USER_GUIDE.md
+MONTHLY_CALENDAR_CHANGES.md
+Dockerfile.custom
+SYSTEM_STATUS_*.txt
+
+# ── Problem datasets (too large for repo) ────────────────────────────────────
+problem_dataset/
+
+# ── IDE / OS ──────────────────────────────────────────────────────────────────
 .vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
 
-# Node
-node_modules/
-dist/
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+deployment.log
