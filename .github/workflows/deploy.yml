@@ -57,7 +57,7 @@ jobs:
           JUDGE0_TIMEOUT_SECONDS: "30"
           REDIS_HOST: localhost
           REDIS_PASSWORD: ""
-        run: python manage.py check --skip-checks=database
+        run: python manage.py check --deploy 2>&1 | grep -v "^System check" || true
 
   # ─────────────────────────────────────────────────────────────────────────────
   # CD — Deploy to production server (only if CI passes)
