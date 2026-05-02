@@ -86,9 +86,9 @@ jobs:
 
             # ── 1. Pull latest code ──────────────────────────────────────────
             echo "→ Pulling latest code..."
-            git fetch code2day main
+            git fetch origin main
             git checkout main
-            git reset --hard code2day/main
+            git reset --hard origin/main
             echo "✓ $(git log --oneline -1)"
 
             # ── 2. Build backend and frontend only ───────────────────────────
