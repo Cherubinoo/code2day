@@ -200,6 +200,17 @@ REST_FRAMEWORK = {
 }
 
 # ---------------------------------------------------------------------------
+# Static files and Media files
+# ---------------------------------------------------------------------------
+
+STATIC_URL = "/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Media files (user uploads)
+MEDIA_URL = "/media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+# ---------------------------------------------------------------------------
 # Judge0 Code Execution Engine
 # ---------------------------------------------------------------------------
 JUDGE0_BASE_URL = os.getenv("JUDGE0_BASE_URL", "http://judge0-server:2358")

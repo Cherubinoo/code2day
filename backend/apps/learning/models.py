@@ -27,11 +27,30 @@ class Institution(models.Model):
     maintenance_inst_admin = models.BooleanField(default=False)
     maintenance_ja = models.BooleanField(default=False)
 
+    # Branding Information
+    display_name = models.CharField(max_length=300, blank=True, default="", help_text="Full display name for reports and headers")
+    subheading = models.CharField(max_length=200, blank=True, default="", help_text="Subtitle or tagline")
+    logo_url = models.URLField(blank=True, default="", help_text="URL to college logo image")
+    logo_file = models.ImageField(upload_to='college_logos/', blank=True, null=True, help_text="Uploaded college logo")
+    website = models.URLField(blank=True, default="", help_text="Official website URL")
+    established_year = models.PositiveIntegerField(null=True, blank=True, help_text="Year of establishment")
+    
     class Meta:
         db_table = "institutions"
 
     def __str__(self):
         return f"{self.institution_id} - {self.name}"
+    
+    @property
+    def logo_display_url(self):
+        """Get the logo URL - prioritize uploaded file over URL"""
+        if self.logo_file:
+            return self.logo_file.url
+        return self.logo_url or ""
+    
+    def get_display_name(self):
+        """Get the display name or fallback to regular name"""
+        return self.display_name or self.name
 
 
 class SystemConfiguration(models.Model):
@@ -792,7 +811,23 @@ class Contest(models.Model):
         default="programming",
     )
     
-    # Contest details
+    # Contest timing - Enhanced for session-based contests
+    access_start_time = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="When students can start accessing the contest"
+    )
+    access_end_time = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="When the contest link expires (no new participants allowed)"
+    )
+    session_duration_minutes = models.PositiveIntegerField(
+        default=60,
+        help_text="Individual session time limit in minutes (e.g., 30 min from when student starts)"
+    )
+    
+    # Legacy fields for backward compatibility
     start_time = models.DateTimeField(null=True, blank=True)
     end_time = models.DateTimeField(null=True, blank=True)
     duration_minutes = models.PositiveIntegerField(default=60)
@@ -863,26 +898,46 @@ class Contest(models.Model):
     
     @property
     def is_active(self):
-        """Check if contest is currently active"""
+        """Check if contest is currently accessible for new participants"""
         if self.status != "published":
             return False
         now = timezone.now()
+        
+        # Use new session-based timing if available
+        if self.access_start_time and self.access_end_time:
+            return self.access_start_time <= now <= self.access_end_time
+        
+        # Fallback to legacy timing
         if self.start_time and self.end_time:
             return self.start_time <= now <= self.end_time
         return False
     
     @property
     def is_ended(self):
-        """Check if contest has ended"""
+        """Check if contest access has ended (no new participants allowed)"""
+        now = timezone.now()
+        
+        # Use new session-based timing if available
+        if self.access_end_time:
+            return now > self.access_end_time
+            
+        # Fallback to legacy timing
         if self.end_time:
-            return timezone.now() > self.end_time
+            return now > self.end_time
         return False
     
     @property
     def is_upcoming(self):
         """Check if contest is upcoming"""
+        now = timezone.now()
+        
+        # Use new session-based timing if available
+        if self.access_start_time:
+            return now < self.access_start_time
+            
+        # Fallback to legacy timing
         if self.start_time:
-            return timezone.now() < self.start_time
+            return now < self.start_time
         return False
     
     def submit_for_approval(self):
@@ -909,6 +964,14 @@ class Contest(models.Model):
         if self.status == "approved":
             self.status = "published"
             self.save(update_fields=['status'])
+    
+    def update_status_if_ended(self):
+        """Update contest status to completed if it has ended"""
+        if self.status in ["published", "approved"] and self.is_ended:
+            self.status = "completed"
+            self.save(update_fields=['status'])
+            return True
+        return False
     
     def update_analytics(self):
         """Update contest analytics based on participant activity"""
@@ -1007,14 +1070,27 @@ class ContestParticipation(models.Model):
         related_name="contest_participations",
     )
     
-    # Timing
+    # Session-based timing
     started_at = models.DateTimeField(auto_now_add=True)
+    session_end_time = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="When this individual session expires (calculated from started_at + session_duration)"
+    )
     completed_at = models.DateTimeField(null=True, blank=True)
     time_spent_seconds = models.PositiveIntegerField(default=0)
     
     # Status
     is_active = models.BooleanField(default=True)
     has_started = models.BooleanField(default=True)
+    auto_submitted = models.BooleanField(
+        default=False,
+        help_text="True if contest was auto-submitted due to time expiry"
+    )
+    manually_stopped = models.BooleanField(
+        default=False,
+        help_text="True if contest was manually stopped by student"
+    )
     
     # Score
     total_score = models.PositiveIntegerField(default=0)
@@ -1038,12 +1114,40 @@ class ContestParticipation(models.Model):
     def __str__(self):
         return f"{self.student.register_number} - {self.contest.title}"
     
-    def end_participation(self):
+    def save(self, *args, **kwargs):
+        # First save to get the started_at timestamp
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        
+        # Calculate session end time after the first save when we have started_at
+        if is_new and not self.session_end_time and self.started_at and self.contest:
+            duration_minutes = self.contest.session_duration_minutes or self.contest.duration_minutes
+            self.session_end_time = self.started_at + timezone.timedelta(minutes=duration_minutes)
+            # Save again to update session_end_time
+            super().save(update_fields=['session_end_time'])
+    
+    @property
+    def is_session_expired(self):
+        """Check if individual session has expired"""
+        if not self.session_end_time:
+            return False
+        return timezone.now() > self.session_end_time
+    
+    @property
+    def remaining_time_seconds(self):
+        """Get remaining time in seconds for this session"""
+        if not self.session_end_time or not self.is_active:
+            return 0
+        remaining = self.session_end_time - timezone.now()
+        return max(0, int(remaining.total_seconds()))
+    
+    def end_participation(self, auto_submitted=False):
         """End the contest participation"""
         if self.is_active:
             self.completed_at = timezone.now()
             duration = self.completed_at - self.started_at
             self.time_spent_seconds = int(duration.total_seconds())
             self.is_active = False
-            self.save(update_fields=['completed_at', 'time_spent_seconds', 'is_active'])
+            self.auto_submitted = auto_submitted
+            self.save(update_fields=['completed_at', 'time_spent_seconds', 'is_active', 'auto_submitted'])
         return self.time_spent_seconds

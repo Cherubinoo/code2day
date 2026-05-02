@@ -18,6 +18,35 @@ const StaffDashboard = ({ institutionId }) => {
   const [selectedDeptId, setSelectedDeptId] = useState(null);
   const [departments, setDepartments] = useState([]);
 
+  // Function to update filter preview
+  const updatePreview = () => {
+    setTimeout(() => {
+      const reportType = document.getElementById('reportType')?.value || 'overall';
+      const batch = document.getElementById('batchFilter')?.value || '';
+      const dateFrom = document.getElementById('dateFrom')?.value || '';
+      const dateTo = document.getElementById('dateTo')?.value || '';
+      const topic = document.getElementById('topicFilter')?.value || '';
+      
+      const reportTypeText = {
+        'overall': 'Overall Performance',
+        'programming': 'Programming Only',
+        'aptitude': 'Aptitude Only',
+        'contests': 'Contest Management'
+      }[reportType] || 'Overall Performance';
+      
+      const batchText = batch ? `Batch ${batch}` : 'All Batches';
+      const dateText = (dateFrom && dateTo) ? `${dateFrom} to ${dateTo}` : 
+                      dateFrom ? `From ${dateFrom}` : 
+                      dateTo ? `Until ${dateTo}` : 'All Time';
+      const topicText = topic ? topic.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase()) : 'All Topics';
+      
+      const previewElement = document.getElementById('filterPreview');
+      if (previewElement) {
+        previewElement.textContent = `📋 Report Preview: ${reportTypeText} • ${batchText} • ${dateText} • ${topicText}`;
+      }
+    }, 10);
+  };
+
   async function loadStaffData(deptId = null) {
     try {
       setLoading(true);
@@ -138,6 +167,7 @@ const StaffDashboard = ({ institutionId }) => {
     { id: 'performance', label: 'Performance', icon: Trophy },
     { id: 'contests', label: 'Contests', icon: BookOpen },
     { id: 'batches', label: 'Batches', icon: Users },
+    { id: 'reports', label: 'Reports', icon: FileText },
     { id: 'chat', label: 'Discuss', icon: MessageSquare },
   ];
 
@@ -242,16 +272,6 @@ const StaffDashboard = ({ institutionId }) => {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: 12 }}>
-                <button 
-                  onClick={() => window.open(`/api/staff/${staff.faculty_id}/report/`, '_blank')}
-                  style={{ 
-                    padding: '12px 24px', borderRadius: '12px', border: '1px solid var(--border-soft)',
-                    background: 'white', color: 'var(--olive-700)', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', gap: 8, fontSize: '14px', fontWeight: '600'
-                  }}
-                >
-                  <FileText size={18} /> Get My Report
-                </button>
                 <button
                   onClick={() => setShowContestCreator({ type: 'programming' })}
                   style={{
@@ -693,6 +713,304 @@ const StaffDashboard = ({ institutionId }) => {
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Reports Tab */}
+          {activeTab === 'reports' && (
+            <div className="reports-tab">
+              <div className="premium-card">
+                <div style={{ textAlign: 'center', marginBottom: 40 }}>
+                  <h2 style={{ fontSize: '1.75rem', fontWeight: '900', color: 'var(--text-hard)', marginBottom: 8 }}>📊 Performance Reports</h2>
+                  <p style={{ color: 'var(--text-soft)' }}>Generate comprehensive PDF reports with college header and detailed analytics.</p>
+                </div>
+
+                {/* Report Generation Form */}
+                <div style={{ 
+                  maxWidth: 800, 
+                  margin: '0 auto', 
+                  background: 'white', 
+                  padding: '32px', 
+                  borderRadius: '20px', 
+                  border: '1px solid var(--border-soft)',
+                  boxShadow: '0 8px 32px rgba(0,0,0,0.08)'
+                }}>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 24, marginBottom: 32 }}>
+                    {/* Report Type */}
+                    <div>
+                      <label style={{ 
+                        display: 'block', 
+                        fontSize: '14px', 
+                        fontWeight: '700', 
+                        color: 'var(--text-hard)', 
+                        marginBottom: 8
+                      }}>
+                        Report Type
+                      </label>
+                      <select 
+                        id="reportType"
+                        onChange={(e) => updatePreview()}
+                        style={{ 
+                          width: '100%',
+                          padding: '12px 16px', 
+                          borderRadius: '12px', 
+                          border: '2px solid var(--border-soft)', 
+                          fontSize: '14px', 
+                          fontWeight: '600', 
+                          color: 'var(--text-hard)', 
+                          cursor: 'pointer', 
+                          outline: 'none',
+                          background: 'white'
+                        }}
+                        defaultValue="overall"
+                      >
+                        <option value="overall">📊 Overall Performance</option>
+                        <option value="programming">💻 Programming Only</option>
+                        <option value="aptitude">🧠 Aptitude Only</option>
+                        <option value="contests">🏆 Contest Management</option>
+                      </select>
+                    </div>
+                    
+                    {/* Batch Filter */}
+                    <div>
+                      <label style={{ 
+                        display: 'block', 
+                        fontSize: '14px', 
+                        fontWeight: '700', 
+                        color: 'var(--text-hard)', 
+                        marginBottom: 8
+                      }}>
+                        Batch Filter
+                      </label>
+                      <select 
+                        id="batchFilter"
+                        onChange={(e) => updatePreview()}
+                        style={{ 
+                          width: '100%',
+                          padding: '12px 16px', 
+                          borderRadius: '12px', 
+                          border: '2px solid var(--border-soft)', 
+                          fontSize: '14px', 
+                          fontWeight: '600', 
+                          color: 'var(--text-hard)', 
+                          cursor: 'pointer', 
+                          outline: 'none',
+                          background: 'white'
+                        }}
+                      >
+                        <option value="">All Batches</option>
+                        {analytics.batch_wise?.map(batch => (
+                          <option key={batch.batch} value={batch.batch}>Batch {batch.batch}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* From Date */}
+                    <div>
+                      <label style={{ 
+                        display: 'block', 
+                        fontSize: '14px', 
+                        fontWeight: '700', 
+                        color: 'var(--text-hard)', 
+                        marginBottom: 8
+                      }}>
+                        From Date
+                      </label>
+                      <input 
+                        type="date" 
+                        id="dateFrom"
+                        onChange={(e) => updatePreview()}
+                        style={{ 
+                          width: '100%',
+                          padding: '12px 16px', 
+                          borderRadius: '12px', 
+                          border: '2px solid var(--border-soft)', 
+                          fontSize: '14px', 
+                          fontWeight: '600', 
+                          color: 'var(--text-hard)', 
+                          cursor: 'pointer', 
+                          outline: 'none',
+                          background: 'white'
+                        }}
+                      />
+                    </div>
+                    
+                    {/* To Date */}
+                    <div>
+                      <label style={{ 
+                        display: 'block', 
+                        fontSize: '14px', 
+                        fontWeight: '700', 
+                        color: 'var(--text-hard)', 
+                        marginBottom: 8
+                      }}>
+                        To Date
+                      </label>
+                      <input 
+                        type="date" 
+                        id="dateTo"
+                        onChange={(e) => updatePreview()}
+                        style={{ 
+                          width: '100%',
+                          padding: '12px 16px', 
+                          borderRadius: '12px', 
+                          border: '2px solid var(--border-soft)', 
+                          fontSize: '14px', 
+                          fontWeight: '600', 
+                          color: 'var(--text-hard)', 
+                          cursor: 'pointer', 
+                          outline: 'none',
+                          background: 'white'
+                        }}
+                      />
+                    </div>
+
+                    {/* Topic Filter */}
+                    <div>
+                      <label style={{ 
+                        display: 'block', 
+                        fontSize: '14px', 
+                        fontWeight: '700', 
+                        color: 'var(--text-hard)', 
+                        marginBottom: 8
+                      }}>
+                        Topic Filter
+                      </label>
+                      <select 
+                        id="topicFilter"
+                        onChange={(e) => updatePreview()}
+                        style={{ 
+                          width: '100%',
+                          padding: '12px 16px', 
+                          borderRadius: '12px', 
+                          border: '2px solid var(--border-soft)', 
+                          fontSize: '14px', 
+                          fontWeight: '600', 
+                          color: 'var(--text-hard)', 
+                          cursor: 'pointer', 
+                          outline: 'none',
+                          background: 'white'
+                        }}
+                      >
+                        <option value="">All Topics</option>
+                        <option value="arrays">Arrays & Strings</option>
+                        <option value="algorithms">Algorithms</option>
+                        <option value="data-structures">Data Structures</option>
+                        <option value="dynamic-programming">Dynamic Programming</option>
+                        <option value="graphs">Graphs & Trees</option>
+                        <option value="mathematics">Mathematics</option>
+                        <option value="sql">SQL & Databases</option>
+                        <option value="system-design">System Design</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Filter Preview */}
+                  <div 
+                    id="filterPreview"
+                    style={{ 
+                      marginBottom: 24, 
+                      padding: '16px 20px', 
+                      background: '#f8f9fa', 
+                      borderRadius: '12px', 
+                      border: '1px solid #e9ecef',
+                      fontSize: '14px',
+                      color: '#6c757d',
+                      fontWeight: '600',
+                      textAlign: 'center'
+                    }}
+                  >
+                    📋 Report Preview: Overall Performance • All Batches • All Time • All Topics
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div style={{ display: 'flex', gap: 16, justifyContent: 'center' }}>
+                    <button 
+                      onClick={() => {
+                        const reportType = document.getElementById('reportType').value;
+                        const batch = document.getElementById('batchFilter').value;
+                        const dateFrom = document.getElementById('dateFrom').value;
+                        const dateTo = document.getElementById('dateTo').value;
+                        const topic = document.getElementById('topicFilter').value;
+                        
+                        const params = new URLSearchParams();
+                        if (reportType !== 'overall') params.append('type', reportType);
+                        if (batch) params.append('batch', batch);
+                        if (dateFrom) params.append('date_from', dateFrom);
+                        if (dateTo) params.append('date_to', dateTo);
+                        if (topic) params.append('topic', topic);
+                        
+                        const url = `/api/staff/${staff.faculty_id}/report/?${params.toString()}`;
+                        window.open(url, '_blank');
+                      }}
+                      style={{ 
+                        padding: '16px 32px', 
+                        borderRadius: '12px', 
+                        border: 'none',
+                        background: 'linear-gradient(135deg, #4f7942, #2d5016)', 
+                        color: 'white', 
+                        cursor: 'pointer',
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 12, 
+                        fontSize: '16px', 
+                        fontWeight: '700',
+                        boxShadow: '0 6px 20px rgba(79, 121, 66, 0.3)',
+                        transition: 'all 0.2s ease'
+                      }}
+                      onMouseOver={(e) => {
+                        e.target.style.transform = 'translateY(-2px)';
+                        e.target.style.boxShadow = '0 8px 25px rgba(79, 121, 66, 0.4)';
+                        e.target.style.background = 'linear-gradient(135deg, #3d5f33, #1f3a0f)';
+                      }}
+                      onMouseOut={(e) => {
+                        e.target.style.transform = 'translateY(0)';
+                        e.target.style.boxShadow = '0 6px 20px rgba(79, 121, 66, 0.3)';
+                        e.target.style.background = 'linear-gradient(135deg, #4f7942, #2d5016)';
+                      }}
+                    >
+                      <FileText size={20} /> 
+                      Download PDF Report
+                    </button>
+
+                    <button 
+                      onClick={() => {
+                        document.getElementById('reportType').value = 'overall';
+                        document.getElementById('batchFilter').value = '';
+                        document.getElementById('dateFrom').value = '';
+                        document.getElementById('dateTo').value = '';
+                        document.getElementById('topicFilter').value = '';
+                        updatePreview();
+                      }}
+                      style={{ 
+                        padding: '16px 24px', 
+                        borderRadius: '12px', 
+                        border: '2px solid #e5e7eb',
+                        background: 'white', 
+                        color: '#6b7280', 
+                        cursor: 'pointer',
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 8, 
+                        fontSize: '14px', 
+                        fontWeight: '600',
+                        transition: 'all 0.2s ease'
+                      }}
+                      onMouseOver={(e) => {
+                        e.target.style.borderColor = '#9ca3af';
+                        e.target.style.color = '#374151';
+                      }}
+                      onMouseOut={(e) => {
+                        e.target.style.borderColor = '#e5e7eb';
+                        e.target.style.color = '#6b7280';
+                      }}
+                    >
+                      🔄 Reset Filters
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

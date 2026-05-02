@@ -6142,3 +6142,1007 @@ button.tab-pill {
   align-items: center;
   gap: 6px;
 }
+
+/* Message bubbles - Chat app style */
+.message-wrapper {
+  display: flex;
+  margin-bottom: 12px;
+  width: 100%;
+  animation: messageSlideIn 0.3s ease-out;
+}
+
+@keyframes messageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-wrapper.own-message {
+  justify-content: flex-end; /* Align to right */
+}
+
+.message-wrapper.other-message {
+  justify-content: flex-start; /* Align to left */
+}
+
+.message-bubble {
+  max-width: 70%; /* Don't take full width */
+  min-width: 120px;
+  padding: 12px 16px;
+  border-radius: 18px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  position: relative;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  transition: transform 0.2s ease;
+}
+
+.message-bubble:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.message-bubble.own-bubble {
+  background: linear-gradient(135deg, #007bff, #0056b3); /* Blue gradient for own messages */
+  color: white;
+  border-bottom-right-radius: 4px; /* Tail effect */
+  margin-left: auto;
+}
+
+.message-bubble.other-bubble {
+  background: #f1f3f4; /* Light gray for others */
+  color: #333;
+  border-bottom-left-radius: 4px; /* Tail effect */
+  margin-right: auto;
+  border: 1px solid #e0e0e0;
+}
+
+.message-sender {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  opacity: 0.9;
+}
+
+.message-batch {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-left: 6px;
+  font-weight: normal;
+}
+
+.message-content {
+  font-size: 14px;
+  line-height: 1.4;
+  margin-bottom: 6px;
+}
+
+.message-time {
+  font-size: 11px;
+  opacity: 0.7;
+  text-align: right;
+  font-weight: 500;
+}
+
+.message-time.own-time {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.message-time.other-time {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+/* Poll styles within bubbles */
+.poll-container-v2 {
+  width: 100%;
+}
+
+.poll-question-v2 {
+  font-weight: 600;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.poll-options-v2 {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.poll-option-v2 {
+  position: relative;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  overflow: hidden;
+}
+
+.other-bubble .poll-option-v2 {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.poll-option-v2:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.other-bubble .poll-option-v2:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.poll-option-v2.voted {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.other-bubble .poll-option-v2.voted {
+  background: rgba(0, 123, 255, 0.1);
+  border-color: rgba(0, 123, 255, 0.3);
+}
+
+.poll-option-bg-v2 {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.2);
+  transition: width 0.3s ease;
+  border-radius: 8px;
+}
+
+.other-bubble .poll-option-bg-v2 {
+  background: rgba(0, 123, 255, 0.2);
+}
+
+.poll-option-content-v2 {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.poll-option-label-v2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.voted-check-v2 {
+  width: 16px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+}
+
+.other-bubble .voted-check-v2 {
+  background: rgba(0, 123, 255, 0.3);
+}
+
+.poll-option-percent-v2 {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.poll-footer-v2 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .message-bubble {
+    max-width: 85%; /* More width on mobile */
+    min-width: 100px;
+  }
+}
+/* Enhanced Message Input Area - Larger and More User-Friendly */
+.message-input-wrapper-v2 {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 24px;
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 28px;
+  transition: all 0.2s ease;
+  min-height: 64px; /* Even larger minimum height for better usability */
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.message-input-wrapper-v2:focus-within {
+  border-color: var(--olive-500);
+  box-shadow: 0 0 0 4px rgba(97, 115, 76, 0.15), 0 4px 12px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.message-input-wrapper-v2 input {
+  flex: 1;
+  border: none;
+  background: none;
+  outline: none;
+  font-size: 17px; /* Larger font size for better readability */
+  line-height: 1.6;
+  padding: 12px 0; /* More vertical padding for comfortable typing */
+  color: var(--text-main);
+  min-height: 28px; /* Ensure comfortable minimum height */
+  font-family: inherit;
+}
+
+.message-input-wrapper-v2 input::placeholder {
+  color: var(--text-soft);
+  font-size: 17px;
+  opacity: 0.8;
+}
+
+.send-button-v2 {
+  width: 48px; /* Larger button for easier tapping */
+  height: 48px;
+  border-radius: 50%; /* Circular button */
+  border: none;
+  background: linear-gradient(135deg, var(--olive-500), var(--olive-700));
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+  box-shadow: 0 3px 6px rgba(97, 115, 76, 0.25);
+}
+
+.send-button-v2:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--olive-700), var(--olive-900));
+  transform: scale(1.08);
+  box-shadow: 0 6px 12px rgba(97, 115, 76, 0.35);
+}
+
+.send-button-v2:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: 0 2px 4px rgba(97, 115, 76, 0.15);
+}
+
+.poll-footer-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid #e5e7eb;
+  background: white;
+  color: var(--text-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.poll-footer-btn:hover {
+  border-color: var(--olive-500);
+  color: var(--olive-500);
+  background: var(--sage-100);
+  transform: scale(1.05);
+}
+
+/* Chat Footer Improvements */
+.chat-footer-v2 {
+  padding: 24px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--panel);
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.footer-blocked-v2 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 24px;
+  background: rgba(196, 151, 67, 0.1);
+  border: 1px solid rgba(196, 151, 67, 0.3);
+  border-radius: 20px;
+  font-size: 15px;
+  color: var(--olive-700);
+  text-align: center;
+  justify-content: center;
+  font-weight: 500;
+}
+
+/* Enhanced Responsive improvements for mobile */
+@media (max-width: 768px) {
+  .message-input-wrapper-v2 {
+    padding: 16px 20px;
+    min-height: 60px; /* Larger on mobile for easier touch interaction */
+    gap: 14px;
+  }
+  
+  .message-input-wrapper-v2 input {
+    font-size: 17px; /* Prevent zoom on iOS while maintaining readability */
+    padding: 10px 0;
+  }
+  
+  .send-button-v2,
+  .poll-footer-btn {
+    width: 46px;
+    height: 46px;
+  }
+  
+  .chat-footer-v2 {
+    padding: 20px;
+  }
+  
+  .footer-blocked-v2 {
+    padding: 16px 20px;
+    font-size: 14px;
+  }
+}
+
+/* Extra small screens (phones in portrait) */
+@media (max-width: 480px) {
+  .message-input-wrapper-v2 {
+    padding: 14px 18px;
+    min-height: 58px;
+    border-radius: 24px;
+  }
+  
+  .chat-footer-v2 {
+    padding: 18px 16px;
+  }
+}
+  }
+}
+
+/* Additional Message Input Enhancements */
+.message-input-wrapper-v2:hover {
+  border-color: var(--sage-300);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* Better focus states for accessibility */
+.message-input-wrapper-v2 input:focus {
+  outline: none;
+}
+
+/* Improved button states */
+.send-button-v2:active {
+  transform: scale(0.95);
+}
+
+.poll-footer-btn:active {
+  transform: scale(0.95);
+}
+
+/* Loading state for send button */
+.send-button-v2.loading {
+  pointer-events: none;
+}
+
+.send-button-v2.loading::after {
+  content: '';
+  width: 16px;
+  height: 16px;
+  border: 2px solid transparent;
+  border-top: 2px solid white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Better visual hierarchy for the input area */
+.chat-footer-v2 .message-input-wrapper-v2 {
+  background: white;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Ensure proper spacing and alignment */
+.message-input-wrapper-v2 > * {
+  flex-shrink: 0;
+}
+
+.message-input-wrapper-v2 input {
+  flex-shrink: 1;
+  min-width: 0; /* Allow input to shrink properly */
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .message-input-wrapper-v2 {
+    border-width: 3px;
+  }
+  
+  .send-button-v2 {
+    border: 2px solid white;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .message-input-wrapper-v2,
+  .send-button-v2,
+  .poll-footer-btn {
+    transition: none;
+  }
+  
+  .send-button-v2:hover:not(:disabled) {
+    transform: none;
+  }
+  
+  .poll-footer-btn:hover {
+    transform: none;
+  }
+}
+/* Main Chat Area Layout - Fix for No Scrolling Access */
+.chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100vh; /* Full viewport height */
+  max-height: 100vh;
+  background: #f8fafc;
+  position: relative;
+  overflow: hidden; /* Prevent outer scrolling */
+}
+
+/* Ensure the discuss layout takes full height */
+.discuss-layout-v2 {
+  height: 100vh !important;
+  max-height: 100vh !important;
+  overflow: hidden !important;
+}
+
+/* Messages container should be scrollable but contained */
+.messages-container-v2 {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  scroll-behavior: smooth;
+  /* Ensure it takes available space minus header and footer */
+  min-height: 0; /* Important for flex child to shrink */
+}
+
+/* Chat header should be fixed at top */
+.chat-header-v2 {
+  flex-shrink: 0; /* Don't shrink */
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: white;
+  border-bottom: 1px solid var(--border-soft);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+/* Chat footer should be fixed at bottom */
+.chat-footer-v2 {
+  flex-shrink: 0; /* Don't shrink */
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  padding: 24px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Sidebar should also be properly sized */
+.discuss-sidebar-v2 {
+  width: 320px;
+  background: white;
+  border-right: 1px solid #f1f5f9;
+  height: 100vh;
+  max-height: 100vh;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+  .discuss-layout-v2 {
+    height: 100vh;
+    height: 100dvh; /* Dynamic viewport height for mobile */
+  }
+  
+  .chat-area {
+    height: 100vh;
+    height: 100dvh;
+  }
+  
+  .discuss-sidebar-v2 {
+    width: 280px;
+    height: 100vh;
+    height: 100dvh;
+  }
+  
+  .messages-container-v2 {
+    padding: 16px;
+  }
+  
+  .chat-header-v2 {
+    padding: 12px 16px;
+  }
+  
+  .chat-footer-v2 {
+    padding: 20px 16px;
+  }
+}
+
+/* Extra small screens */
+@media (max-width: 480px) {
+  .discuss-sidebar-v2 {
+    width: 260px;
+  }
+  
+  .messages-container-v2 {
+    padding: 12px;
+  }
+  
+  .chat-header-v2 {
+    padding: 10px 12px;
+  }
+  
+  .chat-footer-v2 {
+    padding: 16px 12px;
+  }
+}
+/* Prevent page-level scrolling for discuss page */
+body.discuss-page {
+  overflow: hidden;
+  height: 100vh;
+  max-height: 100vh;
+}
+
+html.discuss-page {
+  overflow: hidden;
+  height: 100vh;
+  max-height: 100vh;
+}
+
+/* Ensure the root app container doesn't cause scrolling */
+.discuss-layout-v2 * {
+  box-sizing: border-box;
+}
+
+/* Fix any potential margin/padding issues */
+.discuss-layout-v2,
+.chat-area,
+.messages-container-v2 {
+  margin: 0;
+  padding: 0;
+}
+
+.messages-container-v2 {
+  padding: 24px; /* Re-add the padding we need */
+}
+
+/* Ensure search overlay doesn't break layout */
+.search-overlay-v2 {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+/* Profile modal should also not affect layout */
+.profile-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+/* Poll modal should also not affect layout */
+.poll-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+/* Enhanced Staff Dashboard Report Filtering */
+.report-filter-container {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 16px;
+  background: white;
+  border-radius: 16px;
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.filter-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  background: var(--sage-50);
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+}
+
+.filter-label {
+  fontSize: 13px;
+  fontWeight: 600;
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.filter-select, .filter-input {
+  border: none;
+  background: none;
+  fontSize: 13px;
+  fontWeight: 600;
+  color: var(--olive-700);
+  cursor: pointer;
+  outline: none;
+  min-width: 80px;
+}
+
+.filter-input[type="date"] {
+  width: 110px;
+  font-size: 12px;
+}
+
+.download-report-btn {
+  padding: 12px 24px;
+  border-radius: 12px;
+  border: 1px solid var(--border-soft);
+  background: linear-gradient(135deg, var(--olive-500), var(--olive-700));
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  fontSize: 14px;
+  fontWeight: 600;
+  box-shadow: 0 4px 12px rgba(97, 115, 76, 0.2);
+  transition: all 0.2s ease;
+}
+
+.download-report-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(97, 115, 76, 0.3);
+}
+
+/* Enhanced Admin Dashboard Institution Cards */
+.institution-card {
+  padding: 32px;
+  background: white;
+  border-radius: 32px;
+  border: 1px solid var(--border-soft);
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  box-shadow: var(--shadow-soft);
+}
+
+.institution-card:hover {
+  transform: translateY(-8px);
+  border-color: var(--olive-400);
+  box-shadow: 0 30px 60px rgba(0,0,0,0.12);
+}
+
+.institution-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.institution-icon {
+  width: 64px;
+  height: 64px;
+  background: linear-gradient(135deg, var(--sage-100), var(--sage-200));
+  border-radius: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--olive-900);
+  box-shadow: 0 8px 16px rgba(97, 115, 76, 0.1);
+}
+
+.status-indicators {
+  display: flex;
+  gap: 8px;
+}
+
+.status-indicator {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  fontSize: 0.8rem;
+  fontWeight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid;
+  transition: all 0.2s ease;
+}
+
+.status-indicator.active {
+  background: #dcfce7;
+  color: #10b981;
+  border-color: #a7f3d0;
+}
+
+.status-indicator.locked {
+  background: #fee2e2;
+  color: #ef4444;
+  border-color: #fecaca;
+}
+
+.institution-title {
+  fontSize: 1.4rem;
+  fontWeight: 900;
+  color: var(--olive-950);
+  margin-bottom: 8px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.institution-meta {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.meta-tag {
+  fontSize: 0.8rem;
+  fontWeight: 800;
+  color: var(--text-soft);
+  background: var(--bg-2);
+  padding: 6px 12px;
+  border-radius: 12px;
+}
+
+.institution-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 20px;
+}
+
+.status-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.status-dot.active {
+  background: #10b981;
+}
+
+.status-dot.inactive {
+  background: #ef4444;
+}
+
+.status-text {
+  fontSize: 0.85rem;
+  fontWeight: 800;
+  text-transform: uppercase;
+}
+
+.status-text.active {
+  color: #059669;
+}
+
+.status-text.inactive {
+  color: #dc2626;
+}
+
+.institution-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.manage-btn {
+  background: var(--olive-900);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 10px;
+  fontSize: 0.8rem;
+  fontWeight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.manage-btn:hover {
+  background: var(--olive-700);
+  transform: translateY(-1px);
+}
+
+.delete-btn {
+  background: none;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.delete-btn:hover {
+  background: #fee2e2;
+  transform: scale(1.1);
+}
+
+/* Empty State Styling */
+.empty-institutions {
+  padding: 80px 40px;
+  text-align: center;
+  background: white;
+  border-radius: 32px;
+  border: 2px dashed var(--border-soft);
+}
+
+.empty-icon {
+  color: var(--text-soft);
+  opacity: 0.3;
+  margin-bottom: 24px;
+}
+
+.empty-title {
+  fontSize: 1.5rem;
+  fontWeight: 800;
+  color: var(--text-soft);
+  margin-bottom: 12px;
+}
+
+.empty-description {
+  color: var(--text-soft);
+  margin-bottom: 32px;
+  fontSize: 1rem;
+}
+
+/* System Metrics Cards */
+.system-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+  margin-bottom: 48px;
+}
+
+.metric-card-enhanced {
+  padding: 32px;
+  border-radius: 24px;
+  background: white;
+  border: 1px solid var(--border-soft);
+  box-shadow: var(--shadow-soft);
+  transition: all 0.2s ease;
+}
+
+.metric-card-enhanced:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
+}
+
+.metric-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+}
+
+.metric-value {
+  fontSize: 2.2rem;
+  fontWeight: 950;
+  color: var(--olive-950);
+  margin-bottom: 8px;
+}
+
+.metric-label {
+  fontSize: 0.9rem;
+  color: var(--text-soft);
+  fontWeight: 600;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+  .system-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .system-metrics {
+    grid-template-columns: 1fr;
+  }
+  
+  .report-filter-container {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .filter-group {
+    justify-content: space-between;
+  }
+  
+  .institution-card {
+    padding: 24px;
+  }
+  
+  .institution-header {
+    flex-direction: column;
+    gap: 16px;
+  }
+  
+  .institution-meta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}

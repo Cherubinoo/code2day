@@ -18,30 +18,67 @@ export function extractApiError(payload, fallbackMessage) {
 }
 
 export function getCsrfToken() {
-  // Try to get CSRF token from meta tag first (set by Django in HTML)
-  const metaTag = document.querySelector('meta[name="csrf-token"]');
-  if (metaTag && metaTag.content) {
-    return metaTag.content;
-  }
-
-  // Fallback: Try to get from X-CSRFToken response header (if available)
-  // This would need to be stored after first API call
+  // Try to get CSRF token from sessionStorage first (cached from initialization)
   const storedToken = sessionStorage.getItem('csrftoken');
   if (storedToken) {
     return storedToken;
   }
 
-  // Last resort: Try old method (for backward compatibility, though cookie is HttpOnly now)
+  // Try to get CSRF token from meta tag (set by Django in HTML)
+  const metaTag = document.querySelector('meta[name="csrf-token"]');
+  if (metaTag && metaTag.content) {
+    sessionStorage.setItem('csrftoken', metaTag.content);
+    return metaTag.content;
+  }
+
+  // If no token available, fetch it from the API endpoint synchronously
+  // This is a fallback - not ideal but necessary for immediate use
   try {
-    const csrfCookie = document.cookie
-      .split("; ")
-      .find((entry) => entry.startsWith("csrftoken="));
-    if (csrfCookie) {
-      const token = decodeURIComponent(csrfCookie.split("=").slice(1).join("="));
-      return token;
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/csrf-token/', false); // synchronous request
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.withCredentials = true; // Include credentials for CSRF cookie
+    xhr.send();
+    
+    if (xhr.status === 200) {
+      const response = JSON.parse(xhr.responseText);
+      const token = response.csrfToken;
+      if (token) {
+        sessionStorage.setItem('csrftoken', token);
+        return token;
+      }
     }
   } catch (e) {
-    // Cookie is HttpOnly, can't read
+    console.warn('Failed to fetch CSRF token synchronously:', e);
+  }
+
+  return "";
+}
+
+// Async version for better performance
+export async function getCsrfTokenAsync() {
+  // Try sessionStorage first
+  const storedToken = sessionStorage.getItem('csrftoken');
+  if (storedToken) {
+    return storedToken;
+  }
+
+  try {
+    const response = await fetch('/api/csrf-token/', {
+      method: 'GET',
+      credentials: 'include'
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      const token = data.csrfToken;
+      if (token) {
+        sessionStorage.setItem('csrftoken', token);
+        return token;
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to fetch CSRF token asynchronously:', e);
   }
 
   return "";
@@ -56,13 +93,39 @@ export function buildJsonPostOptions(payload) {
   if (csrfToken) {
     headers["X-CSRFToken"] = csrfToken;
   }
-
+  
   return {
     method: "POST",
     credentials: "include",
     headers,
     body: JSON.stringify(payload),
   };
+}
+
+export function buildGetOptions() {
+  const csrfToken = getCsrfToken();
+  const headers = {};
+
+  if (csrfToken) {
+    headers["X-CSRFToken"] = csrfToken;
+  }
+
+  return {
+    method: "GET",
+    credentials: "include",
+    headers,
+  };
+}
+
+// Clear CSRF token (useful when switching users)
+export function clearCsrfToken() {
+  sessionStorage.removeItem('csrftoken');
+}
+
+// Refresh CSRF token (useful after login/logout)
+export async function refreshCsrfToken() {
+  clearCsrfToken();
+  return await getCsrfTokenAsync();
 }
 
 export function normalizeProblems(problems) {

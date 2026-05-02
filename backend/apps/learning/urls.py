@@ -21,6 +21,7 @@ from .views import (
     ContestBatchAssignView,
     ContestPublishView,
     ContestSubmitForApprovalView,
+    CSRFTokenView,
     DashboardView,
     DailyLeaderboardView,
     DepartmentStudentsFilterView,
@@ -43,6 +44,8 @@ from .views import (
     StudentContestProblemView,
     StudentContestStartView,
     StudentContestAutoSubmitView,
+    StudentContestStopView,
+    StudentContestSessionStatusView,
     StudentContestSubmitView,
     StudentContestWinnersView,
     StudentLogoutView,
@@ -83,10 +86,12 @@ from .views import (
     AptitudeQuestionListView,
     AptitudeQuestionSubmitView,
     AptitudeContestSubmitView,
+    InstitutionBrandingPreviewView,
 )
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health-check"),
+    path("csrf-token/", CSRFTokenView.as_view(), name="csrf-token"),
 
     # Dashboard & problems
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
@@ -107,6 +112,8 @@ urlpatterns = [
     path("student/contests/<int:contest_id>/", StudentContestDetailView.as_view(), name="student-contest-detail"),
     path("student/contests/<int:contest_id>/start/", StudentContestStartView.as_view(), name="student-contest-start"),
     path("student/contests/<int:contest_id>/auto-submit/", StudentContestAutoSubmitView.as_view(), name="student-contest-auto-submit"),
+    path("student/contests/<int:contest_id>/stop/", StudentContestStopView.as_view(), name="student-contest-stop"),
+    path("student/contests/<int:contest_id>/session-status/", StudentContestSessionStatusView.as_view(), name="student-contest-session-status"),
     path("student/contests/<int:contest_id>/winners/", StudentContestWinnersView.as_view(), name="student-contest-winners"),
     path("student/contests/<int:contest_id>/problems/<slug:problem_slug>/", StudentContestProblemView.as_view(), name="student-contest-problem"),
     path("student/contests/<int:contest_id>/problems/<slug:problem_slug>/submit/", StudentContestSubmitView.as_view(), name="student-contest-submit"),
@@ -193,6 +200,11 @@ urlpatterns = [
 
     path("students/<str:register_number>/report/", StudentReportPDFView.as_view(), name="student-report-pdf"),
     path("staff/<str:faculty_id>/report/", StaffReportPDFView.as_view(), name="staff-report-pdf"),
+    
+    # Institution Branding
+    path("admin/v2/institutions/<int:pk>/branding/preview/", InstitutionBrandingPreviewView.as_view(), name="institution-branding-preview"),
+    path("admin/v2/institutions/<int:pk>/branding/upload-logo/", InstitutionDetailManagementView.as_view(), name="institution-logo-upload"),
+    
     # Judge0 Direct API
     path("judge0/system_info/", Judge0SystemInfoView.as_view(), name="judge0-system-info"),
     path("judge0/submit/", Judge0SubmitView.as_view(), name="judge0-submit"),
