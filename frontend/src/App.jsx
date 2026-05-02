@@ -37,6 +37,8 @@ import {
 import { runCodeExecution, editorLanguageMap } from "./lib/codeExecution";
 import {
   buildJsonPostOptions,
+  clearCsrfToken,
+  refreshCsrfToken,
   estimateComplexity,
   extractApiError,
   normalizeProblems,
@@ -133,6 +135,18 @@ function App() {
 
   const [targetContestId, setTargetContestId] = useState(null);
   const isLoggedIn = Boolean(activeRegisterNumber);
+
+  // Initialize CSRF token on app startup
+  useEffect(() => {
+    async function initializeCsrfToken() {
+      try {
+        await refreshCsrfToken();
+      } catch (error) {
+        console.warn('Failed to initialize CSRF token:', error);
+      }
+    }
+    initializeCsrfToken();
+  }, []);
 
   function resetStudentSession() {
     window.localStorage.removeItem(authStorageKey);
@@ -755,8 +769,13 @@ function App() {
       setActiveRegisterNumber(registerNumber.trim());
       setPassword("");
       setAuthMessage(payload.detail);
+      
+      // Refresh CSRF token after successful login
+      await refreshCsrfToken();
+      
       // Navigate to role-specific dashboard
-      const targetPage = (type === "admin" || type === "director" || type === "tpu" || type === "ja") ? "hod" : 
+      const targetPage = type === "admin" ? "admin" :
+                         (type === "director" || type === "tpu" || type === "ja") ? "hod" : 
                          type === "hod" ? "hod" : 
                          type === "staff" ? "staff" : "explore";
       navigate(targetPage, { replace: true });
@@ -775,6 +794,8 @@ function App() {
     } catch (error) {
       console.error("Logout request failed", error);
     } finally {
+      // Clear CSRF token when logging out
+      clearCsrfToken();
       resetStudentSession();
     }
   }
@@ -1218,7 +1239,7 @@ function App() {
       );
       break;
     case "hod":
-      activeView = (userType === "hod" || userType === "director" || userType === "tpu" || userType === "ja" || userType === "admin") ? (
+      activeView = (userType === "hod" || userType === "director" || userType === "tpu" || userType === "ja") ? (
         <HODDashboard institutionId={selectedInstitutionId} />
       ) : (
         <div style={{ padding: 40 }}>
@@ -1286,7 +1307,11 @@ function App() {
         navigate("staff", { replace: true });
         break;
       }
-      if (userType === "hod" || userType === "director" || userType === "tpu" || userType === "ja" || userType === "admin") {
+      if (userType === "admin") {
+        navigate("admin", { replace: true });
+        break;
+      }
+      if (userType === "hod" || userType === "director" || userType === "tpu" || userType === "ja") {
         navigate("hod", { replace: true });
         break;
       }

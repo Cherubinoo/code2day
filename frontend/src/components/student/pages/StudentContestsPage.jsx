@@ -674,7 +674,7 @@ function CompletedContestCard({ contest, onViewWinners }) {
         </div>
         <div style={{ fontSize: 11, color: '#666' }}>
           <Clock size={12} style={{ display: 'inline', marginRight: 4 }} />
-          {contest.duration_minutes}min
+          {contest.session_duration_minutes || contest.duration_minutes}min session
         </div>
       </div>
 
@@ -805,9 +805,9 @@ function ContestCard({ contest, isUpcoming, isCompleted, onStart }) {
           </div>
         </div>
         <div>
-          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Duration</div>
+          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Session Duration</div>
           <div style={{ fontSize: 16, fontWeight: 600, color: '#d97706' }}>
-            {contest.duration_minutes} min
+            {contest.session_duration_minutes || contest.duration_minutes} min
           </div>
         </div>
         {contest.participation && (

@@ -31,6 +31,16 @@ const AdminDashboard = () => {
     departments: [],
     batches: [],
     maintenance: { staff: false, student: false, hod: false, inst_admin: false, ja: false },
+    branding: { 
+      display_name: '', 
+      subheading: '', 
+      logo_url: '', 
+      website: '', 
+      established_year: '', 
+      address: '', 
+      contact_email: '', 
+      contact_phone: '' 
+    },
     metrics: { students: 0, staff: 0, departments: 0 }
   });
 
@@ -39,6 +49,16 @@ const AdminDashboard = () => {
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('');
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [brandingForm, setBrandingForm] = useState({
+    display_name: '',
+    subheading: '',
+    logo_url: '',
+    website: '',
+    established_year: '',
+    address: '',
+    contact_email: '',
+    contact_phone: ''
+  });
   
   // Double Confirmation State
   const [confirmState, setConfirmState] = useState({ 
@@ -75,6 +95,19 @@ const AdminDashboard = () => {
     try {
       const res = await api.get(`/admin/v2/institutions/${inst.id}/hub/`);
       setHubData(res.data);
+      
+      // Initialize branding form with current data, using institution defaults if branding fields are empty
+      const brandingData = res.data.branding || {};
+      setBrandingForm({
+        display_name: brandingData.display_name || inst.name || '',
+        subheading: brandingData.subheading || '',
+        logo_url: brandingData.logo_url || '',
+        website: brandingData.website || '',
+        established_year: brandingData.established_year || '',
+        address: brandingData.address || inst.address || '',
+        contact_email: brandingData.contact_email || inst.contact_email || '',
+        contact_phone: brandingData.contact_phone || inst.contact_phone || ''
+      });
     } catch (err) {
       console.error("Hub load failed", err);
     }
@@ -244,6 +277,25 @@ const AdminDashboard = () => {
     );
   };
 
+  const handleUpdateBranding = async () => {
+    try {
+      await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, {
+        action: 'update_branding',
+        branding: brandingForm
+      });
+      
+      // Update local state
+      setHubData({
+        ...hubData,
+        branding: brandingForm
+      });
+      
+      alert("College branding updated successfully!");
+    } catch (err) {
+      alert("Failed to update branding: " + (err.response?.data?.error || err.message));
+    }
+  };
+
   if (loading) return (
     <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-2)' }}>
       <div className="loader">Stabilizing System Environment...</div>
@@ -283,57 +335,253 @@ const AdminDashboard = () => {
         </header>
 
         {!selectedInstitution ? (
-          /* GLOBAL LANDING VIEW */
+          /* GLOBAL LANDING VIEW - INSTITUTIONS LIST */
           <div className="global-view animate-fade-in">
+            {/* SYSTEM METRICS */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 24, marginBottom: 48 }}>
+              {[
+                { label: 'Total Institutions', value: institutions.length, icon: Building2, color: '#6366f1' },
+                { label: 'Active Users', value: metrics.total_users, icon: Users, color: '#10b981' },
+                { label: 'Faculty Members', value: metrics.total_staff, icon: Briefcase, color: '#f59e0b' },
+                { label: 'Problem Bank', value: metrics.total_problems + metrics.total_aptitude, icon: Database, color: '#ef4444' }
+              ].map((m, i) => (
+                <div key={i} style={{ padding: 32, borderRadius: 24, background: 'white', border: '1px solid var(--border-soft)', boxShadow: 'var(--shadow-soft)' }}>
+                  <div style={{ width: 48, height: 48, borderRadius: 12, background: `${m.color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: m.color, marginBottom: 20 }}>
+                    <m.icon size={24} />
+                  </div>
+                  <div style={{ fontSize: '2.2rem', fontWeight: 950, color: 'var(--olive-950)', marginBottom: 8 }}>{m.value}</div>
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-soft)', fontWeight: 600 }}>{m.label}</div>
+                </div>
+              ))}
+            </div>
+
             {/* INSTITUTION CARDS */}
             <div style={{ marginBottom: 48 }}>
-              <h2 style={{ fontSize: '1.6rem', fontWeight: 900, marginBottom: 24, color: 'var(--olive-900)', display: 'flex', alignItems: 'center', gap: 12 }}>
-                <Building2 size={28} /> Infrastructure Nodes
-              </h2>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 24 }}>
-                {institutions.map((inst) => (
-                  <article 
-                    key={inst.id}
-                    onClick={() => fetchInstitutionHub(inst)}
-                    className="surface-card"
-                    style={{ padding: 32, background: 'white', borderRadius: 32, border: '1px solid var(--border-soft)', cursor: 'pointer', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', position: 'relative' }}
-                    onMouseOver={e => { e.currentTarget.style.transform = 'translateY(-8px)'; e.currentTarget.style.borderColor = 'var(--olive-400)'; e.currentTarget.style.boxShadow = '0 30px 60px rgba(0,0,0,0.08)'; }}
-                    onMouseOut={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border-soft)'; e.currentTarget.style.boxShadow = 'none'; }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
-                      <div style={{ width: 56, height: 56, background: 'var(--sage-100)', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--olive-900)' }}>
-                        <Building2 size={28} />
-                      </div>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        {['S', 'T', 'H'].map((role, idx) => {
-                          const isM = idx === 0 ? inst.maintenance_staff : idx === 1 ? inst.maintenance_students : inst.maintenance_hod;
-                          return (
-                            <div key={idx} style={{ width: 28, height: 28, borderRadius: 8, background: isM ? '#fee2e2' : '#d1fae5', color: isM ? '#ef4444' : '#10b981', fontSize: '0.75rem', fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${isM ? '#fecaca' : '#a7f3d0'}` }}>
-                              {role}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                    <h3 style={{ fontSize: '1.6rem', fontWeight: 900, color: 'var(--olive-950)', marginBottom: 8, lineHeight: 1.2 }}>{inst.name}</h3>
-                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 24 }}>
-                      <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-soft)', background: 'var(--bg-2)', padding: '4px 12px', borderRadius: 10 }}>ID: {inst.institution_id}</span>
-                      <span style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--text-soft)', background: 'var(--bg-2)', padding: '4px 12px', borderRadius: 10 }}>CODE: {inst.short_code}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-soft)', paddingTop: 24 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
-                        <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#059669', textTransform: 'uppercase' }}>Provisioned</span>
-                      </div>
-                      <button onClick={(e) => { e.stopPropagation(); setShowDeleteConfirm(inst); }} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 8 }}><Trash2 size={20} /></button>
-                    </div>
-                  </article>
-                ))}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
+                <div>
+                  <h2 style={{ fontSize: '1.8rem', fontWeight: 900, marginBottom: 8, color: 'var(--olive-900)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <Building2 size={28} /> Educational Institutions
+                  </h2>
+                  <p style={{ color: 'var(--text-soft)', margin: 0, fontSize: '1rem' }}>
+                    Manage and monitor institutional nodes across the network
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                  <div style={{ padding: '8px 16px', background: 'var(--sage-100)', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
+                    <span style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--olive-700)' }}>
+                      {institutions.filter(i => i.is_active).length} Active
+                    </span>
+                  </div>
+                  <button onClick={() => setShowCreateModal(true)} className="primary-button" style={{ borderRadius: 16, padding: '14px 28px', display: 'flex', alignItems: 'center', gap: 10, fontSize: '1rem' }}>
+                    <Plus size={22} /> Add Institution
+                  </button>
+                </div>
               </div>
+              
+              {institutions.length === 0 ? (
+                <div style={{ 
+                  padding: '80px 40px', 
+                  textAlign: 'center', 
+                  background: 'white', 
+                  borderRadius: '32px', 
+                  border: '2px dashed var(--border-soft)' 
+                }}>
+                  <Building2 size={64} style={{ color: 'var(--text-soft)', opacity: 0.3, marginBottom: 24 }} />
+                  <h3 style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--text-soft)', marginBottom: 12 }}>
+                    No Institutions Found
+                  </h3>
+                  <p style={{ color: 'var(--text-soft)', marginBottom: 32, fontSize: '1rem' }}>
+                    Get started by adding your first educational institution to the system.
+                  </p>
+                  <button onClick={() => setShowCreateModal(true)} className="primary-button" style={{ borderRadius: 16, padding: '16px 32px', fontSize: '1rem' }}>
+                    <Plus size={20} style={{ marginRight: 8 }} /> Create First Institution
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: 24 }}>
+                  {institutions.map((inst) => (
+                    <article 
+                      key={inst.id}
+                      onClick={() => fetchInstitutionHub(inst)}
+                      className="surface-card"
+                      style={{ 
+                        padding: 32, 
+                        background: 'white', 
+                        borderRadius: 32, 
+                        border: '1px solid var(--border-soft)', 
+                        cursor: 'pointer', 
+                        transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)', 
+                        position: 'relative',
+                        boxShadow: 'var(--shadow-soft)'
+                      }}
+                      onMouseOver={e => { 
+                        e.currentTarget.style.transform = 'translateY(-8px)'; 
+                        e.currentTarget.style.borderColor = 'var(--olive-400)'; 
+                        e.currentTarget.style.boxShadow = '0 30px 60px rgba(0,0,0,0.12)'; 
+                      }}
+                      onMouseOut={e => { 
+                        e.currentTarget.style.transform = 'translateY(0)'; 
+                        e.currentTarget.style.borderColor = 'var(--border-soft)'; 
+                        e.currentTarget.style.boxShadow = 'var(--shadow-soft)'; 
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+                        <div style={{ 
+                          width: 64, 
+                          height: 64, 
+                          background: 'linear-gradient(135deg, var(--sage-100), var(--sage-200))', 
+                          borderRadius: 20, 
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center', 
+                          color: 'var(--olive-900)',
+                          boxShadow: '0 8px 16px rgba(97, 115, 76, 0.1)'
+                        }}>
+                          <Building2 size={32} />
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {[
+                            { role: 'S', status: inst.maintenance_staff, label: 'Staff' },
+                            { role: 'T', status: inst.maintenance_students, label: 'Students' },
+                            { role: 'H', status: inst.maintenance_hod, label: 'HOD' }
+                          ].map((item, idx) => (
+                            <div 
+                              key={idx} 
+                              title={`${item.label}: ${item.status ? 'Locked' : 'Active'}`}
+                              style={{ 
+                                width: 32, 
+                                height: 32, 
+                                borderRadius: 10, 
+                                background: item.status ? '#fee2e2' : '#dcfce7', 
+                                color: item.status ? '#ef4444' : '#10b981', 
+                                fontSize: '0.8rem', 
+                                fontWeight: 900, 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'center', 
+                                border: `2px solid ${item.status ? '#fecaca' : '#a7f3d0'}`,
+                                transition: 'all 0.2s ease'
+                              }}
+                            >
+                              {item.role}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      
+                      <h3 style={{ 
+                        fontSize: '1.4rem', 
+                        fontWeight: 900, 
+                        color: 'var(--olive-950)', 
+                        marginBottom: 8, 
+                        lineHeight: 1.3,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {inst.name}
+                      </h3>
+                      
+                      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 24, flexWrap: 'wrap' }}>
+                        <span style={{ 
+                          fontSize: '0.8rem', 
+                          fontWeight: 800, 
+                          color: 'var(--text-soft)', 
+                          background: 'var(--bg-2)', 
+                          padding: '6px 12px', 
+                          borderRadius: 12 
+                        }}>
+                          ID: {inst.institution_id}
+                        </span>
+                        <span style={{ 
+                          fontSize: '0.8rem', 
+                          fontWeight: 800, 
+                          color: 'var(--text-soft)', 
+                          background: 'var(--bg-2)', 
+                          padding: '6px 12px', 
+                          borderRadius: 12 
+                        }}>
+                          {inst.short_code}
+                        </span>
+                      </div>
+                      
+                      <div style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center', 
+                        borderTop: '1px solid var(--border-soft)', 
+                        paddingTop: 20 
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ 
+                            width: 10, 
+                            height: 10, 
+                            borderRadius: '50%', 
+                            background: inst.is_active ? '#10b981' : '#ef4444' 
+                          }} />
+                          <span style={{ 
+                            fontSize: '0.85rem', 
+                            fontWeight: 800, 
+                            color: inst.is_active ? '#059669' : '#dc2626', 
+                            textTransform: 'uppercase' 
+                          }}>
+                            {inst.is_active ? 'Active' : 'Inactive'}
+                          </span>
+                        </div>
+                        
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button 
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              fetchInstitutionHub(inst); 
+                            }} 
+                            style={{ 
+                              background: 'var(--olive-900)', 
+                              color: 'white', 
+                              border: 'none', 
+                              padding: '8px 16px', 
+                              borderRadius: '10px', 
+                              fontSize: '0.8rem', 
+                              fontWeight: '700', 
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6
+                            }}
+                          >
+                            <Settings size={14} /> Manage
+                          </button>
+                          <button 
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              setShowDeleteConfirm(inst); 
+                            }} 
+                            style={{ 
+                              background: 'none', 
+                              border: 'none', 
+                              color: '#ef4444', 
+                              cursor: 'pointer', 
+                              padding: 8,
+                              borderRadius: 8,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                            title="Delete Institution"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* GLOBAL PERMISSIONS */}
-            <div className="surface-card" style={{ padding: 40, borderRadius: 32, background: 'white', border: '1px solid var(--border-soft)' }}>
+            <div className="surface-card" style={{ padding: 40, borderRadius: 32, background: 'white', border: '1px solid var(--border-soft)', boxShadow: 'var(--shadow-soft)' }}>
               <h2 style={{ fontSize: '1.6rem', fontWeight: 900, color: 'var(--olive-900)', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 32 }}>
                 <Shield size={28} /> Global System Permissions
               </h2>
@@ -345,8 +593,24 @@ const AdminDashboard = () => {
                 ].map((p, i) => (
                   <div key={i} style={{ padding: 28, background: 'var(--bg-2)', borderRadius: 24, border: '1px solid var(--border-soft)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-                      <div style={{ width: 48, height: 48, borderRadius: 14, background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--olive-700)' }}><p.icon size={24} /></div>
-                      <button onClick={() => toggleGlobalMaintenance(p.role, p.current)} style={{ padding: '8px 16px', borderRadius: 12, border: 'none', background: p.current ? '#ef4444' : '#10b981', color: 'white', fontSize: '0.8rem', fontWeight: 900, cursor: 'pointer' }}>{p.current ? 'LOCKED' : 'ACTIVE'}</button>
+                      <div style={{ width: 48, height: 48, borderRadius: 14, background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--olive-700)' }}>
+                        <p.icon size={24} />
+                      </div>
+                      <button 
+                        onClick={() => toggleGlobalMaintenance(p.role, p.current)} 
+                        style={{ 
+                          padding: '8px 16px', 
+                          borderRadius: 12, 
+                          border: 'none', 
+                          background: p.current ? '#ef4444' : '#10b981', 
+                          color: 'white', 
+                          fontSize: '0.8rem', 
+                          fontWeight: 900, 
+                          cursor: 'pointer' 
+                        }}
+                      >
+                        {p.current ? 'LOCKED' : 'ACTIVE'}
+                      </button>
                     </div>
                     <h4 style={{ fontSize: '1.2rem', fontWeight: 850, color: 'var(--olive-900)', marginBottom: 8 }}>{p.label}</h4>
                   </div>
@@ -361,6 +625,7 @@ const AdminDashboard = () => {
             <div style={{ display: 'flex', gap: 12, marginBottom: 32 }}>
               {[
                 { id: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+                { id: 'branding', label: 'College Branding', icon: Award },
                 { id: 'departments', label: 'Departments', icon: Building2 },
                 { id: 'staff', label: 'Personnel', icon: Users },
                 { id: 'students', label: 'Students', icon: GraduationCap },
@@ -394,6 +659,534 @@ const AdminDashboard = () => {
                             <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)', fontWeight: 800 }}>{m.label}</div>
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTab === 'branding' && (
+                    <div className="animate-fade-in">
+                      <div style={{ marginBottom: 40 }}>
+                        <h3 style={{ fontSize: '1.8rem', fontWeight: 900, color: '#2d5016', margin: 0 }}>College Branding & Identity</h3>
+                        <p style={{ color: '#6b7280', margin: '8px 0 0' }}>Configure college information, logo, and branding for reports and headers.</p>
+                      </div>
+
+                      {/* Preview Section */}
+                      <div style={{ 
+                        marginBottom: 40, 
+                        padding: 32, 
+                        background: 'linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%)', 
+                        borderRadius: 24, 
+                        border: '2px solid #e5e7eb',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 24
+                      }}>
+                        {/* Logo Preview */}
+                        <div style={{ 
+                          width: 120, 
+                          height: 120, 
+                          borderRadius: 20, 
+                          background: 'white', 
+                          border: '2px solid #d1d5db',
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                          overflow: 'hidden'
+                        }}>
+                          {(brandingForm.logo_url || hubData.branding?.logo_display_url) ? (
+                            <img 
+                              src={brandingForm.logo_url || hubData.branding?.logo_display_url} 
+                              alt="College Logo" 
+                              style={{ 
+                                width: '100%', 
+                                height: '100%', 
+                                objectFit: 'contain' 
+                              }}
+                              onError={(e) => {
+                                e.target.style.display = 'none';
+                                e.target.nextSibling.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          <div style={{ 
+                            display: (brandingForm.logo_url || hubData.branding?.logo_display_url) ? 'none' : 'flex',
+                            alignItems: 'center', 
+                            justifyContent: 'center',
+                            color: '#9ca3af',
+                            fontSize: '14px',
+                            fontWeight: '600',
+                            textAlign: 'center',
+                            padding: 16,
+                            flexDirection: 'column'
+                          }}>
+                            <Award size={32} style={{ marginBottom: 8 }} />
+                            Logo Preview
+                          </div>
+                        </div>
+
+                        {/* College Info Preview */}
+                        <div style={{ flex: 1 }}>
+                          <h2 style={{ 
+                            fontSize: '2rem', 
+                            fontWeight: '900', 
+                            color: '#2d5016', 
+                            margin: '0 0 8px',
+                            lineHeight: 1.2
+                          }}>
+                            {brandingForm.display_name || selectedInstitution.name || 'College Name'}
+                          </h2>
+                          {brandingForm.subheading && (
+                            <p style={{ 
+                              fontSize: '1.1rem', 
+                              color: '#4f7942', 
+                              margin: '0 0 12px',
+                              fontWeight: '600'
+                            }}>
+                              {brandingForm.subheading}
+                            </p>
+                          )}
+                          <div style={{ fontSize: '0.95rem', color: '#6b7280', lineHeight: 1.6 }}>
+                            {brandingForm.address && <div>{brandingForm.address}</div>}
+                            <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
+                              {brandingForm.contact_email && <span>📧 {brandingForm.contact_email}</span>}
+                              {brandingForm.contact_phone && <span>📞 {brandingForm.contact_phone}</span>}
+                            </div>
+                            {brandingForm.established_year && (
+                              <div style={{ marginTop: 8, fontWeight: '600' }}>
+                                Est. {brandingForm.established_year}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Branding Form */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32 }}>
+                        {/* Left Column */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                          <div>
+                            <label style={{ 
+                              display: 'block', 
+                              fontSize: '14px', 
+                              fontWeight: '700', 
+                              color: '#374151', 
+                              marginBottom: 8 
+                            }}>
+                              College Display Name *
+                            </label>
+                            <input
+                              type="text"
+                              value={brandingForm.display_name}
+                              onChange={(e) => setBrandingForm({...brandingForm, display_name: e.target.value})}
+                              placeholder="Full official name for reports and headers"
+                              style={{
+                                width: '100%',
+                                padding: '16px 20px',
+                                borderRadius: '12px',
+                                border: '2px solid #e5e7eb',
+                                fontSize: '16px',
+                                fontWeight: '600',
+                                color: '#374151',
+                                background: 'white',
+                                outline: 'none',
+                                transition: 'border-color 0.2s'
+                              }}
+                              onFocus={(e) => e.target.style.borderColor = '#4f7942'}
+                              onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ 
+                              display: 'block', 
+                              fontSize: '14px', 
+                              fontWeight: '700', 
+                              color: '#374151', 
+                              marginBottom: 8 
+                            }}>
+                              Subheading / Tagline
+                            </label>
+                            <input
+                              type="text"
+                              value={brandingForm.subheading}
+                              onChange={(e) => setBrandingForm({...brandingForm, subheading: e.target.value})}
+                              placeholder="e.g., Excellence in Education, Autonomous Institution"
+                              style={{
+                                width: '100%',
+                                padding: '16px 20px',
+                                borderRadius: '12px',
+                                border: '2px solid #e5e7eb',
+                                fontSize: '16px',
+                                fontWeight: '600',
+                                color: '#374151',
+                                background: 'white',
+                                outline: 'none',
+                                transition: 'border-color 0.2s'
+                              }}
+                              onFocus={(e) => e.target.style.borderColor = '#4f7942'}
+                              onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ 
+                              display: 'block', 
+                              fontSize: '14px', 
+                              fontWeight: '700', 
+                              color: '#374151', 
+                              marginBottom: 8 
+                            }}>
+                              College Logo
+                            </label>
+                            
+                            {/* Logo Upload Options */}
+                            <div style={{ marginBottom: 16 }}>
+                              <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => document.getElementById('logo-file-input').click()}
+                                  style={{
+                                    padding: '12px 20px',
+                                    borderRadius: '12px',
+                                    border: '2px solid #4f7942',
+                                    background: 'white',
+                                    color: '#4f7942',
+                                    fontSize: '14px',
+                                    fontWeight: '700',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 8,
+                                    transition: 'all 0.2s'
+                                  }}
+                                  onMouseOver={(e) => {
+                                    e.target.style.background = '#4f7942';
+                                    e.target.style.color = 'white';
+                                  }}
+                                  onMouseOut={(e) => {
+                                    e.target.style.background = 'white';
+                                    e.target.style.color = '#4f7942';
+                                  }}
+                                >
+                                  <Award size={16} />
+                                  Upload Logo File
+                                </button>
+                                <span style={{ 
+                                  display: 'flex', 
+                                  alignItems: 'center', 
+                                  fontSize: '14px', 
+                                  color: '#6b7280',
+                                  fontWeight: '600'
+                                }}>
+                                  OR
+                                </span>
+                              </div>
+                              
+                              <input
+                                id="logo-file-input"
+                                type="file"
+                                accept="image/*"
+                                style={{ display: 'none' }}
+                                onChange={async (e) => {
+                                  const file = e.target.files[0];
+                                  if (file) {
+                                    try {
+                                      // Upload file to server
+                                      const formData = new FormData();
+                                      formData.append('logo', file);
+                                      formData.append('action', 'upload_logo');
+                                      
+                                      const response = await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, formData, {
+                                        headers: {
+                                          'Content-Type': 'multipart/form-data'
+                                        }
+                                      });
+                                      
+                                      // Update the logo URL with the uploaded file URL
+                                      setBrandingForm({...brandingForm, logo_url: response.data.logo_url});
+                                      alert('Logo uploaded successfully!');
+                                    } catch (err) {
+                                      alert('Failed to upload logo: ' + (err.response?.data?.error || err.message));
+                                    }
+                                  }
+                                }}
+                              />
+                              
+                              <input
+                                type="url"
+                                value={brandingForm.logo_url}
+                                onChange={(e) => setBrandingForm({...brandingForm, logo_url: e.target.value})}
+                                placeholder="Or paste logo URL: https://example.com/logo.png"
+                                style={{
+                                  width: '100%',
+                                  padding: '16px 20px',
+                                  borderRadius: '12px',
+                                  border: '2px solid #e5e7eb',
+                                  fontSize: '16px',
+                                  fontWeight: '600',
+                                  color: '#374151',
+                                  background: 'white',
+                                  outline: 'none',
+                                  transition: 'border-color 0.2s'
+                                }}
+                                onFocus={(e) => e.target.style.borderColor = '#4f7942'}
+                                onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                              />
+                            </div>
+                            <p style={{ fontSize: '12px', color: '#6b7280', marginTop: 4 }}>
+                              Recommended: Square format, minimum 200x200px, PNG or JPG
+                            </p>
+                          </div>
+
+                          <div>
+                            <label style={{ 
+                              display: 'block', 
+                              fontSize: '14px', 
+                              fontWeight: '700', 
+                              color: '#374151', 
+                              marginBottom: 8 
+                            }}>
+                              Official Website
+                            </label>
+                            <input
+                              type="url"
+                              value={brandingForm.website}
+                              onChange={(e) => setBrandingForm({...brandingForm, website: e.target.value})}
+                              placeholder="https://www.college.edu"
+                              style={{
+                                width: '100%',
+                                padding: '16px 20px',
+                                borderRadius: '12px',
+                                border: '2px solid #e5e7eb',
+                                fontSize: '16px',
+                                fontWeight: '600',
+                                color: '#374151',
+                                background: 'white',
+                                outline: 'none',
+                                transition: 'border-color 0.2s'
+                              }}
+                              onFocus={(e) => e.target.style.borderColor = '#4f7942'}
+                              onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                            />
+                          </div>
+                        </div>
+
+                        {/* Right Column */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                          <div>
+                            <label style={{ 
+                              display: 'block', 
+                              fontSize: '14px', 
+                              fontWeight: '700', 
+                              color: '#374151', 
+                              marginBottom: 8 
+                            }}>
+                              Complete Address
+                            </label>
+                            <textarea
+                              value={brandingForm.address}
+                              onChange={(e) => setBrandingForm({...brandingForm, address: e.target.value})}
+                              placeholder="Full postal address including city, state, and PIN code"
+                              rows={4}
+                              style={{
+                                width: '100%',
+                                padding: '16px 20px',
+                                borderRadius: '12px',
+                                border: '2px solid #e5e7eb',
+                                fontSize: '16px',
+                                fontWeight: '600',
+                                color: '#374151',
+                                background: 'white',
+                                outline: 'none',
+                                transition: 'border-color 0.2s',
+                                resize: 'vertical',
+                                fontFamily: 'inherit'
+                              }}
+                              onFocus={(e) => e.target.style.borderColor = '#4f7942'}
+                              onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ 
+                              display: 'block', 
+                              fontSize: '14px', 
+                              fontWeight: '700', 
+                              color: '#374151', 
+                              marginBottom: 8 
+                            }}>
+                              Contact Email
+                            </label>
+                            <input
+                              type="email"
+                              value={brandingForm.contact_email}
+                              onChange={(e) => setBrandingForm({...brandingForm, contact_email: e.target.value})}
+                              placeholder="info@college.edu"
+                              style={{
+                                width: '100%',
+                                padding: '16px 20px',
+                                borderRadius: '12px',
+                                border: '2px solid #e5e7eb',
+                                fontSize: '16px',
+                                fontWeight: '600',
+                                color: '#374151',
+                                background: 'white',
+                                outline: 'none',
+                                transition: 'border-color 0.2s'
+                              }}
+                              onFocus={(e) => e.target.style.borderColor = '#4f7942'}
+                              onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ 
+                              display: 'block', 
+                              fontSize: '14px', 
+                              fontWeight: '700', 
+                              color: '#374151', 
+                              marginBottom: 8 
+                            }}>
+                              Contact Phone
+                            </label>
+                            <input
+                              type="tel"
+                              value={brandingForm.contact_phone}
+                              onChange={(e) => setBrandingForm({...brandingForm, contact_phone: e.target.value})}
+                              placeholder="+91 12345 67890"
+                              style={{
+                                width: '100%',
+                                padding: '16px 20px',
+                                borderRadius: '12px',
+                                border: '2px solid #e5e7eb',
+                                fontSize: '16px',
+                                fontWeight: '600',
+                                color: '#374151',
+                                background: 'white',
+                                outline: 'none',
+                                transition: 'border-color 0.2s'
+                              }}
+                              onFocus={(e) => e.target.style.borderColor = '#4f7942'}
+                              onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                            />
+                          </div>
+
+                          <div>
+                            <label style={{ 
+                              display: 'block', 
+                              fontSize: '14px', 
+                              fontWeight: '700', 
+                              color: '#374151', 
+                              marginBottom: 8 
+                            }}>
+                              Year Established
+                            </label>
+                            <input
+                              type="number"
+                              value={brandingForm.established_year}
+                              onChange={(e) => setBrandingForm({...brandingForm, established_year: e.target.value})}
+                              placeholder="1985"
+                              min="1800"
+                              max={new Date().getFullYear()}
+                              style={{
+                                width: '100%',
+                                padding: '16px 20px',
+                                borderRadius: '12px',
+                                border: '2px solid #e5e7eb',
+                                fontSize: '16px',
+                                fontWeight: '600',
+                                color: '#374151',
+                                background: 'white',
+                                outline: 'none',
+                                transition: 'border-color 0.2s'
+                              }}
+                              onFocus={(e) => e.target.style.borderColor = '#4f7942'}
+                              onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div style={{ marginTop: 40, display: 'flex', gap: 16, justifyContent: 'center' }}>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const response = await api.get(`/admin/v2/institutions/${selectedInstitution.id}/branding/preview/`, {
+                                responseType: 'blob'
+                              });
+                              
+                              // Create blob URL and download
+                              const blob = new Blob([response.data], { type: 'application/pdf' });
+                              const url = window.URL.createObjectURL(blob);
+                              const link = document.createElement('a');
+                              link.href = url;
+                              link.download = `College_Branding_Template_${selectedInstitution.short_code}.pdf`;
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                              window.URL.revokeObjectURL(url);
+                            } catch (err) {
+                              alert('Failed to generate preview: ' + (err.response?.data?.error || err.message));
+                            }
+                          }}
+                          style={{
+                            padding: '16px 32px',
+                            borderRadius: '16px',
+                            border: '2px solid #4f7942',
+                            background: 'white',
+                            color: '#4f7942',
+                            fontSize: '16px',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 12,
+                            transition: 'all 0.2s ease'
+                          }}
+                          onMouseOver={(e) => {
+                            e.target.style.background = '#f8f9fa';
+                            e.target.style.transform = 'translateY(-2px)';
+                          }}
+                          onMouseOut={(e) => {
+                            e.target.style.background = 'white';
+                            e.target.style.transform = 'translateY(0)';
+                          }}
+                        >
+                          <Award size={20} />
+                          Preview PDF Template
+                        </button>
+                        
+                        <button
+                          onClick={handleUpdateBranding}
+                          style={{
+                            padding: '16px 48px',
+                            borderRadius: '16px',
+                            border: 'none',
+                            background: 'linear-gradient(135deg, #4f7942, #2d5016)',
+                            color: 'white',
+                            fontSize: '16px',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            boxShadow: '0 8px 24px rgba(79, 121, 66, 0.3)',
+                            transition: 'all 0.2s ease',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 12
+                          }}
+                          onMouseOver={(e) => {
+                            e.target.style.transform = 'translateY(-2px)';
+                            e.target.style.boxShadow = '0 12px 32px rgba(79, 121, 66, 0.4)';
+                          }}
+                          onMouseOut={(e) => {
+                            e.target.style.transform = 'translateY(0)';
+                            e.target.style.boxShadow = '0 8px 24px rgba(79, 121, 66, 0.3)';
+                          }}
+                        >
+                          <Award size={20} />
+                          Save College Branding
+                        </button>
                       </div>
                     </div>
                   )}

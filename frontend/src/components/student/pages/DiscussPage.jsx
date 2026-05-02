@@ -620,59 +620,68 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
               <p>Be the first to start the conversation!</p>
             </div>
           ) : (
-            messages.map((msg) => (
-              <div key={msg.id} className={`message-wrapper-v2 ${msg.is_self ? "self" : ""}`}>
-                {!msg.is_self && (
-                  <div className="message-avatar-v2" onClick={() => setViewingProfile(msg)}>
-                    {(msg.sender_name || "?")[0]}
-                  </div>
-                )}
-                <div className="message-content-v2">
-                  {!msg.is_self && <span className="message-author-v2">{msg.sender_name}</span>}
-                  <div className="message-bubble-v2">
-                    {msg.is_poll ? (
-                      <div className="poll-container-v2">
-                        <div className="poll-question-v2">{msg.body}</div>
-                        <div className="poll-options-v2">
-                          {msg.poll_options.map((option, idx) => {
-                            const voteCount = msg.poll_results ? msg.poll_results[idx] : 0;
-                            const totalVotes = msg.poll_results ? msg.poll_results.reduce((a, b) => a + b, 0) : 0;
-                            const percent = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
-                            const hasVoted = msg.user_vote === idx;
-                            
-                            return (
-                              <button 
-                                key={idx} 
-                                className={`poll-option-v2 ${hasVoted ? 'voted' : ''}`}
-                                onClick={() => handleVote(msg.id, idx)}
-                              >
-                                <div className="poll-option-bg-v2" style={{ width: `${percent}%` }}></div>
-                                <div className="poll-option-content-v2">
-                                  <div className="poll-option-label-v2">
-                                    {hasVoted && <div className="voted-check-v2">✓</div>}
-                                    <span>{option}</span>
-                                  </div>
-                                  <span className="poll-option-percent-v2">{percent}%</span>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <div className="poll-footer-v2">
-                          <Users size={14} />
-                          {msg.poll_results?.reduce((a, b) => a + b, 0) || 0} total votes
-                        </div>
+            messages.map((msg) => {
+              const isOwnMessage = msg.is_self;
+              
+              return (
+                <div key={msg.id} className={`message-wrapper ${isOwnMessage ? 'own-message' : 'other-message'}`}>
+                  <div className={`message-bubble ${isOwnMessage ? 'own-bubble' : 'other-bubble'}`}>
+                    {!isOwnMessage && (
+                      <div className="message-sender">
+                        <strong>{msg.sender_name}</strong>
+                        {msg.batch_name && <span className="message-batch">({msg.batch_name})</span>}
                       </div>
-                    ) : (
-                      <p>{msg.body || msg.content}</p>
                     )}
-                    <span className="message-time-v2">
-                      {new Date(msg.created_at || msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
+                    
+                    <div className="message-content">
+                      {msg.is_poll ? (
+                        <div className="poll-container-v2">
+                          <div className="poll-question-v2">{msg.body}</div>
+                          <div className="poll-options-v2">
+                            {msg.poll_options.map((option, idx) => {
+                              const voteCount = msg.poll_results ? msg.poll_results[idx] : 0;
+                              const totalVotes = msg.poll_results ? msg.poll_results.reduce((a, b) => a + b, 0) : 0;
+                              const percent = totalVotes > 0 ? Math.round((voteCount / totalVotes) * 100) : 0;
+                              const hasVoted = msg.user_vote === idx;
+                              
+                              return (
+                                <button 
+                                  key={idx} 
+                                  className={`poll-option-v2 ${hasVoted ? 'voted' : ''}`}
+                                  onClick={() => handleVote(msg.id, idx)}
+                                >
+                                  <div className="poll-option-bg-v2" style={{ width: `${percent}%` }}></div>
+                                  <div className="poll-option-content-v2">
+                                    <div className="poll-option-label-v2">
+                                      {hasVoted && <div className="voted-check-v2">✓</div>}
+                                      <span>{option}</span>
+                                    </div>
+                                    <span className="poll-option-percent-v2">{percent}%</span>
+                                  </div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <div className="poll-footer-v2">
+                            <Users size={14} />
+                            {msg.poll_results?.reduce((a, b) => a + b, 0) || 0} total votes
+                          </div>
+                        </div>
+                      ) : (
+                        msg.body || msg.content
+                      )}
+                    </div>
+                    
+                    <div className={`message-time ${isOwnMessage ? 'own-time' : 'other-time'}`}>
+                      {new Date(msg.created_at || msg.timestamp).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      })}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 

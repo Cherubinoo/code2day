@@ -1,15 +1,29 @@
 // Student Analytics Modal - Detailed view of individual student performance
 import { useState, useEffect } from 'react';
-import { X, TrendingUp, Clock, Award, Activity, FileText, Briefcase, Layout } from 'lucide-react';
+import { X, TrendingUp, Award, Activity, FileText, Briefcase, Layout } from 'lucide-react';
+import ReportFilterModal from '../common/ReportFilterModal';
 
 const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showReportFilter, setShowReportFilter] = useState(false);
 
   useEffect(() => {
     loadAnalytics();
   }, [registerNumber]);
+
+  const handleGenerateReport = (filters) => {
+    const params = new URLSearchParams();
+    if (filters.reportType !== 'overall') params.append('type', filters.reportType);
+    if (filters.batch) params.append('batch', filters.batch);
+    if (filters.dateFrom) params.append('date_from', filters.dateFrom);
+    if (filters.dateTo) params.append('date_to', filters.dateTo);
+    if (filters.topic) params.append('topic', filters.topic);
+    
+    const url = `/api/students/${registerNumber}/report/?${params.toString()}`;
+    window.open(url, '_blank');
+  };
 
   async function loadAnalytics() {
     try {
@@ -155,12 +169,29 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
           </div>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             <button 
-              onClick={() => window.open(`/api/students/${student.register_number}/report/`, '_blank')}
+              onClick={() => setShowReportFilter(true)}
               style={{ 
-                padding: '12px 24px', background: 'var(--olive-900)', color: 'white', 
-                border: 'none', borderRadius: '12px', cursor: 'pointer', fontSize: '14px',
-                display: 'flex', alignItems: 'center', gap: 8, fontWeight: '700',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+                padding: '12px 24px', 
+                background: '#2d5016', 
+                color: 'white', 
+                border: 'none', 
+                borderRadius: '12px', 
+                cursor: 'pointer', 
+                fontSize: '14px',
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: 8, 
+                fontWeight: '700',
+                boxShadow: '0 4px 12px rgba(45, 80, 22, 0.3)',
+                transition: 'all 0.2s ease'
+              }}
+              onMouseOver={(e) => {
+                e.target.style.background = '#1f3a0f';
+                e.target.style.transform = 'translateY(-1px)';
+              }}
+              onMouseOut={(e) => {
+                e.target.style.background = '#2d5016';
+                e.target.style.transform = 'translateY(0)';
               }}
             >
               <FileText size={18} /> Download Report
@@ -168,12 +199,12 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
             <button
               onClick={onClose}
               style={{
-                background: 'var(--bg-2)',
+                background: '#f3f4f6',
                 border: 'none',
                 cursor: 'pointer',
                 padding: '12px',
                 borderRadius: '12px',
-                color: 'var(--text-hard)',
+                color: '#374151',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -445,6 +476,18 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
           )}
         </div>
       </div>
+
+      {/* Report Filter Modal */}
+      <ReportFilterModal
+        show={showReportFilter}
+        onClose={() => setShowReportFilter(false)}
+        onGenerate={handleGenerateReport}
+        title={`Generate Report for ${analytics?.student?.name || 'Student'}`}
+        batches={analytics?.student?.batch ? [analytics.student.batch] : []}
+        showBatchFilter={false} // Hide batch filter for individual student
+        showReportTypeFilter={true}
+        showTopicFilter={true}
+      />
     </div>
   );
 };

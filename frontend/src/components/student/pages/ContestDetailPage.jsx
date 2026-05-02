@@ -1,6 +1,6 @@
-// Contest Detail Page - Shows all problems in the contest
+// Contest Detail Page - Shows all problems in the contest with ProblemsPage styling
 import { useState, useEffect } from 'react';
-import { ArrowLeft, CheckCircle, Circle, Clock, Trophy } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Circle, Clock, Trophy, Play } from 'lucide-react';
 import { getCsrfToken } from '../../../lib/appUtils';
 
 const ContestDetailPage = ({ contestId, onBack, onSelectProblem }) => {
@@ -41,6 +41,33 @@ const ContestDetailPage = ({ contestId, onBack, onSelectProblem }) => {
       }
     } catch (err) {
       console.error('Auto-submit failed:', err);
+    }
+  }
+
+  async function handleStopContest() {
+    if (!confirm('Are you sure you want to stop this contest? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/student/contests/${contestId}/stop/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'X-CSRFToken': getCsrfToken(),
+        },
+      });
+
+      if (res.ok) {
+        alert('Contest stopped successfully. Your current progress has been saved.');
+        // Reload contest to get updated status
+        await loadContest();
+      } else {
+        const data = await res.json();
+        alert(data.detail || 'Failed to stop contest');
+      }
+    } catch (err) {
+      alert(`Error: ${err.message}`);
     }
   }
 
@@ -127,224 +154,176 @@ const ContestDetailPage = ({ contestId, onBack, onSelectProblem }) => {
   const problems = contest.problems || [];
   const solvedCount = problems.filter(p => p.is_solved).length;
   const isTimeUp = timeRemaining !== null && timeRemaining <= 0;
+  const isTimeWarning = timeRemaining !== null && timeRemaining < 5 * 60 * 1000; // Less than 5 minutes
+  const isProgrammingContest = contest.contest_type === 'programming';
 
   console.log('Rendering contest with problems:', problems); // Debug log
 
   return (
-    <div style={{ padding: '20px 0' }}>
-      {/* Header */}
-      <div style={{
-        marginBottom: 24,
-        padding: 20,
-        background: 'white',
-        borderRadius: 12,
-        border: '1px solid #e5e7eb',
-      }}>
-        <button
-          onClick={onBack}
-          style={{
-            padding: '8px 12px',
-            borderRadius: 6,
-            border: '1px solid #d1d5db',
-            background: 'white',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            marginBottom: 16,
-          }}
-        >
-          <ArrowLeft size={16} />
-          Back to Contests
-        </button>
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-          <div style={{ flex: 1 }}>
-            <h2 style={{ margin: '0 0 8px', fontSize: 24 }}>{contest.title}</h2>
-            {contest.description && (
-              <p style={{ margin: '0 0 16px', color: '#666', fontSize: 14 }}>
-                {contest.description}
-              </p>
-            )}
-
-            <div style={{ display: 'flex', gap: 24, fontSize: 14 }}>
-              <div>
-                <span style={{ color: '#666' }}>Problems: </span>
-                <strong>{problems.length}</strong>
-              </div>
-              <div>
-                <span style={{ color: '#666' }}>Solved: </span>
-                <strong style={{ color: '#059669' }}>{solvedCount}/{problems.length}</strong>
-              </div>
-              {contest.participation && (
-                <div>
-                  <span style={{ color: '#666' }}>Score: </span>
-                  <strong style={{ color: '#f59e0b' }}>{contest.participation.total_score}</strong>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Timer */}
-          {timeRemaining !== null && (
-            <div style={{
-              padding: '12px 20px',
-              borderRadius: 8,
-              background: isTimeUp ? '#fee2e2' : timeRemaining < 5 * 60 * 1000 ? '#fef3c7' : '#e0e7ff',
-              color: isTimeUp ? '#dc2626' : timeRemaining < 5 * 60 * 1000 ? '#d97706' : '#4f46e5',
-              fontWeight: 600,
-              fontSize: 18,
+    <div className="page-stack">
+      {/* Header - ProblemsPage style */}
+      <section className="page-header compact-header">
+        <div>
+          <button
+            onClick={onBack}
+            className="back-to-list-btn"
+            style={{
+              padding: '8px 12px',
+              borderRadius: 6,
+              border: '1px solid #d1d5db',
+              background: 'white',
+              cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
-              gap: 8,
-              textAlign: 'center',
-            }}>
-              <Clock size={20} />
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 400 }}>Time Remaining</div>
-                <div>{formatTime(timeRemaining)}</div>
-              </div>
-            </div>
+              gap: 6,
+              marginBottom: 12,
+            }}
+          >
+            <ArrowLeft size={16} />
+            Back to Contests
+          </button>
+          <p className="kicker">Contest Workspace</p>
+          <h1>{contest.title}</h1>
+          {contest.description && (
+            <p style={{ margin: '8px 0 0', color: '#666', fontSize: 14 }}>
+              {contest.description}
+            </p>
           )}
         </div>
+        
+        <div className="problem-header-meta">
+          {/* Timer */}
+          {timeRemaining !== null && (
+            <div className="workspace-brief contest-timer-brief">
+              <span>Time Remaining</span>
+              <strong className={`timer-countdown ${isTimeUp ? 'time-up' : isTimeWarning ? 'time-warning' : ''}`}>
+                {formatTime(timeRemaining)}
+              </strong>
+            </div>
+          )}
+          
+          {/* Stats */}
+          <div className="stats-summary-row">
+            <span className="stat-chip total">{problems.length} Problems</span>
+            <span className="stat-chip easy">{solvedCount} Solved</span>
+            {contest.participation && (
+              <span className="stat-chip medium">Score: {contest.participation.total_score}</span>
+            )}
+          </div>
+          
+          {/* Stop Contest Button - Only for programming contests */}
+          {isProgrammingContest && !isTimeUp && contest.participation?.is_active && (
+            <button 
+              type="button" 
+              className="primary-button dense-action"
+              onClick={handleStopContest}
+              style={{ background: '#dc2626' }}
+            >
+              Stop Contest
+            </button>
+          )}
+        </div>
+      </section>
 
-        {isTimeUp && (
+      {/* Time Up Warning */}
+      {isTimeUp && (
+        <section className="surface-card" style={{ marginBottom: 16 }}>
           <div style={{
-            marginTop: 16,
             padding: 12,
             background: '#fee2e2',
             borderRadius: 8,
             color: '#dc2626',
             fontSize: 14,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
           }}>
-            ⏰ Contest has ended. You can view problems but cannot submit solutions.
+            <Clock size={16} />
+            Contest has ended. You can view problems but cannot submit solutions.
           </div>
-        )}
-      </div>
+        </section>
+      )}
 
-      {/* Problems List */}
-      <div>
-        <h3 style={{ fontSize: 18, marginBottom: 16 }}>Problems</h3>
+      {/* Problems Table - ProblemsPage style */}
+      <section className="surface-card problems-table-card">
         {problems.length === 0 ? (
-          <div style={{
-            padding: 40,
-            textAlign: 'center',
-            background: 'white',
-            borderRadius: 12,
-            border: '1px solid #e5e7eb',
-          }}>
-            <p style={{ color: '#666' }}>No problems in this contest</p>
+          <div className="empty-problems-state">
+            <span className="empty-icon">🔍</span>
+            <h3>No problems found</h3>
+            <p>This contest doesn't have any problems yet.</p>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {problems.map((problem, idx) => (
-              <div
-                key={problem.id}
-                onClick={() => {
-                  console.log('Problem clicked:', problem.slug, 'isTimeUp:', isTimeUp); // Debug log
-                  if (!isTimeUp) {
-                    onSelectProblem(problem.slug);
-                  }
-                }}
-                style={{
-                  padding: 20,
-                  background: 'white',
-                  borderRadius: 12,
-                  border: problem.is_solved ? '2px solid #d1fae5' : '1px solid #e5e7eb',
-                  cursor: isTimeUp ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.2s',
-                  opacity: isTimeUp ? 0.6 : 1,
-                }}
-                onMouseEnter={(e) => {
-                  if (!isTimeUp) {
-                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                    e.currentTarget.style.transform = 'translateY(-2px)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.boxShadow = 'none';
-                  e.currentTarget.style.transform = 'translateY(0)';
-                }}
-              >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                {/* Status Icon */}
-                <div style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: '50%',
-                  background: problem.is_solved ? '#d1fae5' : '#f3f4f6',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}>
-                  {problem.is_solved ? (
-                    <CheckCircle size={20} style={{ color: '#059669' }} />
-                  ) : (
-                    <Circle size={20} style={{ color: '#9ca3af' }} />
-                  )}
-                </div>
+          <>
+            {/* Table header */}
+            <div className="problems-table-head">
+              <span className="col-num">#</span>
+              <span className="col-title">Title</span>
+              <span className="col-tags">Tags</span>
+              <span className="col-diff">Difficulty</span>
+              <span className="col-status">Status</span>
+              <span className="col-action" />
+            </div>
 
-                {/* Problem Info */}
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-                    <span style={{ fontSize: 14, color: '#666', fontWeight: 500 }}>
-                      Problem {idx + 1}
-                    </span>
-                    <h4 style={{ margin: 0, fontSize: 16 }}>{problem.title}</h4>
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span style={{
-                      padding: '2px 8px',
-                      borderRadius: 12,
-                      fontSize: 11,
-                      background: problem.difficulty === 'Easy' ? '#d1fae5' :
-                                 problem.difficulty === 'Medium' ? '#fef3c7' : '#fee2e2',
-                      color: problem.difficulty === 'Easy' ? '#059669' :
-                             problem.difficulty === 'Medium' ? '#d97706' : '#dc2626',
-                    }}>
+            {/* Rows */}
+            <div className="problems-table-body">
+              {problems.map((problem, idx) => (
+                <button
+                  key={problem.id}
+                  type="button"
+                  className="problem-table-row"
+                  onClick={() => {
+                    console.log('Problem clicked:', problem.slug, 'isTimeUp:', isTimeUp); // Debug log
+                    if (!isTimeUp) {
+                      onSelectProblem(problem.slug);
+                    }
+                  }}
+                  disabled={isTimeUp}
+                  style={{
+                    opacity: isTimeUp ? 0.6 : 1,
+                    cursor: isTimeUp ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  <span className="col-num">{idx + 1}</span>
+
+                  <span className="col-title">
+                    <strong>{problem.title}</strong>
+                  </span>
+
+                  <span className="col-tags">
+                    {(problem.tags || []).map((tag) => (
+                      <span key={tag} className="tag compact-tag">{tag}</span>
+                    ))}
+                  </span>
+
+                  <span className="col-diff">
+                    <span className={`difficulty-chip ${problem.difficulty.toLowerCase()}`}>
                       {problem.difficulty}
                     </span>
-                    {problem.tags && problem.tags.length > 0 && (
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        {problem.tags.slice(0, 3).map((tag, i) => (
-                          <span key={i} style={{
-                            padding: '2px 8px',
-                            borderRadius: 12,
-                            fontSize: 11,
-                            background: '#e0e7ff',
-                            color: '#4338ca',
-                          }}>
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                  </span>
 
-                {/* Solve Button */}
-                {!isTimeUp && (
-                  <button
-                    style={{
-                      padding: '8px 16px',
-                      borderRadius: 6,
-                      border: 'none',
-                      background: problem.is_solved ? '#d1fae5' : '#4f46e5',
-                      color: problem.is_solved ? '#059669' : 'white',
-                      cursor: 'pointer',
-                      fontSize: 14,
-                      fontWeight: 500,
-                    }}
-                  >
-                    {problem.is_solved ? 'Solved ✓' : 'Solve'}
-                  </button>
-                )}
-              </div>
+                  <span className="col-status">
+                    <span className={`status-badge ${problem.is_solved ? 'status-solved' : 'status-todo'}`}>
+                      {problem.is_solved ? 'Solved' : 'Todo'}
+                    </span>
+                  </span>
+
+                  <span className="col-action">
+                    {!isTimeUp && (
+                      <span className="solve-arrow">
+                        {problem.is_solved ? 'Review →' : 'Solve →'}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              ))}
             </div>
-          ))}
-        </div>
+
+            <p className="table-footer-note">
+              {problems.length} problem{problems.length !== 1 ? "s" : ""} total • {solvedCount} solved
+            </p>
+          </>
         )}
-      </div>
+      </section>
     </div>
   );
 };

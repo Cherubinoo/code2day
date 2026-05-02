@@ -6,7 +6,7 @@ from io import BytesIO
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Q, Sum, Avg, Max, Max
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -79,8 +79,110 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate
+from reportlab.platypus.frames import Frame
+from reportlab.lib.utils import ImageReader
+import requests
+from PIL import Image as PILImage
+import io
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# PDF Watermark Utility
+# ---------------------------------------------------------------------------
+
+class WatermarkDocTemplate(BaseDocTemplate):
+    """Custom document template that adds watermark to all pages"""
+    
+    def __init__(self, filename, institution=None, **kwargs):
+        BaseDocTemplate.__init__(self, filename, **kwargs)
+        self.institution = institution
+        self.watermark_image = None
+        
+        # Try to get watermark image
+        if institution and institution.logo_display_url:
+            try:
+                self.watermark_image = self._get_watermark_image(institution.logo_display_url)
+            except Exception as e:
+                logger.warning(f"Failed to load watermark image: {e}")
+        
+        # Add page template with frame
+        frame = Frame(
+            self.leftMargin, self.bottomMargin, 
+            self.width, self.height, 
+            id='normal'
+        )
+        template = PageTemplate(id='main', frames=frame, onPage=self._add_watermark)
+        self.addPageTemplates([template])
+    
+    def _get_watermark_image(self, logo_url):
+        """Download and prepare watermark image"""
+        try:
+            if logo_url.startswith('http'):
+                # Download from URL
+                response = requests.get(logo_url, timeout=10)
+                response.raise_for_status()
+                image_data = response.content
+            else:
+                # Local file path
+                with open(logo_url, 'rb') as f:
+                    image_data = f.read()
+            
+            # Process image with PIL
+            pil_image = PILImage.open(io.BytesIO(image_data))
+            
+            # Convert to RGBA if needed
+            if pil_image.mode != 'RGBA':
+                pil_image = pil_image.convert('RGBA')
+            
+            # Make it semi-transparent for watermark effect
+            alpha = pil_image.split()[-1]
+            alpha = alpha.point(lambda p: p * 0.15)  # 15% opacity
+            pil_image.putalpha(alpha)
+            
+            # Convert back to bytes
+            output = io.BytesIO()
+            pil_image.save(output, format='PNG')
+            output.seek(0)
+            
+            return ImageReader(output)
+        except Exception as e:
+            logger.error(f"Error processing watermark image: {e}")
+            return None
+    
+    def _add_watermark(self, canvas, doc):
+        """Add watermark to each page"""
+        if not self.watermark_image:
+            return
+        
+        try:
+            # Calculate watermark position (center of page)
+            page_width, page_height = A4
+            watermark_size = min(page_width, page_height) * 0.4  # 40% of page size
+            
+            x = (page_width - watermark_size) / 2
+            y = (page_height - watermark_size) / 2
+            
+            # Draw watermark
+            canvas.drawImage(
+                self.watermark_image, 
+                x, y, 
+                width=watermark_size, 
+                height=watermark_size,
+                mask='auto'
+            )
+        except Exception as e:
+            logger.error(f"Error adding watermark: {e}")
+
+
+def create_watermarked_pdf(buffer, institution=None, **kwargs):
+    """Create a PDF document with watermark support"""
+    if institution and institution.logo_display_url:
+        return WatermarkDocTemplate(buffer, institution=institution, **kwargs)
+    else:
+        return SimpleDocTemplate(buffer, **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -3141,9 +3243,13 @@ class ContestListCreateView(APIView):
         from datetime import datetime
         start_time_str = request.data.get('start_time')
         end_time_str = request.data.get('end_time')
+        access_start_time_str = request.data.get('access_start_time')
+        access_end_time_str = request.data.get('access_end_time')
         
         start_time = None
         end_time = None
+        access_start_time = None
+        access_end_time = None
         
         if start_time_str:
             try:
@@ -3159,6 +3265,20 @@ class ContestListCreateView(APIView):
                 end_time = timezone.make_aware(naive_dt, timezone.get_current_timezone())
             except (ValueError, TypeError):
                 pass
+        
+        if access_start_time_str:
+            try:
+                naive_dt = datetime.fromisoformat(access_start_time_str)
+                access_start_time = timezone.make_aware(naive_dt, timezone.get_current_timezone())
+            except (ValueError, TypeError):
+                pass
+        
+        if access_end_time_str:
+            try:
+                naive_dt = datetime.fromisoformat(access_end_time_str)
+                access_end_time = timezone.make_aware(naive_dt, timezone.get_current_timezone())
+            except (ValueError, TypeError):
+                pass
 
         contest = Contest.objects.create(
             title=title,
@@ -3169,6 +3289,10 @@ class ContestListCreateView(APIView):
             start_time=start_time,
             end_time=end_time,
             duration_minutes=request.data.get('duration_minutes', 60),
+            # New session-based timing fields
+            access_start_time=access_start_time,
+            access_end_time=access_end_time,
+            session_duration_minutes=request.data.get('session_duration_minutes', 60),
             status=initial_status,
             contest_type=request.data.get('contest_type', 'programming'),
             submitted_for_approval_at=timezone.now() if submit_for_approval else None,
@@ -3443,7 +3567,10 @@ class AptitudeContestSubmitView(APIView):
         participation, _ = ContestParticipation.objects.get_or_create(
             contest=contest,
             student=student,
-            defaults={'has_started': True}
+            defaults={
+                'has_started': True,
+                'manually_stopped': False
+            }
         )
         
         # Recalculate total score and solved count for accuracy
@@ -4893,14 +5020,21 @@ class StudentContestListView(APIView):
 
         student = request.user.student_profile
 
-        # Get contests where student is assigned (directly or via batch) and status is published
+        # Get contests where student is assigned via:
+        # 1. Direct assignment to student
+        # 2. Assignment to student's batch AND department (both must match)
+        # Only show contests that are published or completed (after HOD approval)
         contests = Contest.objects.filter(
-            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
-            status='published'
+            Q(assigned_students=student) | 
+            Q(assigned_batches__contains=student.batch, department=student.department),
+            status__in=['published', 'completed']  # Only published/completed contests visible to students
         ).distinct().select_related('created_by', 'department').prefetch_related('problems')
 
         data = []
         for contest in contests:
+            # Update contest status if it has ended
+            contest.update_status_if_ended()
+            
             # Check if student has started this contest
             participation = ContestParticipation.objects.filter(
                 contest=contest,
@@ -4918,18 +5052,9 @@ class StudentContestListView(APIView):
                     participation.refresh_from_db()
 
             # Check if contest is currently active
-            now = timezone.now()
-            is_active = False
-            is_upcoming = False
-            is_ended = False
-            
-            if contest.start_time and contest.end_time:
-                if now < contest.start_time:
-                    is_upcoming = True
-                elif contest.start_time <= now <= contest.end_time:
-                    is_active = True
-                else:
-                    is_ended = True
+            is_active = contest.is_active
+            is_upcoming = contest.is_upcoming
+            is_ended = contest.is_ended
 
             # Get question counts
             problem_count = contest.problems.count()
@@ -4974,9 +5099,10 @@ class StudentContestDetailView(APIView):
         student = request.user.student_profile
 
         contest = Contest.objects.filter(
-            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
+            Q(assigned_students=student) | 
+            Q(assigned_batches__contains=student.batch, department=student.department),
             id=contest_id,
-            status='published'
+            status__in=['published', 'completed']  # Only published/completed contests
         ).select_related('created_by', 'department').prefetch_related('problems', 'aptitude_questions').first()
 
         if not contest:
@@ -5009,15 +5135,8 @@ class StudentContestDetailView(APIView):
             )
 
         # Check if contest is active
-        now = timezone.now()
-        is_active = False
-        is_ended = False
-        
-        if contest.start_time and contest.end_time:
-            if contest.start_time <= now <= contest.end_time:
-                is_active = True
-            elif now > contest.end_time:
-                is_ended = True
+        is_active = contest.is_active
+        is_ended = contest.is_ended
 
         # Get questions/problems with status
         problems_data = []
@@ -5086,7 +5205,7 @@ class StudentContestDetailView(APIView):
 
 
 class StudentContestStartView(APIView):
-    """Start a contest (creates participation record)"""
+    """Start a contest (creates participation record with session timing)"""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, contest_id):
@@ -5099,9 +5218,10 @@ class StudentContestStartView(APIView):
         student = request.user.student_profile
 
         contest = Contest.objects.filter(
-            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
+            Q(assigned_students=student) | 
+            Q(assigned_batches__contains=student.batch, department=student.department),
             id=contest_id,
-            status='published'
+            status__in=['published', 'completed']  # Only published/completed contests
         ).first()
 
         if not contest:
@@ -5110,19 +5230,17 @@ class StudentContestStartView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # Check if contest is active
-        now = timezone.now()
-        if contest.start_time and contest.end_time:
-            if now < contest.start_time:
-                return Response(
-                    {"detail": "Contest has not started yet."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            if now > contest.end_time:
-                return Response(
-                    {"detail": "Contest has ended."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        # Check if contest access is available
+        if contest.is_upcoming:
+            return Response(
+                {"detail": "Contest access has not started yet."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if contest.is_ended:
+            return Response(
+                {"detail": "Contest access has ended. No new participants allowed."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         # Check if already started
         participation = ContestParticipation.objects.filter(
@@ -5131,28 +5249,46 @@ class StudentContestStartView(APIView):
         ).first()
 
         if participation:
-            return Response(
-                {"detail": "You have already started this contest."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            # If session has expired, auto-submit
+            if participation.is_session_expired and participation.is_active:
+                participation.end_participation(auto_submitted=True)
+                return Response(
+                    {"detail": "Your session has expired. Contest has been auto-submitted."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            return Response({
+                "detail": "Contest session already started.",
+                "participation": {
+                    "started_at": participation.started_at,
+                    "session_end_time": participation.session_end_time,
+                    "remaining_time_seconds": participation.remaining_time_seconds,
+                    "is_active": participation.is_active,
+                    "contest_id": contest.id,
+                }
+            })
 
-        # Create participation
+        # Create participation with session timing
         participation = ContestParticipation.objects.create(
             contest=contest,
-            student=student
+            student=student,
+            manually_stopped=False  # Explicitly set default value
         )
 
         return Response({
-            "detail": "Contest started successfully.",
+            "detail": "Contest session started successfully.",
             "participation": {
                 "started_at": participation.started_at,
+                "session_end_time": participation.session_end_time,
+                "session_duration_minutes": contest.session_duration_minutes or contest.duration_minutes,
+                "remaining_time_seconds": participation.remaining_time_seconds,
                 "contest_id": contest.id,
             }
         })
 
 
 class StudentContestAutoSubmitView(APIView):
-    """Auto-submit contest when time expires"""
+    """Auto-submit contest when session time expires"""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, contest_id):
@@ -5177,30 +5313,166 @@ class StudentContestAutoSubmitView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # End the participation
-        participation.ended_at = timezone.now()
-        participation.is_active = False
-        
-        # Calculate time spent
-        duration = participation.ended_at - participation.started_at
-        participation.time_spent_seconds = int(duration.total_seconds())
+        # Check if session has actually expired
+        if not participation.is_session_expired:
+            return Response(
+                {"detail": "Session has not expired yet."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # End the participation with auto-submit flag
+        participation.end_participation(auto_submitted=True)
         
         # Calculate final score and problems solved
-        submissions = ContestSubmission.objects.filter(
-            contest_id=contest_id,
-            student=student
-        )
+        if participation.contest.contest_type == 'programming':
+            submissions = ContestSubmission.objects.filter(
+                contest_id=contest_id,
+                student=student
+            )
+            participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
+            participation.problems_solved = submissions.filter(status='Accepted').values('problem').distinct().count()
+        else:
+            # Aptitude contest
+            submissions = AptitudeContestSubmission.objects.filter(
+                contest_id=contest_id,
+                student=student
+            )
+            participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
+            participation.problems_solved = submissions.filter(is_correct=True).count()
         
-        participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
-        participation.problems_solved = submissions.filter(status='Accepted').values('problem').distinct().count()
+        participation.save(update_fields=['total_score', 'problems_solved'])
+
+        return Response({
+            "detail": "Contest auto-submitted due to session expiry.",
+            "participation": {
+                "completed_at": participation.completed_at,
+                "time_spent_seconds": participation.time_spent_seconds,
+                "total_score": participation.total_score,
+                "problems_solved": participation.problems_solved,
+                "auto_submitted": participation.auto_submitted,
+            }
+        })
+
+
+class StudentContestStopView(APIView):
+    """Manually stop a contest (student can stop at any time during session)"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, contest_id):
+        if not hasattr(request.user, 'student_profile'):
+            return Response(
+                {"detail": "Student access required."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        try:
+            contest = Contest.objects.get(id=contest_id)
+        except Contest.DoesNotExist:
+            return Response(
+                {"detail": "Contest not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if student has an active participation
+        try:
+            participation = ContestParticipation.objects.get(
+                contest=contest,
+                student=request.user.student_profile,
+                is_active=True
+            )
+        except ContestParticipation.DoesNotExist:
+            return Response(
+                {"detail": "No active participation found for this contest."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if contest is programming type (only programming contests can be stopped manually)
+        if contest.contest_type != 'programming':
+            return Response(
+                {"detail": "Only programming contests can be stopped manually."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Stop the contest
+        participation.is_active = False
+        participation.completed_at = timezone.now()
         
+        # Calculate time spent
+        if participation.started_at:
+            time_spent = timezone.now() - participation.started_at
+            participation.time_spent_seconds = int(time_spent.total_seconds())
+        
+        participation.manually_stopped = True  # Add this field to track manual stops
         participation.save()
 
         return Response({
-            "detail": "Contest auto-submitted successfully.",
+            "detail": "Contest stopped successfully.",
             "participation": {
-                "ended_at": participation.ended_at,
+                "completed_at": participation.completed_at,
                 "time_spent_seconds": participation.time_spent_seconds,
+                "total_score": participation.total_score,
+                "problems_solved": participation.problems_solved,
+                "manually_stopped": True,
+            }
+        })
+
+
+class StudentContestSessionStatusView(APIView):
+    """Get current session status and remaining time"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, contest_id):
+        if not hasattr(request.user, 'student_profile'):
+            return Response(
+                {"detail": "Student access required."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        student = request.user.student_profile
+
+        # Get participation
+        participation = ContestParticipation.objects.filter(
+            contest_id=contest_id,
+            student=student
+        ).first()
+
+        if not participation:
+            return Response(
+                {"detail": "No participation found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if session has expired and auto-submit if needed
+        if participation.is_session_expired and participation.is_active:
+            participation.end_participation(auto_submitted=True)
+            
+            # Calculate final score
+            if participation.contest.contest_type == 'programming':
+                submissions = ContestSubmission.objects.filter(
+                    contest_id=contest_id,
+                    student=student
+                )
+                participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
+                participation.problems_solved = submissions.filter(status='Accepted').values('problem').distinct().count()
+            else:
+                submissions = AptitudeContestSubmission.objects.filter(
+                    contest_id=contest_id,
+                    student=student
+                )
+                participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
+                participation.problems_solved = submissions.filter(is_correct=True).count()
+            
+            participation.save(update_fields=['total_score', 'problems_solved'])
+
+        return Response({
+            "participation": {
+                "started_at": participation.started_at,
+                "session_end_time": participation.session_end_time,
+                "completed_at": participation.completed_at,
+                "remaining_time_seconds": participation.remaining_time_seconds,
+                "is_active": participation.is_active,
+                "is_session_expired": participation.is_session_expired,
+                "auto_submitted": participation.auto_submitted,
                 "total_score": participation.total_score,
                 "problems_solved": participation.problems_solved,
             }
@@ -5221,9 +5493,10 @@ class StudentContestProblemView(APIView):
         student = request.user.student_profile
 
         contest = Contest.objects.filter(
-            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
+            Q(assigned_students=student) | 
+            Q(assigned_batches__contains=student.batch, department=student.department),
             id=contest_id,
-            status='published'
+            status__in=['published', 'completed']  # Only published/completed contests
         ).first()
 
         if not contest:
@@ -5245,8 +5518,7 @@ class StudentContestProblemView(APIView):
             )
 
         # Check if contest has ended
-        now = timezone.now()
-        if contest.end_time and now > contest.end_time:
+        if contest.is_ended:
             return Response(
                 {"detail": "Contest has ended."},
                 status=status.HTTP_400_BAD_REQUEST
@@ -5304,9 +5576,10 @@ class StudentContestSubmitView(APIView):
         student = request.user.student_profile
 
         contest = Contest.objects.filter(
-            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
+            Q(assigned_students=student) | 
+            Q(assigned_batches__contains=student.batch, department=student.department),
             id=contest_id,
-            status='published'
+            status__in=['published', 'completed']  # Only published/completed contests
         ).first()
 
         if not contest:
@@ -5328,8 +5601,7 @@ class StudentContestSubmitView(APIView):
             )
 
         # Check if contest has ended
-        now = timezone.now()
-        if contest.end_time and now > contest.end_time:
+        if contest.is_ended:
             # End participation if still active
             if participation.is_active:
                 participation.end_participation()
@@ -5786,7 +6058,7 @@ class AptitudeQuestionSubmitView(APIView):
 # ---------------------------------------------------------------------------
 
 class StudentReportPDFView(APIView):
-    """Generate a professional PDF performance report for a student."""
+    """Generate a professional PDF performance report for a student with filtering options."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, register_number):
@@ -5805,113 +6077,405 @@ class StudentReportPDFView(APIView):
         if staff_profile.role == 'hod' and student.department != staff_profile.department:
             return Response({"detail": "Access denied (Department mismatch)."}, status=403)
 
-        # Gather data (mirroring StudentDetailView logic)
-        solved_problems = SolvedProblem.objects.filter(student=student).select_related('problem')
+        # Get filter parameters
+        report_type = request.GET.get('type', 'overall')  # overall, aptitude, programming, contests
+        topic_filter = request.GET.get('topic', '')
+        date_from = request.GET.get('date_from', '')
+        date_to = request.GET.get('date_to', '')
+
+        # Create PDF with enhanced template and watermark
+        buffer = BytesIO()
+        doc = create_watermarked_pdf(
+            buffer, 
+            institution=student.institution,
+            pagesize=A4, 
+            topMargin=0.5*inch, 
+            bottomMargin=0.5*inch
+        )
+        
+        # Custom styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=18,
+            spaceAfter=30,
+            alignment=1,  # Center
+            textColor=colors.HexColor('#2d5016')
+        )
+        
+        header_style = ParagraphStyle(
+            'CustomHeader',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=12,
+            textColor=colors.HexColor('#39482a')
+        )
+        
+        elements = []
+        
+        # College Header
+        institution = student.institution
+        display_name = institution.display_name or institution.name
+        elements.append(Paragraph(f"{display_name}", title_style))
+        
+        if institution.subheading:
+            elements.append(Paragraph(f"{institution.subheading}", styles['Normal']))
+        
+        if institution.address:
+            elements.append(Paragraph(f"{institution.address}", styles['Normal']))
+        
+        contact_info = []
+        if institution.contact_email:
+            contact_info.append(f"Email: {institution.contact_email}")
+        if institution.contact_phone:
+            contact_info.append(f"Phone: {institution.contact_phone}")
+        if institution.website:
+            contact_info.append(f"Website: {institution.website}")
+        
+        if contact_info:
+            elements.append(Paragraph(" | ".join(contact_info), styles['Normal']))
+        
+        elements.append(Spacer(1, 0.3 * inch))
+        
+        # Report Title
+        report_titles = {
+            'overall': 'Comprehensive Student Performance Report',
+            'aptitude': 'Aptitude Assessment Performance Report',
+            'programming': 'Programming Performance Report',
+            'contests': 'Contest Participation Report'
+        }
+        elements.append(Paragraph(report_titles.get(report_type, 'Student Performance Report'), title_style))
+        elements.append(Spacer(1, 0.2 * inch))
+        
+        # Student Information
+        elements.append(Paragraph("Student Information", header_style))
+        student_data = [
+            ["Name:", student.name],
+            ["Register Number:", student.register_number],
+            ["Department:", student.department.name if student.department else 'N/A'],
+            ["Batch:", student.batch or 'N/A'],
+            ["Report Period:", f"{date_from or 'All time'} to {date_to or 'Present'}"],
+        ]
+        
+        if topic_filter:
+            student_data.append(["Topic Filter:", topic_filter])
+            
+        student_table = Table(student_data, colWidths=[2*inch, 4*inch])
+        student_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(student_table)
+        elements.append(Spacer(1, 0.3 * inch))
+
+        # Get filtered data based on report type and filters
+        report_data = self._get_filtered_student_data(student, report_type, topic_filter, date_from, date_to)
+        
+        # Performance Metrics
+        elements.append(Paragraph("Performance Metrics", header_style))
+        metrics_data = [
+            ["Metric", "Value", "Details"],
+            ["Problems Solved", str(report_data['total_solved']), f"Easy: {report_data['easy']}, Medium: {report_data['medium']}, Hard: {report_data['hard']}"],
+            ["Current Streak", f"{report_data['current_streak']} days", f"Campus Rank: #{report_data['campus_rank']}"],
+            ["Success Rate", f"{report_data['success_rate']:.1f}%", f"Based on {report_data['total_attempts']} attempts"],
+        ]
+        
+        if report_type in ['aptitude', 'overall']:
+            metrics_data.extend([
+                ["Aptitude Questions", str(report_data['aptitude_solved']), f"Out of {report_data['total_aptitude']} ({report_data['aptitude_percentage']:.1f}%)"],
+            ])
+            
+        if report_type in ['contests', 'overall']:
+            metrics_data.extend([
+                ["Contest Participation", str(report_data['contests_participated']), f"Total submissions: {report_data['contest_submissions']}"],
+            ])
+            
+        metrics_table = Table(metrics_data, colWidths=[2.5*inch, 1.5*inch, 2.5*inch])
+        metrics_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e6ebdd')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#39482a')),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9f7')]),
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d9c2')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(metrics_table)
+        elements.append(Spacer(1, 0.3 * inch))
+
+        # Skills & Topics Analysis
+        if report_data['top_skills']:
+            elements.append(Paragraph("Skills & Topics Mastery", header_style))
+            skills_data = [["Skill/Topic", "Problems Solved", "Proficiency"]]
+            for skill_info in report_data['top_skills'][:8]:
+                proficiency = "Expert" if skill_info['count'] >= 10 else "Intermediate" if skill_info['count'] >= 5 else "Beginner"
+                skills_data.append([
+                    skill_info['skill'],
+                    str(skill_info['count']),
+                    proficiency
+                ])
+            
+            skills_table = Table(skills_data, colWidths=[2.5*inch, 1.5*inch, 1.5*inch])
+            skills_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e6ebdd')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#39482a')),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9f7')]),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d9c2')),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(skills_table)
+            elements.append(Spacer(1, 0.3 * inch))
+
+        # Company Readiness
+        if report_data['top_companies']:
+            elements.append(Paragraph("Company Readiness", header_style))
+            company_text = "Target Companies: " + ", ".join([f"{comp['company']} ({comp['count']} problems)" for comp in report_data['top_companies'][:5]])
+            elements.append(Paragraph(company_text, styles['Normal']))
+            elements.append(Spacer(1, 0.2 * inch))
+
+        # Recent Activity Summary
+        if report_data['recent_activities']:
+            elements.append(Paragraph("Recent Activity (Last 30 Days)", header_style))
+            activity_data = [["Date", "Activity", "Problem/Contest", "Result"]]
+            for activity in report_data['recent_activities'][:10]:
+                activity_data.append([
+                    activity['date'],
+                    activity['type'],
+                    activity['subject'],
+                    activity['result']
+                ])
+            
+            activity_table = Table(activity_data, colWidths=[1.2*inch, 1.5*inch, 2*inch, 1.8*inch])
+            activity_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e6ebdd')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#39482a')),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9f7')]),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d9c2')),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(activity_table)
+
+        # Footer
+        elements.append(Spacer(1, 0.5 * inch))
+        footer_style = ParagraphStyle(
+            'Footer',
+            parent=styles['Normal'],
+            fontSize=8,
+            textColor=colors.grey,
+            alignment=1
+        )
+        elements.append(Paragraph(f"Report generated on {timezone.now().strftime('%B %d, %Y at %I:%M %p')}", footer_style))
+        elements.append(Paragraph(f"Generated by: {staff_profile.name} ({staff_profile.faculty_id})", footer_style))
+
+        doc.build(elements)
+        buffer.seek(0)
+        
+        # Generate filename based on filters
+        filename_parts = [f"Student_Report_{student.register_number}"]
+        if report_type != 'overall':
+            filename_parts.append(report_type.title())
+        if topic_filter:
+            filename_parts.append(topic_filter.replace(' ', '_'))
+        filename_parts.append(timezone.now().strftime('%Y%m%d'))
+        
+        filename = "_".join(filename_parts) + ".pdf"
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return response
+
+    def _get_filtered_student_data(self, student, report_type, topic_filter, date_from, date_to):
+        """Get comprehensive student data based on filters."""
+        from datetime import datetime, timedelta
+        from django.db.models import Q, Count
+        
+        # Date filtering
+        date_filter = Q()
+        if date_from:
+            try:
+                date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                date_filter &= Q(solved_at__gte=date_from_obj)
+            except ValueError:
+                pass
+                
+        if date_to:
+            try:
+                date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                date_filter &= Q(solved_at__lte=date_to_obj)
+            except ValueError:
+                pass
+
+        # Get solved problems with filters
+        solved_problems = SolvedProblem.objects.filter(student=student)
+        if date_filter:
+            solved_problems = solved_problems.filter(date_filter)
+
+        # Topic filtering
+        if topic_filter:
+            solved_problems = solved_problems.filter(problem__tags__icontains=topic_filter)
+
+        # Calculate metrics
         total_solved = solved_problems.count()
         difficulty_counts = {'Easy': 0, 'Medium': 0, 'Hard': 0}
         company_counts = {}
         skill_counts = {}
-        project_tags = {'project', 'real-world', 'application', 'system', 'database', 'web', 'api', 'full-stack'}
 
-        for sp in solved_problems:
+        for sp in solved_problems.select_related('problem'):
             d = sp.problem.difficulty or 'Medium'
             difficulty_counts[d] = difficulty_counts.get(d, 0) + 1
             
             # Companies
             comps = sp.problem.companies or ""
             clist = [c.strip() for c in comps.replace(',', ' ').split() if c.strip()]
-            for c in clist: company_counts[c] = company_counts.get(c, 0) + 1
+            for c in clist: 
+                company_counts[c] = company_counts.get(c, 0) + 1
             
             # Skills
             tags = sp.problem.tags or []
-            for t in tags: skill_counts[t.lower()] = skill_counts.get(t.lower(), 0) + 1
+            for t in tags: 
+                skill_counts[t.lower()] = skill_counts.get(t.lower(), 0) + 1
 
-        aptitude_solved = SolvedAptitude.objects.filter(student=student).count()
+        # Aptitude metrics
+        aptitude_solved = SolvedAptitude.objects.filter(student=student)
+        if date_filter:
+            # Use solved_at field for aptitude questions
+            date_filter_aptitude = Q()
+            if date_from:
+                try:
+                    date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                    date_filter_aptitude &= Q(solved_at__date__gte=date_from_obj)
+                except ValueError:
+                    pass
+            if date_to:
+                try:
+                    date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                    date_filter_aptitude &= Q(solved_at__date__lte=date_to_obj)
+                except ValueError:
+                    pass
+            if date_filter_aptitude:
+                aptitude_solved = aptitude_solved.filter(date_filter_aptitude)
+        aptitude_count = aptitude_solved.count()
         total_aptitude = AptitudeQuestion.objects.count()
+        aptitude_percentage = (aptitude_count / total_aptitude * 100) if total_aptitude > 0 else 0
 
-        # Create PDF
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=18)
-        styles = getSampleStyleSheet()
+        # Contest metrics
+        contest_participations = ContestParticipation.objects.filter(student=student)
+        if date_filter:
+            # Use started_at field for date filtering on contest participations
+            date_filter_contests = Q()
+            if date_from:
+                try:
+                    date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                    date_filter_contests &= Q(started_at__date__gte=date_from_obj)
+                except ValueError:
+                    pass
+            if date_to:
+                try:
+                    date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                    date_filter_contests &= Q(started_at__date__lte=date_to_obj)
+                except ValueError:
+                    pass
+            if date_filter_contests:
+                contest_participations = contest_participations.filter(date_filter_contests)
         
-        # Custom styles
-        title_style = ParagraphStyle('TitleStyle', parent=styles['Heading1'], fontSize=24, spaceAfter=20, color=colors.HexColor('#39482a'))
-        header_style = ParagraphStyle('HeaderStyle', parent=styles['Heading2'], fontSize=16, spaceAfter=12, color=colors.HexColor('#4b5563'))
-        normal_style = styles['Normal']
+        contests_participated = contest_participations.count()
+        contest_submissions = ContestSubmission.objects.filter(student=student)
+        if date_filter:
+            # Use submitted_at field for contest submissions
+            date_filter_submissions = Q()
+            if date_from:
+                try:
+                    date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                    date_filter_submissions &= Q(submitted_at__date__gte=date_from_obj)
+                except ValueError:
+                    pass
+            if date_to:
+                try:
+                    date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                    date_filter_submissions &= Q(submitted_at__date__lte=date_to_obj)
+                except ValueError:
+                    pass
+            if date_filter_submissions:
+                contest_submissions = contest_submissions.filter(date_filter_submissions)
+        contest_submission_count = contest_submissions.count()
+
+        # Calculate success rate based on solved problems vs execution records
+        total_attempts = ExecutionRecord.objects.filter(student=student)
+        if date_filter:
+            # Use created_at field for execution records
+            date_filter_attempts = Q()
+            if date_from:
+                try:
+                    date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                    date_filter_attempts &= Q(created_at__date__gte=date_from_obj)
+                except ValueError:
+                    pass
+            if date_to:
+                try:
+                    date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                    date_filter_attempts &= Q(created_at__date__lte=date_to_obj)
+                except ValueError:
+                    pass
+            if date_filter_attempts:
+                total_attempts = total_attempts.filter(date_filter_attempts)
+        total_attempt_count = total_attempts.count()
+        success_rate = (total_solved / total_attempt_count * 100) if total_attempt_count > 0 else 0
+
+        # Top skills and companies
+        top_skills = [{'skill': skill.title(), 'count': count} for skill, count in sorted(skill_counts.items(), key=lambda x: x[1], reverse=True)]
+        top_companies = [{'company': comp, 'count': count} for comp, count in sorted(company_counts.items(), key=lambda x: x[1], reverse=True)]
+
+        # Recent activities
+        recent_activities = []
+        recent_solved = solved_problems.filter(
+            solved_at__gte=timezone.now() - timedelta(days=30)
+        ).order_by('-solved_at')[:20]
         
-        elements = []
+        for sp in recent_solved:
+            recent_activities.append({
+                'date': sp.solved_at.strftime('%m/%d'),
+                'type': 'Problem Solved',
+                'subject': sp.problem.title[:30],
+                'result': 'Success'
+            })
 
-        # Header Section
-        elements.append(Paragraph(f"Student Performance Report", title_style))
-        elements.append(Paragraph(f"<b>Name:</b> {student.name}", normal_style))
-        elements.append(Paragraph(f"<b>Register Number:</b> {student.register_number}", normal_style))
-        elements.append(Paragraph(f"<b>Department:</b> {student.department.name if student.department else 'N/A'}", normal_style))
-        elements.append(Paragraph(f"<b>Batch:</b> {student.batch}", normal_style))
-        elements.append(Spacer(1, 0.25 * inch))
-
-        # Coding Performance
-        elements.append(Paragraph("Coding Analytics", header_style))
-        data = [
-            ["Metric", "Value"],
-            ["Total Problems Solved", str(total_solved)],
-            ["Easy Problems", str(difficulty_counts['Easy'])],
-            ["Medium Problems", str(difficulty_counts['Medium'])],
-            ["Hard Problems", str(difficulty_counts['Hard'])],
-            ["Current Solving Streak", f"{student.current_streak} days"],
-            ["Campus Rank", f"#{calculate_campus_rank_helper(student)}"],
-        ]
-        t = Table(data, colWidths=[2.5 * inch, 2.5 * inch])
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f3f4f6')),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#374151')),
-            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#e5e7eb'))
-        ]))
-        elements.append(t)
-        elements.append(Spacer(1, 0.2 * inch))
-
-        # Aptitude Performance
-        elements.append(Paragraph("Aptitude & Skills", header_style))
-        apt_perc = round((aptitude_solved / total_aptitude * 100), 1) if total_aptitude > 0 else 0
-        elements.append(Paragraph(f"Solved <b>{aptitude_solved}</b> out of <b>{total_aptitude}</b> aptitude questions ({apt_perc}% completion).", normal_style))
-        elements.append(Spacer(1, 0.1 * inch))
-
-        # Top Companies
-        top_comps = sorted(company_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-        if top_comps:
-            comp_text = "Target Companies: " + ", ".join([f"{n} ({c})" for n, c in top_comps])
-            elements.append(Paragraph(comp_text, normal_style))
-        
-        elements.append(Spacer(1, 0.25 * inch))
-
-        # Project Readiness
-        elements.append(Paragraph("Project-Based Insights", header_style))
-        proj_skills = []
-        for s, c in sorted(skill_counts.items(), key=lambda x: x[1], reverse=True):
-            if s in project_tags or any(pt in s for pt in project_tags):
-                proj_skills.append(f"{s.capitalize()} ({c})")
-        
-        if proj_skills:
-            elements.append(Paragraph("Demonstrated skills in: " + ", ".join(proj_skills[:6]), normal_style))
-        else:
-            elements.append(Paragraph("No specific project-based tags found in solved problems.", normal_style))
-
-        elements.append(Spacer(1, 0.5 * inch))
-        elements.append(Paragraph(f"Generated by Code-2Day Analytics on {timezone.now().strftime('%Y-%m-%d %H:%M')}", styles['Italic']))
-
-        doc.build(elements)
-        buffer.seek(0)
-        
-        filename = f"Report_{student.register_number}.pdf"
-        response = HttpResponse(buffer, content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        return response
+        return {
+            'total_solved': total_solved,
+            'easy': difficulty_counts['Easy'],
+            'medium': difficulty_counts['Medium'],
+            'hard': difficulty_counts['Hard'],
+            'current_streak': student.current_streak,
+            'campus_rank': calculate_campus_rank_helper(student),
+            'success_rate': success_rate,
+            'total_attempts': total_attempt_count,
+            'aptitude_solved': aptitude_count,
+            'total_aptitude': total_aptitude,
+            'aptitude_percentage': aptitude_percentage,
+            'contests_participated': contests_participated,
+            'contest_submissions': contest_submission_count,
+            'top_skills': top_skills,
+            'top_companies': top_companies,
+            'recent_activities': recent_activities,
+        }
 
 
 class StaffReportPDFView(APIView):
-    """Generate a professional PDF performance report for a staff member."""
+    """Generate a comprehensive PDF performance report with filtering options."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, faculty_id):
@@ -5928,50 +6492,394 @@ class StaffReportPDFView(APIView):
         if target_staff.institution != user_profile.institution:
             return Response({"detail": "Access denied."}, status=403)
 
-        # Gather data
-        contests = target_staff.contests.all()
-        total_contests = contests.count()
-        approved_contests = contests.filter(status='approved').count()
-        published_contests = contests.filter(status='published').count()
-        
-        student_count = StudentProfile.objects.filter(department=target_staff.department).count() if target_staff.department else 0
-        
-        # Create PDF
+        # Get filter parameters
+        batch_filter = request.GET.get('batch', '')
+        report_type = request.GET.get('type', 'overall')  # overall, aptitude, programming, contests
+        topic_filter = request.GET.get('topic', '')
+        date_from = request.GET.get('date_from', '')
+        date_to = request.GET.get('date_to', '')
+
+        # Create PDF with enhanced template and watermark
         buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=A4)
+        doc = create_watermarked_pdf(
+            buffer, 
+            institution=target_staff.institution,
+            pagesize=A4, 
+            topMargin=0.5*inch, 
+            bottomMargin=0.5*inch
+        )
+        
+        # Custom styles
         styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=18,
+            spaceAfter=30,
+            alignment=1,  # Center
+            textColor=colors.HexColor('#2d5016')
+        )
+        
+        header_style = ParagraphStyle(
+            'CustomHeader',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=12,
+            textColor=colors.HexColor('#39482a')
+        )
         
         elements = []
-        elements.append(Paragraph(f"Faculty Performance Report", styles['Title']))
-        elements.append(Paragraph(f"<b>Name:</b> {target_staff.name}", styles['Normal']))
-        elements.append(Paragraph(f"<b>Faculty ID:</b> {target_staff.faculty_id}", styles['Normal']))
-        elements.append(Paragraph(f"<b>Department:</b> {target_staff.department.name if target_staff.department else 'N/A'}", styles['Normal']))
-        elements.append(Spacer(1, 0.25 * inch))
-
-        elements.append(Paragraph("Engagement Metrics", styles['Heading2']))
-        data = [
-            ["Metric", "Value"],
-            ["Total Contests Created", str(total_contests)],
-            ["Published Contests", str(published_contests)],
-            ["Department Student Base", str(student_count)],
+        
+        # College Header
+        institution = target_staff.institution
+        display_name = institution.display_name or institution.name
+        elements.append(Paragraph(f"{display_name}", title_style))
+        
+        if institution.subheading:
+            elements.append(Paragraph(f"{institution.subheading}", styles['Normal']))
+        
+        if institution.address:
+            elements.append(Paragraph(f"{institution.address}", styles['Normal']))
+        
+        contact_info = []
+        if institution.contact_email:
+            contact_info.append(f"Email: {institution.contact_email}")
+        if institution.contact_phone:
+            contact_info.append(f"Phone: {institution.contact_phone}")
+        if institution.website:
+            contact_info.append(f"Website: {institution.website}")
+        
+        if contact_info:
+            elements.append(Paragraph(" | ".join(contact_info), styles['Normal']))
+        
+        elements.append(Spacer(1, 0.3 * inch))
+        
+        # Report Title
+        report_titles = {
+            'overall': 'Comprehensive Faculty Performance Report',
+            'aptitude': 'Aptitude Assessment Performance Report',
+            'programming': 'Programming Contest Performance Report',
+            'contests': 'Contest Management Report'
+        }
+        elements.append(Paragraph(report_titles.get(report_type, 'Faculty Performance Report'), title_style))
+        elements.append(Spacer(1, 0.2 * inch))
+        
+        # Faculty Information
+        elements.append(Paragraph("Faculty Information", header_style))
+        faculty_data = [
+            ["Name:", target_staff.name],
+            ["Faculty ID:", target_staff.faculty_id],
+            ["Department:", target_staff.department.name if target_staff.department else 'N/A'],
+            ["Role:", target_staff.get_role_display() if hasattr(target_staff, 'get_role_display') else target_staff.role],
+            ["Report Period:", f"{date_from or 'All time'} to {date_to or 'Present'}"],
         ]
-        t = Table(data, colWidths=[3 * inch, 2 * inch])
-        t.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.lightgrey),
-            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        
+        if batch_filter:
+            faculty_data.append(["Batch Filter:", batch_filter])
+        if topic_filter:
+            faculty_data.append(["Topic Filter:", topic_filter])
+            
+        faculty_table = Table(faculty_data, colWidths=[2*inch, 4*inch])
+        faculty_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
         ]))
-        elements.append(t)
+        elements.append(faculty_table)
+        elements.append(Spacer(1, 0.3 * inch))
 
+        # Get filtered data based on report type and filters
+        report_data = self._get_filtered_report_data(target_staff, report_type, batch_filter, topic_filter, date_from, date_to)
+        
+        # Performance Metrics
+        elements.append(Paragraph("Performance Metrics", header_style))
+        metrics_data = [
+            ["Metric", "Value", "Details"],
+            ["Total Students Managed", str(report_data['student_count']), f"Across {report_data['batch_count']} batches"],
+            ["Contests Created", str(report_data['total_contests']), f"{report_data['active_contests']} active"],
+            ["Student Submissions", str(report_data['total_submissions']), f"Avg: {report_data['avg_submissions_per_student']:.1f} per student"],
+            ["Problems Solved", str(report_data['total_problems_solved']), f"Success rate: {report_data['success_rate']:.1f}%"],
+        ]
+        
+        if report_type in ['aptitude', 'overall']:
+            metrics_data.extend([
+                ["Aptitude Tests Conducted", str(report_data['aptitude_tests']), f"{report_data['aptitude_participants']} participants"],
+                ["Avg Aptitude Score", f"{report_data['avg_aptitude_score']:.1f}%", f"Best: {report_data['best_aptitude_score']:.1f}%"],
+            ])
+            
+        metrics_table = Table(metrics_data, colWidths=[2.5*inch, 1.5*inch, 2.5*inch])
+        metrics_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e6ebdd')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#39482a')),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9f7')]),
+            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d9c2')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        elements.append(metrics_table)
+        elements.append(Spacer(1, 0.3 * inch))
+
+        # Batch-wise Performance (if applicable)
+        if report_data['batch_performance']:
+            elements.append(Paragraph("Batch-wise Performance", header_style))
+            batch_data = [["Batch", "Students", "Avg Score", "Top Performer", "Completion Rate"]]
+            for batch_info in report_data['batch_performance']:
+                batch_data.append([
+                    batch_info['batch'],
+                    str(batch_info['student_count']),
+                    f"{batch_info['avg_score']:.1f}%",
+                    batch_info['top_performer'],
+                    f"{batch_info['completion_rate']:.1f}%"
+                ])
+            
+            batch_table = Table(batch_data, colWidths=[1.2*inch, 1*inch, 1.2*inch, 1.8*inch, 1.3*inch])
+            batch_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e6ebdd')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#39482a')),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9f7')]),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d9c2')),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(batch_table)
+            elements.append(Spacer(1, 0.3 * inch))
+
+        # Recent Activity Summary
+        if report_data['recent_activities']:
+            elements.append(Paragraph("Recent Activity (Last 30 Days)", header_style))
+            activity_data = [["Date", "Activity", "Student/Contest", "Result"]]
+            for activity in report_data['recent_activities'][:10]:  # Show top 10
+                activity_data.append([
+                    activity['date'],
+                    activity['type'],
+                    activity['subject'],
+                    activity['result']
+                ])
+            
+            activity_table = Table(activity_data, colWidths=[1.2*inch, 1.5*inch, 2*inch, 1.8*inch])
+            activity_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e6ebdd')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#39482a')),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9f7')]),
+                ('GRID', (0, 0), (-1, -1), 1, colors.HexColor('#d0d9c2')),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            elements.append(activity_table)
+
+        # Footer
         elements.append(Spacer(1, 0.5 * inch))
-        elements.append(Paragraph(f"Report generated on {timezone.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
+        footer_style = ParagraphStyle(
+            'Footer',
+            parent=styles['Normal'],
+            fontSize=8,
+            textColor=colors.grey,
+            alignment=1
+        )
+        elements.append(Paragraph(f"Report generated on {timezone.now().strftime('%B %d, %Y at %I:%M %p')}", footer_style))
+        elements.append(Paragraph(f"Generated by: {user_profile.name} ({user_profile.faculty_id})", footer_style))
 
         doc.build(elements)
         buffer.seek(0)
         
-        filename = f"Faculty_Report_{target_staff.faculty_id}.pdf"
+        # Generate filename based on filters
+        filename_parts = [f"Report_{target_staff.faculty_id}"]
+        if batch_filter:
+            filename_parts.append(f"Batch_{batch_filter}")
+        if report_type != 'overall':
+            filename_parts.append(report_type.title())
+        filename_parts.append(timezone.now().strftime('%Y%m%d'))
+        
+        filename = "_".join(filename_parts) + ".pdf"
         response = HttpResponse(buffer, content_type='application/pdf')
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
+
+    def _get_filtered_report_data(self, staff, report_type, batch_filter, topic_filter, date_from, date_to):
+        """Get comprehensive report data based on filters."""
+        from datetime import datetime, timedelta
+        from django.db.models import Q, Avg, Count, Sum
+        
+        # Base queryset for students
+        students_qs = StudentProfile.objects.filter(
+            department=staff.department if staff.department else None
+        )
+        
+        if batch_filter:
+            students_qs = students_qs.filter(batch=batch_filter)
+            
+        # Date filtering
+        date_filter = Q()
+        if date_from:
+            try:
+                date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                date_filter &= Q(created_at__date__gte=date_from_obj)
+            except ValueError:
+                pass
+                
+        if date_to:
+            try:
+                date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                date_filter &= Q(created_at__date__lte=date_to_obj)
+            except ValueError:
+                pass
+
+        # Get contests created by this staff
+        contests_qs = staff.contests.all()
+        if date_filter:
+            contests_qs = contests_qs.filter(date_filter)
+
+        # Calculate metrics
+        student_count = students_qs.count()
+        batch_count = students_qs.values('batch').distinct().count()
+        total_contests = contests_qs.count()
+        active_contests = contests_qs.filter(status='published').count()
+
+        # Submission metrics
+        submissions = ExecutionRecord.objects.filter(
+            student__in=students_qs
+        )
+        if date_filter:
+            submissions = submissions.filter(date_filter)
+            
+        total_submissions = submissions.count()
+        # Use SolvedProblem for successful submissions instead
+        successful_problems = SolvedProblem.objects.filter(student__in=students_qs)
+        if date_filter:
+            # Use solved_at field for SolvedProblem
+            date_filter_solved = Q()
+            if date_from:
+                try:
+                    date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                    date_filter_solved &= Q(solved_at__date__gte=date_from_obj)
+                except ValueError:
+                    pass
+            if date_to:
+                try:
+                    date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                    date_filter_solved &= Q(solved_at__date__lte=date_to_obj)
+                except ValueError:
+                    pass
+            if date_filter_solved:
+                successful_problems = successful_problems.filter(date_filter_solved)
+        successful_submissions = successful_problems.count()
+        avg_submissions_per_student = total_submissions / student_count if student_count > 0 else 0
+        success_rate = (successful_submissions / total_submissions * 100) if total_submissions > 0 else 0
+
+        # Problem solving metrics
+        solved_problems = SolvedProblem.objects.filter(student__in=students_qs)
+        if date_filter:
+            # Use solved_at field for SolvedProblem
+            if date_filter_solved:
+                solved_problems = solved_problems.filter(date_filter_solved)
+        total_problems_solved = solved_problems.count()
+
+        # Aptitude metrics
+        aptitude_data = {'aptitude_tests': 0, 'aptitude_participants': 0, 'avg_aptitude_score': 0, 'best_aptitude_score': 0}
+        if report_type in ['aptitude', 'overall']:
+            aptitude_contests = contests_qs.filter(contest_type='aptitude')
+            aptitude_submissions = ContestSubmission.objects.filter(
+                contest__in=aptitude_contests,
+                student__in=students_qs
+            )
+            if date_filter:
+                # Use submitted_at field for contest submissions
+                date_filter_aptitude_submissions = Q()
+                if date_from:
+                    try:
+                        date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+                        date_filter_aptitude_submissions &= Q(submitted_at__date__gte=date_from_obj)
+                    except ValueError:
+                        pass
+                if date_to:
+                    try:
+                        date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+                        date_filter_aptitude_submissions &= Q(submitted_at__date__lte=date_to_obj)
+                    except ValueError:
+                        pass
+                if date_filter_aptitude_submissions:
+                    aptitude_submissions = aptitude_submissions.filter(date_filter_aptitude_submissions)
+                
+            aptitude_data.update({
+                'aptitude_tests': aptitude_contests.count(),
+                'aptitude_participants': aptitude_submissions.values('student').distinct().count(),
+                'avg_aptitude_score': aptitude_submissions.aggregate(avg=Avg('score'))['avg'] or 0,
+                'best_aptitude_score': aptitude_submissions.aggregate(max=Max('score'))['max'] or 0,
+            })
+
+        # Batch-wise performance
+        batch_performance = []
+        for batch in students_qs.values('batch').distinct():
+            batch_name = batch['batch']
+            batch_students = students_qs.filter(batch=batch_name)
+            batch_submissions = submissions.filter(student__in=batch_students)
+            
+            # Calculate success rate based on solved problems vs total submissions
+            batch_solved = successful_problems.filter(student__in=batch_students)
+            batch_success_rate = 0
+            if batch_submissions.exists():
+                batch_success_rate = (batch_solved.count() / batch_submissions.count() * 100)
+            
+            # Find top performer in batch
+            top_performer = batch_students.annotate(
+                solved_count=Count('solved_problems')
+            ).order_by('-solved_count').first()
+            
+            batch_performance.append({
+                'batch': batch_name,
+                'student_count': batch_students.count(),
+                'avg_score': batch_success_rate,
+                'top_performer': top_performer.name if top_performer else 'N/A',
+                'completion_rate': batch_success_rate
+            })
+
+        # Recent activities
+        recent_activities = []
+        recent_submissions = submissions.filter(
+            created_at__gte=timezone.now() - timedelta(days=30)
+        ).order_by('-created_at')[:20]
+        
+        for sub in recent_submissions:
+            # Check if this submission resulted in a solved problem
+            is_success = successful_problems.filter(
+                student=sub.student, 
+                problem=sub.problem,
+                solved_at__date=sub.created_at.date()
+            ).exists()
+            
+            recent_activities.append({
+                'date': sub.created_at.strftime('%m/%d'),
+                'type': 'Problem Solved' if is_success else 'Attempt',
+                'subject': f"{sub.student.name} - {sub.problem.title[:30] if sub.problem else 'Unknown Problem'}",
+                'result': 'Success' if is_success else 'Failed'
+            })
+
+        return {
+            'student_count': student_count,
+            'batch_count': batch_count,
+            'total_contests': total_contests,
+            'active_contests': active_contests,
+            'total_submissions': total_submissions,
+            'avg_submissions_per_student': avg_submissions_per_student,
+            'success_rate': success_rate,
+            'total_problems_solved': total_problems_solved,
+            'batch_performance': batch_performance,
+            'recent_activities': recent_activities,
+            **aptitude_data
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -6117,6 +7025,17 @@ class InstitutionDetailManagementView(APIView):
                 "inst_admin": institution.maintenance_inst_admin,
                 "ja": institution.maintenance_ja
             },
+            "branding": {
+                "display_name": institution.display_name,
+                "subheading": institution.subheading,
+                "logo_url": institution.logo_url,
+                "logo_display_url": institution.logo_display_url,
+                "website": institution.website,
+                "established_year": institution.established_year,
+                "address": institution.address,
+                "contact_email": institution.contact_email,
+                "contact_phone": institution.contact_phone
+            },
             "metrics": {
                 "students": students_count,
                 "staff": StaffProfile.objects.filter(institution=institution).count(),
@@ -6185,6 +7104,51 @@ class InstitutionDetailManagementView(APIView):
             
             return Response({"message": f"Batch {batch_name} deleted successfully"})
             
+        elif action == 'update_branding':
+            # Update branding information
+            branding_data = request.data.get('branding', {})
+            
+            institution.display_name = branding_data.get('display_name', institution.display_name)
+            institution.subheading = branding_data.get('subheading', institution.subheading)
+            institution.logo_url = branding_data.get('logo_url', institution.logo_url)
+            institution.website = branding_data.get('website', institution.website)
+            institution.established_year = branding_data.get('established_year', institution.established_year)
+            institution.address = branding_data.get('address', institution.address)
+            institution.contact_email = branding_data.get('contact_email', institution.contact_email)
+            institution.contact_phone = branding_data.get('contact_phone', institution.contact_phone)
+            
+            institution.save()
+            return Response({"message": "Branding updated successfully"})
+            
+        elif action == 'upload_logo':
+            # Handle logo file upload
+            if 'logo' not in request.FILES:
+                return Response({"error": "No logo file provided"}, status=400)
+            
+            logo_file = request.FILES['logo']
+            
+            # Validate file type
+            allowed_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif']
+            if logo_file.content_type not in allowed_types:
+                return Response({"error": "Invalid file type. Please upload JPG, PNG, or GIF."}, status=400)
+            
+            # Validate file size (max 5MB)
+            if logo_file.size > 5 * 1024 * 1024:
+                return Response({"error": "File too large. Maximum size is 5MB."}, status=400)
+            
+            # Delete old logo file if exists
+            if institution.logo_file:
+                institution.logo_file.delete(save=False)
+            
+            # Save new logo
+            institution.logo_file = logo_file
+            institution.save()
+            
+            return Response({
+                "message": "Logo uploaded successfully",
+                "logo_url": institution.logo_display_url
+            })
+            
         return Response({"error": "Invalid action"}, status=400)
 
 class GlobalMaintenanceControlView(APIView):
@@ -6201,6 +7165,148 @@ class GlobalMaintenanceControlView(APIView):
         
         config.save()
         return Response({"message": "Global maintenance updated"})
+
+
+class InstitutionBrandingPreviewView(APIView):
+    """Generate PDF template preview for institution branding"""
+    permission_classes = [AllowAny]
+    
+    def get(self, request, pk):
+        institution = get_object_or_404(Institution, pk=pk)
+        
+        # Create PDF template preview with watermark
+        buffer = BytesIO()
+        doc = create_watermarked_pdf(
+            buffer, 
+            institution=institution,
+            pagesize=A4, 
+            topMargin=0.5*inch, 
+            bottomMargin=0.5*inch
+        )
+        
+        # Custom styles
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            spaceAfter=30,
+            alignment=1,  # Center
+            textColor=colors.HexColor('#2d5016')
+        )
+        
+        subtitle_style = ParagraphStyle(
+            'CustomSubtitle',
+            parent=styles['Heading2'],
+            fontSize=16,
+            spaceAfter=20,
+            alignment=1,  # Center
+            textColor=colors.HexColor('#4f7942')
+        )
+        
+        elements = []
+        
+        # College Header with Logo (if available)
+        header_data = []
+        
+        # Logo section (left side)
+        logo_cell = ""
+        if institution.logo_display_url:
+            try:
+                # For now, we'll just show a placeholder for logo
+                logo_cell = "LOGO"
+            except:
+                logo_cell = "LOGO"
+        else:
+            logo_cell = "LOGO"
+        
+        # College info section (right side)
+        display_name = institution.get_display_name()
+        info_lines = [display_name]
+        
+        if institution.subheading:
+            info_lines.append(institution.subheading)
+        
+        if institution.address:
+            info_lines.append(institution.address)
+        
+        contact_info = []
+        if institution.contact_email:
+            contact_info.append(f"Email: {institution.contact_email}")
+        if institution.contact_phone:
+            contact_info.append(f"Phone: {institution.contact_phone}")
+        if institution.website:
+            contact_info.append(f"Website: {institution.website}")
+        
+        if contact_info:
+            info_lines.extend(contact_info)
+        
+        if institution.established_year:
+            info_lines.append(f"Established: {institution.established_year}")
+        
+        # Create header table with logo on left, info on right
+        header_table_data = [[logo_cell, "\n".join(info_lines)]]
+        header_table = Table(header_table_data, colWidths=[1.5*inch, 5*inch])
+        header_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (0, 0), 'CENTER'),  # Logo cell center
+            ('ALIGN', (1, 0), (1, 0), 'LEFT'),    # Info cell left
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (0, 0), 14),
+            ('FONTNAME', (1, 0), (1, 0), 'Helvetica'),
+            ('FONTSIZE', (1, 0), (1, 0), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+            ('TOPPADDING', (0, 0), (-1, -1), 12),
+        ]))
+        
+        elements.append(header_table)
+        elements.append(Spacer(1, 0.5 * inch))
+        
+        # Sample Report Title
+        elements.append(Paragraph("SAMPLE REPORT TEMPLATE", title_style))
+        elements.append(Paragraph("This is how your college branding will appear in all generated reports", subtitle_style))
+        elements.append(Spacer(1, 0.3 * inch))
+        
+        # Sample content
+        sample_content = [
+            "This template shows how your college branding information will be displayed in:",
+            "• Student Performance Reports",
+            "• Faculty Analytics Reports", 
+            "• Contest Management Reports",
+            "• All other PDF documents generated by the system",
+            "",
+            "The layout includes:",
+            "• College logo positioned on the left",
+            "• College name and details on the right",
+            "• Professional formatting with consistent styling",
+            "• Complete contact information",
+            "",
+            "You can customize all branding elements in the College Branding tab."
+        ]
+        
+        for line in sample_content:
+            if line:
+                elements.append(Paragraph(line, styles['Normal']))
+            else:
+                elements.append(Spacer(1, 0.1 * inch))
+        
+        # Footer
+        elements.append(Spacer(1, 0.5 * inch))
+        footer_style = ParagraphStyle(
+            'Footer',
+            parent=styles['Normal'],
+            fontSize=8,
+            textColor=colors.grey,
+            alignment=1
+        )
+        elements.append(Paragraph(f"Template generated on {timezone.now().strftime('%B %d, %Y at %I:%M %p')}", footer_style))
+        
+        doc.build(elements)
+        buffer.seek(0)
+        
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="College_Branding_Template_{institution.short_code}.pdf"'
+        return response
 
 class DepartmentManagementView(APIView):
     permission_classes = [AllowAny]
@@ -6290,3 +7396,16 @@ class StaffDeptListView(UnifiedAuthMixin, APIView):
                 "department": s.department.name if s.department else ""
             })
         return Response(data)
+
+
+class CSRFTokenView(APIView):
+    """
+    Provides CSRF token for frontend authentication.
+    """
+    permission_classes = [AllowAny]
+    
+    @method_decorator(ensure_csrf_cookie)
+    def get(self, request):
+        from django.middleware.csrf import get_token
+        token = get_token(request)
+        return Response({"csrfToken": token})

@@ -1,0 +1,5 @@
+# PDF Generation Dependencies
+# Add these to your main requirements.txt or install separately
+
+reportlab>=4.0.0
+Pillow>=10.0.0  # For image processing in PDFs
