@@ -56,6 +56,30 @@ def clean_expected_output(value: str) -> str:
     return cleaned
 
 
+def _extract_primary_expected(value: str) -> str:
+    """
+    For problems like removeDuplicates where expected output is stored as
+    '2, nums = [1,2]' or '2\nnums = [1,2]', extract just the primary return value.
+
+    Rules:
+    - If the value contains ', <identifier> =' pattern after the first token,
+      return only the first token (the actual return value).
+    - If the value is a plain number or array, return as-is.
+    """
+    import re
+    cleaned = str(value or "").strip()
+    if not cleaned:
+        return cleaned
+
+    # Pattern: "2, nums = [1,2]" or "5, nums = [0,1,2,3,4]"
+    # Extract just the first part before ", <word> ="
+    match = re.match(r'^([^,\n]+?)(?:,\s*\w+\s*=|\n)', cleaned)
+    if match:
+        return match.group(1).strip()
+
+    return cleaned
+
+
 
 
 def _coerce_literal(value: str):
@@ -158,27 +182,26 @@ def normalize_comparable_output(value: str) -> str:
     cleaned = str(value or "").strip()
     if not cleaned:
         return ""
-    
+
+    # Strip annotation suffixes like ", nums = [1,2]" from expected outputs
+    cleaned = _extract_primary_expected(cleaned)
+
     # If it's already a valid JSON array/object, return as-is (compact)
     if (cleaned.startswith("[") and cleaned.endswith("]")) or \
        (cleaned.startswith("{") and cleaned.endswith("}")):
         try:
-            # Validate it's proper JSON and re-serialize compactly
             parsed = json.loads(cleaned)
             return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
         except json.JSONDecodeError:
             pass
-    
+
     # Try to parse as a literal first
     parsed = _coerce_literal(cleaned)
 
     if isinstance(parsed, str):
-        # For strings, normalize whitespace but preserve the full content
         return " ".join(parsed.split())
     if isinstance(parsed, (list, dict, bool, int, float)) or parsed is None:
-        # For structured data, use compact JSON representation
         return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
-    # Fallback: normalize whitespace in the raw string
     return " ".join(cleaned.split())
 
 
