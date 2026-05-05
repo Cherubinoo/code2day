@@ -670,108 +670,301 @@ done:
 '''.strip()
 
 
-def _build_cpp_wrapper(source_code: str, candidates: list[str]) -> str:
-    """Build C++ wrapper that reads from stdin and calls the solution function."""
-    candidate_list = json.dumps(candidates)
-    
-    # Use triple quotes without f-string to avoid bool/true conflicts
-    cpp_template = '''
-#include <iostream>
-#include <vector>
-#include <string>
-#include <sstream>
-#include <algorithm>
-#include <cctype>
+def _generate_cpp_call(func_name: str, sig_match, source_code: str) -> str:
+    """
+    Generate the typed call inside the C++ main lambda.
+    Inspects the function signature to determine parameter types and builds
+    the correct typed call with serialization of the return value.
+    """
+    import re as _re
 
+    # Map C++ type strings to J accessor methods and serialize calls
+    TYPE_MAP = {
+        # int-like
+        'int':              ('args[{i}].asInt()',    'serialize'),
+        'long':             ('args[{i}].asLong()',   'serialize'),
+        'long long':        ('args[{i}].asLong()',   'serialize'),
+        'double':           ('args[{i}].asDouble()', 'serialize'),
+        'float':            ('args[{i}].asDouble()', 'serialize'),
+        'bool':             ('args[{i}].asBool()',   'serialize'),
+        'string':           ('args[{i}].asStr()',    'serialize'),
+        'vector<int>':      ('args[{i}].asVecInt()', 'serialize'),
+        'vector<long long>':('args[{i}].asVecLong()','serialize'),
+        'vector<double>':   ('args[{i}].asVecDouble()','serialize'),
+        'vector<string>':   ('args[{i}].asVecStr()', 'serialize'),
+        'vector<vector<int>>': ('args[{i}].asVecVecInt()', 'serialize'),
+    }
+
+    def normalize_type(t):
+        t = t.strip()
+        t = _re.sub(r'\s+', ' ', t)
+        t = t.replace('std::', '')
+        return t
+
+    lines = []
+
+    if sig_match:
+        params_str = sig_match.group(2).strip()
+        ret_type = normalize_type(sig_match.group(1))
+
+        # Parse parameter types
+        param_types = []
+        if params_str:
+            for param in params_str.split(','):
+                param = param.strip()
+                # Remove parameter name (last word) to get type
+                parts = param.rsplit(None, 1)
+                if len(parts) == 2:
+                    ptype = normalize_type(parts[0].rstrip('&*'))
+                else:
+                    ptype = normalize_type(parts[0])
+                param_types.append(ptype)
+
+        # Build argument list
+        call_args = []
+        for i, ptype in enumerate(param_types):
+            accessor = None
+            for key, (acc, _) in TYPE_MAP.items():
+                if ptype == key or ptype.startswith(key):
+                    accessor = acc.format(i=i)
+                    break
+            if accessor is None:
+                # Fallback: try int
+                accessor = f'args[{i}].asInt()'
+            call_args.append(accessor)
+
+        call_str = f'sol.{func_name}({", ".join(call_args)})'
+
+        # Determine how to serialize return value
+        ret_norm = normalize_type(ret_type)
+        if ret_norm == 'void':
+            lines.append(f'        {call_str};')
+            lines.append('        return "void";')
+        elif ret_norm == 'bool':
+            lines.append(f'        return serialize((bool)({call_str}));')
+        elif ret_norm in ('int', 'long', 'long long'):
+            lines.append(f'        return serialize((long long)({call_str}));')
+        elif ret_norm in ('double', 'float'):
+            lines.append(f'        return serialize((double)({call_str}));')
+        elif ret_norm == 'string':
+            lines.append(f'        return serialize({call_str});')
+        elif 'vector' in ret_norm:
+            lines.append(f'        return serialize({call_str});')
+        else:
+            # Unknown return type — try to_string
+            lines.append(f'        auto __r = {call_str};')
+            lines.append('        ostringstream __os; __os << __r; return __os.str();')
+    else:
+        # No signature found — try common single-arg patterns as fallback
+        lines.append(f'        if (args.size() >= 2) {{')
+        lines.append(f'            auto __r = sol.{func_name}(args[0].asInt(), args[1].asInt());')
+        lines.append(f'            return serialize(__r);')
+        lines.append(f'        }}')
+        lines.append(f'        if (args.size() == 1) {{')
+        lines.append(f'            auto __r = sol.{func_name}(args[0].asVecInt());')
+        lines.append(f'            return serialize(__r);')
+        lines.append(f'        }}')
+
+    return '\n'.join(lines)
+
+
+def _build_cpp_wrapper(source_code: str, candidates: list[str]) -> str:
+    """
+    Build C++ wrapper that reads JSON args from stdin and calls the solution.
+
+    Strategy:
+    - Inject a full JSON parser (no external deps).
+    - Detect the first candidate function name from the user's code.
+    - Generate a main() that:
+        1. Reads one line of JSON from stdin (e.g. [2, 7, 11, 15, 9])
+        2. Parses it into a vector of JsonNode values
+        3. Calls the solution function with the parsed args
+        4. Prints the result
+
+    Because C++ has no runtime reflection, we use a code-generation approach:
+    we inspect the source to find the function signature and generate a typed call.
+    If we can't determine the signature, we fall back to passing the raw JSON line
+    as a single string argument.
+    """
+    import re as _re
+
+    # Pick the first candidate that actually appears in the source
+    func_name = None
+    for c in candidates:
+        if _re.search(rf'\b{_re.escape(c)}\s*\(', source_code):
+            func_name = c
+            break
+    if not func_name and candidates:
+        func_name = candidates[0]
+    if not func_name:
+        func_name = "solution"
+
+    # Try to extract the return type and parameter types from the function signature
+    # Pattern: <return_type> func_name(<params>) {
+    sig_pattern = _re.compile(
+        rf'([\w:<>\[\]*&\s]+?)\s+{_re.escape(func_name)}\s*\(([^)]*)\)\s*(?:const\s*)?\{{',
+        _re.MULTILINE
+    )
+    match = sig_pattern.search(source_code)
+
+    # Build the wrapper
+    # We use a robust JSON parser that handles nested arrays, strings, ints, bools
+    wrapper = r"""
+#include <bits/stdc++.h>
 using namespace std;
 
-// Minimal JSON parsing for C++
-class JsonValue {
-public:
-    string raw_value;
-    bool is_string;
-    bool is_number;
-    bool is_array;
-    
-    JsonValue() : is_string(false), is_number(false), is_array(false) {}
-    
-    string str_value() const { return raw_value; }
-    int int_value() const { return stoi(raw_value); }
-    double double_value() const { return stod(raw_value); }
+// ── Lightweight JSON value ────────────────────────────────────────────────────
+struct J {
+    enum Type { INT, DOUBLE, BOOL, STR, ARR, NUL } type = NUL;
+    long long   ival = 0;
+    double      dval = 0;
+    bool        bval = false;
+    string      sval;
+    vector<J>   aval;
+
+    // Accessors
+    int         asInt()    const { return (int)ival; }
+    long long   asLong()   const { return ival; }
+    double      asDouble() const { return type==DOUBLE?dval:(double)ival; }
+    bool        asBool()   const { return bval; }
+    string      asStr()    const { return sval; }
+    vector<int> asVecInt() const {
+        vector<int> v; for(auto&x:aval) v.push_back(x.asInt()); return v;
+    }
+    vector<long long> asVecLong() const {
+        vector<long long> v; for(auto&x:aval) v.push_back(x.asLong()); return v;
+    }
+    vector<double> asVecDouble() const {
+        vector<double> v; for(auto&x:aval) v.push_back(x.asDouble()); return v;
+    }
+    vector<string> asVecStr() const {
+        vector<string> v; for(auto&x:aval) v.push_back(x.asStr()); return v;
+    }
+    vector<vector<int>> asVecVecInt() const {
+        vector<vector<int>> v;
+        for(auto&x:aval) v.push_back(x.asVecInt());
+        return v;
+    }
 };
 
-vector<JsonValue> parse_json_array(const string& input) {
-    vector<JsonValue> result;
-    string trimmed = input;
-    // Remove leading/trailing whitespace and brackets
-    size_t start = trimmed.find('[');
-    size_t end = trimmed.rfind(']');
-    if (start == string::npos || end == string::npos) return result;
-    
-    trimmed = trimmed.substr(start + 1, end - start - 1);
-    
-    stringstream ss(trimmed);
-    string token;
-    while (getline(ss, token, ',')) {
-        // Trim token
-        token.erase(0, token.find_first_not_of(" \\t\\n\\r"));
-        token.erase(token.find_last_not_of(" \\t\\n\\r") + 1);
-        
-        if (token.empty()) continue;
-        
-        JsonValue val;
-        val.raw_value = token;
-        
-        if ((token.front() == '"' && token.back() == '"') || 
-            (token.front() == '\'' && token.back() == '\'')) {
-            val.is_string = true;
-            val.raw_value = token.substr(1, token.length() - 2);
-        } else if (token.find('.') != string::npos) {
-            val.is_number = true;
-        } else if (isdigit(token[0]) || (token[0] == '-' && token.length() > 1)) {
-            val.is_number = true;
-        }
-        
-        result.push_back(val);
+// ── JSON parser ───────────────────────────────────────────────────────────────
+static size_t _pos;
+static string _src;
+
+static void skip_ws() { while(_pos<_src.size()&&isspace(_src[_pos]))_pos++; }
+
+static J parse_value();
+
+static J parse_array() {
+    J j; j.type=J::ARR; _pos++; // skip '['
+    skip_ws();
+    if(_pos<_src.size()&&_src[_pos]==']'){_pos++;return j;}
+    while(true){
+        skip_ws();
+        j.aval.push_back(parse_value());
+        skip_ws();
+        if(_pos>=_src.size()||_src[_pos]==']'){_pos++;break;}
+        if(_src[_pos]==',')_pos++;
     }
-    
-    return result;
+    return j;
 }
 
-string serialize_value(int val) { return to_string(val); }
-string serialize_value(double val) { 
-    stringstream ss;
-    ss << val;
-    string result = ss.str();
-    return result;
+static J parse_string() {
+    J j; j.type=J::STR; _pos++; // skip '"'
+    while(_pos<_src.size()&&_src[_pos]!='"'){
+        if(_src[_pos]=='\\'&&_pos+1<_src.size()){_pos++;j.sval+=_src[_pos++];}
+        else j.sval+=_src[_pos++];
+    }
+    if(_pos<_src.size())_pos++; // skip closing '"'
+    return j;
 }
-string serialize_value(string val) { return val; }
-string serialize_value(bool val) { return val ? "true" : "false"; }
 
-// User code
-''' + source_code + '''
+static J parse_value() {
+    skip_ws();
+    if(_pos>=_src.size()){J j;return j;}
+    char c=_src[_pos];
+    if(c=='[') return parse_array();
+    if(c=='"') return parse_string();
+    if(c=='t'){_pos+=4;J j;j.type=J::BOOL;j.bval=true;return j;}
+    if(c=='f'){_pos+=5;J j;j.type=J::BOOL;j.bval=false;return j;}
+    if(c=='n'){_pos+=4;J j;j.type=J::NUL;return j;}
+    // number
+    size_t start=_pos;
+    bool is_float=false;
+    if(c=='-')_pos++;
+    while(_pos<_src.size()&&(isdigit(_src[_pos])||_src[_pos]=='.'||_src[_pos]=='e'||_src[_pos]=='E'||_src[_pos]=='+'||_src[_pos]=='-')){
+        if(_src[_pos]=='.'||_src[_pos]=='e'||_src[_pos]=='E') is_float=true;
+        _pos++;
+    }
+    string num=_src.substr(start,_pos-start);
+    J j;
+    if(is_float){j.type=J::DOUBLE;j.dval=stod(num);}
+    else{j.type=J::INT;j.ival=stoll(num);}
+    return j;
+}
 
+static vector<J> parse_json_args(const string& line) {
+    _src=line; _pos=0;
+    skip_ws();
+    if(_pos<_src.size()&&_src[_pos]=='['){
+        J arr=parse_array();
+        return arr.aval;
+    }
+    // single value
+    return {parse_value()};
+}
+
+// ── Serializer ────────────────────────────────────────────────────────────────
+static string serialize(int v)         { return to_string(v); }
+static string serialize(long long v)   { return to_string(v); }
+static string serialize(double v)      { ostringstream s;s<<v;return s.str(); }
+static string serialize(bool v)        { return v?"true":"false"; }
+static string serialize(const string&v){ return v; }
+static string serialize(const vector<int>&v){
+    string s="[";
+    for(int i=0;i<(int)v.size();i++){if(i)s+=",";s+=to_string(v[i]);}
+    return s+"]";
+}
+static string serialize(const vector<long long>&v){
+    string s="[";
+    for(int i=0;i<(int)v.size();i++){if(i)s+=",";s+=to_string(v[i]);}
+    return s+"]";
+}
+static string serialize(const vector<string>&v){
+    string s="[";
+    for(int i=0;i<(int)v.size();i++){if(i)s+=",";s+="\""+v[i]+"\"";}
+    return s+"]";
+}
+static string serialize(const vector<vector<int>>&v){
+    string s="[";
+    for(int i=0;i<(int)v.size();i++){if(i)s+=",";s+=serialize(v[i]);}
+    return s+"]";
+}
+
+// ── User solution ─────────────────────────────────────────────────────────────
+""" + source_code + """
+
+// ── Main: read args, call solution, print result ──────────────────────────────
 int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(NULL);
+
     string line;
-    if (!getline(cin, line)) {
-        line = "[]";
-    }
-    
-    if (line.empty()) {
-        line = "[]";
-    }
-    
-    vector<JsonValue> args = parse_json_array(line);
-    
-    // Candidates: ''' + candidate_list + '''
-    // For C++, the wrapper assumes you provide a solution function.
-    // Otherwise, provide a complete main() function.
-    
-    cout << "null" << endl;
+    if (!getline(cin, line) || line.empty()) line = "[]";
+
+    vector<J> args = parse_json_args(line);
+
+    Solution sol;
+    auto call = [&]() -> string {
+""" + _generate_cpp_call(func_name, match, source_code) + """
+        return "null";
+    };
+
+    cout << call() << endl;
     return 0;
 }
-'''
-    return cpp_template
+"""
+    return wrapper
 
 
 def _build_csharp_wrapper(source_code: str, candidates: list[str]) -> str:
