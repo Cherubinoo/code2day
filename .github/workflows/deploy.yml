@@ -7,7 +7,7 @@ on:
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
-  # CI — Validate code before deploying
+  # CI — Validate code before deploying (runs on GitHub's servers)
   # ─────────────────────────────────────────────────────────────────────────────
   ci:
     name: CI — Validate
@@ -60,75 +60,68 @@ jobs:
         run: python manage.py check --deploy 2>&1 | grep -v "^System check" || true
 
   # ─────────────────────────────────────────────────────────────────────────────
-  # CD — Deploy to production server (only if CI passes)
+  # CD — Deploy directly on the server via self-hosted runner
   # ─────────────────────────────────────────────────────────────────────────────
   deploy:
     name: CD — Deploy to Production
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: ci
 
     steps:
-      - name: Deploy to server via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: 22
-          command_timeout: 15m
-          script: |
-            set -e
-            cd /home/administrator/Desktop/doc_judge/judge0
+      - name: Deploy
+        working-directory: /home/administrator/Desktop/doc_judge/judge0
+        run: |
+          set -e
 
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  Code2Day Deploy — $(date)"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  Code2Day Deploy — $(date)"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-            # ── 1. Pull latest code ──────────────────────────────────────────
-            echo "→ Pulling latest code..."
-            git fetch origin main
-            git checkout main
-            git reset --hard origin/main
-            echo "✓ $(git log --oneline -1)"
+          # ── 1. Pull latest code ────────────────────────────────────────────
+          echo "→ Pulling latest code..."
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
+          echo "✓ $(git log --oneline -1)"
 
-            # ── 2. Build backend and frontend only ───────────────────────────
-            echo "→ Building images..."
-            echo "Adserver@11042026" | sudo -S docker compose build backend frontend
-            echo "✓ Images built"
+          # ── 2. Build backend and frontend ──────────────────────────────────
+          echo "→ Building images..."
+          docker compose build backend frontend
+          echo "✓ Images built"
 
-            # ── 3. Restart containers ────────────────────────────────────────
-            echo "→ Restarting..."
-            echo "Adserver@11042026" | sudo -S docker compose up -d --remove-orphans
-            echo "✓ Containers up"
+          # ── 3. Restart containers ──────────────────────────────────────────
+          echo "→ Restarting..."
+          docker compose up -d --remove-orphans
+          echo "✓ Containers up"
 
-            # ── 4. Run migrations ────────────────────────────────────────────
-            echo "→ Migrations..."
-            echo "Adserver@11042026" | sudo -S docker exec code2day-backend python manage.py migrate --noinput
-            echo "✓ Migrations done"
+          # ── 4. Run migrations ──────────────────────────────────────────────
+          echo "→ Migrations..."
+          docker exec code2day-backend python manage.py migrate --noinput
+          echo "✓ Migrations done"
 
-            # ── 5. Collect static files ──────────────────────────────────────
-            echo "→ Static files..."
-            echo "Adserver@11042026" | sudo -S docker exec code2day-backend python manage.py collectstatic --noinput
-            echo "✓ Done"
+          # ── 5. Collect static files ────────────────────────────────────────
+          echo "→ Static files..."
+          docker exec code2day-backend python manage.py collectstatic --noinput
+          echo "✓ Done"
 
-            # ── 6. Health check ──────────────────────────────────────────────
-            sleep 8
-            BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/)
-            FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/)
-            EXECUTOR=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2358/health)
+          # ── 6. Health check ────────────────────────────────────────────────
+          sleep 8
+          BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/)
+          FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/)
+          EXECUTOR=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2358/health)
 
-            echo "  Backend  → HTTP $BACKEND"
-            echo "  Frontend → HTTP $FRONTEND"
-            echo "  Executor → HTTP $EXECUTOR"
+          echo "  Backend  → HTTP $BACKEND"
+          echo "  Frontend → HTTP $FRONTEND"
+          echo "  Executor → HTTP $EXECUTOR"
 
-            if [ "$BACKEND" != "302" ] && [ "$BACKEND" != "200" ]; then
-              echo "✗ Backend failed!" && exit 1
-            fi
-            if [ "$FRONTEND" != "200" ]; then
-              echo "✗ Frontend failed!" && exit 1
-            fi
+          if [ "$BACKEND" != "302" ] && [ "$BACKEND" != "200" ]; then
+            echo "✗ Backend failed!" && exit 1
+          fi
+          if [ "$FRONTEND" != "200" ]; then
+            echo "✗ Frontend failed!" && exit 1
+          fi
 
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-            echo "  ✓ Deploy complete — $(date)"
-            echo "  ✓ https://code2day.ramcoad.com"
-            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "  ✓ Deploy complete — $(date)"
+          echo "  ✓ https://code2day.ramcoad.com"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
