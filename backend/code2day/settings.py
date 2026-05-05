@@ -181,6 +181,12 @@ _csrf_raw = os.getenv(
 )
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_raw.split(",") if o.strip()]
 
+# Always trust the production domain regardless of env
+_production_origins = ["https://code2day.ramcoad.com", "http://code2day.ramcoad.com"]
+for _origin in _production_origins:
+    if _origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(_origin)
+
 # ---------------------------------------------------------------------------
 # Static files
 # ---------------------------------------------------------------------------
