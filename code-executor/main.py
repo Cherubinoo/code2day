@@ -44,7 +44,7 @@ LANGUAGES = {
     # JavaScript (Node.js)
     63: {"image": "code2day-node:latest",    "ext": "js",   "cmd": ["node", "/code/solution.js"]},
     # Java
-    62: {"image": "code2day-java:latest",    "ext": "java", "cmd": ["sh", "-c", "cd /code && javac Solution.java 2>&1 && java Solution"]},
+    62: {"image": "code2day-java:latest",    "ext": "java", "cmd": ["sh", "-c", "CP=$(find /usr/local/lib/java -name '*.jar' 2>/dev/null | tr '\n' ':'); cd /code && javac -cp \".:$CP\" Solution.java 2>&1 && java -cp \".:$CP\" Solution"]},
     # C
     50: {"image": "code2day-c:latest",       "ext": "c",    "cmd": ["sh", "-c", "gcc /code/solution.c -o /code/solution -lm 2>&1 && /code/solution"]},
     # C++
