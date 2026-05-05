@@ -8,24 +8,24 @@ x-logging:
 services:
 
   # ── Redis ─────────────────────────────────────────────────────────────────────
-  judge0-redis:
+  code2day-redis:
     image: redis:7-alpine
-    container_name: judge0-redis
+    container_name: code2day-redis
     command: redis-server --requirepass judge0redis --appendonly no
     volumes:
-      - judge0-redis-data:/data
+      - code2day-redis-data:/data
     restart: unless-stopped
     <<: *default-logging
     networks:
       - code2day-network
 
-  # ── Code Executor (Judge0-compatible, Docker-based, no cgroup v1 needed) ─────
-  judge0-server:
+  # ── Code Executor (Docker-based, no cgroup v1 needed) ─────────────────────
+  code2day-executor:
     build:
       context: ./code-executor
       dockerfile: Dockerfile
     image: code2day-executor:latest
-    container_name: judge0-server
+    container_name: code2day-executor
     ports:
       - "2358:2358"
     volumes:
@@ -58,8 +58,8 @@ services:
     restart: unless-stopped
     <<: *default-logging
     depends_on:
-      - judge0-redis
-      - judge0-server
+      - code2day-redis
+      - code2day-executor
     networks:
       - code2day-network
     command: gunicorn code2day.wsgi:application --bind 0.0.0.0:8000 --workers 12 --timeout 120 --max-requests 1000 --max-requests-jitter 100
@@ -79,7 +79,7 @@ services:
       - code2day-network
 
 volumes:
-  judge0-redis-data:
+  code2day-redis-data:
 
 networks:
   code2day-network:

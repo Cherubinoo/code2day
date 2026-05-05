@@ -217,10 +217,14 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 # ---------------------------------------------------------------------------
-# Judge0 Code Execution Engine
+# Code Execution Engine
+# Env vars keep JUDGE0_ prefix for backward compat with server .env
 # ---------------------------------------------------------------------------
-JUDGE0_BASE_URL = os.getenv("JUDGE0_BASE_URL", "http://judge0-server:2358")
-JUDGE0_TIMEOUT_SECONDS = int(os.getenv("JUDGE0_TIMEOUT_SECONDS", "30"))
+EXECUTOR_BASE_URL = os.getenv("JUDGE0_BASE_URL", "http://judge0-server:2358")
+EXECUTOR_TIMEOUT_SECONDS = int(os.getenv("JUDGE0_TIMEOUT_SECONDS", "30"))
+# Legacy aliases — do not remove (used in old imports)
+JUDGE0_BASE_URL = EXECUTOR_BASE_URL
+JUDGE0_TIMEOUT_SECONDS = EXECUTOR_TIMEOUT_SECONDS
 
 # ---------------------------------------------------------------------------
 # Auth rate limiting (InMemoryRateLimiter in auth_utils.py)

@@ -89,7 +89,7 @@ jobs:
           docker compose build backend frontend
           echo "✓ Images built"
 
-          # ── 3. Restart backend and frontend only (judge0-server untouched) ──
+          # ── 3. Restart backend and frontend only (code2day-executor untouched) ──
           echo "→ Restarting..."
           docker compose up -d --no-deps backend frontend
           echo "✓ Containers up"

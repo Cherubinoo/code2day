@@ -70,8 +70,8 @@ from .views import (
     ContestAnalyticsView,
     ContestStudentSubmissionsView,
     UnifiedUserLookupView,
-    Judge0SystemInfoView,
-    Judge0SubmitView,
+    ExecutorSystemInfoView,
+    ExecutorSubmitView,
     AnnouncementListView,
     NotificationListView,
     NotificationMarkReadView,
@@ -205,9 +205,9 @@ urlpatterns = [
     path("admin/v2/institutions/<int:pk>/branding/preview/", InstitutionBrandingPreviewView.as_view(), name="institution-branding-preview"),
     path("admin/v2/institutions/<int:pk>/branding/upload-logo/", InstitutionDetailManagementView.as_view(), name="institution-logo-upload"),
     
-    # Judge0 Direct API
-    path("judge0/system_info/", Judge0SystemInfoView.as_view(), name="judge0-system-info"),
-    path("judge0/submit/", Judge0SubmitView.as_view(), name="judge0-submit"),
+    # Executor Direct API
+    path("executor/system_info/", ExecutorSystemInfoView.as_view(), name="executor-system-info"),
+    path("executor/submit/", ExecutorSubmitView.as_view(), name="executor-submit"),
     path("discussions/staff-dept-list/", StaffDeptListView.as_view(), name="staff-dept-list"),
     path("discussions/threads/", DiscussionThreadListView.as_view(), name="discussion-threads"),
 ]

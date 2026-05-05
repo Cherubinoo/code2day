@@ -60,10 +60,10 @@ from .serializers import (
     StudentLookupListSerializer,
     StudentProfileSerializer,
 )
-from .services.judge0 import (
-    Judge0ServiceError,
-    Judge0TimeoutError,
-    execute_judge0_submission,
+from .services.executor import (
+    ExecutorServiceError,
+    ExecutorTimeoutError,
+    execute_submission as execute_judge0_submission,
 )
 from .services.execution_adapter import (
     normalize_comparable_output,
@@ -1039,7 +1039,7 @@ class HealthCheckView(APIView):
         return Response(
             {
                 "status": "ok",
-                "judge0_configured": bool(getattr(settings, "JUDGE0_BASE_URL", "").strip()),
+                "executor_configured": bool(getattr(settings, "EXECUTOR_BASE_URL", "").strip()),
             }
         )
 
@@ -1195,11 +1195,11 @@ class CodeRunView(StudentAuthMixin, APIView):
                     stdin=prepared["stdin"],
                 )
             
-        except Judge0TimeoutError as exc:
-            logger.error("Judge0 timeout: %s", exc)
+        except ExecutorTimeoutError as exc:
+            logger.error("Executor timeout: %s", exc)
             return Response({"detail": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
-        except Judge0ServiceError as exc:
-            logger.error("Judge0 service error: %s", exc)
+        except ExecutorServiceError as exc:
+            logger.error("Executor service error: %s", exc)
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception as exc:
             logger.error("Unexpected execution error: %s", exc, exc_info=True)
@@ -3987,21 +3987,20 @@ class UnifiedUserLookupView(APIView):
 
 
 # =============================================================================
-# Judge0 Direct API Endpoints
+# Executor Direct API Endpoints
 # =============================================================================
 
-class Judge0SystemInfoView(APIView):
-    """Get Judge0 system information and status."""
+class ExecutorSystemInfoView(APIView):
+    """Get executor system information and status."""
     permission_classes = [AllowAny]
 
     def get(self, request):
-        """Fetch Judge0 system info."""
         import urllib.request
         import json
         from django.conf import settings
 
-        base_url = getattr(settings, 'JUDGE0_BASE_URL', 'http://localhost:2358').rstrip('/')
-        
+        base_url = getattr(settings, 'EXECUTOR_BASE_URL', 'http://localhost:2358').rstrip('/')
+
         try:
             req = urllib.request.Request(
                 f"{base_url}/system_info",
@@ -4012,7 +4011,7 @@ class Judge0SystemInfoView(APIView):
                 data = json.loads(response.read().decode('utf-8'))
                 return Response({
                     "status": "online",
-                    "judge0_info": data
+                    "executor_info": data
                 })
         except Exception as e:
             return Response(
@@ -4021,11 +4020,10 @@ class Judge0SystemInfoView(APIView):
             )
 
 
-class Judge0SubmitView(APIView):
-    """Submit code directly to Judge0 for execution."""
+class ExecutorSubmitView(APIView):
+    """Submit code directly to the executor for execution."""
     permission_classes = [AllowAny]
 
-    # Language ID mapping
     LANGUAGE_IDS = {
         "c": 50,
         "cpp": 54,
@@ -4037,11 +4035,11 @@ class Judge0SubmitView(APIView):
     }
 
     def post(self, request):
-        """Execute code via Judge0 with fallback mock mode."""
-        from .services.judge0 import (
-            execute_judge0_submission,
-            Judge0TimeoutError,
-            Judge0ServiceError,
+        """Execute code via the executor."""
+        from .services.executor import (
+            execute_submission,
+            ExecutorTimeoutError,
+            ExecutorServiceError,
         )
 
         language_id = request.data.get("language_id")
@@ -4050,7 +4048,6 @@ class Judge0SubmitView(APIView):
         language = request.data.get("language", "").lower()
         use_mock = request.data.get("mock", False)
 
-        # If language_id not provided, try to map from language name
         if not language_id and language:
             language_id = self.LANGUAGE_IDS.get(language)
 

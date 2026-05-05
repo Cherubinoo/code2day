@@ -10,10 +10,10 @@ from .models import (
     SolvedProblem, 
     ProblemSession
 )
-from .services.judge0 import (
-    execute_judge0_submission,
-    Judge0TimeoutError,
-    Judge0ServiceError,
+from .services.executor import (
+    execute_submission as execute_judge0_submission,
+    ExecutorTimeoutError as Judge0TimeoutError,
+    ExecutorServiceError as Judge0ServiceError,
 )
 from .services.execution_adapter import (
     prepare_execution_payload,
