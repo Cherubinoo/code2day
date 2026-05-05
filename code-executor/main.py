@@ -109,7 +109,6 @@ def run_in_docker(language_id: int, source_code: str, stdin: str,
         }
 
     lang = LANGUAGES[language_id]
-    token = str(uuid.uuid4())
     container = None
     start_time = time.time()
 
@@ -120,50 +119,65 @@ def run_in_docker(language_id: int, source_code: str, stdin: str,
         filename = f"solution.{lang['ext']}"
 
     try:
-        # Write source code to a temp file on host, mount into container
-        import tempfile
+        import tempfile, subprocess
+
         with tempfile.TemporaryDirectory() as tmpdir:
             code_file = os.path.join(tmpdir, filename)
             with open(code_file, "w") as f:
                 f.write(source_code)
-            # Make readable by all users inside container
             os.chmod(code_file, 0o644)
             os.chmod(tmpdir, 0o755)
 
-            # Prepare stdin
-            stdin_bytes = stdin.encode("utf-8") if stdin else b""
+            # Write stdin to a file inside tmpdir so it can be piped reliably
+            stdin_file = os.path.join(tmpdir, "_stdin.txt")
+            with open(stdin_file, "w") as f:
+                f.write(stdin or "")
+            os.chmod(stdin_file, 0o644)
 
-            # Run container
-            container = docker_client.containers.run(
-                image=lang["image"],
-                command=lang["cmd"],
-                volumes={tmpdir: {"bind": "/code", "mode": "rw"}},
-                stdin_open=True,
-                detach=True,
-                network_disabled=True,
-                mem_limit=f"{mem_limit_mb}m",
-                memswap_limit=f"{mem_limit_mb}m",
-                cpu_period=100000,
-                cpu_quota=int(cpu_limit * 100000),
-                pids_limit=64,
-                read_only=False,
-                remove=False,
-                security_opt=["no-new-privileges"],
-            )
+            # Build docker run command — pipe stdin via file redirect
+            # This avoids the unreliable attach_socket approach entirely
+            cmd = [
+                "docker", "run", "--rm",
+                "--network", "none",
+                "--memory", f"{mem_limit_mb}m",
+                "--memory-swap", f"{mem_limit_mb}m",
+                "--cpus", str(cpu_limit),
+                "--pids-limit", "64",
+                "--security-opt", "no-new-privileges",
+                "-v", f"{tmpdir}:/code:rw",
+                "-i",  # keep stdin open for pipe
+                lang["image"],
+            ]
+            # Append the language command
+            if isinstance(lang["cmd"], list):
+                cmd.extend(lang["cmd"])
+            else:
+                cmd.extend(["sh", "-c", lang["cmd"]])
 
-            # Send stdin
-            if stdin_bytes:
-                sock = container.attach_socket(params={"stdin": 1, "stream": 1})
-                sock._sock.sendall(stdin_bytes)
-                sock._sock.close()
+            stdin_data = (stdin or "").encode("utf-8")
 
-            # Wait with timeout
             try:
-                result = container.wait(timeout=wall_limit)
-                exit_code = result.get("StatusCode", 1)
-            except Exception:
-                container.kill()
+                proc = subprocess.run(
+                    cmd,
+                    input=stdin_data,
+                    capture_output=True,
+                    timeout=wall_limit,
+                )
                 elapsed = time.time() - start_time
+                exit_code = proc.returncode
+                stdout_raw = proc.stdout.decode("utf-8", errors="replace")
+                stderr_raw = proc.stderr.decode("utf-8", errors="replace")
+
+            except subprocess.TimeoutExpired:
+                elapsed = time.time() - start_time
+                # Kill any leftover container
+                try:
+                    subprocess.run(
+                        ["docker", "ps", "-q", "--filter", f"ancestor={lang['image']}"],
+                        capture_output=True, timeout=5
+                    )
+                except Exception:
+                    pass
                 return {
                     "stdout": "", "stderr": "Time Limit Exceeded",
                     "compile_output": "", "message": "",
@@ -171,41 +185,37 @@ def run_in_docker(language_id: int, source_code: str, stdin: str,
                     "time": f"{elapsed:.3f}", "memory": "0",
                 }
 
-            elapsed = time.time() - start_time
-
-            # Get output
-            logs = container.logs(stdout=True, stderr=True)
-            full_output = logs.decode("utf-8", errors="replace") if logs else ""
-
-            # For compiled languages, separate compile errors from runtime output
-            stdout = full_output
+            # Separate compile errors from runtime output for compiled languages
+            stdout = stdout_raw
             stderr = ""
             compile_output = ""
 
             if exit_code != 0:
                 if language_id in (50, 54):  # C, C++
-                    # Check if it's a compile error (no executable created)
-                    if "error:" in full_output or "undefined reference" in full_output:
-                        compile_output = full_output
+                    if "error:" in stdout_raw or "undefined reference" in stdout_raw:
+                        compile_output = stdout_raw
                         stdout = ""
                         status_id = 6
                         status_desc = "Compilation Error"
                     else:
-                        stderr = full_output
+                        stderr = stderr_raw or stdout_raw
+                        stdout = ""
                         status_id = 11
                         status_desc = "Runtime Error (NZEC)"
                 elif language_id == 62:  # Java
-                    if "error:" in full_output and ".java:" in full_output:
-                        compile_output = full_output
+                    if "error:" in stdout_raw and ".java:" in stdout_raw:
+                        compile_output = stdout_raw
                         stdout = ""
                         status_id = 6
                         status_desc = "Compilation Error"
                     else:
-                        stderr = full_output
+                        stderr = stderr_raw or stdout_raw
+                        stdout = ""
                         status_id = 11
                         status_desc = "Runtime Error (NZEC)"
                 else:
-                    stderr = full_output
+                    stderr = stderr_raw or stdout_raw
+                    stdout = ""
                     status_id = 11
                     status_desc = "Runtime Error (NZEC)"
             else:
@@ -223,14 +233,6 @@ def run_in_docker(language_id: int, source_code: str, stdin: str,
                 "memory": "0",
             }
 
-    except docker.errors.ImageNotFound:
-        return {
-            "stdout": "", "stderr": "",
-            "compile_output": f"Language image not found: {lang['image']}",
-            "message": "Internal error: language image missing",
-            "status_id": 13, "status_desc": "Internal Error",
-            "time": "0", "memory": "0",
-        }
     except Exception as e:
         logger.error(f"Execution error: {e}")
         return {
@@ -239,12 +241,6 @@ def run_in_docker(language_id: int, source_code: str, stdin: str,
             "status_id": 13, "status_desc": "Internal Error",
             "time": "0", "memory": "0",
         }
-    finally:
-        if container:
-            try:
-                container.remove(force=True)
-            except Exception:
-                pass
 
 
 # ── API Endpoints (Judge0 compatible) ─────────────────────────────────────────
