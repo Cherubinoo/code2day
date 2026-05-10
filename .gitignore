@@ -59,6 +59,7 @@ problem_dataset/
 # ── IDE / OS ──────────────────────────────────────────────────────────────────
 .vscode/
 .idea/
+.kiro/
 .DS_Store
 *.swp
 *.swo
