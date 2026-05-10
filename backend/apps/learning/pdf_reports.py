@@ -261,95 +261,20 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         return doc
 
     def _create_contest_header(self, contest, profile):
-        """Create header for contest report"""
-        story = []
-        styles = getSampleStyleSheet()
+        """Create header for contest report using branded header"""
+        # Use the new branded header function
+        report_title = f"Contest Performance Report: {contest.title}"
+        department = contest.department.name if contest.department else "All Departments"
+        user_name = getattr(profile, 'name', 'System Administrator')
         
-        # Custom styles
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=20,
-            spaceAfter=6,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor('#2c3e50')
+        return create_branded_report_header(
+            institution=contest.institution,
+            report_title=report_title,
+            report_type="Contest Analytics",
+            department=department,
+            user_name=user_name,
+            academic_year=datetime.now().year
         )
-        
-        subtitle_style = ParagraphStyle(
-            'CustomSubtitle',
-            parent=styles['Normal'],
-            fontSize=14,
-            spaceAfter=12,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor('#34495e')
-        )
-        
-        # Try to find college logo
-        logo_found = False
-        logo_paths = [
-            os.path.join(settings.STATIC_ROOT or '', 'images', 'college_logo.png'),
-            os.path.join(settings.STATIC_ROOT or '', 'images', 'college_logo.jpg'),
-            os.path.join(settings.BASE_DIR, 'frontend', 'public', 'images', 'college_logo.png'),
-            os.path.join(settings.BASE_DIR, 'frontend', 'public', 'images', 'college_logo.jpg'),
-            os.path.join(settings.BASE_DIR, 'frontend', 'public', 'logo', 'logo.jpeg'),
-            os.path.join(settings.MEDIA_ROOT or '', 'logos', 'college_logo.png'),
-        ]
-        
-        for logo_path in logo_paths:
-            if os.path.exists(logo_path):
-                try:
-                    logo = Image(logo_path, width=2.5*inch, height=1.25*inch)
-                    logo.hAlign = 'CENTER'
-                    story.append(logo)
-                    story.append(Spacer(1, 12))
-                    logo_found = True
-                    break
-                except Exception as e:
-                    continue
-        
-        if not logo_found:
-            header_style = ParagraphStyle(
-                'HeaderDecoration',
-                parent=styles['Normal'],
-                fontSize=24,
-                spaceAfter=12,
-                alignment=TA_CENTER,
-                textColor=colors.HexColor('#3498db')
-            )
-            story.append(Paragraph("🏆", header_style))
-        
-        # Institution name
-        institution_name = "Code2Day Learning Platform"
-        if contest.institution:
-            institution_name = contest.institution.name
-        
-        story.append(Paragraph(institution_name, title_style))
-        story.append(Paragraph("Contest Performance Report", subtitle_style))
-        
-        # Department information
-        if contest.department:
-            dept_style = ParagraphStyle(
-                'DeptStyle',
-                parent=styles['Normal'],
-                fontSize=12,
-                spaceAfter=6,
-                alignment=TA_CENTER,
-                textColor=colors.HexColor('#7f8c8d')
-            )
-            story.append(Paragraph(f"Department: {contest.department.name}", dept_style))
-        
-        # Add decorative line
-        line_style = ParagraphStyle(
-            'Line',
-            parent=styles['Normal'],
-            fontSize=8,
-            spaceAfter=20,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor('#bdc3c7')
-        )
-        story.append(Paragraph("━" * 60, line_style))
-        
-        return story
 
     def _create_contest_overview(self, contest):
         """Create contest overview section"""
@@ -664,3 +589,549 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         story.append(Paragraph("For questions about this report, please contact your instructor or system administrator.", footer_style))
         
         return story
+
+
+def generate_branded_template(institution, template_type, branding_data):
+    """
+    Generate branded PDF templates for institutions
+    
+    Args:
+        institution: Institution model instance
+        template_type: Type of template ('letterhead', 'certificate', 'report_header')
+        branding_data: Dictionary containing branding information
+    
+    Returns:
+        BytesIO buffer containing the generated PDF
+    """
+    if not REPORTLAB_AVAILABLE:
+        raise ImportError("ReportLab is required for PDF generation")
+    
+    buffer = BytesIO()
+    
+    # Create document
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=0.75*inch,
+        leftMargin=0.75*inch,
+        topMargin=1*inch,
+        bottomMargin=0.75*inch
+    )
+    
+    story = []
+    styles = getSampleStyleSheet()
+    
+    # Get branding colors
+    primary_color = branding_data.get('primary_color', '#4f7942')
+    secondary_color = branding_data.get('secondary_color', '#2d5016')
+    accent_color = branding_data.get('accent_color', '#059669')
+    
+    if template_type == 'letterhead':
+        story.extend(_create_letterhead_template(institution, branding_data, styles, primary_color, secondary_color))
+    elif template_type == 'certificate':
+        story.extend(_create_certificate_template(institution, branding_data, styles, primary_color, secondary_color))
+    elif template_type == 'report_header':
+        story.extend(_create_report_header_template(institution, branding_data, styles, primary_color, secondary_color))
+    else:
+        raise ValueError(f"Unknown template type: {template_type}")
+    
+    # Build PDF
+    doc.build(story)
+    buffer.seek(0)
+    
+    return buffer
+
+
+def _create_letterhead_template(institution, branding_data, styles, primary_color, secondary_color):
+    """Create compact report header template (not full letterhead)"""
+    story = []
+    
+    # This creates a sample of the compact header that will appear on reports
+    sample_style = ParagraphStyle(
+        'SampleNote',
+        parent=styles['Normal'],
+        fontSize=10,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor('#666666'),
+        spaceAfter=16,
+        borderWidth=1,
+        borderColor=colors.HexColor('#cccccc'),
+        borderPadding=8,
+        backColor=colors.HexColor('#f9f9f9')
+    )
+    
+    story.append(Paragraph("SAMPLE: This shows how your college header will appear on PDF reports", sample_style))
+    story.append(Spacer(1, 16))
+    
+    # Create the actual compact header that will be used in reports
+    header_elements = create_branded_report_header(
+        institution=institution,
+        report_title="Sample Report Title",
+        report_type="Performance Report",
+        department="Computer Science",
+        user_name="Administrator",
+        academic_year="2024-25"
+    )
+    
+    story.extend(header_elements)
+    
+    # Add sample content to show how it looks with actual report content
+    content_style = ParagraphStyle(
+        'SampleContent',
+        parent=styles['Normal'],
+        fontSize=12,
+        alignment=TA_LEFT,
+        spaceAfter=12
+    )
+    
+    story.append(Paragraph("<b>EXECUTIVE SUMMARY</b>", content_style))
+    story.append(Paragraph("This is where your report content will appear. The header above will be automatically added to all PDF reports generated from the system.", content_style))
+    story.append(Spacer(1, 12))
+    
+    story.append(Paragraph("<b>REPORT SECTIONS</b>", content_style))
+    story.append(Paragraph("• Student Performance Analytics", content_style))
+    story.append(Paragraph("• Contest Results and Rankings", content_style))
+    story.append(Paragraph("• Department-wise Statistics", content_style))
+    story.append(Paragraph("• Individual Student Reports", content_style))
+    story.append(Spacer(1, 12))
+    
+    # Footer note
+    footer_style = ParagraphStyle(
+        'FooterNote',
+        parent=styles['Normal'],
+        fontSize=9,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor('#888888'),
+        spaceAfter=12,
+        borderWidth=1,
+        borderColor=colors.HexColor('#cccccc'),
+        borderPadding=8,
+        backColor=colors.HexColor('#f9f9f9')
+    )
+    
+    story.append(Spacer(1, 24))
+    story.append(Paragraph("This compact header design ensures professional branding while maximizing space for report content.", footer_style))
+    
+    return story
+
+
+def _create_certificate_template(institution, branding_data, styles, primary_color, secondary_color):
+    """Create certificate template"""
+    story = []
+    
+    # Certificate border (decorative)
+    border_style = ParagraphStyle(
+        'BorderStyle',
+        parent=styles['Normal'],
+        fontSize=16,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor(primary_color),
+        spaceAfter=24
+    )
+    story.append(Paragraph("╔" + "═" * 60 + "╗", border_style))
+    
+    # Certificate title
+    cert_title_style = ParagraphStyle(
+        'CertTitleStyle',
+        parent=styles['Normal'],
+        fontSize=28,
+        fontName='Helvetica-Bold',
+        alignment=TA_CENTER,
+        textColor=colors.HexColor(primary_color),
+        spaceAfter=24
+    )
+    story.append(Paragraph("CERTIFICATE OF ACHIEVEMENT", cert_title_style))
+    
+    # Institution name
+    inst_style = ParagraphStyle(
+        'InstStyle',
+        parent=styles['Normal'],
+        fontSize=18,
+        fontName='Helvetica-Bold',
+        alignment=TA_CENTER,
+        textColor=colors.HexColor(secondary_color),
+        spaceAfter=36
+    )
+    display_name = branding_data.get('display_name', institution.name)
+    story.append(Paragraph(display_name, inst_style))
+    
+    # Certificate content
+    content_style = ParagraphStyle(
+        'CertContentStyle',
+        parent=styles['Normal'],
+        fontSize=14,
+        alignment=TA_CENTER,
+        spaceAfter=24
+    )
+    
+    story.append(Paragraph("This is to certify that", content_style))
+    story.append(Spacer(1, 12))
+    
+    name_style = ParagraphStyle(
+        'NameStyle',
+        parent=styles['Normal'],
+        fontSize=20,
+        fontName='Helvetica-Bold',
+        alignment=TA_CENTER,
+        textColor=colors.HexColor(primary_color),
+        spaceAfter=24
+    )
+    story.append(Paragraph("_" * 40, name_style))
+    story.append(Paragraph("(Student Name)", content_style))
+    story.append(Spacer(1, 24))
+    
+    story.append(Paragraph("has successfully completed", content_style))
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("_" * 50, name_style))
+    story.append(Paragraph("(Course/Contest Name)", content_style))
+    story.append(Spacer(1, 24))
+    
+    story.append(Paragraph("with outstanding performance", content_style))
+    story.append(Spacer(1, 36))
+    
+    # Date and signature section
+    signature_style = ParagraphStyle(
+        'SignatureStyle',
+        parent=styles['Normal'],
+        fontSize=12,
+        alignment=TA_LEFT,
+        spaceAfter=12
+    )
+    
+    # Create signature table
+    sig_data = [
+        ['Date: _______________', '', 'Signature: _______________'],
+        ['', '', ''],
+        ['', '', 'Authorized Signatory']
+    ]
+    
+    sig_table = Table(sig_data, colWidths=[2*inch, 1*inch, 2*inch])
+    sig_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+        ('ALIGN', (2, 0), (2, -1), 'RIGHT'),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]))
+    
+    story.append(sig_table)
+    story.append(Spacer(1, 24))
+    
+    # Bottom border
+    story.append(Paragraph("╚" + "═" * 60 + "╝", border_style))
+    
+    return story
+
+
+def _create_report_header_template(institution, branding_data, styles, primary_color, secondary_color):
+    """Create compact report header for PDF reports"""
+    story = []
+    
+    # Create a compact header table with logo and institution info
+    header_data = []
+    
+    # Get institution info
+    display_name = branding_data.get('display_name', institution.name)
+    subheading = branding_data.get('subheading', '')
+    address = branding_data.get('address', institution.address or '')
+    contact_info = []
+    
+    if branding_data.get('contact_phone'):
+        contact_info.append(f"Phone: {branding_data['contact_phone']}")
+    if branding_data.get('contact_email'):
+        contact_info.append(f"Email: {branding_data['contact_email']}")
+    if branding_data.get('website'):
+        contact_info.append(f"Web: {branding_data['website']}")
+    
+    # Create header content
+    institution_info = f"<b>{display_name}</b>"
+    if subheading:
+        institution_info += f"<br/><i>{subheading}</i>"
+    if address:
+        institution_info += f"<br/>{address}"
+    if contact_info:
+        institution_info += f"<br/>{' | '.join(contact_info)}"
+    
+    # Logo placeholder and institution info in a table
+    header_data = [
+        ['[LOGO]', institution_info, f'<b>Report Generated</b><br/>{datetime.now().strftime("%B %d, %Y")}<br/>{datetime.now().strftime("%I:%M %p")}']
+    ]
+    
+    header_table = Table(header_data, colWidths=[1*inch, 4*inch, 1.5*inch])
+    header_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (0, 0), 'CENTER'),  # Logo center
+        ('ALIGN', (1, 0), (1, 0), 'LEFT'),    # Institution info left
+        ('ALIGN', (2, 0), (2, 0), 'RIGHT'),   # Date right
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('FONTSIZE', (1, 0), (1, 0), 10),
+        ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#333333')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor(primary_color)),
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8f9fa')),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+    ]))
+    
+    story.append(header_table)
+    story.append(Spacer(1, 16))
+    
+    # Report title section
+    title_style = ParagraphStyle(
+        'ReportTitleStyle',
+        parent=styles['Normal'],
+        fontSize=16,
+        fontName='Helvetica-Bold',
+        alignment=TA_CENTER,
+        textColor=colors.HexColor(primary_color),
+        spaceAfter=8,
+        borderWidth=1,
+        borderColor=colors.HexColor(primary_color),
+        borderPadding=8,
+        backColor=colors.HexColor('#f0f8ff')
+    )
+    story.append(Paragraph("[REPORT TITLE]", title_style))
+    story.append(Spacer(1, 16))
+    
+    # Report metadata in a compact format
+    meta_style = ParagraphStyle(
+        'ReportMetaStyle',
+        parent=styles['Normal'],
+        fontSize=9,
+        alignment=TA_LEFT,
+        textColor=colors.HexColor('#666666'),
+        spaceAfter=16
+    )
+    
+    meta_info = f"<b>Report Details:</b> [REPORT TYPE] | <b>Department:</b> [DEPARTMENT] | <b>Academic Year:</b> [ACADEMIC YEAR] | <b>Generated By:</b> [USER NAME]"
+    story.append(Paragraph(meta_info, meta_style))
+    
+    # Separator line
+    separator_style = ParagraphStyle(
+        'SeparatorStyle',
+        parent=styles['Normal'],
+        fontSize=8,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor(primary_color),
+        spaceAfter=16
+    )
+    story.append(Paragraph("═" * 100, separator_style))
+    
+    return story
+
+
+def create_branded_report_header(institution, report_title="Report", report_type="", department="", user_name="", academic_year=""):
+    """
+    Create a compact branded header for PDF reports
+    
+    Args:
+        institution: Institution model instance
+        report_title: Title of the report
+        report_type: Type of report (Student Performance, Contest Analytics, etc.)
+        department: Department name
+        user_name: Name of user generating the report
+        academic_year: Academic year
+    
+    Returns:
+        List of ReportLab story elements for the header
+    """
+    if not REPORTLAB_AVAILABLE:
+        return []
+    
+    story = []
+    styles = getSampleStyleSheet()
+    
+    # Get branding settings
+    branding_settings = None
+    primary_color = '#4f7942'
+    secondary_color = '#2d5016'
+    
+    try:
+        from .models import InstitutionBrandingSettings
+        branding_settings = InstitutionBrandingSettings.objects.get(institution=institution)
+        primary_color = branding_settings.primary_color
+        secondary_color = branding_settings.secondary_color
+    except InstitutionBrandingSettings.DoesNotExist:
+        # Use default colors if no branding settings exist
+        pass
+    except Exception as e:
+        # Log error but continue with defaults
+        print(f"Error accessing branding settings for {institution.name}: {e}")
+        pass
+    
+    # Institution info
+    display_name = institution.display_name or institution.name
+    subheading = institution.subheading or ''
+    address = institution.address or ''
+    
+    # Contact info
+    contact_parts = []
+    if institution.contact_phone:
+        contact_parts.append(f"Ph: {institution.contact_phone}")
+    if institution.contact_email:
+        contact_parts.append(f"Email: {institution.contact_email}")
+    if institution.website:
+        contact_parts.append(f"Web: {institution.website}")
+    
+    contact_info = " | ".join(contact_parts)
+    
+    # Create header table
+    institution_cell = f"""
+    <b><font size="12" color="{primary_color}">{display_name}</font></b><br/>
+    """
+    
+    if subheading:
+        institution_cell += f'<font size="9" color="{secondary_color}"><i>{subheading}</i></font><br/>'
+    
+    if address:
+        institution_cell += f'<font size="8" color="#666666">{address}</font><br/>'
+    
+    if contact_info:
+        institution_cell += f'<font size="8" color="#666666">{contact_info}</font>'
+    
+    # Date and time info
+    date_cell = f"""
+    <b><font size="9" color="{primary_color}">Report Generated</font></b><br/>
+    <font size="8" color="#666666">{datetime.now().strftime('%B %d, %Y')}</font><br/>
+    <font size="8" color="#666666">{datetime.now().strftime('%I:%M %p')}</font>
+    """
+    
+    # Logo placeholder (can be replaced with actual logo if available)
+    logo_cell = f'<font size="24" color="{primary_color}">🏛️</font>'
+    
+    # Try to use actual logo if available
+    logo_path = None
+    
+    # First try branding settings primary logo
+    if branding_settings and branding_settings.primary_logo:
+        try:
+            logo_path = branding_settings.primary_logo.file.path
+        except:
+            pass
+    
+    # Fallback to institution logo_file
+    if not logo_path and institution.logo_file:
+        try:
+            logo_path = institution.logo_file.path
+        except:
+            pass
+    
+    # Fallback to institution logo_url (download and cache)
+    if not logo_path and institution.logo_url:
+        try:
+            import requests
+            from PIL import Image as PILImage
+            import tempfile
+            
+            response = requests.get(institution.logo_url, timeout=10)
+            response.raise_for_status()
+            
+            # Create temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                tmp_file.write(response.content)
+                logo_path = tmp_file.name
+        except Exception as e:
+            print(f"Failed to download logo from URL: {e}")
+    
+    # Use logo if we have a valid path
+    if logo_path and os.path.exists(logo_path):
+        try:
+            logo = Image(logo_path, width=0.8*inch, height=0.8*inch)
+            logo_cell = logo
+        except Exception as e:
+            print(f"Failed to load logo image: {e}")
+            pass
+    
+    header_data = [[logo_cell, institution_cell, date_cell]]
+    
+    header_table = Table(header_data, colWidths=[1*inch, 4.5*inch, 1.5*inch])
+    header_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+        ('ALIGN', (1, 0), (1, 0), 'LEFT'),
+        ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('TOPPADDING', (0, 0), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor(primary_color)),
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8f9fa')),
+    ]))
+    
+    story.append(header_table)
+    story.append(Spacer(1, 12))
+    
+    # Report title section
+    title_style = ParagraphStyle(
+        'ReportTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        fontName='Helvetica-Bold',
+        alignment=TA_CENTER,
+        textColor=colors.HexColor(primary_color),
+        spaceAfter=8,
+        borderWidth=1,
+        borderColor=colors.HexColor(primary_color),
+        borderPadding=6,
+        backColor=colors.HexColor('#f0f8ff')
+    )
+    
+    story.append(Paragraph(report_title, title_style))
+    story.append(Spacer(1, 8))
+    
+    # Report metadata
+    if report_type or department or user_name or academic_year:
+        meta_parts = []
+        if report_type:
+            meta_parts.append(f"<b>Type:</b> {report_type}")
+        if department:
+            meta_parts.append(f"<b>Department:</b> {department}")
+        if academic_year:
+            meta_parts.append(f"<b>Academic Year:</b> {academic_year}")
+        if user_name:
+            meta_parts.append(f"<b>Generated By:</b> {user_name}")
+        
+        if meta_parts:
+            meta_style = ParagraphStyle(
+                'ReportMeta',
+                parent=styles['Normal'],
+                fontSize=9,
+                alignment=TA_CENTER,
+                textColor=colors.HexColor('#666666'),
+                spaceAfter=12
+            )
+            
+            story.append(Paragraph(" | ".join(meta_parts), meta_style))
+    
+    # Separator line
+    separator_style = ParagraphStyle(
+        'Separator',
+        parent=styles['Normal'],
+        fontSize=8,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor(primary_color),
+        spaceAfter=16
+    )
+    story.append(Paragraph("━" * 80, separator_style))
+    
+    return story
+
+
+def enhance_existing_pdf_with_header(pdf_content, institution, report_title="Report", **kwargs):
+    """
+    Add branded header to existing PDF content
+    
+    Args:
+        pdf_content: List of ReportLab story elements
+        institution: Institution model instance
+        report_title: Title of the report
+        **kwargs: Additional parameters for header (report_type, department, etc.)
+    
+    Returns:
+        Enhanced story with branded header
+    """
+    header_story = create_branded_report_header(institution, report_title, **kwargs)
+    return header_story + pdf_content

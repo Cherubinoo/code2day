@@ -31,6 +31,14 @@ from .views import (
     EditorBootstrapView,
     FirstLoginView,
     HealthCheckView,
+    JADepartmentView,
+    JABatchManagementView,
+    JAStudentManagementView,
+    JAStudentBulkDeleteView,
+    JAStudentBulkUploadView,
+    JAStudentMoveBatchView,
+    JAPasswordResetView,
+    PasswordResetView,
     ProblemDetailView,
     ProblemListView,
     ProblemProgressUpdateView,
@@ -77,6 +85,7 @@ from .views import (
     NotificationMarkReadView,
     AptitudeTopicListView,
     SystemAdminDashboardView,
+    PublicInstitutionListView,
     InstitutionManagementView,
     InstitutionDetailManagementView,
     GlobalMaintenanceControlView,
@@ -89,9 +98,24 @@ from .views import (
     InstitutionBrandingPreviewView,
 )
 
+# Import file management views
+from .file_views import (
+    InstitutionFilesAPIView,
+    InstitutionFileDetailAPIView,
+    InstitutionFileDownloadAPIView,
+    InstitutionBrandingAPIView,
+    InstitutionTemplateGeneratorAPIView,
+)
+
+# Import PDF report views
+from .pdf_reports import ContestReportPDFView
+
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health-check"),
     path("csrf-token/", CSRFTokenView.as_view(), name="csrf-token"),
+    
+    # Public endpoints
+    path("institutions/", PublicInstitutionListView.as_view(), name="public-institutions"),
 
     # Dashboard & problems
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
@@ -186,6 +210,22 @@ urlpatterns = [
     path("auth/admin/login/", AdminLoginView.as_view(), name="admin-login"),
     path("auth/admin/logout/", AdminLogoutView.as_view(), name="admin-logout"),
 
+    # Password Reset
+    path("auth/password-reset/", PasswordResetView.as_view(), name="password-reset"),
+
+    # JA (Junior Administrator) endpoints
+    path("ja/department/", JADepartmentView.as_view(), name="ja-department"),
+    path("ja/batches/", JABatchManagementView.as_view(), name="ja-batch-create"),
+    path("ja/batches/<int:batch_id>/", JABatchManagementView.as_view(), name="ja-batch-delete"),
+    path("ja/batches/<int:batch_id>/rename/", JABatchManagementView.as_view(), name="ja-batch-rename"),
+    path("ja/students/", JAStudentManagementView.as_view(), name="ja-student-create"),
+    path("ja/students/<int:student_id>/", JAStudentManagementView.as_view(), name="ja-student-delete"),
+    path("ja/students/bulk-delete/", JAStudentBulkDeleteView.as_view(), name="ja-student-bulk-delete"),
+    path("ja/students/bulk-upload/", JAStudentBulkUploadView.as_view(), name="ja-student-bulk-upload"),
+    path("ja/students/move-batch/", JAStudentMoveBatchView.as_view(), name="ja-student-move-batch"),
+    path("ja/students/<int:student_id>/reset-password/", JAPasswordResetView.as_view(), name="ja-student-password-reset"),
+    path("ja/staff/<str:faculty_id>/reset-password/", JAPasswordResetView.as_view(), name="ja-staff-password-reset"),
+
     # Discussions
     path("discussions/", DiscussionMessageListCreateView.as_view(), name="discussion-messages"),
     path("discussions/<int:pk>/vote/", DiscussionPollVoteView.as_view(), name="discussion-poll-vote"),
@@ -200,10 +240,19 @@ urlpatterns = [
 
     path("students/<str:register_number>/report/", StudentReportPDFView.as_view(), name="student-report-pdf"),
     path("staff/<str:faculty_id>/report/", StaffReportPDFView.as_view(), name="staff-report-pdf"),
+    path("contests/<int:contest_id>/report/", ContestReportPDFView.as_view(), name="contest-report-pdf"),
     
     # Institution Branding
     path("admin/v2/institutions/<int:pk>/branding/preview/", InstitutionBrandingPreviewView.as_view(), name="institution-branding-preview"),
     path("admin/v2/institutions/<int:pk>/branding/upload-logo/", InstitutionDetailManagementView.as_view(), name="institution-logo-upload"),
+    
+    # File Management System
+    path("admin/v2/institutions/<int:pk>/files/", InstitutionFilesAPIView.as_view(), name="institution-files"),
+    path("admin/v2/institutions/<int:pk>/files/<int:file_id>/", InstitutionFileDetailAPIView.as_view(), name="institution-file-detail"),
+    path("admin/v2/institutions/<int:pk>/files/<int:file_id>/download/", InstitutionFileDownloadAPIView.as_view(), name="institution-file-download"),
+    path("admin/v2/institutions/<int:pk>/branding/assets/", InstitutionBrandingAPIView.as_view(), name="institution-branding-assets"),
+    path("admin/v2/institutions/<int:pk>/branding/", InstitutionBrandingAPIView.as_view(), name="institution-branding-settings"),
+    path("admin/v2/institutions/<int:pk>/branding/generate-template/", InstitutionTemplateGeneratorAPIView.as_view(), name="institution-template-generator"),
     
     # Judge0 Direct API
     path("judge0/system_info/", Judge0SystemInfoView.as_view(), name="judge0-system-info"),
