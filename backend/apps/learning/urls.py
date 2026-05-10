@@ -31,13 +31,6 @@ from .views import (
     EditorBootstrapView,
     FirstLoginView,
     HealthCheckView,
-    JADepartmentView,
-    JABatchManagementView,
-    JAStudentManagementView,
-    JAStudentBulkDeleteView,
-    JAStudentBulkUploadView,
-    JAStudentMoveBatchView,
-    JAPasswordResetView,
     PasswordResetView,
     ProblemDetailView,
     ProblemListView,
@@ -212,19 +205,6 @@ urlpatterns = [
 
     # Password Reset
     path("auth/password-reset/", PasswordResetView.as_view(), name="password-reset"),
-
-    # JA (Junior Administrator) endpoints
-    path("ja/department/", JADepartmentView.as_view(), name="ja-department"),
-    path("ja/batches/", JABatchManagementView.as_view(), name="ja-batch-create"),
-    path("ja/batches/<int:batch_id>/", JABatchManagementView.as_view(), name="ja-batch-delete"),
-    path("ja/batches/<int:batch_id>/rename/", JABatchManagementView.as_view(), name="ja-batch-rename"),
-    path("ja/students/", JAStudentManagementView.as_view(), name="ja-student-create"),
-    path("ja/students/<int:student_id>/", JAStudentManagementView.as_view(), name="ja-student-delete"),
-    path("ja/students/bulk-delete/", JAStudentBulkDeleteView.as_view(), name="ja-student-bulk-delete"),
-    path("ja/students/bulk-upload/", JAStudentBulkUploadView.as_view(), name="ja-student-bulk-upload"),
-    path("ja/students/move-batch/", JAStudentMoveBatchView.as_view(), name="ja-student-move-batch"),
-    path("ja/students/<int:student_id>/reset-password/", JAPasswordResetView.as_view(), name="ja-student-password-reset"),
-    path("ja/staff/<str:faculty_id>/reset-password/", JAPasswordResetView.as_view(), name="ja-staff-password-reset"),
 
     # Discussions
     path("discussions/", DiscussionMessageListCreateView.as_view(), name="discussion-messages"),
