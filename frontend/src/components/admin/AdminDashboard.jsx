@@ -897,11 +897,7 @@ const AdminDashboard = () => {
                                       formData.append('logo', file);
                                       formData.append('action', 'upload_logo');
                                       
-                                      const response = await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, formData, {
-                                        headers: {
-                                          'Content-Type': 'multipart/form-data'
-                                        }
-                                      });
+                                      const response = await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, formData);
                                       
                                       // Update the logo URL with the uploaded file URL
                                       setBrandingForm({...brandingForm, logo_url: response.data.logo_url});
@@ -1113,9 +1109,7 @@ const AdminDashboard = () => {
                         <button
                           onClick={async () => {
                             try {
-                              const response = await api.get(`/admin/v2/institutions/${selectedInstitution.id}/branding/preview/`, {
-                                responseType: 'blob'
-                              });
+                              const response = await api.getBlob(`/admin/v2/institutions/${selectedInstitution.id}/branding/preview/`);
                               
                               // Create blob URL and download
                               const blob = new Blob([response.data], { type: 'application/pdf' });
@@ -1128,7 +1122,7 @@ const AdminDashboard = () => {
                               document.body.removeChild(link);
                               window.URL.revokeObjectURL(url);
                             } catch (err) {
-                              alert('Failed to generate preview: ' + (err.response?.data?.error || err.message));
+                              alert('Failed to generate preview: ' + (err.response?.data?.error || err.response?.data?.detail || err.message));
                             }
                           }}
                           style={{

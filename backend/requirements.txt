@@ -25,3 +25,7 @@ sqlparse==0.5.3
 asgiref==3.8.1
 typing_extensions==4.12.2
 tabulate==0.10.0
+
+# Excel / Spreadsheet
+openpyxl==3.1.5
+Pillow==10.4.0

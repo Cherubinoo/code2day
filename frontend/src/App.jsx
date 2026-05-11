@@ -3,7 +3,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import AdminDashboard from "./components/admin/AdminDashboard";
 import InstitutionDetail from "./components/admin/InstitutionDetail";
 import HODDashboard from "./components/hod/HODDashboard";
+import JADashboard from "./components/ja/JADashboard";
 import StaffDashboard from "./components/staff/StaffDashboard";
+import TwoStepVerification from "./components/common/TwoStepVerification";
 import AuthScreen from "./components/common/AuthScreen";
 import MaintenanceScreen from "./components/common/MaintenanceScreen";
 import TopBar from "./components/common/TopBar";
@@ -91,6 +93,8 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [studentMatches, setStudentMatches] = useState([]);
   const [staffMatches, setStaffMatches] = useState([]);
+  // Holds the successful login payload for JA until 2-step verification passes
+  const [pendingJaLogin, setPendingJaLogin] = useState(null);
   const [outputLog, setOutputLog] = useState(
     "Output panel ready. Run the code to see sample execution results here.",
   );
@@ -751,6 +755,13 @@ function App() {
       console.log("Login response payload:", payload);
       console.log("Login response - user type:", type, "admin:", !!payload.admin, "hod:", !!payload.hod, "staff:", !!payload.staff);
 
+      // JA requires 2-step verification before completing login
+      if (type === "ja") {
+        setPendingJaLogin({ payload, type, registerNumberValue: registerNumber.trim() });
+        setAuthBusy(false);
+        return;
+      }
+
       window.localStorage.setItem(authStorageKey, registerNumber.trim());
       window.localStorage.setItem("code2day-user-type", type);
       setUserType(type);
@@ -775,8 +786,9 @@ function App() {
       
       // Navigate to role-specific dashboard
       const targetPage = type === "admin" ? "admin" :
-                         (type === "director" || type === "tpu" || type === "ja") ? "hod" : 
-                         type === "hod" ? "hod" : 
+                         (type === "director" || type === "tpu") ? "hod" :
+                         type === "ja" ? "ja" :
+                         type === "hod" ? "hod" :
                          type === "staff" ? "staff" : "explore";
       navigate(targetPage, { replace: true });
     } catch (error) {
@@ -784,6 +796,31 @@ function App() {
     } finally {
       setAuthBusy(false);
     }
+  }
+
+  // Called after JA passes 2-step verification
+  function completeJaLogin() {
+    if (!pendingJaLogin) return;
+    const { payload, type, registerNumberValue } = pendingJaLogin;
+    setPendingJaLogin(null);
+    window.localStorage.setItem(authStorageKey, registerNumberValue);
+    window.localStorage.setItem("code2day-user-type", type);
+    setUserType(type);
+    if (payload.institution_id) {
+      setSelectedInstitutionId(payload.institution_id);
+      window.localStorage.setItem("code2day-institution-id", payload.institution_id);
+    }
+    setAuthStudent(prev => ({
+      ...prev,
+      ...(payload.staff || {}),
+      user_type: type,
+      institution_id: payload.institution_id,
+    }));
+    setActiveRegisterNumber(registerNumberValue);
+    setPassword("");
+    setAuthMessage(payload.detail || "Login successful.");
+    refreshCsrfToken();
+    navigate("ja", { replace: true });
   }
 
   async function handleLogout() {
@@ -1060,6 +1097,8 @@ function App() {
         staffMatches={staffMatches}
         setStudentMatches={setStudentMatches}
         studentMatches={studentMatches}
+        selectedInstitutionId={selectedInstitutionId}
+        setSelectedInstitutionId={setSelectedInstitutionId}
         onNavigate={navigate}
       />
     );
@@ -1239,12 +1278,22 @@ function App() {
       );
       break;
     case "hod":
-      activeView = (userType === "hod" || userType === "director" || userType === "tpu" || userType === "ja") ? (
+      activeView = (userType === "hod" || userType === "director" || userType === "tpu") ? (
         <HODDashboard institutionId={selectedInstitutionId} />
       ) : (
         <div style={{ padding: 40 }}>
           <h2>Access Denied</h2>
           <p>HOD access required.</p>
+        </div>
+      );
+      break;
+    case "ja":
+      activeView = userType === "ja" ? (
+        <JADashboard />
+      ) : (
+        <div style={{ padding: 40 }}>
+          <h2>Access Denied</h2>
+          <p>Junior Admin access required.</p>
         </div>
       );
       break;
@@ -1311,8 +1360,12 @@ function App() {
         navigate("admin", { replace: true });
         break;
       }
-      if (userType === "hod" || userType === "director" || userType === "tpu" || userType === "ja") {
+      if (userType === "hod" || userType === "director" || userType === "tpu") {
         navigate("hod", { replace: true });
+        break;
+      }
+      if (userType === "ja") {
+        navigate("ja", { replace: true });
         break;
       }
       activeView = (
@@ -1353,10 +1406,33 @@ function App() {
     return <MaintenanceScreen message={maintenanceMessage} onRetry={() => window.location.reload()} onBack={handleMaintenanceBack} />;
   }
 
+  // JA 2-step verification gate — shown after password is correct, before session is created
+  if (pendingJaLogin) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#f9fafb" }}>
+        <TwoStepVerification
+          user={pendingJaLogin.payload.staff || { faculty_id: pendingJaLogin.registerNumberValue }}
+          userType="ja"
+          onVerificationSuccess={completeJaLogin}
+          onBack={() => {
+            setPendingJaLogin(null);
+            setAuthMode("login");
+            setPassword("");
+          }}
+          onCancel={() => {
+            setPendingJaLogin(null);
+            setAuthMode("identify");
+            setPassword("");
+          }}
+        />
+      </div>
+    );
+  }
+
   // If a redirect branch fired (activeView still null), render nothing visible
   // while the navigate() call triggers the next render with the correct page.
   return (
-    <div className="app-shell">
+    <div className="app-shell" style={!isLoggedIn ? { minHeight: "100vh", display: "flex", flexDirection: "column", padding: 0 } : {}}>
       {isLoggedIn && (
         <TopBar
           activePage={activePage}
@@ -1367,7 +1443,7 @@ function App() {
           userType={userType}
         />
       )}
-      <main className="main-shell">
+      <main className="main-shell" style={!isLoggedIn ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0 } : {}}>
         {activeView ?? (
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh", color: "var(--text-soft)" }}>
             Loading…
