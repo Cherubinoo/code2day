@@ -1060,6 +1060,8 @@ function App() {
         staffMatches={staffMatches}
         setStudentMatches={setStudentMatches}
         studentMatches={studentMatches}
+        selectedInstitutionId={selectedInstitutionId}
+        setSelectedInstitutionId={setSelectedInstitutionId}
         onNavigate={navigate}
       />
     );
@@ -1356,7 +1358,7 @@ function App() {
   // If a redirect branch fired (activeView still null), render nothing visible
   // while the navigate() call triggers the next render with the correct page.
   return (
-    <div className="app-shell">
+    <div className="app-shell" style={!isLoggedIn ? { minHeight: "100vh", display: "flex", flexDirection: "column", padding: 0 } : {}}>
       {isLoggedIn && (
         <TopBar
           activePage={activePage}
@@ -1367,7 +1369,7 @@ function App() {
           userType={userType}
         />
       )}
-      <main className="main-shell">
+      <main className="main-shell" style={!isLoggedIn ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0 } : {}}>
         {activeView ?? (
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh", color: "var(--text-soft)" }}>
             Loading…

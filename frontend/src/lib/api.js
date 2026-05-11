@@ -55,15 +55,20 @@ const api = {
     },
 
     async post(url, data) {
+        const isFormData = data instanceof FormData;
         try {
+            const headers = {
+                'X-CSRFToken': getCsrfToken(),
+            };
+            if (!isFormData) {
+                headers['Content-Type'] = 'application/json';
+            }
+
             const response = await fetchWithTimeout(`${BASE_URL}${url}`, {
                 method: 'POST',
                 credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCsrfToken(),
-                },
-                body: JSON.stringify(data),
+                headers,
+                body: isFormData ? data : JSON.stringify(data),
             }, DEFAULT_TIMEOUT);
             
             if (!response.ok) {
@@ -84,15 +89,21 @@ const api = {
     },
 
     async patch(url, data) {
+        const isFormData = data instanceof FormData;
         try {
+            const headers = {
+                'X-CSRFToken': getCsrfToken(),
+            };
+            // Don't set Content-Type for FormData — browser sets it with boundary automatically
+            if (!isFormData) {
+                headers['Content-Type'] = 'application/json';
+            }
+
             const response = await fetchWithTimeout(`${BASE_URL}${url}`, {
                 method: 'PATCH',
                 credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': getCsrfToken(),
-                },
-                body: JSON.stringify(data),
+                headers,
+                body: isFormData ? data : JSON.stringify(data),
             }, DEFAULT_TIMEOUT);
             
             if (!response.ok) {
@@ -131,6 +142,39 @@ const api = {
             if (error instanceof TypeError && error.message === 'Failed to fetch') {
                 throw { 
                     response: { data: { detail: 'Network error. Please check your connection.' } }, 
+                    message: 'Failed to fetch',
+                    status: 0
+                };
+            }
+            throw error;
+        }
+    },
+
+    /**
+     * GET a binary/blob response (e.g. PDF, image).
+     * Returns { data: Blob }.
+     */
+    async getBlob(url) {
+        try {
+            const response = await fetchWithTimeout(`${BASE_URL}${url}`, {
+                method: 'GET',
+                credentials: 'include',
+            }, DEFAULT_TIMEOUT);
+
+            if (!response.ok) {
+                // Try to read error as text (might be JSON or plain text)
+                const errText = await response.text().catch(() => response.statusText);
+                let errData = {};
+                try { errData = JSON.parse(errText); } catch (_) { errData = { detail: errText }; }
+                throw { response: { data: errData }, message: response.statusText, status: response.status };
+            }
+
+            const blob = await response.blob();
+            return { data: blob };
+        } catch (error) {
+            if (error instanceof TypeError && error.message === 'Failed to fetch') {
+                throw {
+                    response: { data: { detail: 'Network error. Please check your connection.' } },
                     message: 'Failed to fetch',
                     status: 0
                 };

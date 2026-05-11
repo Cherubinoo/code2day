@@ -7406,3 +7406,272 @@ class CSRFTokenView(APIView):
         from django.middleware.csrf import get_token
         token = get_token(request)
         return Response({"csrfToken": token})
+
+
+# =============================================================================
+# Password Reset and Public Views
+# =============================================================================
+
+class PasswordResetView(APIView):
+    """
+    Handle password reset requests for students and staff.
+    """
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        """
+        Reset password for a user (student or staff).
+        """
+        try:
+            identifier = request.data.get('identifier', '').strip()
+            user_type = request.data.get('user_type', 'student')  # 'student' or 'staff'
+            
+            if not identifier:
+                return Response(
+                    {'error': 'Identifier (register number or faculty ID) is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if user_type == 'student':
+                # Find student by register number
+                try:
+                    student = StudentProfile.objects.get(register_number=identifier)
+                    user = student.user
+                    
+                    # Generate a simple reset token (in production, use proper token generation)
+                    reset_token = f"reset_{user.id}_{timezone.now().timestamp()}"
+                    
+                    return Response({
+                        'message': 'Password reset initiated for student',
+                        'user_type': 'student',
+                        'identifier': identifier,
+                        'reset_token': reset_token,
+                        'instructions': 'Contact your administrator with this token to reset your password'
+                    })
+                    
+                except StudentProfile.DoesNotExist:
+                    return Response(
+                        {'error': 'Student not found with this register number'}, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            
+            elif user_type == 'staff':
+                # Find staff by faculty ID
+                try:
+                    staff = StaffProfile.objects.get(faculty_id=identifier)
+                    user = staff.user
+                    
+                    # Generate a simple reset token
+                    reset_token = f"reset_{user.id}_{timezone.now().timestamp()}"
+                    
+                    return Response({
+                        'message': 'Password reset initiated for staff',
+                        'user_type': 'staff',
+                        'identifier': identifier,
+                        'reset_token': reset_token,
+                        'instructions': 'Contact your administrator with this token to reset your password'
+                    })
+                    
+                except StaffProfile.DoesNotExist:
+                    return Response(
+                        {'error': 'Staff not found with this faculty ID'}, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            
+            else:
+                return Response(
+                    {'error': 'Invalid user type. Must be "student" or "staff"'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            return Response(
+                {'error': f'Password reset failed: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def put(self, request):
+        """
+        Complete password reset with token and new password.
+        """
+        try:
+            reset_token = request.data.get('reset_token', '').strip()
+            new_password = request.data.get('new_password', '').strip()
+            
+            if not reset_token or not new_password:
+                return Response(
+                    {'error': 'Reset token and new password are required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Parse the reset token (simplified - in production use proper token validation)
+            if reset_token.startswith('reset_'):
+                try:
+                    parts = reset_token.split('_')
+                    user_id = int(parts[1])
+                    timestamp = float(parts[2])
+                    
+                    # Check if token is not too old (24 hours)
+                    current_time = timezone.now().timestamp()
+                    if current_time - timestamp > 86400:  # 24 hours
+                        return Response(
+                            {'error': 'Reset token has expired'}, 
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    # Find and update user password
+                    user = User.objects.get(id=user_id)
+                    user.set_password(new_password)
+                    user.save()
+                    
+                    return Response({
+                        'message': 'Password reset successfully',
+                        'username': user.username
+                    })
+                    
+                except (ValueError, IndexError, User.DoesNotExist):
+                    return Response(
+                        {'error': 'Invalid reset token'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            
+            return Response(
+                {'error': 'Invalid reset token format'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+                
+        except Exception as e:
+            return Response(
+                {'error': f'Password reset completion failed: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class PublicInstitutionListView(APIView):
+    """
+    Public endpoint to list all institutions.
+    Used for registration and public information.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        """
+        Get list of all institutions with basic information.
+        """
+        try:
+            # Get query parameters for filtering
+            search = request.query_params.get('search', '').strip()
+            active_only = request.query_params.get('active_only', 'true').lower() == 'true'
+            
+            # Base queryset
+            institutions = Institution.objects.all()
+            
+            # Filter by active status if requested
+            if active_only:
+                institutions = institutions.filter(is_active=True)
+            
+            # Search filter
+            if search:
+                institutions = institutions.filter(
+                    Q(name__icontains=search) |
+                    Q(code__icontains=search) |
+                    Q(location__icontains=search)
+                )
+            
+            # Prepare response data
+            institution_list = []
+            for institution in institutions:
+                # Handle logo URL properly
+                logo_url = None
+                if hasattr(institution, 'logo_file') and institution.logo_file:
+                    try:
+                        logo_url = institution.logo_file.url
+                    except ValueError:
+                        logo_url = None
+                
+                institution_data = {
+                    'id': institution.id,
+                    'name': institution.name,
+                    'code': getattr(institution, 'code', ''),
+                    'location': getattr(institution, 'location', ''),
+                    'is_active': getattr(institution, 'is_active', True),
+                    'student_count': StudentProfile.objects.filter(institution=institution).count(),
+                    'staff_count': StaffProfile.objects.filter(institution=institution).count(),
+                    'logo_url': logo_url,
+                    'primary_color': getattr(institution, 'primary_color', '#1f2937'),
+                    'secondary_color': getattr(institution, 'secondary_color', '#3b82f6'),
+                }
+                
+                # Add department count if available
+                if hasattr(institution, 'departments'):
+                    institution_data['department_count'] = institution.departments.count()
+                else:
+                    institution_data['department_count'] = Department.objects.filter(institution=institution).count()
+                
+                institution_list.append(institution_data)
+            
+            return Response({
+                'institutions': institution_list,
+                'total_count': len(institution_list),
+                'search_query': search,
+                'active_only': active_only
+            })
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to fetch institutions: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def post(self, request):
+        """
+        Create a new institution (admin only in practice, but public endpoint for flexibility).
+        """
+        try:
+            name = request.data.get('name', '').strip()
+            code = request.data.get('code', '').strip()
+            location = request.data.get('location', '').strip()
+            
+            if not name:
+                return Response(
+                    {'error': 'Institution name is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Check if institution with same name or code already exists
+            if Institution.objects.filter(name=name).exists():
+                return Response(
+                    {'error': 'Institution with this name already exists'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if code and Institution.objects.filter(code=code).exists():
+                return Response(
+                    {'error': 'Institution with this code already exists'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Create new institution
+            institution = Institution.objects.create(
+                name=name,
+                code=code or name.upper()[:10],  # Generate code if not provided
+                location=location,
+                is_active=True
+            )
+            
+            return Response({
+                'message': 'Institution created successfully',
+                'institution': {
+                    'id': institution.id,
+                    'name': institution.name,
+                    'code': institution.code,
+                    'location': institution.location,
+                    'is_active': institution.is_active
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to create institution: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

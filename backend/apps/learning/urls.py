@@ -31,6 +31,7 @@ from .views import (
     EditorBootstrapView,
     FirstLoginView,
     HealthCheckView,
+    PasswordResetView,
     ProblemDetailView,
     ProblemListView,
     ProblemProgressUpdateView,
@@ -77,6 +78,7 @@ from .views import (
     NotificationMarkReadView,
     AptitudeTopicListView,
     SystemAdminDashboardView,
+    PublicInstitutionListView,
     InstitutionManagementView,
     InstitutionDetailManagementView,
     GlobalMaintenanceControlView,
@@ -90,13 +92,13 @@ from .views import (
 )
 
 # Import file management views
-# from .file_views import (
-#     InstitutionFilesAPIView,
-#     InstitutionFileDetailAPIView,
-#     InstitutionFileDownloadAPIView,
-#     InstitutionBrandingAPIView,
-#     InstitutionTemplateGeneratorAPIView,
-# )
+from .file_views import (
+    InstitutionFilesAPIView,
+    InstitutionFileDetailAPIView,
+    InstitutionFileDownloadAPIView,
+    InstitutionBrandingAPIView,
+    InstitutionTemplateGeneratorAPIView,
+)
 
 # Import PDF report views
 from .pdf_reports import ContestReportPDFView
@@ -105,6 +107,9 @@ urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health-check"),
     path("csrf-token/", CSRFTokenView.as_view(), name="csrf-token"),
     
+    # Public endpoints
+    path("institutions/", PublicInstitutionListView.as_view(), name="public-institutions"),
+
     # Dashboard & problems
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
     path("dashboard/tracked-companies/", UpdateTrackedCompaniesView.as_view(), name="update-tracked-companies"),
@@ -198,6 +203,9 @@ urlpatterns = [
     path("auth/admin/login/", AdminLoginView.as_view(), name="admin-login"),
     path("auth/admin/logout/", AdminLogoutView.as_view(), name="admin-logout"),
 
+    # Password Reset
+    path("auth/password-reset/", PasswordResetView.as_view(), name="password-reset"),
+
     # Discussions
     path("discussions/", DiscussionMessageListCreateView.as_view(), name="discussion-messages"),
     path("discussions/<int:pk>/vote/", DiscussionPollVoteView.as_view(), name="discussion-poll-vote"),
@@ -218,13 +226,13 @@ urlpatterns = [
     path("admin/v2/institutions/<int:pk>/branding/preview/", InstitutionBrandingPreviewView.as_view(), name="institution-branding-preview"),
     path("admin/v2/institutions/<int:pk>/branding/upload-logo/", InstitutionDetailManagementView.as_view(), name="institution-logo-upload"),
     
-    # File Management System (temporarily disabled - file_views.py missing)
-    # path("admin/v2/institutions/<int:pk>/files/", InstitutionFilesAPIView.as_view(), name="institution-files"),
-    # path("admin/v2/institutions/<int:pk>/files/<int:file_id>/", InstitutionFileDetailAPIView.as_view(), name="institution-file-detail"),
-    # path("admin/v2/institutions/<int:pk>/files/<int:file_id>/download/", InstitutionFileDownloadAPIView.as_view(), name="institution-file-download"),
-    # path("admin/v2/institutions/<int:pk>/branding/assets/", InstitutionBrandingAPIView.as_view(), name="institution-branding-assets"),
-    # path("admin/v2/institutions/<int:pk>/branding/", InstitutionBrandingAPIView.as_view(), name="institution-branding-settings"),
-    # path("admin/v2/institutions/<int:pk>/branding/generate-template/", InstitutionTemplateGeneratorAPIView.as_view(), name="institution-template-generator"),
+    # File Management System
+    path("admin/v2/institutions/<int:pk>/files/", InstitutionFilesAPIView.as_view(), name="institution-files"),
+    path("admin/v2/institutions/<int:pk>/files/<int:file_id>/", InstitutionFileDetailAPIView.as_view(), name="institution-file-detail"),
+    path("admin/v2/institutions/<int:pk>/files/<int:file_id>/download/", InstitutionFileDownloadAPIView.as_view(), name="institution-file-download"),
+    path("admin/v2/institutions/<int:pk>/branding/assets/", InstitutionBrandingAPIView.as_view(), name="institution-branding-assets"),
+    path("admin/v2/institutions/<int:pk>/branding/", InstitutionBrandingAPIView.as_view(), name="institution-branding-settings"),
+    path("admin/v2/institutions/<int:pk>/branding/generate-template/", InstitutionTemplateGeneratorAPIView.as_view(), name="institution-template-generator"),
     
     # Executor Direct API
     path("executor/system_info/", ExecutorSystemInfoView.as_view(), name="executor-system-info"),
