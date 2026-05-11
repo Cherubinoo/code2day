@@ -1,6 +1,16 @@
 from django.urls import path
 
 from .views import (
+    JADashboardView,
+    JABatchListView,
+    JABatchDetailView,
+    JAStudentCreateView,
+    JAStudentDeleteView,
+    JAStudentMoveView,
+    JABulkImportView,
+    JAExcelTemplateView,
+    JAStudentListView,
+    JAImportReportView,
     AdminStatsView,
     AdminUserListView,
     AdminInstitutionListCreateView,
@@ -234,6 +244,18 @@ urlpatterns = [
     path("admin/v2/institutions/<int:pk>/branding/", InstitutionBrandingAPIView.as_view(), name="institution-branding-settings"),
     path("admin/v2/institutions/<int:pk>/branding/generate-template/", InstitutionTemplateGeneratorAPIView.as_view(), name="institution-template-generator"),
     
+    # JA (Junior Admin) endpoints
+    path("ja/dashboard/", JADashboardView.as_view(), name="ja-dashboard"),
+    path("ja/batches/", JABatchListView.as_view(), name="ja-batch-list"),
+    path("ja/batches/<str:batch_code>/", JABatchDetailView.as_view(), name="ja-batch-detail"),
+    path("ja/students/", JAStudentListView.as_view(), name="ja-student-list"),
+    path("ja/students/create/", JAStudentCreateView.as_view(), name="ja-student-create"),
+    path("ja/students/<str:register_number>/delete/", JAStudentDeleteView.as_view(), name="ja-student-delete"),
+    path("ja/students/<str:register_number>/move/", JAStudentMoveView.as_view(), name="ja-student-move"),
+    path("ja/import/", JABulkImportView.as_view(), name="ja-bulk-import"),
+    path("ja/import/template/", JAExcelTemplateView.as_view(), name="ja-excel-template"),
+    path("ja/import/report/", JAImportReportView.as_view(), name="ja-import-report"),
+
     # Executor Direct API
     path("executor/system_info/", ExecutorSystemInfoView.as_view(), name="executor-system-info"),
     path("executor/submit/", ExecutorSubmitView.as_view(), name="executor-submit"),
