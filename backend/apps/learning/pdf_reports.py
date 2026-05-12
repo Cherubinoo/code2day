@@ -144,9 +144,12 @@ class WatermarkDocTemplate(BaseDocTemplate):
         
         # Logo
         logo_path = None
-        if inst and inst.logo_file:
-            try: logo_path = inst.logo_file.path
-            except: pass
+        if inst:
+            if inst.logo_file:
+                try: logo_path = inst.logo_file.path
+                except: pass
+            elif inst.logo_url:
+                logo_path = inst.logo_url
         
         if logo_path:
             try:
@@ -670,20 +673,31 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         hardest_name = 'N/A'
         most_solved_name = 'N/A'
         top_lang = 'N/A'
-        if not is_apt and problems:
+        
+        if problems:
             rates = []
             for p in problems:
-                tot = ContestSubmission.objects.filter(contest=contest, problem=p).count()
-                acc = ContestSubmission.objects.filter(contest=contest, problem=p, status='Accepted').count()
-                rates.append((p.title, acc / tot * 100 if tot else 0, acc))
+                if is_apt:
+                    tot = AptitudeContestSubmission.objects.filter(contest=contest, question=p).count()
+                    acc = AptitudeContestSubmission.objects.filter(contest=contest, question=p, is_correct=True).count()
+                else:
+                    tot = ContestSubmission.objects.filter(contest=contest, problem=p).count()
+                    acc = ContestSubmission.objects.filter(contest=contest, problem=p, status='Accepted').count()
+                rates.append((p.title if not is_apt else f"Q{problems.index(p)+1}", acc / tot * 100 if tot else 0, acc))
+            
             rates.sort(key=lambda x: x[1])
-            hardest_name = rates[0][0][:20] if rates else 'N/A'
-            most_solved_name = rates[-1][0][:20] if rates else 'N/A'
-            # Top language
-            from django.db.models import Count as DCount
-            lang_qs = (ContestSubmission.objects.filter(contest=contest)
-                       .values('language').annotate(c=DCount('id')).order_by('-c').first())
-            top_lang = lang_qs['language'] if lang_qs else 'N/A'
+            if rates:
+                hardest_name = rates[0][0][:20]
+                most_solved_name = rates[-1][0][:20]
+                
+            if not is_apt:
+                # Top language (Programming only)
+                from django.db.models import Count as DCount
+                lang_qs = (ContestSubmission.objects.filter(contest=contest)
+                           .values('language').annotate(c=DCount('id')).order_by('-c').first())
+                top_lang = lang_qs['language'] if lang_qs else 'N/A'
+            else:
+                top_lang = 'N/A (Aptitude)'
 
         raw_avg = participations.aggregate(a=Avg('total_score'))['a'] or 0
         avg_norm = self._normalise_score(raw_avg, n_problems, contest.contest_type)
@@ -705,9 +719,9 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
 
         cards2 = [
             _metric_card('Completion Rate', f'{comp_rate}%', bg='#7c3aed', w=1.6*inch),
-            _metric_card('Hardest Problem', hardest_name, bg=_RED, w=1.6*inch),
+            _metric_card('Hardest Question' if is_apt else 'Hardest Problem', hardest_name, bg=_RED, w=1.6*inch),
             _metric_card('Most Solved', most_solved_name, bg='#0d7377', w=1.6*inch),
-            _metric_card('Top Language', top_lang, bg=_SLATE, w=1.6*inch),
+            _metric_card('Analysis Status', 'Complete' if n > 0 else 'Pending', bg=_SLATE, w=1.6*inch),
         ]
         row2 = Table([cards2], colWidths=[1.65*inch]*4)
         row2.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER'),
@@ -719,12 +733,14 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
 
         # Score distribution bar chart + solved/unsolved pie side by side
         if n > 0:
-            raw_max = participations.aggregate(m=Max('total_score'))['m'] or 1
+            possible_max = n_problems if is_apt else (n_problems * 100)
+            if possible_max == 0: possible_max = 1
+            
             buckets = [
-                participations.filter(total_score__lte=raw_max*0.25).count(),
-                participations.filter(total_score__gt=raw_max*0.25, total_score__lte=raw_max*0.5).count(),
-                participations.filter(total_score__gt=raw_max*0.5,  total_score__lte=raw_max*0.75).count(),
-                participations.filter(total_score__gt=raw_max*0.75).count(),
+                participations.filter(total_score__lte=possible_max*0.25).count(),
+                participations.filter(total_score__gt=possible_max*0.25, total_score__lte=possible_max*0.5).count(),
+                participations.filter(total_score__gt=possible_max*0.5,  total_score__lte=possible_max*0.75).count(),
+                participations.filter(total_score__gt=possible_max*0.75).count(),
             ]
             bar = _bar_chart(buckets, ['0-25%','26-50%','51-75%','76-100%'],
                              bar_color=_INDIGO, w=300, h=140)
@@ -733,7 +749,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             unsolved_total = max(0, n * n_problems - solved_total)
             pie = _pie_chart(
                 [solved_total, unsolved_total] if (solved_total + unsolved_total) > 0 else [1, 0],
-                ['Solved', 'Unsolved'],
+                ['Correct', 'Incorrect'] if is_apt else ['Solved', 'Unsolved'],
                 [_GREEN, _RED], size=130
             )
 

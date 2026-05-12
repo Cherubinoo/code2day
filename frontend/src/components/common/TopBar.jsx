@@ -37,16 +37,30 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
     if (userType === "ja") return "Admin Console";
     if (userType === "hod") return "HOD Dashboard";
     if (userType === "staff") return "Staff Dashboard";
-    return "Meaningful campus coding practice";
+    return "Meaningful practice, not random scrolling.";
   };
 
   return (
     <header className="topbar">
       <div className="brand-block">
-        <div className="brand-badge">C2D</div>
+        {dashboard.institution?.logo_url || dashboard.institution?.logo_display_url ? (
+          <img 
+            src={dashboard.institution.logo_url || dashboard.institution.logo_display_url} 
+            alt="Logo" 
+            style={{ height: 32, width: 'auto', marginRight: 12, objectFit: 'contain' }}
+          />
+        ) : (
+          <div className="brand-badge" style={{ background: 'var(--olive-900)' }}>
+            {dashboard.institution?.short_code?.substring(0, 2).toUpperCase() || 'C2D'}
+          </div>
+        )}
         <div>
-          <strong>code-2day</strong>
-          <p>{getDashboardTitle()}</p>
+          <strong style={{ color: 'var(--olive-950)', fontSize: '1rem', fontWeight: 800 }}>
+            {dashboard.institution?.display_name || dashboard.institution?.name || "code-2day"}
+          </strong>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-soft)', margin: 0 }}>
+            {getDashboardTitle()}
+          </p>
         </div>
       </div>
 
