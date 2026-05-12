@@ -5627,30 +5627,42 @@ class StudentContestSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Execute code using Judge0 (similar to regular problem submission)
+        # Execute code using the execution engine
         try:
             # Get test cases for the problem
-            test_cases = problem.test_cases.all()
-            
-            if not test_cases.exists():
+            test_cases = list(problem.test_cases.all().order_by('order'))
+
+            if not test_cases:
                 return Response(
                     {"detail": "No test cases available for this problem."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Run against test cases
+            # Run against each test case — same pattern as CodeRunView
             passed_cases = 0
-            total_cases = test_cases.count()
-            
+            total_cases = len(test_cases)
+
             for test_case in test_cases:
-                result = execute_judge0_submission(
+                prepared = prepare_execution_payload(
+                    problem=problem,
                     source_code=source_code,
-                    language_id=language_id,
+                    language=language,
                     stdin=test_case.stdin,
-                    expected_output=test_case.expected_output
                 )
-                
-                if result.get('status') == 'Accepted':
+                result = execute_judge0_submission(
+                    source_code=prepared["source_code"],
+                    language_id=language_id,
+                    stdin=prepared["stdin"],
+                )
+
+                actual_raw = (result.get("stdout") or "").strip()
+                expected = (test_case.expected_output or "").strip()
+                passed = (
+                    result.get("status") == "Accepted"
+                    and normalize_comparable_output(actual_raw)
+                    == normalize_comparable_output(expected)
+                )
+                if passed:
                     passed_cases += 1
 
             # Determine status
