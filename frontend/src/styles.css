@@ -30,6 +30,10 @@
 
 html {
   scroll-behavior: smooth;
+  /* Scale base font with viewport width — desktop-focused.
+     Clamps between 13px (small laptops ~1280px) and 16px (large screens ~1920px).
+     All rem-based sizes scale automatically. */
+  font-size: clamp(13px, 0.85vw, 16px);
 }
 
 body {
@@ -2718,7 +2722,7 @@ button.tab-pill {
 }
 
 .admin-header h1 {
-  font-size: 1.8rem;
+  font-size: clamp(1.3rem, 1.5vw, 1.8rem);
   color: var(--olive-900);
   margin: 0 0 8px;
 }
@@ -5798,11 +5802,13 @@ button.tab-pill {
 
 .hod-main-content {
   margin-left: 260px !important;
-  padding: 40px;
+  padding: clamp(20px, 2.5vw, 40px);
   min-height: 100vh;
   position: relative;
   background: var(--bg-2);
-  width: auto; /* Let it fill naturally */
+  width: auto;
+  max-width: calc(100vw - 260px);
+  box-sizing: border-box;
 }
 
 .hod-main-content.no-padding {
@@ -7144,5 +7150,388 @@ html.discuss-page {
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
+  }
+}
+
+
+/* =============================================================================
+   RESPONSIVE OVERRIDES — Desktop-first, targeting 1024px–1440px range
+   Focus: sidebar dashboards, topbar, tables, modals, editor layout
+   ============================================================================= */
+
+/* ── 1440px+ : very wide monitors — cap content width ─────────────────────── */
+@media (min-width: 1440px) {
+  .hod-main-content {
+    max-width: 1400px;
+  }
+}
+
+/* ── 1280px : standard laptop (1280×800, 1366×768) ────────────────────────── */
+@media (max-width: 1280px) {
+  /* Shrink sidebar slightly */
+  :root {
+    --sidebar-width: 240px;
+  }
+
+  .admin-sidebar {
+    width: 240px;
+  }
+
+  .hod-main-content {
+    margin-left: 240px !important;
+    padding: 28px 24px;
+  }
+
+  .hod-main-content.no-padding {
+    margin-left: 240px !important;
+    width: calc(100% - 240px);
+  }
+
+  /* Admin header font */
+  .admin-header h1 {
+    font-size: clamp(1.2rem, 1.4vw, 1.6rem);
+  }
+
+  /* Premium cards — tighter padding */
+  .premium-card {
+    padding: 20px !important;
+  }
+
+  /* Stat grids — 2 columns instead of 4 on narrow laptops */
+  .stats-grid-4 {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Contest detail modal — full width */
+  div[style*="maxWidth: 1200px"] {
+    max-width: 98vw !important;
+  }
+}
+
+/* ── 1100px : small laptops / tablets in landscape ─────────────────────────── */
+@media (max-width: 1100px) {
+  :root {
+    --sidebar-width: 220px;
+  }
+
+  .admin-sidebar {
+    width: 220px;
+  }
+
+  .hod-main-content {
+    margin-left: 220px !important;
+    padding: 20px 18px;
+  }
+
+  .hod-main-content.no-padding {
+    margin-left: 220px !important;
+    width: calc(100% - 220px);
+  }
+
+  /* Collapse sidebar labels — show only icons */
+  .logo-main { font-size: 14px; }
+  .logo-sub  { font-size: 9px; }
+  .nav-item  { font-size: 13px; padding: 10px 12px; }
+
+  /* Topbar — tighter */
+  .topbar { padding: 12px 14px; border-radius: 18px; }
+  .topnav { gap: 4px; }
+  .nav-link, .switch-pill { padding: 10px 12px; font-size: 0.85rem; }
+
+  /* Problem page layout — stack sidebar */
+  .problem-layout.code2day-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Editor frame — reduce height on small screens */
+  .editor-frame { min-height: 320px !important; height: 320px !important; }
+  .editor-frame .monaco-editor { height: 320px !important; }
+
+  /* Auth card — stack */
+  .auth-card {
+    grid-template-columns: 1fr;
+    max-width: 480px;
+  }
+  .auth-copy { display: none; }
+
+  /* Tables — allow horizontal scroll */
+  .problems-table-card,
+  .premium-card table {
+    overflow-x: auto;
+    display: block;
+  }
+}
+
+/* ── 900px : tablets / small laptops ───────────────────────────────────────── */
+@media (max-width: 900px) {
+  /* Sidebar becomes a top bar on tablet */
+  .admin-sidebar {
+    width: 100% !important;
+    height: auto;
+    position: relative !important;
+    top: auto;
+    left: auto;
+    bottom: auto;
+    flex-direction: row;
+    align-items: center;
+    border-right: none;
+    border-bottom: 1px solid var(--border-soft);
+    padding: 0;
+    z-index: 200;
+  }
+
+  .sidebar-header {
+    padding: 12px 16px;
+    border-bottom: none;
+  }
+
+  .sidebar-nav {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 8px 12px;
+    gap: 4px;
+    scrollbar-width: none;
+  }
+
+  .sidebar-nav::-webkit-scrollbar { display: none; }
+
+  .nav-item {
+    flex-shrink: 0;
+    padding: 8px 14px;
+    font-size: 12px;
+    border-radius: 10px;
+    margin-bottom: 0;
+    white-space: nowrap;
+  }
+
+  .nav-icon { width: 16px; height: 16px; }
+
+  /* Main content — no left margin, full width */
+  .hod-main-content,
+  .hod-main-content.no-padding {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 16px !important;
+  }
+
+  .admin-dashboard-layout,
+  .hod-dashboard-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Topbar nav — scrollable row */
+  .topnav {
+    overflow-x: auto;
+    justify-content: flex-start;
+    scrollbar-width: none;
+  }
+
+  /* Stats grids — 2 columns */
+  .stats-grid-4,
+  .mini-metrics,
+  .mini-metrics.expanded {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Problem page — single column */
+  .problem-layout,
+  .code2day-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  .problem-sidebar-rail,
+  .judge-sidebar {
+    display: none !important;
+  }
+
+  /* Contest modal — full screen */
+  div[style*="maxWidth: 1200px"],
+  div[style*="max-width: 1200px"] {
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Tables — horizontal scroll */
+  table {
+    min-width: 600px;
+  }
+
+  .problems-table-card,
+  .premium-card,
+  div[style*="overflow: hidden"] {
+    overflow-x: auto;
+  }
+
+  /* Auth */
+  .auth-card { grid-template-columns: 1fr; }
+  .auth-copy { display: none; }
+  .auth-panel { padding: 24px; }
+}
+
+/* ── 768px : tablet portrait ────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  html { font-size: 13px; }
+
+  /* Topbar — stack brand + nav */
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  .topnav {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .account-block {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+  }
+
+  /* Page headers */
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .problem-header-meta {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Stats — single column */
+  .stats-grid-4,
+  .mini-metrics,
+  .mini-metrics.expanded,
+  .hero-summary-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Editor */
+  .editor-frame { min-height: 280px !important; height: 280px !important; }
+
+  /* Buttons — full width in forms */
+  .auth-form .primary-button,
+  .auth-form .ghost-button {
+    width: 100%;
+  }
+
+  /* Admin header */
+  .admin-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px;
+  }
+
+  .admin-header h1 { font-size: 1.3rem; }
+
+  /* HOD/Staff dashboard cards */
+  .premium-card { padding: 16px !important; }
+
+  /* Leaderboard table — horizontal scroll */
+  .leaderboard-item { flex-wrap: wrap; }
+
+  /* Contest list items */
+  .contest-top,
+  .contest-card-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  /* Filter bar */
+  .filter-row-main {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .filter-group.stretch { min-width: 0; }
+
+  /* Chip scroll — allow wrap */
+  .chip-scroll { flex-wrap: wrap; }
+
+  /* Discussion layout */
+  .discuss-layout { grid-template-columns: 1fr !important; }
+  .discuss-sidebar { display: none; }
+
+  /* JA Dashboard */
+  .ja-batch-table { overflow-x: auto; }
+}
+
+/* ── 480px : small phones (not primary target but prevent breakage) ─────────── */
+@media (max-width: 480px) {
+  html { font-size: 12px; }
+
+  .topbar { padding: 10px; }
+  .brand-badge { width: 36px; height: 36px; }
+  .brand-block h1 { font-size: 1rem; }
+
+  .auth-shell { padding: 8px; }
+  .auth-panel { padding: 16px; }
+
+  .primary-button,
+  .ghost-button {
+    padding: 11px 14px;
+    font-size: 0.9rem;
+  }
+
+  .nav-link, .switch-pill {
+    padding: 8px 10px;
+    font-size: 0.8rem;
+  }
+
+  /* Problem page */
+  .page-stack { gap: 10px; }
+  .surface-card { padding: 14px; border-radius: 16px; }
+
+  /* Editor */
+  .editor-frame { min-height: 240px !important; height: 240px !important; }
+
+  /* Tables — force scroll */
+  table { min-width: 480px; }
+
+  /* Modals — full screen */
+  div[style*="borderRadius: 12px"],
+  div[style*="border-radius: 12px"] {
+    border-radius: 0 !important;
+  }
+}
+
+/* ── Utility: prevent overflow on all screen sizes ──────────────────────────── */
+.tab-container,
+.admin-container,
+.hod-main-content {
+  overflow-x: hidden;
+}
+
+/* Tables always scroll horizontally, never overflow the page */
+.table-scroll-wrapper,
+.premium-card > table,
+.admin-container table {
+  display: block;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent fixed-width inline styles from breaking layout */
+@media (max-width: 1100px) {
+  [style*="maxWidth: 1200px"],
+  [style*="max-width: 1200px"] {
+    max-width: 100% !important;
+  }
+
+  [style*="width: 1200px"],
+  [style*="width: 1100px"] {
+    width: 100% !important;
   }
 }
