@@ -1,7 +1,28 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Clock, ChevronLeft, ChevronRight, CheckCircle, AlertCircle, Play, Send } from "lucide-react";
 import { formatDuration, buildJsonPostOptions } from "../../../lib/appUtils";
 import DoubleConfirmModal from "../../common/DoubleConfirmModal";
+
+// ── Toast notification ────────────────────────────────────────────────────────
+function Toast({ message, type = 'success', onDone }) {
+  useEffect(() => {
+    const t = setTimeout(onDone, 3500);
+    return () => clearTimeout(t);
+  }, [onDone]);
+  const bg = type === 'success' ? '#059669' : type === 'error' ? '#dc2626' : '#f59e0b';
+  return (
+    <div style={{
+      position: 'fixed', top: 24, left: '50%', transform: 'translateX(-50%)',
+      background: bg, color: 'white', padding: '14px 28px', borderRadius: 12,
+      fontWeight: 700, fontSize: 16, zIndex: 99999,
+      boxShadow: '0 8px 32px rgba(0,0,0,0.25)',
+      display: 'flex', alignItems: 'center', gap: 10,
+      animation: 'slideDown 0.3s ease',
+    }}>
+      {type === 'success' ? '✅' : type === 'error' ? '❌' : '⏰'} {message}
+    </div>
+  );
+}
 
 function AptitudeContestWorkspacePage({ contestId, onBack }) {
   const [contest, setContest] = useState(null);
@@ -15,10 +36,83 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
   
   const [contestSecondsLeft, setContestSecondsLeft] = useState(null);
   const [confirmState, setConfirmState] = useState({ show: false, m1: '', m2: '', onConfirm: null, firstOk: false });
+  const [toast, setToast] = useState(null);
+  const autoSubmittedRef = useRef(false);
+  const isContestActiveRef = useRef(true);
+
+  const showToast = (message, type = 'success') => setToast({ message, type });
 
   const askDouble = (onConfirm, m1, m2) => {
     setConfirmState({ show: true, m1, m2, onConfirm, firstOk: false });
   };
+
+  // ── Fullscreen + anti-cheat enforcement ──────────────────────────────────
+  useEffect(() => {
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+
+    const blockPaste = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showToast('Pasting is not allowed during a contest.', 'error');
+    };
+    document.addEventListener('paste', blockPaste, true);
+
+    const handleVisibility = () => {
+      if (document.hidden && isContestActiveRef.current) {
+        showToast('⚠️ Tab switching is not allowed! Return to the contest.', 'error');
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    const blockKeys = (e) => {
+      if (
+        (e.ctrlKey && ['t', 'w', 'Tab'].includes(e.key)) ||
+        (e.altKey && e.key === 'Tab') ||
+        e.key === 'F12' ||
+        (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(e.key))
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    document.addEventListener('keydown', blockKeys, true);
+
+    const handleBeforeUnload = (e) => {
+      if (isContestActiveRef.current) {
+        e.preventDefault();
+        e.returnValue = 'You are in an active contest. Are you sure you want to leave?';
+        return e.returnValue;
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement && isContestActiveRef.current) {
+        showToast('⚠️ Please stay in fullscreen during the contest!', 'error');
+        setTimeout(() => {
+          if (isContestActiveRef.current) {
+            const el2 = document.documentElement;
+            if (el2.requestFullscreen) el2.requestFullscreen().catch(() => {});
+            else if (el2.webkitRequestFullscreen) el2.webkitRequestFullscreen();
+          }
+        }, 1500);
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener('paste', blockPaste, true);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      document.removeEventListener('keydown', blockKeys, true);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    };
+  }, []);
 
   // Fetch contest data
   useEffect(() => {
@@ -68,7 +162,7 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
     const startTime = new Date(contest.participation.started_at).getTime();
     const durationMs = contest.duration_minutes * 60 * 1000;
 
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       const now = Date.now();
       const elapsed = now - startTime;
       const remaining = durationMs - elapsed;
@@ -77,7 +171,23 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
         setContestSecondsLeft(0);
         clearInterval(interval);
         // Auto-finish when time is up
-        handleFinishContest(true);
+        if (!autoSubmittedRef.current) {
+          autoSubmittedRef.current = true;
+          isContestActiveRef.current = false;
+          try {
+            await fetch(`/api/student/contests/${contestId}/auto-submit/`, {
+              method: "POST",
+              ...buildJsonPostOptions({}),
+            });
+          } catch (err) {
+            console.error("Auto-submit error:", err);
+          }
+          showToast('⏰ Time is up! Your aptitude contest has been submitted automatically.', 'warning');
+          setTimeout(() => {
+            if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+            onBack();
+          }, 3000);
+        }
       } else {
         setContestSecondsLeft(Math.floor(remaining / 1000));
       }
@@ -120,11 +230,18 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
           });
 
           if (response.ok) {
-            alert("Aptitude contest finished successfully!");
-            onBack();
+            isContestActiveRef.current = false;
+            showToast('🎉 Aptitude contest submitted successfully! Redirecting...', 'success');
+            setTimeout(() => {
+              if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+              onBack();
+            }, 2500);
+          } else {
+            showToast('Failed to submit contest. Please try again.', 'error');
           }
         } catch (err) {
           console.error("Error finishing contest:", err);
+          showToast('Error submitting contest.', 'error');
         }
       }
       finish();
@@ -167,7 +284,7 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <button 
-            onClick={() => onBack()}
+            onClick={() => handleFinishContest()}
             style={{ 
               background: 'none', 
               border: 'none', 
@@ -469,7 +586,6 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
         </section>
       </main>
 
-      {/* Confirmation Modal */}
       {confirmState.show && (
         <DoubleConfirmModal 
           show={confirmState.show}
@@ -485,6 +601,22 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
           onCancel={() => setConfirmState(prev => ({ ...prev, show: false }))}
         />
       )}
+
+      {/* Toast notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onDone={() => setToast(null)}
+        />
+      )}
+
+      <style>{`
+        @keyframes slideDown {
+          from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }
