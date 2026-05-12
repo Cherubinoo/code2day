@@ -1,5 +1,5 @@
 // Contest Detail Modal - View contest analytics and student submissions
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Trophy, Users, Clock, CheckCircle, XCircle, Eye, Code, Download, ChevronDown, ChevronUp } from 'lucide-react';
 import { getCsrfToken } from '../../lib/appUtils';
 
@@ -358,7 +358,8 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                 </thead>
                 <tbody>
                   {participantsWithSubmissions.map((participant, idx) => (
-                    <tr key={participant.register_number} style={{
+                    <React.Fragment key={participant.register_number}>
+                      <tr style={{
                       borderBottom: '1px solid #f3f4f6',
                       background: selectedStudent?.register_number === participant.register_number ? '#f0fdf4' : 'white',
                     }}>
@@ -487,6 +488,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                         </td>
                       </tr>
                     )}
+                    </React.Fragment>
                   ))}
                 </tbody>
               </table>
