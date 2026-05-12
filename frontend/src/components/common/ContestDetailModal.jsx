@@ -257,7 +257,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
           <div style={{ padding: 16, background: 'white', borderRadius: 8, border: '1px solid #e5e7eb' }}>
             <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Total Submissions</div>
             <div style={{ fontSize: 24, fontWeight: 'bold', color: '#d97706' }}>
-              {analytics.total_submissions || 0}
+              {analytics.summary?.total_submissions || 0}
             </div>
           </div>
           <div style={{ padding: 16, background: 'white', borderRadius: 8, border: '1px solid #e5e7eb' }}>

@@ -939,6 +939,24 @@ class Contest(models.Model):
         if self.start_time:
             return now < self.start_time
         return False
+
+    @property
+    def problem_count(self):
+        return self.problems.count()
+
+    @property
+    def aptitude_question_count(self):
+        return self.aptitude_questions.count()
+
+    @property
+    def assigned_student_count(self):
+        """Total unique students assigned via individual assignment or batch assignment"""
+        q = models.Q(id__in=self.assigned_students.values_list('id', flat=True))
+        if self.assigned_batches:
+            # We filter by department too to be safe, as batches might not be globally unique
+            q |= models.Q(batch__in=self.assigned_batches, department=self.department)
+        
+        return StudentProfile.objects.filter(q).distinct().count()
     
     def submit_for_approval(self):
         """Submit contest for HOD approval"""

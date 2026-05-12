@@ -75,12 +75,14 @@ class WatermarkDocTemplate(BaseDocTemplate):
                 print(f"Failed to load watermark image: {e}")
         
         # Add page template with frame
+        # Reserve 1.5 inches at the top for the header
+        header_height = 1.5 * inch
         frame = Frame(
             self.leftMargin, self.bottomMargin, 
             self.width, self.height, 
             id='normal'
         )
-        template = PageTemplate(id='main', frames=frame, onPage=self._add_watermark)
+        template = PageTemplate(id='main', frames=frame, onPage=self._add_header_and_watermark)
         self.addPageTemplates([template])
     
     def _get_watermark_image(self, logo_url):
@@ -118,42 +120,83 @@ class WatermarkDocTemplate(BaseDocTemplate):
             print(f"Error processing watermark image: {e}")
             return None
     
-    def _add_watermark(self, canvas, doc):
-        """Add watermark to each page"""
-        if not self.watermark_image:
-            return
+    def _add_header_and_watermark(self, canvas, doc):
+        """Add dynamic institution header and watermark to each page"""
+        page_width, page_height = A4
+        margin = 0.6 * inch
         
-        try:
-            # Calculate watermark position (center of page)
-            page_width, page_height = A4
-            watermark_size = min(page_width, page_height) * 0.4  # 40% of page size
-            
-            x = (page_width - watermark_size) / 2
-            y = (page_height - watermark_size) / 2
-            
-            # Draw watermark
-            canvas.drawImage(
-                self.watermark_image, 
-                x, y, 
-                width=watermark_size, 
-                height=watermark_size,
-                mask='auto'
-            )
-        except Exception as e:
-            print(f"Error adding watermark: {e}")
+        inst = self.institution
+        display_name = getattr(inst, 'display_name', '') or getattr(inst, 'name', 'Institution')
+        subheading = getattr(inst, 'subheading', '')
+        address = getattr(inst, 'address', '')
+
+        # ── 1. Draw Watermark (Background) ──
+        if self.watermark_image:
+            try:
+                watermark_size = min(page_width, page_height) * 0.4
+                x = (page_width - watermark_size) / 2
+                y = (page_height - watermark_size) / 2
+                canvas.drawImage(self.watermark_image, x, y, width=watermark_size, height=watermark_size, mask='auto')
+            except: pass
+        
+        # ── 2. Draw Header ──
+        canvas.saveState()
+        
+        # Logo
+        logo_path = None
+        if inst and inst.logo_file:
+            try: logo_path = inst.logo_file.path
+            except: pass
+        
+        if logo_path:
+            try:
+                canvas.drawImage(logo_path, margin, page_height - 1.0 * inch, width=0.75 * inch, height=0.75 * inch, mask='auto')
+            except: pass
+        
+        # Text block
+        text_x = page_width/2 + 0.5*inch
+        
+        # Display Name (Red)
+        canvas.setFont("Helvetica-Bold", 14)
+        canvas.setFillColor(colors.HexColor('#ED1C24'))
+        canvas.drawCentredString(text_x, page_height - 0.45*inch, display_name.upper())
+        
+        # Subheading (Gold)
+        if subheading:
+            canvas.setFont("Helvetica-Bold", 9)
+            canvas.setFillColor(colors.HexColor('#FFA000'))
+            canvas.drawCentredString(text_x, page_height - 0.6*inch, subheading.upper())
+        
+        # Address lines (Blue/Grey)
+        if address:
+            canvas.setFont("Helvetica", 7.5)
+            canvas.setFillColor(colors.HexColor('#2c3e50'))
+            address_lines = address.split('\n')
+            y = page_height - (0.72 * inch if subheading else 0.6 * inch)
+            for line in address_lines[:3]:
+                canvas.drawCentredString(text_x, y, line.strip())
+                y -= 11
+        
+        # Red line
+        canvas.setStrokeColor(colors.HexColor('#ED1C24'))
+        canvas.setLineWidth(1.2)
+        canvas.line(margin, page_height - 1.05*inch, page_width - margin, page_height - 1.05*inch)
+        
+        canvas.restoreState()
 
 
 def create_watermarked_pdf_contest(buffer, institution=None, **kwargs):
-    """Create a PDF document with watermark support for contest reports"""
-    if institution and institution.logo_display_url:
-        return WatermarkDocTemplate(buffer, institution=institution, **kwargs)
-    else:
-        return SimpleDocTemplate(buffer, **kwargs)
+    """Create a PDF document with branding support for contest reports"""
+    return WatermarkDocTemplate(buffer, institution=institution, **kwargs)
 
 
 # ---------------------------------------------------------------------------
 # Palette
 # ---------------------------------------------------------------------------
+_RAMCO_RED = '#ED1C24'
+_RAMCO_GOLD = '#FFA000'
+_RAMCO_BLUE = '#005696'
+
 _NAVY    = '#1a1a2e'
 _BLUE    = '#16213e'
 _INDIGO  = '#0f3460'
@@ -171,7 +214,10 @@ _SLATE   = '#334155'
 _PURPLE  = '#7c3aed'
 
 
-def _hx(h): return colors.HexColor(h)
+
+def _hx(h):
+    if not isinstance(h, str): return h
+    return colors.HexColor(h)
 
 
 # ---------------------------------------------------------------------------
@@ -303,27 +349,43 @@ def _generate_insights(contest, participations, problems, contest_type):
     else:
         insights.append(f"Average score of {norm_avg}/100 is low. Problems may be too hard or students need more preparation.")
 
-    # Problem-level (programming only)
-    if contest_type == 'programming' and problems:
-        from .models import ContestSubmission as CS
+    # Problem difficulty insights
+    if problems:
+        is_apt = contest_type == 'aptitude'
+        if is_apt:
+            from .models import AptitudeContestSubmission as CS
+            prob_field = 'question'
+        else:
+            from .models import ContestSubmission as CS
+            prob_field = 'problem'
+
         hardest = None
         hardest_rate = 101
         easiest = None
         easiest_rate = -1
+        
         for p in problems:
-            total = CS.objects.filter(contest=contest, problem=p).count()
-            acc   = CS.objects.filter(contest=contest, problem=p, status='Accepted').count()
-            rate  = (acc / total * 100) if total else 0
-            if rate < hardest_rate:
-                hardest_rate = rate
-                hardest = p
-            if rate > easiest_rate:
-                easiest_rate = rate
-                easiest = p
+            filter_kwargs = {'contest': contest, prob_field: p}
+            total = CS.objects.filter(**filter_kwargs).count()
+            if total > 0:
+                if is_apt:
+                    acc = CS.objects.filter(is_correct=True, **filter_kwargs).count()
+                else:
+                    acc = CS.objects.filter(status='Accepted', **filter_kwargs).count()
+                rate = (acc / total) * 100
+                if rate < hardest_rate:
+                    hardest_rate = rate
+                    hardest = p
+                if rate > easiest_rate:
+                    easiest_rate = rate
+                    easiest = p
+
         if hardest:
-            insights.append(f"Hardest problem: '{hardest.title}' with only {hardest_rate:.0f}% success rate — consider adding hints.")
+            h_title = (hardest.question_text[:40] + "...") if is_apt else hardest.title
+            insights.append(f"Problem '{h_title}' was the most challenging with a {round(hardest_rate,1)}% success rate.")
         if easiest and easiest != hardest:
-            insights.append(f"Most solved: '{easiest.title}' ({easiest_rate:.0f}% success) — good warm-up problem.")
+            e_title = (easiest.question_text[:40] + "...") if is_apt else easiest.title
+            insights.append(f"Students found '{e_title}' most approachable ({round(easiest_rate,1)}% success).")
 
     # Recommendations
     insights.append("Recommended: conduct a post-contest review session focusing on unsolved problems.")
@@ -366,7 +428,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
                 buffer, institution=contest.institution,
                 pagesize=A4,
                 rightMargin=0.6*inch, leftMargin=0.6*inch,
-                topMargin=0.6*inch, bottomMargin=0.6*inch,
+                topMargin=1.2*inch, bottomMargin=0.6*inch,
             )
             story = self._build_story(contest, profile)
             doc.build(story)
@@ -395,6 +457,17 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             return True
         return False
 
+    def _normalise_score(self, raw_score, n_problems, contest_type):
+        """Normalise a score to a 0-100 scale"""
+        if not n_problems or n_problems == 0:
+            return 0
+        if contest_type == 'aptitude':
+            # Each aptitude question is 1 mark
+            return round((raw_score / n_problems) * 100, 1)
+        else:
+            # Each programming problem is 100 marks max (as per StudentContestSubmitView)
+            return round((raw_score / (n_problems * 100)) * 100, 1)
+
     # ------------------------------------------------------------------
     # Master story builder
     # ------------------------------------------------------------------
@@ -416,17 +489,14 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         story = []
         story += self._cover_page(contest, profile)
         story.append(PageBreak())
-        story += self._executive_summary(contest, participations, problems, is_apt)
-        story.append(PageBreak())
+        
         story += self._overview_section(contest, participations, is_apt, n_problems)
+        story.append(Spacer(1, 15))
         story += self._analytics_dashboard(contest, participations, problems, is_apt)
         story.append(PageBreak())
+        
         story += self._leaderboard_section(contest, participations, problems, is_apt, n_problems)
-        story.append(PageBreak())
-        story += self._student_performance_section(contest, participations, problems, is_apt, n_problems)
-        story.append(PageBreak())
-        story += self._problem_analysis_section(contest, problems, is_apt)
-        story += self._footer_section(contest)
+        
         return story
 
     # ------------------------------------------------------------------
@@ -434,99 +504,45 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
     # ------------------------------------------------------------------
     def _cover_page(self, contest, profile):
         story = []
-        inst = contest.institution
         styles = getSampleStyleSheet()
 
-        # ── Institution header bar ──
-        display_name = (inst.display_name or inst.name) if inst else 'Institution'
-        subheading   = (inst.subheading or '') if inst else ''
-        address      = (inst.address or '') if inst else ''
-
-        # Try to load logo
-        logo_elem = None
-        if inst:
-            logo_path = None
-            if inst.logo_file:
-                try: logo_path = inst.logo_file.path
-                except: pass
-            if not logo_path and inst.logo_url:
-                try:
-                    import requests as _req, tempfile
-                    r = _req.get(inst.logo_url, timeout=8)
-                    r.raise_for_status()
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp:
-                        tmp.write(r.content)
-                        logo_path = tmp.name
-                except: pass
-            if logo_path:
-                try: logo_elem = Image(logo_path, width=0.9*inch, height=0.9*inch)
-                except: pass
-
-        logo_cell = logo_elem or Paragraph(
-            f'<font size="28" color="{_WHITE}">🏛</font>',
-            ParagraphStyle('lc', alignment=1))
-
-        inst_text = (
-            f'<font size="14" color="{_WHITE}"><b>{display_name}</b></font>'
-            + (f'<br/><font size="9" color="#aed6f1">{subheading}</font>' if subheading else '')
-            + (f'<br/><font size="8" color="#aed6f1">{address}</font>' if address else '')
-        )
-        date_text = (
-            f'<font size="8" color="#aed6f1">Report Generated</font><br/>'
-            f'<font size="9" color="{_WHITE}"><b>{datetime.now().strftime("%d %b %Y")}</b></font><br/>'
-            f'<font size="8" color="#aed6f1">{datetime.now().strftime("%I:%M %p")}</font>'
-        )
-
-        hdr = Table(
-            [[logo_cell,
-              Paragraph(inst_text, ParagraphStyle('it', fontName='Helvetica', leading=14)),
-              Paragraph(date_text, ParagraphStyle('dt', fontName='Helvetica', leading=12, alignment=2))]],
-            colWidths=[1.0*inch, 4.4*inch, 1.5*inch]
-        )
-        hdr.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), _hx(_NAVY)),
-            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
-            ('TOPPADDING', (0,0), (-1,-1), 12),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 12),
-            ('LEFTPADDING', (0,0), (-1,-1), 10),
-            ('RIGHTPADDING', (0,0), (-1,-1), 10),
-        ]))
-        story.append(hdr)
-        story.append(Spacer(1, 30))
+        story.append(Spacer(1, 0.8 * inch))
 
         # ── Contest title block ──
-        title_s = ParagraphStyle('ct', fontName='Helvetica-Bold', fontSize=22,
-                                 alignment=1, textColor=_hx(_NAVY), spaceAfter=6)
+        title_s = ParagraphStyle('ct', fontName='Helvetica-Bold', fontSize=26,
+                                 alignment=1, textColor=_hx(_NAVY), spaceAfter=12)
         story.append(Paragraph(contest.title, title_s))
 
-        sub_s = ParagraphStyle('cs', fontName='Helvetica', fontSize=11,
-                               alignment=1, textColor=_hx(_GRAY), spaceAfter=20)
-        ctype = 'Aptitude Contest' if contest.contest_type == 'aptitude' else 'Programming Contest'
+        sub_s = ParagraphStyle('cs', fontName='Helvetica-Bold', fontSize=14,
+                               alignment=1, textColor=_hx(_GRAY), spaceAfter=30)
+        ctype = 'Aptitude Contest Report' if contest.contest_type == 'aptitude' else 'Programming Contest Report'
         story.append(Paragraph(ctype, sub_s))
 
-        # ── Info cards row ──
+        # ── Info section ──
+        story.append(Spacer(1, 20))
         dept  = contest.department.name if contest.department else 'N/A'
         by    = getattr(profile, 'name', 'Administrator')
         start_dt = contest.access_start_time or contest.start_time
         dur   = contest.session_duration_minutes or contest.duration_minutes or 0
 
-        cards = [
-            _metric_card('Department', dept, bg=_INDIGO, w=1.55*inch),
-            _metric_card('Generated By', by[:18], bg=_TEAL, w=1.55*inch),
-            _metric_card('Date', start_dt.strftime('%d %b %Y') if start_dt else 'N/A', bg=_SLATE, w=1.55*inch),
-            _metric_card('Duration', f'{dur} min', bg='#7c3aed', w=1.55*inch),
+        info_data = [
+            [Paragraph('<b>Department:</b>', styles['Normal']), dept],
+            [Paragraph('<b>Generated By:</b>', styles['Normal']), by],
+            [Paragraph('<b>Contest Date:</b>', styles['Normal']), start_dt.strftime('%d %b %Y') if start_dt else 'N/A'],
+            [Paragraph('<b>Duration:</b>', styles['Normal']), f'{dur} minutes'],
         ]
-        row = Table([cards], colWidths=[1.6*inch]*4)
-        row.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER'),
-                                  ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
-                                  ('LEFTPADDING',(0,0),(-1,-1),4),
-                                  ('RIGHTPADDING',(0,0),(-1,-1),4)]))
-        story.append(row)
-        story.append(Spacer(1, 24))
-
+        info_tbl = Table(info_data, colWidths=[1.5*inch, 3.5*inch])
+        info_tbl.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+        ]))
+        story.append(info_tbl)
+        
+        story.append(Spacer(1, 50))
+        
         # ── Decorative rule ──
         d = Drawing(480, 4)
-        d.add(Rect(0, 0, 480, 4, fillColor=_hx(_INDIGO), strokeColor=None))
+        d.add(Rect(0, 0, 480, 4, fillColor=_hx(_RAMCO_RED), strokeColor=None))
         story.append(d)
         story.append(Spacer(1, 8))
 
@@ -636,9 +652,9 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
     # 4. Analytics Dashboard
     # ------------------------------------------------------------------
     def _analytics_dashboard(self, contest, participations, problems, is_apt):
+        story = [_section_header('PERFORMANCE ANALYTICS', _RAMCO_RED)]
         from django.db.models import Avg, Max, Count
         from .models import AptitudeContestSubmission
-        story = [_section_header('ANALYTICS DASHBOARD', _TEAL)]
 
         n = participations.count()
         n_problems = len(problems)
@@ -711,19 +727,19 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
                 participations.filter(total_score__gt=raw_max*0.75).count(),
             ]
             bar = _bar_chart(buckets, ['0-25%','26-50%','51-75%','76-100%'],
-                             bar_color=_INDIGO, w=260, h=110)
+                             bar_color=_INDIGO, w=300, h=140)
 
             solved_total = sum(p.problems_solved for p in participations)
             unsolved_total = max(0, n * n_problems - solved_total)
             pie = _pie_chart(
                 [solved_total, unsolved_total] if (solved_total + unsolved_total) > 0 else [1, 0],
                 ['Solved', 'Unsolved'],
-                [_GREEN, _RED], size=110
+                [_GREEN, _RED], size=130
             )
 
             chart_row = Table(
                 [[bar, pie]],
-                colWidths=[3.2*inch, 1.8*inch]
+                colWidths=[3.8*inch, 2.2*inch]
             )
             chart_row.setStyle(TableStyle([
                 ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
@@ -737,7 +753,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             chart_labels = Table(
                 [[Paragraph('Score Distribution', label_s),
                   Paragraph('Solved vs Unsolved', label_s)]],
-                colWidths=[3.2*inch, 1.8*inch]
+                colWidths=[3.8*inch, 2.2*inch]
             )
             story.append(chart_row)
             story.append(chart_labels)
@@ -750,8 +766,8 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
     # 5. Leaderboard
     # ------------------------------------------------------------------
     def _leaderboard_section(self, contest, participations, problems, is_apt, n_problems):
+        story = [_section_header('PARTICIPANT RESULTS', _RAMCO_RED)]
         from .models import AptitudeContestSubmission
-        story = [_section_header("LEADERBOARD", _INDIGO)]
         if not participations.exists():
             story.append(Paragraph("No participants yet.", ParagraphStyle("np", fontSize=9)))
             return story

@@ -113,78 +113,38 @@ function AuthScreen({
   // ── Dynamic header ──────────────────────────────────────────────────────
   const renderHeader = () => {
     if (selectedInstitution) {
-      const isRamco =
-        selectedInstitution.name.toLowerCase().includes("ramco") ||
-        selectedInstitution.code === "RIT";
-
-      if (isRamco) {
-        return (
-          <div style={{
-            width: "100%", background: "white", padding: "14px 24px",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            gap: "20px", borderBottom: "1px solid #e5e7eb",
-            boxShadow: "0 1px 4px rgba(0,0,0,0.08)", flexShrink: 0,
-          }}>
-            <img src="/logo/logo.jpeg" alt="RIT Logo"
-              style={{ height: 90, width: "auto", objectFit: "contain" }} />
-            <div style={{ textAlign: "center" }}>
-              <h1 style={{ color: "#dc2626", margin: 0, fontSize: 26, fontWeight: 800,
-                letterSpacing: "0.5px", textTransform: "uppercase" }}>
-                RAMCO INSTITUTE OF TECHNOLOGY
-              </h1>
-              <h2 style={{ color: "#eab308", margin: "3px 0", fontSize: 16,
-                fontWeight: 700, textTransform: "uppercase" }}>
-                (AN AUTONOMOUS INSTITUTION)
-              </h2>
-              <div style={{ fontSize: 13, color: "#4b5563", lineHeight: 1.5, fontWeight: 500 }}>
-                <p style={{ margin: 0 }}>Approved By AICTE, New Delhi &amp; Affiliated to Anna University</p>
-                <p style={{ margin: 0 }}>NAAC Accredited with 'A+' Grade &amp; An ISO 9001:2015 Certified Institution</p>
-                <p style={{ margin: 0 }}>Rajapalayam, Tamil Nadu, India - 626 117.</p>
-              </div>
-            </div>
-          </div>
-        );
-      }
+      const { display_name, subheading, address, logo_url, name } = selectedInstitution;
 
       return (
         <div style={{
-          width: "100%", padding: "16px 24px", flexShrink: 0,
-          background: selectedInstitution.primary_color
-            ? `linear-gradient(135deg, ${selectedInstitution.primary_color}, ${selectedInstitution.secondary_color || selectedInstitution.primary_color})`
-            : "linear-gradient(135deg, #1e3a5f, #2d5a8e)",
+          width: "100%", background: "white", padding: "8px 16px",
           display: "flex", alignItems: "center", justifyContent: "center",
-          gap: "20px", boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+          gap: "16px", borderBottom: "1px solid #e5e7eb",
+          boxShadow: "0 1px 3px rgba(0,0,0,0.06)", flexShrink: 0,
         }}>
-          <div style={{
-            width: 64, height: 64, borderRadius: 10, overflow: "hidden",
-            background: "rgba(255,255,255,0.15)", display: "flex",
-            alignItems: "center", justifyContent: "center", flexShrink: 0,
-            border: "2px solid rgba(255,255,255,0.25)",
-          }}>
-            {selectedInstitution.logo_url ? (
-              <img src={selectedInstitution.logo_url} alt={selectedInstitution.name}
-                style={{ width: "100%", height: "100%", objectFit: "contain", background: "white" }} />
-            ) : (
-              <span style={{ color: "white", fontSize: 28, fontWeight: 700 }}>
-                {selectedInstitution.name.charAt(0).toUpperCase()}
-              </span>
-            )}
-          </div>
+          {logo_url ? (
+            <img src={logo_url} alt={`${name} Logo`}
+              style={{ height: 60, width: "auto", objectFit: "contain" }} />
+          ) : (
+            <div style={{ width: 48, height: 48, background: "#f3f4f6", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>🏛️</div>
+          )}
           <div style={{ textAlign: "center" }}>
-            <h1 style={{ color: "white", margin: 0, fontSize: 26, fontWeight: 800,
-              textTransform: "uppercase", textShadow: "0 1px 4px rgba(0,0,0,0.3)" }}>
-              {selectedInstitution.name}
+            <h1 style={{ color: "#dc2626", margin: 0, fontSize: 20, fontWeight: 800,
+              letterSpacing: "0.5px", textTransform: "uppercase" }}>
+              {display_name || name}
             </h1>
-            {selectedInstitution.code && (
-              <h2 style={{ color: "rgba(255,255,255,0.85)", margin: "4px 0",
-                fontSize: 15, fontWeight: 600, textTransform: "uppercase" }}>
-                ({selectedInstitution.code})
+            {subheading && (
+              <h2 style={{ color: "#eab308", margin: "1px 0", fontSize: 13,
+                fontWeight: 700, textTransform: "uppercase" }}>
+                {subheading}
               </h2>
             )}
-            {selectedInstitution.location && (
-              <p style={{ color: "rgba(255,255,255,0.75)", margin: 0, fontSize: 13 }}>
-                📍 {selectedInstitution.location}
-              </p>
+            {address && (
+              <div style={{ fontSize: 10.5, color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
+                {address.split('\n').map((line, i) => (
+                  <p key={i} style={{ margin: 0 }}>{line.strip ? line.strip() : line}</p>
+                ))}
+              </div>
             )}
           </div>
         </div>

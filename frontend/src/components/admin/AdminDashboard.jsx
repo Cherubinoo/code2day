@@ -328,8 +328,8 @@ const AdminDashboard = () => {
           </div>
           
           {!selectedInstitution && (
-            <button onClick={() => setShowCreateModal(true)} className="primary-button" style={{ borderRadius: 16, padding: '14px 28px', display: 'flex', alignItems: 'center', gap: 10, fontSize: '1rem' }}>
-              <Plus size={22} /> Provision Institution
+            <button onClick={() => setShowCreateModal(true)} className="primary-button" style={{ borderRadius: 12, padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', width: 'fit-content' }}>
+              <Plus size={18} /> Provision Institution
             </button>
           )}
         </header>
@@ -373,8 +373,8 @@ const AdminDashboard = () => {
                       {institutions.filter(i => i.is_active).length} Active
                     </span>
                   </div>
-                  <button onClick={() => setShowCreateModal(true)} className="primary-button" style={{ borderRadius: 16, padding: '14px 28px', display: 'flex', alignItems: 'center', gap: 10, fontSize: '1rem' }}>
-                    <Plus size={22} /> Add Institution
+                  <button onClick={() => setShowCreateModal(true)} className="primary-button" style={{ borderRadius: 12, padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', width: 'fit-content' }}>
+                    <Plus size={18} /> Add Institution
                   </button>
                 </div>
               </div>
@@ -1431,7 +1431,7 @@ const AdminDashboard = () => {
         {/* MODALS */}
         {showCreateModal && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(10px)' }}>
-            <div style={{ background: 'white', borderRadius: 36, padding: 48, width: '90%', maxWidth: 480, boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
+            <div style={{ background: 'white', borderRadius: 32, padding: 40, width: '90%', maxWidth: 420, boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
               <h3 style={{ fontSize: '2rem', fontWeight: 950, marginBottom: 8, color: 'var(--olive-950)' }}>Provision Node</h3>
               <p style={{ color: 'var(--text-soft)', marginBottom: 36 }}>Initialize an isolated institutional environment.</p>
               <div style={{ display: 'grid', gap: 24 }}>

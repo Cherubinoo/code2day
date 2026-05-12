@@ -3400,7 +3400,10 @@ class ContestDetailView(APIView):
             "end_time": contest.end_time,
             "duration_minutes": contest.duration_minutes,
             "problems": problems_data,
+            "problem_count": contest.problem_count,
+            "aptitude_question_count": contest.aptitude_question_count,
             "assigned_batches": contest.assigned_batches,
+            "assigned_student_count": contest.assigned_student_count,
             "created_by": contest.created_by.name,
             "department": contest.department.name if contest.department else None,
             "approved_by": contest.approved_by.name if contest.approved_by else None,
@@ -7653,6 +7656,13 @@ class PublicInstitutionListView(APIView):
                     'logo_url': logo_url,
                     'primary_color': getattr(institution, 'primary_color', '#1f2937'),
                     'secondary_color': getattr(institution, 'secondary_color', '#3b82f6'),
+                    # Branding fields
+                    'display_name': getattr(institution, 'display_name', ''),
+                    'subheading': getattr(institution, 'subheading', ''),
+                    'address': getattr(institution, 'address', ''),
+                    'contact_email': getattr(institution, 'contact_email', ''),
+                    'contact_phone': getattr(institution, 'contact_phone', ''),
+                    'established_year': getattr(institution, 'established_year', None),
                 }
                 
                 # Add department count if available
