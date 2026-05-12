@@ -288,9 +288,18 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         
         story.append(Paragraph("📋 Contest Overview", section_style))
         
-        # Contest information table — use live counts
+        # Use live counts
         live_participants = ContestParticipation.objects.filter(contest=contest).count()
-        live_submissions = ContestSubmission.objects.filter(contest=contest).count()
+        if contest.contest_type == 'aptitude':
+            from .models import AptitudeContestSubmission
+            live_submissions = AptitudeContestSubmission.objects.filter(contest=contest).count()
+        else:
+            live_submissions = ContestSubmission.objects.filter(contest=contest).count()
+
+        # Prefer access_start/end_time, fall back to start/end_time
+        start_dt = contest.access_start_time or contest.start_time
+        end_dt   = contest.access_end_time   or contest.end_time
+        duration = contest.session_duration_minutes or contest.duration_minutes
 
         overview_data = [
             ['Field', 'Information'],
@@ -299,9 +308,9 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             ['Created By', contest.created_by.name if contest.created_by else 'N/A'],
             ['Department', contest.department.name if contest.department else 'N/A'],
             ['Status', contest.get_status_display()],
-            ['Duration', f"{contest.duration_minutes} minutes" if contest.duration_minutes else 'N/A'],
-            ['Start Time', contest.start_time.strftime('%B %d, %Y at %I:%M %p') if contest.start_time else 'N/A'],
-            ['End Time', contest.end_time.strftime('%B %d, %Y at %I:%M %p') if contest.end_time else 'N/A'],
+            ['Session Duration', f"{duration} minutes" if duration else 'N/A'],
+            ['Access Start', start_dt.strftime('%B %d, %Y at %I:%M %p') if start_dt else 'Not set'],
+            ['Access End',   end_dt.strftime('%B %d, %Y at %I:%M %p')   if end_dt   else 'Not set'],
             ['Total Participants', str(live_participants)],
             ['Total Submissions', str(live_submissions)],
             ['Report Generated', datetime.now().strftime('%B %d, %Y at %I:%M %p')],
@@ -354,15 +363,27 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             completed_participants = participations.filter(completed_at__isnull=False).count()
             
             from django.db.models import Avg, Max
-            avg_score = participations.aggregate(avg_score=Avg('total_score'))['avg_score'] or 0
-            max_score = participations.aggregate(max_score=Max('total_score'))['max_score'] or 0
-            
-            # Score distribution
+            raw_avg  = participations.aggregate(avg_score=Avg('total_score'))['avg_score'] or 0
+            raw_max  = participations.aggregate(max_score=Max('total_score'))['max_score'] or 0
+
+            # Determine total_problems for normalisation
+            if contest.contest_type == 'aptitude':
+                n_problems = contest.aptitude_questions.count() or 1
+            else:
+                n_problems = contest.problems.count() or 1
+
+            def norm(raw):
+                return self._normalise_score(raw, n_problems, contest.contest_type)
+
+            avg_score_norm = norm(raw_avg)
+            max_score_norm = norm(raw_max)
+
+            # Score distribution — always in /100 buckets
             score_ranges = [
-                ('0-25%', participations.filter(total_score__lte=max_score*0.25).count() if max_score > 0 else 0),
-                ('26-50%', participations.filter(total_score__gt=max_score*0.25, total_score__lte=max_score*0.5).count() if max_score > 0 else 0),
-                ('51-75%', participations.filter(total_score__gt=max_score*0.5, total_score__lte=max_score*0.75).count() if max_score > 0 else 0),
-                ('76-100%', participations.filter(total_score__gt=max_score*0.75).count() if max_score > 0 else 0),
+                ('0–25',  participations.filter(total_score__lte=raw_max * 0.25).count() if raw_max > 0 else total_participants),
+                ('26–50', participations.filter(total_score__gt=raw_max * 0.25, total_score__lte=raw_max * 0.5).count()  if raw_max > 0 else 0),
+                ('51–75', participations.filter(total_score__gt=raw_max * 0.5,  total_score__lte=raw_max * 0.75).count() if raw_max > 0 else 0),
+                ('76–100',participations.filter(total_score__gt=raw_max * 0.75).count() if raw_max > 0 else 0),
             ]
             
             # Statistics table
@@ -371,8 +392,8 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
                 ['Total Participants', str(total_participants)],
                 ['Completed Contest', str(completed_participants)],
                 ['Completion Rate', f"{(completed_participants/total_participants*100):.1f}%" if total_participants > 0 else "0%"],
-                ['Average Score', f"{avg_score:.1f}"],
-                ['Highest Score', str(int(max_score))],
+                ['Average Score (/100)', f"{avg_score_norm}"],
+                ['Highest Score (/100)', f"{max_score_norm}"],
             ]
             
             stats_table = Table(stats_data, colWidths=[2.5*inch, 1.5*inch])
@@ -424,25 +445,29 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         return story
 
     def _create_contest_leaderboard(self, contest):
-        """Create full contest leaderboard with ALL students and per-problem breakdown"""
+        """
+        Create:
+          1. Top Performers podium (top 3)
+          2. Full leaderboard table (descending score)
+          3. Per-student detailed section with cumulative score out of 100
+        """
+        from django.db.models import Sum
         story = []
         styles = getSampleStyleSheet()
 
         section_style = ParagraphStyle(
             'SectionTitle',
             parent=styles['Heading2'],
-            fontSize=16,
-            spaceAfter=12,
+            fontSize=14,
+            spaceAfter=10,
             textColor=colors.HexColor('#2c3e50'),
             borderWidth=1,
             borderColor=colors.HexColor('#f39c12'),
-            borderPadding=8,
+            borderPadding=6,
             backColor=colors.HexColor('#ecf0f1')
         )
 
-        story.append(Paragraph("🏆 Full Student Results", section_style))
-
-        # Get ALL participants ordered by score
+        # ── Fetch all participations ordered by score desc ────────────────
         all_participations = (
             ContestParticipation.objects
             .filter(contest=contest)
@@ -450,54 +475,124 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             .order_by('-total_score', 'total_time_taken')
         )
 
-        problems = list(contest.problems.all().order_by('id'))
+        if contest.contest_type == 'aptitude':
+            from .models import AptitudeContestSubmission
+            problems = list(contest.aptitude_questions.all().order_by('id'))
+            total_problems = len(problems)
+        else:
+            problems = list(contest.problems.all().order_by('id'))
+            total_problems = len(problems)
 
         if not all_participations.exists():
             story.append(Paragraph("No participants yet.", styles['Normal']))
             story.append(Spacer(1, 20))
             return story
 
-        # ── Summary leaderboard table ─────────────────────────────────────
-        header = ['Rank', 'Register No.', 'Name', 'Score', 'Solved', 'Time', 'Status']
-        # Add one column per problem
-        for i, p in enumerate(problems):
-            short = p.title[:12] + '…' if len(p.title) > 12 else p.title
-            header.append(f'P{i+1}\n{short}')
+        # ── 1. TOP PERFORMERS PODIUM ──────────────────────────────────────
+        story.append(Paragraph("🏆 Top Performers", section_style))
 
-        col_widths = [0.4*inch, 1.1*inch, 1.6*inch, 0.6*inch, 0.5*inch, 0.7*inch, 0.7*inch]
-        col_widths += [0.7*inch] * len(problems)
+        top3 = list(all_participations[:3])
+        podium_colors = [
+            colors.HexColor('#FFD700'),  # Gold
+            colors.HexColor('#C0C0C0'),  # Silver
+            colors.HexColor('#CD7F32'),  # Bronze
+        ]
+        medals = ['🥇 1st', '🥈 2nd', '🥉 3rd']
+
+        podium_data = [['Medal', 'Name', 'Register No.', 'Score / 100', 'Solved', 'Time Taken']]
+        for i, part in enumerate(top3):
+            t = part.total_time_taken or part.time_spent_seconds or 0
+            time_str = f"{t // 60}m {t % 60}s" if t else '—'
+            # Normalise score to /100
+            norm_score = self._normalise_score(part.total_score, total_problems, contest.contest_type)
+            podium_data.append([
+                medals[i],
+                part.student.name,
+                part.student.register_number or '—',
+                f"{norm_score}/100",
+                f"{part.problems_solved}/{total_problems}",
+                time_str,
+            ])
+
+        podium_tbl = Table(podium_data, colWidths=[0.7*inch, 2*inch, 1.3*inch, 1*inch, 0.7*inch, 0.9*inch], repeatRows=1)
+        podium_style_cmds = [
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2c3e50')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#bdc3c7')),
+        ]
+        for i, _ in enumerate(top3, 1):
+            podium_style_cmds.append(('BACKGROUND', (0, i), (-1, i), podium_colors[i - 1]))
+            podium_style_cmds.append(('FONTNAME', (0, i), (-1, i), 'Helvetica-Bold'))
+        podium_tbl.setStyle(TableStyle(podium_style_cmds))
+        story.append(podium_tbl)
+        story.append(Spacer(1, 20))
+
+        # ── 2. FULL LEADERBOARD TABLE ─────────────────────────────────────
+        story.append(Paragraph("📊 Full Student Results (Descending Order)", section_style))
+
+        # For aptitude with many questions, cap the per-question columns to avoid overflow
+        MAX_PROB_COLS = 15
+        display_problems = problems[:MAX_PROB_COLS]
+        extra_problems = len(problems) - len(display_problems)
+
+        header = ['Rank', 'Register No.', 'Name', 'Score/100', 'Solved', 'Time', 'Status']
+        for i, p in enumerate(display_problems):
+            label = getattr(p, 'title', None) or getattr(p, 'question_text', '')
+            short = label[:8] + '…' if len(label) > 8 else label
+            header.append(f'Q{i+1}\n{short}' if contest.contest_type == 'aptitude' else f'P{i+1}\n{short}')
+        if extra_problems:
+            header.append(f'+{extra_problems}\nmore')
+
+        # Fit within A4 width (~6.7 inch usable)
+        fixed_width = 0.4 + 1.1 + 1.5 + 0.7 + 0.5 + 0.7 + 0.6  # = 5.5 inch
+        remaining = max(0.0, 6.7 - fixed_width)
+        n_prob_cols = len(display_problems) + (1 if extra_problems else 0)
+        prob_col_w = round(remaining / n_prob_cols, 3) if n_prob_cols else 0.5
+
+        col_widths = [0.4*inch, 1.1*inch, 1.5*inch, 0.7*inch, 0.5*inch, 0.7*inch, 0.6*inch]
+        col_widths += [prob_col_w * inch] * (len(display_problems) + (1 if extra_problems else 0))
 
         rows = [header]
         for idx, part in enumerate(all_participations, 1):
-            time_str = (
-                f"{part.total_time_taken//60}m {part.total_time_taken%60}s"
-                if part.total_time_taken else "—"
-            )
-            status_str = "Done" if part.completed_at else "Active"
+            t = part.total_time_taken or part.time_spent_seconds or 0
+            time_str = f"{t // 60}m {t % 60}s" if t else '—'
+            status_str = 'Done' if part.completed_at else 'Active'
+            norm_score = self._normalise_score(part.total_score, total_problems, contest.contest_type)
             row = [
                 str(idx),
                 part.student.register_number or '—',
-                (part.student.name[:22] + '…') if len(part.student.name) > 22 else part.student.name,
-                str(part.total_score),
-                str(part.problems_solved),
+                (part.student.name[:20] + '…') if len(part.student.name) > 20 else part.student.name,
+                f"{norm_score}/100",
+                f"{part.problems_solved}/{total_problems}",
                 time_str,
                 status_str,
             ]
-            # Per-problem best submission status
-            for problem in problems:
-                best = (
-                    ContestSubmission.objects
-                    .filter(contest=contest, student=part.student, problem=problem)
-                    .order_by('-score', '-submitted_at')
-                    .first()
-                )
-                if best:
-                    row.append('✓' if best.status == 'Accepted' else f'{best.score}%')
+            # Per-problem best result (only display_problems columns)
+            for problem in display_problems:
+                if contest.contest_type == 'aptitude':
+                    from .models import AptitudeContestSubmission
+                    best = AptitudeContestSubmission.objects.filter(
+                        contest=contest, student=part.student, question=problem
+                    ).first()
+                    row.append('✓' if (best and best.is_correct) else ('✗' if best else '—'))
                 else:
-                    row.append('—')
+                    best = (
+                        ContestSubmission.objects
+                        .filter(contest=contest, student=part.student, problem=problem)
+                        .order_by('-score', '-submitted_at')
+                        .first()
+                    )
+                    row.append('✓' if (best and best.status == 'Accepted') else (f'{best.score}' if best else '—'))
+            if extra_problems:
+                row.append('…')
             rows.append(row)
 
         tbl = Table(rows, colWidths=col_widths, repeatRows=1)
+        num_rows = len(rows)  # includes header row
         style_cmds = [
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f39c12')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
@@ -508,86 +603,180 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#bdc3c7')),
             ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
-            # Gold / Silver / Bronze for top 3
-            ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#fff9c4')),
-            ('BACKGROUND', (0, 2), (-1, 2), colors.HexColor('#f5f5f5')),
-            ('BACKGROUND', (0, 3), (-1, 3), colors.HexColor('#ffe0b2')),
         ]
+        # Only apply medal colours if those rows actually exist
+        if num_rows >= 2:
+            style_cmds.append(('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#fff9c4')))  # Gold
+        if num_rows >= 3:
+            style_cmds.append(('BACKGROUND', (0, 2), (-1, 2), colors.HexColor('#f5f5f5')))  # Silver
+        if num_rows >= 4:
+            style_cmds.append(('BACKGROUND', (0, 3), (-1, 3), colors.HexColor('#ffe0b2')))  # Bronze
         tbl.setStyle(TableStyle(style_cmds))
         story.append(tbl)
         story.append(Spacer(1, 24))
 
-        # ── Per-student detailed section ──────────────────────────────────
-        story.append(Paragraph("📋 Individual Student Submission Details", section_style))
+        # ── 3. PER-STUDENT DETAILED SECTION ──────────────────────────────
+        story.append(Paragraph("📋 Individual Student Report (Descending Order)", section_style))
+
+        student_header_style = ParagraphStyle(
+            'StudentHeader',
+            parent=styles['Normal'],
+            fontSize=10,
+            fontName='Helvetica-Bold',
+            textColor=colors.white,
+            backColor=colors.HexColor('#2c3e50'),
+            borderPadding=6,
+            spaceAfter=4,
+        )
 
         for idx, part in enumerate(all_participations, 1):
             student = part.student
-            # Student header
-            student_header_style = ParagraphStyle(
-                'StudentHeader',
-                parent=styles['Normal'],
-                fontSize=10,
-                fontName='Helvetica-Bold',
-                textColor=colors.white,
-                backColor=colors.HexColor('#2c3e50'),
-                borderPadding=6,
-                spaceAfter=4,
-            )
+            norm_score = self._normalise_score(part.total_score, total_problems, contest.contest_type)
+            t = part.total_time_taken or part.time_spent_seconds or 0
+            time_str = f"{t // 60}m {t % 60}s" if t else '—'
+
             story.append(Paragraph(
                 f"#{idx}  {student.name}  ({student.register_number or '—'})  "
-                f"Score: {part.total_score}  |  Solved: {part.problems_solved}/{len(problems)}",
+                f"Score: {norm_score}/100  |  Solved: {part.problems_solved}/{total_problems}  |  Time: {time_str}",
                 student_header_style
             ))
 
-            # Submissions for this student
-            subs = (
-                ContestSubmission.objects
-                .filter(contest=contest, student=student)
-                .select_related('problem')
-                .order_by('problem__id', '-score', '-submitted_at')
-            )
-
-            if not subs.exists():
-                story.append(Paragraph("  No submissions.", styles['Normal']))
-            else:
-                sub_data = [['Problem', 'Language', 'Status', 'Score', 'Submitted At']]
-                for sub in subs:
-                    sub_data.append([
-                        (sub.problem.title[:30] + '…') if sub.problem and len(sub.problem.title) > 30 else (sub.problem.title if sub.problem else '—'),
-                        sub.language or '—',
-                        sub.status or '—',
-                        str(sub.score or 0),
-                        sub.submitted_at.strftime('%H:%M:%S') if sub.submitted_at else '—',
-                    ])
-
-                sub_tbl = Table(
-                    sub_data,
-                    colWidths=[2.5*inch, 0.9*inch, 1.2*inch, 0.6*inch, 1.1*inch],
-                    repeatRows=1,
+            if contest.contest_type == 'aptitude':
+                from .models import AptitudeContestSubmission
+                subs = (
+                    AptitudeContestSubmission.objects
+                    .filter(contest=contest, student=student)
+                    .select_related('question')
+                    .order_by('question__id')
                 )
-                sub_tbl.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 8),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('ALIGN', (0, 1), (0, -1), 'LEFT'),
-                    ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#bdc3c7')),
-                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
-                ]))
-                # Colour accepted rows green
-                for r_idx, sub in enumerate(subs, 1):
-                    if sub.status == 'Accepted':
-                        sub_tbl.setStyle(TableStyle([
-                            ('BACKGROUND', (0, r_idx), (-1, r_idx), colors.HexColor('#d1fae5')),
-                        ]))
-                story.append(sub_tbl)
+                if not subs.exists():
+                    story.append(Paragraph("  No submissions.", styles['Normal']))
+                else:
+                    sub_data = [['Question (truncated)', 'Selected', 'Correct?', 'Score', 'Time Taken']]
+                    for sub in subs:
+                        q_text = sub.question.question_text[:40] + '…' if len(sub.question.question_text) > 40 else sub.question.question_text
+                        sub_data.append([
+                            q_text,
+                            sub.selected_option or '—',
+                            'Yes ✓' if sub.is_correct else 'No ✗',
+                            str(sub.score),
+                            f"{sub.time_taken_seconds}s" if sub.time_taken_seconds else '—',
+                        ])
+                    sub_tbl = Table(sub_data, colWidths=[3.2*inch, 0.7*inch, 0.8*inch, 0.6*inch, 0.9*inch], repeatRows=1)
+                    sub_tbl.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 8),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+                        ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#bdc3c7')),
+                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+                    ]))
+                    for r_idx, sub in enumerate(subs, 1):
+                        if sub.is_correct:
+                            sub_tbl.setStyle(TableStyle([('BACKGROUND', (0, r_idx), (-1, r_idx), colors.HexColor('#d1fae5'))]))
+                    story.append(sub_tbl)
+            else:
+                # Programming contest — group by problem, show best submission per problem
+                # then all attempts
+                subs = (
+                    ContestSubmission.objects
+                    .filter(contest=contest, student=student)
+                    .select_related('problem')
+                    .order_by('problem__id', '-score', '-submitted_at')
+                )
+                if not subs.exists():
+                    story.append(Paragraph("  No submissions.", styles['Normal']))
+                else:
+                    # Build per-problem summary first
+                    prob_summary = []
+                    for problem in problems:
+                        p_subs = [s for s in subs if s.problem_id == problem.id]
+                        if not p_subs:
+                            continue
+                        best = p_subs[0]  # already ordered by -score
+                        # Get test case info from ProblemSolution if available
+                        ps = ProblemSolution.objects.filter(
+                            student=student, problem=problem
+                        ).order_by('-submitted_at').first()
+                        passed = ps.passed_cases if ps else '—'
+                        total_tc = ps.total_cases if ps else '—'
+                        cases_str = f"{passed}/{total_tc}" if ps else '—'
+                        # Per-problem score normalised to 100/num_problems
+                        per_prob_max = round(100 / total_problems, 1) if total_problems else 100
+                        prob_score = round((best.score / 100) * per_prob_max, 1) if best.score else 0
+                        prob_summary.append([
+                            (problem.title[:28] + '…') if len(problem.title) > 28 else problem.title,
+                            best.language or '—',
+                            best.status or '—',
+                            f"{prob_score}/{per_prob_max}",
+                            cases_str,
+                            f"{len(p_subs)} attempt{'s' if len(p_subs) != 1 else ''}",
+                            best.submitted_at.strftime('%H:%M:%S') if best.submitted_at else '—',
+                        ])
 
-            story.append(Spacer(1, 10))
+                    if prob_summary:
+                        sum_data = [['Problem', 'Lang', 'Best Status', 'Score', 'Test Cases', 'Attempts', 'Time']]
+                        sum_data.extend(prob_summary)
+                        sum_tbl = Table(
+                            sum_data,
+                            colWidths=[2.0*inch, 0.6*inch, 1.0*inch, 0.7*inch, 0.8*inch, 0.7*inch, 0.7*inch],
+                            repeatRows=1,
+                        )
+                        sum_tbl.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a5276')),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 8),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+                            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#bdc3c7')),
+                            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#eaf4fb')]),
+                        ]))
+                        for r_idx, row in enumerate(prob_summary, 1):
+                            if 'Accepted' in row[2]:
+                                sum_tbl.setStyle(TableStyle([('BACKGROUND', (0, r_idx), (-1, r_idx), colors.HexColor('#d1fae5'))]))
+                        story.append(sum_tbl)
+
+                    # Cumulative score box
+                    cum_style = ParagraphStyle(
+                        'CumScore', parent=styles['Normal'],
+                        fontSize=10, fontName='Helvetica-Bold',
+                        textColor=colors.HexColor('#1a5276'),
+                        backColor=colors.HexColor('#d6eaf8'),
+                        borderPadding=5, spaceAfter=4,
+                    )
+                    story.append(Paragraph(
+                        f"Cumulative Score: {norm_score} / 100  "
+                        f"(Problems solved: {part.problems_solved}/{total_problems}  |  "
+                        f"Total time: {time_str})",
+                        cum_style
+                    ))
+
+            story.append(Spacer(1, 12))
 
         story.append(Spacer(1, 20))
         return story
+
+    @staticmethod
+    def _normalise_score(raw_score, total_problems, contest_type):
+        """
+        Normalise a raw cumulative score to /100.
+        For programming: each problem is worth 100 pts raw → total max = 100 * n_problems
+        For aptitude: each question is worth 1 pt raw → total max = n_questions
+        """
+        if not total_problems or not raw_score:
+            return 0
+        if contest_type == 'aptitude':
+            # raw_score = number of correct answers; max = total_problems
+            return round((raw_score / total_problems) * 100, 1)
+        else:
+            # raw_score = sum of per-problem scores (each 0-100); max = 100 * n_problems
+            max_raw = 100 * total_problems
+            return round((raw_score / max_raw) * 100, 1)
 
     def _create_problem_analysis(self, contest):
         """Create problem-wise analysis for programming contests"""
