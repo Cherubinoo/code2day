@@ -1039,12 +1039,8 @@ def create_branded_report_header(institution, report_title="Report", report_type
         branding_settings = InstitutionBrandingSettings.objects.get(institution=institution)
         primary_color = branding_settings.primary_color
         secondary_color = branding_settings.secondary_color
-    except InstitutionBrandingSettings.DoesNotExist:
-        # Use default colors if no branding settings exist
-        pass
-    except Exception as e:
-        # Log error but continue with defaults
-        print(f"Error accessing branding settings for {institution.name}: {e}")
+    except Exception:
+        # Model doesn't exist or no branding settings — use defaults
         pass
     
     # Institution info
