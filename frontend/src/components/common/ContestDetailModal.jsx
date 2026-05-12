@@ -467,9 +467,9 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                                     </span>
                                     <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{sub.problem_title}</span>
                                     {sub.language && <span style={{ fontSize: 12, color: '#6b7280' }}>{sub.language}</span>}
-                                    {sub.passed_cases != null && (
+                                    {sub.time_taken != null && sub.time_taken > 0 && (
                                       <span style={{ fontSize: 12, color: '#6b7280' }}>
-                                        {sub.passed_cases}/{sub.total_cases} cases
+                                        {Math.floor(sub.time_taken / 60)}m {sub.time_taken % 60}s
                                       </span>
                                     )}
                                     {sub.score != null && (

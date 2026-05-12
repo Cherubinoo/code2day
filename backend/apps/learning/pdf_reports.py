@@ -550,20 +550,19 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             if not subs.exists():
                 story.append(Paragraph("  No submissions.", styles['Normal']))
             else:
-                sub_data = [['Problem', 'Language', 'Status', 'Score', 'Cases', 'Submitted At']]
+                sub_data = [['Problem', 'Language', 'Status', 'Score', 'Submitted At']]
                 for sub in subs:
                     sub_data.append([
                         (sub.problem.title[:30] + '…') if sub.problem and len(sub.problem.title) > 30 else (sub.problem.title if sub.problem else '—'),
                         sub.language or '—',
                         sub.status or '—',
                         str(sub.score or 0),
-                        f"{sub.passed_cases}/{sub.total_cases}" if sub.passed_cases is not None else '—',
                         sub.submitted_at.strftime('%H:%M:%S') if sub.submitted_at else '—',
                     ])
 
                 sub_tbl = Table(
                     sub_data,
-                    colWidths=[2.2*inch, 0.8*inch, 1.1*inch, 0.6*inch, 0.7*inch, 0.9*inch],
+                    colWidths=[2.5*inch, 0.9*inch, 1.2*inch, 0.6*inch, 1.1*inch],
                     repeatRows=1,
                 )
                 sub_tbl.setStyle(TableStyle([

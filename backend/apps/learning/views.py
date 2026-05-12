@@ -3650,11 +3650,8 @@ class ContestStudentSubmissionsView(APIView):
                     "problem_slug": sub.problem.slug,
                     "language": sub.language,
                     "status": sub.status,
-                    "passed_cases": sub.passed_cases,
-                    "total_cases": sub.total_cases,
                     "score": sub.score,
-                    "execution_time": sub.execution_time,
-                    "memory": sub.memory,
+                    "time_taken": sub.time_taken_seconds,
                     "submitted_at": sub.submitted_at,
                 })
 
