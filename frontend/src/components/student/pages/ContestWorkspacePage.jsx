@@ -7,7 +7,7 @@ import { runCodeExecution, getLanguageIdForChoice } from "../../../lib/codeExecu
 import { starterCodeByLanguage, editorLanguageByChoice } from "../../../lib/appData";
 import { formatDuration } from "../../../lib/appUtils";
 import { buildJsonPostOptions } from "../../../lib/appUtils";
-import { validateLanguageMatch, getLanguageMismatchError } from "../../../lib/languageDetector";
+import { validateLanguageMatch, getLanguageMismatchError, detectLanguageFromCode } from "../../../lib/languageDetector";
 import DoubleConfirmModal from "../../common/DoubleConfirmModal";
 
 loader.config({ monaco });
@@ -165,9 +165,10 @@ function ContestWorkspacePage({ contestId, onBack }) {
     }
 
     // Validate language match
-    const validation = validateLanguageMatch(code, selectedLanguage);
-    if (!validation.matches) {
-      setOutputLog(getLanguageMismatchError(selectedLanguage, validation.detectedLanguage));
+    const detectedLang = detectLanguageFromCode(code);
+    const isMatch = !detectedLang || validateLanguageMatch(detectedLang, selectedLanguage);
+    if (!isMatch) {
+      setOutputLog(getLanguageMismatchError(detectedLang, selectedLanguage));
       setExecutionMeta({ status: "Error", time: null, memory: null });
       return;
     }
@@ -208,11 +209,12 @@ function ContestWorkspacePage({ contestId, onBack }) {
     }
 
     // Validate language match before submission
-    const validation = validateLanguageMatch(code, selectedLanguage);
-    if (!validation.matches) {
-      setOutputLog(getLanguageMismatchError(selectedLanguage, validation.detectedLanguage));
+    const detectedLang = detectLanguageFromCode(code);
+    const isMatch = !detectedLang || validateLanguageMatch(detectedLang, selectedLanguage);
+    if (!isMatch) {
+      setOutputLog(getLanguageMismatchError(detectedLang, selectedLanguage));
       setExecutionMeta({ status: "Error", time: null, memory: null });
-      alert(`Language mismatch detected! You selected ${selectedLanguage} but your code appears to be ${validation.detectedLanguage}.`);
+      alert(`Language mismatch detected! You selected ${selectedLanguage} but your code appears to be written in ${detectedLang}. Please select the correct language.`);
       return;
     }
 
