@@ -5678,19 +5678,18 @@ class StudentContestSubmitView(APIView):
                 if passed:
                     passed_cases += 1
 
-                # Only include sample test cases in the response (hide hidden ones)
-                if test_case.is_sample:
-                    test_results.append({
-                        "case": idx + 1,
-                        "passed": passed,
-                        "status": exec_status,
-                        "stdin": test_case.stdin,
-                        "expected": expected,
-                        "actual": actual_raw,
-                        "stderr": stderr,
-                        "compile_output": compile_out,
-                        "time": result.get("time") or "",
-                    })
+                # Include all test cases in the response (hidden ones show as "Hidden" input)
+                test_results.append({
+                    "case": idx + 1,
+                    "passed": passed,
+                    "status": exec_status,
+                    "stdin": test_case.stdin if test_case.is_sample else "(hidden)",
+                    "expected": expected if test_case.is_sample else "(hidden)",
+                    "actual": actual_raw,
+                    "stderr": stderr,
+                    "compile_output": compile_out,
+                    "time": result.get("time") or "",
+                })
 
             # Determine overall status
             if compile_error:
