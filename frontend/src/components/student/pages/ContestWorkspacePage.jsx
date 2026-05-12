@@ -240,16 +240,52 @@ function ContestWorkspacePage({ contestId, onBack }) {
       }
 
       const result = await response.json();
-      
-      setOutputLog(result.message || "Submission successful!");
+      const sub = result.submission || result;
+
+      // Build rich output
+      const lines = [];
+
+      if (sub.status === 'Accepted') {
+        lines.push(`✅ Accepted — All ${sub.total_cases} test case(s) passed!`);
+        lines.push(`Score: ${sub.score}/100`);
+      } else if (sub.status === 'Compilation Error') {
+        lines.push(`🔴 Compilation Error`);
+        lines.push('');
+        lines.push(sub.compile_error || 'Check your syntax.');
+      } else {
+        lines.push(`❌ ${sub.status || 'Wrong Answer'} — ${sub.passed_cases}/${sub.total_cases} test case(s) passed`);
+        lines.push(`Score: ${sub.score}/100`);
+      }
+
+      if (sub.test_results && sub.test_results.length > 0) {
+        lines.push('');
+        lines.push('─── Sample Test Cases ───');
+        sub.test_results.forEach((tc) => {
+          lines.push('');
+          lines.push(`Case ${tc.case}: ${tc.passed ? '✓ Passed' : '✗ Failed'} [${tc.status}]${tc.time ? ` · ${tc.time}s` : ''}`);
+          if (tc.stdin) lines.push(`  Input:    ${tc.stdin}`);
+          lines.push(`  Expected: ${tc.expected || '(empty)'}`);
+          lines.push(`  Got:      ${tc.actual || '(no output)'}`);
+          if (tc.stderr) lines.push(`  Error:    ${tc.stderr}`);
+          if (tc.compile_output) lines.push(`  Compile:  ${tc.compile_output}`);
+        });
+      }
+
+      if (!sub.test_results?.length && sub.stderr) {
+        lines.push('');
+        lines.push('─── Runtime Error ───');
+        lines.push(sub.stderr);
+      }
+
+      setOutputLog(lines.join('\n'));
       setExecutionMeta({
-        status: result.status || "Submitted",
-        time: result.time || null,
-        memory: result.memory || null,
+        status: sub.status || "Submitted",
+        time: null,
+        memory: null,
       });
 
-      // Mark problem as solved if all tests passed
-      if (result.all_tests_passed || result.status === 'Accepted') {
+      // Mark problem as solved if accepted
+      if (sub.status === 'Accepted') {
         const updatedProblems = [...problems];
         updatedProblems[selectedProblemIndex] = {
           ...updatedProblems[selectedProblemIndex],

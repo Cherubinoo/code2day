@@ -228,15 +228,48 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
 
       if (res.ok) {
         const data = await res.json();
-        setTestResults(data.submission);
-        
-        if (data.submission.status === 'Accepted') {
-          setOutput(`✅ Success! All test cases passed.\n\nPassed: ${data.submission.passed_cases}/${data.submission.total_cases}\nScore: ${data.submission.score}`);
+        const sub = data.submission;
+        setTestResults(sub);
+
+        // Build a rich output string showing exactly what happened
+        const lines = [];
+
+        // Header
+        if (sub.status === 'Accepted') {
+          lines.push(`✅ Accepted — All ${sub.total_cases} test case(s) passed!`);
+          lines.push(`Score: ${sub.score}/100`);
+        } else if (sub.status === 'Compilation Error') {
+          lines.push(`🔴 Compilation Error`);
+          lines.push('');
+          lines.push(sub.compile_error || 'Check your syntax.');
         } else {
-          setOutput(`❌ Some test cases failed.\n\nPassed: ${data.submission.passed_cases}/${data.submission.total_cases}\nScore: ${data.submission.score}`);
+          lines.push(`❌ ${sub.status} — ${sub.passed_cases}/${sub.total_cases} test case(s) passed`);
+          lines.push(`Score: ${sub.score}/100`);
         }
-        
-        // Reload problem to update submission history
+
+        // Per-test-case breakdown (sample cases only)
+        if (sub.test_results && sub.test_results.length > 0) {
+          lines.push('');
+          lines.push('─── Sample Test Cases ───');
+          sub.test_results.forEach((tc) => {
+            lines.push('');
+            lines.push(`Case ${tc.case}: ${tc.passed ? '✓ Passed' : '✗ Failed'} [${tc.status}]${tc.time ? ` · ${tc.time}s` : ''}`);
+            if (tc.stdin) lines.push(`  Input:    ${tc.stdin}`);
+            lines.push(`  Expected: ${tc.expected || '(empty)'}`);
+            lines.push(`  Got:      ${tc.actual || '(no output)'}`);
+            if (tc.stderr) lines.push(`  Error:    ${tc.stderr}`);
+            if (tc.compile_output) lines.push(`  Compile:  ${tc.compile_output}`);
+          });
+        }
+
+        // Surface stderr if no test results (e.g. runtime crash on all cases)
+        if (!sub.test_results?.length && sub.stderr) {
+          lines.push('');
+          lines.push('─── Runtime Error ───');
+          lines.push(sub.stderr);
+        }
+
+        setOutput(lines.join('\n'));
         loadProblemAndContest();
       } else {
         const data = await res.json();

@@ -5641,8 +5641,11 @@ class StudentContestSubmitView(APIView):
             # Run against each test case — same pattern as CodeRunView
             passed_cases = 0
             total_cases = len(test_cases)
+            test_results = []
+            compile_error = ""
+            first_stderr = ""
 
-            for test_case in test_cases:
+            for idx, test_case in enumerate(test_cases):
                 prepared = prepare_execution_payload(
                     problem=problem,
                     source_code=source_code,
@@ -5657,17 +5660,47 @@ class StudentContestSubmitView(APIView):
 
                 actual_raw = (result.get("stdout") or "").strip()
                 expected = (test_case.expected_output or "").strip()
+                exec_status = result.get("status", "Unknown")
+                stderr = (result.get("stderr") or "").strip()
+                compile_out = (result.get("compile_output") or "").strip()
+
+                # Capture first compile error to surface it
+                if compile_out and not compile_error:
+                    compile_error = compile_out
+                if stderr and not first_stderr:
+                    first_stderr = stderr
+
                 passed = (
-                    result.get("status") == "Accepted"
+                    exec_status == "Accepted"
                     and normalize_comparable_output(actual_raw)
                     == normalize_comparable_output(expected)
                 )
                 if passed:
                     passed_cases += 1
 
-            # Determine status
-            status_str = 'Accepted' if passed_cases == total_cases else 'Wrong Answer'
-            score = (passed_cases / total_cases) * 100 if total_cases > 0 else 0
+                # Only include sample test cases in the response (hide hidden ones)
+                if test_case.is_sample:
+                    test_results.append({
+                        "case": idx + 1,
+                        "passed": passed,
+                        "status": exec_status,
+                        "stdin": test_case.stdin,
+                        "expected": expected,
+                        "actual": actual_raw,
+                        "stderr": stderr,
+                        "compile_output": compile_out,
+                        "time": result.get("time") or "",
+                    })
+
+            # Determine overall status
+            if compile_error:
+                status_str = "Compilation Error"
+            elif passed_cases == total_cases:
+                status_str = "Accepted"
+            else:
+                status_str = "Wrong Answer"
+
+            score = int((passed_cases / total_cases) * 100) if total_cases > 0 else 0
 
             # Create contest submission
             submission = ContestSubmission.objects.create(
@@ -5703,6 +5736,9 @@ class StudentContestSubmitView(APIView):
                     "score": submission.score,
                     "passed_cases": passed_cases,
                     "total_cases": total_cases,
+                    "test_results": test_results,
+                    "compile_error": compile_error,
+                    "stderr": first_stderr,
                 },
             })
 
