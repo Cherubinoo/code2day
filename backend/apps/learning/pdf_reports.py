@@ -185,32 +185,25 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
 
         # Generate PDF with watermark
         buffer = BytesIO()
-        pdf_doc = self._create_pdf_document(buffer, contest.institution)
-        
-        # Build PDF content
-        story = []
-        
-        # Add header with college branding
-        story.extend(self._create_contest_header(contest, profile))
-        
-        # Add contest overview
-        story.extend(self._create_contest_overview(contest))
-        
-        # Add participant statistics
-        story.extend(self._create_participant_statistics(contest))
-        
-        # Add leaderboard
-        story.extend(self._create_contest_leaderboard(contest))
-        
-        # Add problem-wise analysis (for programming contests)
-        if contest.contest_type == 'programming':
-            story.extend(self._create_problem_analysis(contest))
-        
-        # Add footer
-        story.extend(self._create_contest_footer(contest))
-        
-        # Build PDF
-        pdf_doc.build(story)
+        try:
+            pdf_doc = self._create_pdf_document(buffer, contest.institution)
+            
+            # Build PDF content
+            story = []
+            story.extend(self._create_contest_header(contest, profile))
+            story.extend(self._create_contest_overview(contest))
+            story.extend(self._create_participant_statistics(contest))
+            story.extend(self._create_contest_leaderboard(contest))
+            if contest.contest_type == 'programming':
+                story.extend(self._create_problem_analysis(contest))
+            story.extend(self._create_contest_footer(contest))
+            pdf_doc.build(story)
+        except Exception as pdf_err:
+            import traceback
+            return Response(
+                {"error": f"PDF generation failed: {str(pdf_err)}", "trace": traceback.format_exc()},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
         
         # Return PDF response
         buffer.seek(0)
@@ -295,7 +288,10 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         
         story.append(Paragraph("📋 Contest Overview", section_style))
         
-        # Contest information table
+        # Contest information table — use live counts
+        live_participants = ContestParticipation.objects.filter(contest=contest).count()
+        live_submissions = ContestSubmission.objects.filter(contest=contest).count()
+
         overview_data = [
             ['Field', 'Information'],
             ['Contest Title', contest.title],
@@ -306,8 +302,8 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             ['Duration', f"{contest.duration_minutes} minutes" if contest.duration_minutes else 'N/A'],
             ['Start Time', contest.start_time.strftime('%B %d, %Y at %I:%M %p') if contest.start_time else 'N/A'],
             ['End Time', contest.end_time.strftime('%B %d, %Y at %I:%M %p') if contest.end_time else 'N/A'],
-            ['Total Participants', str(contest.total_participants)],
-            ['Total Submissions', str(contest.total_submissions)],
+            ['Total Participants', str(live_participants)],
+            ['Total Submissions', str(live_submissions)],
             ['Report Generated', datetime.now().strftime('%B %d, %Y at %I:%M %p')],
         ]
         

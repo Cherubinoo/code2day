@@ -3183,6 +3183,9 @@ class ContestListCreateView(APIView):
 
         data = []
         for contest in contests:
+            # Compute live counts — stored fields may be stale
+            live_participants = ContestParticipation.objects.filter(contest=contest).count()
+            live_submissions = ContestSubmission.objects.filter(contest=contest).count()
             data.append({
                 "id": contest.id,
                 "title": contest.title,
@@ -3195,8 +3198,8 @@ class ContestListCreateView(APIView):
                 "start_time": contest.start_time,
                 "end_time": contest.end_time,
                 "duration_minutes": contest.duration_minutes,
-                "total_participants": contest.total_participants,
-                "total_submissions": contest.total_submissions,
+                "total_participants": live_participants,
+                "total_submissions": live_submissions,
                 "approved_by": {
                     "faculty_id": contest.approved_by.faculty_id,
                     "name": contest.approved_by.name or contest.approved_by.faculty_id,
@@ -5726,6 +5729,12 @@ class StudentContestSubmitView(APIView):
                     participation.problems_solved += 1
                     participation.total_score += int(score)
                     participation.save(update_fields=['problems_solved', 'total_score'])
+
+            # Keep contest-level counters in sync
+            try:
+                contest.update_analytics()
+            except Exception as analytics_err:
+                logger.warning("Failed to update contest analytics: %s", analytics_err)
 
             return Response({
                 "detail": "Code submitted successfully.",
