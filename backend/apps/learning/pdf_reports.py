@@ -428,10 +428,10 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         return story
 
     def _create_contest_leaderboard(self, contest):
-        """Create contest leaderboard section"""
+        """Create full contest leaderboard with ALL students and per-problem breakdown"""
         story = []
         styles = getSampleStyleSheet()
-        
+
         section_style = ParagraphStyle(
             'SectionTitle',
             parent=styles['Heading2'],
@@ -443,64 +443,154 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             borderPadding=8,
             backColor=colors.HexColor('#ecf0f1')
         )
-        
-        story.append(Paragraph("🏆 Contest Leaderboard", section_style))
-        
-        # Get top participants
-        top_participants = ContestParticipation.objects.filter(contest=contest).select_related('student').order_by('-total_score', 'total_time_taken')[:20]
-        
-        if top_participants:
-            leaderboard_data = [['Rank', 'Register No.', 'Name', 'Score', 'Time Taken', 'Status']]
-            
-            for idx, participation in enumerate(top_participants, 1):
-                time_taken = f"{participation.total_time_taken//60}m {participation.total_time_taken%60}s" if participation.total_time_taken else "N/A"
-                status = "Completed" if participation.completed_at else "In Progress"
-                
-                leaderboard_data.append([
-                    str(idx),
-                    participation.student.register_number or 'N/A',
-                    participation.student.name[:25] + "..." if len(participation.student.name) > 25 else participation.student.name,
-                    str(participation.total_score),
-                    time_taken,
-                    status
-                ])
-            
-            leaderboard_table = Table(leaderboard_data, colWidths=[0.5*inch, 1.2*inch, 1.8*inch, 0.8*inch, 1*inch, 1*inch])
-            leaderboard_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f39c12')),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 8),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#bdc3c7')),
-                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f8f9fa')),
-            ]))
-            
-            # Add alternating row colors and highlight top 3
-            for i in range(1, len(leaderboard_data)):
-                if i <= 3:  # Top 3 get special highlighting
-                    if i == 1:
-                        leaderboard_table.setStyle(TableStyle([('BACKGROUND', (0, i), (-1, i), colors.HexColor('#ffd700'))]))  # Gold
-                    elif i == 2:
-                        leaderboard_table.setStyle(TableStyle([('BACKGROUND', (0, i), (-1, i), colors.HexColor('#c0c0c0'))]))  # Silver
-                    elif i == 3:
-                        leaderboard_table.setStyle(TableStyle([('BACKGROUND', (0, i), (-1, i), colors.HexColor('#cd7f32'))]))  # Bronze
-                elif i % 2 == 0:
-                    leaderboard_table.setStyle(TableStyle([('BACKGROUND', (0, i), (-1, i), colors.HexColor('#ecf0f1'))]))
-            
-            story.append(leaderboard_table)
-        else:
-            no_data_style = ParagraphStyle(
-                'NoData',
+
+        story.append(Paragraph("🏆 Full Student Results", section_style))
+
+        # Get ALL participants ordered by score
+        all_participations = (
+            ContestParticipation.objects
+            .filter(contest=contest)
+            .select_related('student')
+            .order_by('-total_score', 'total_time_taken')
+        )
+
+        problems = list(contest.problems.all().order_by('id'))
+
+        if not all_participations.exists():
+            story.append(Paragraph("No participants yet.", styles['Normal']))
+            story.append(Spacer(1, 20))
+            return story
+
+        # ── Summary leaderboard table ─────────────────────────────────────
+        header = ['Rank', 'Register No.', 'Name', 'Score', 'Solved', 'Time', 'Status']
+        # Add one column per problem
+        for i, p in enumerate(problems):
+            short = p.title[:12] + '…' if len(p.title) > 12 else p.title
+            header.append(f'P{i+1}\n{short}')
+
+        col_widths = [0.4*inch, 1.1*inch, 1.6*inch, 0.6*inch, 0.5*inch, 0.7*inch, 0.7*inch]
+        col_widths += [0.7*inch] * len(problems)
+
+        rows = [header]
+        for idx, part in enumerate(all_participations, 1):
+            time_str = (
+                f"{part.total_time_taken//60}m {part.total_time_taken%60}s"
+                if part.total_time_taken else "—"
+            )
+            status_str = "Done" if part.completed_at else "Active"
+            row = [
+                str(idx),
+                part.student.register_number or '—',
+                (part.student.name[:22] + '…') if len(part.student.name) > 22 else part.student.name,
+                str(part.total_score),
+                str(part.problems_solved),
+                time_str,
+                status_str,
+            ]
+            # Per-problem best submission status
+            for problem in problems:
+                best = (
+                    ContestSubmission.objects
+                    .filter(contest=contest, student=part.student, problem=problem)
+                    .order_by('-score', '-submitted_at')
+                    .first()
+                )
+                if best:
+                    row.append('✓' if best.status == 'Accepted' else f'{best.score}%')
+                else:
+                    row.append('—')
+            rows.append(row)
+
+        tbl = Table(rows, colWidths=col_widths, repeatRows=1)
+        style_cmds = [
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#f39c12')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 7),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#bdc3c7')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+            # Gold / Silver / Bronze for top 3
+            ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor('#fff9c4')),
+            ('BACKGROUND', (0, 2), (-1, 2), colors.HexColor('#f5f5f5')),
+            ('BACKGROUND', (0, 3), (-1, 3), colors.HexColor('#ffe0b2')),
+        ]
+        tbl.setStyle(TableStyle(style_cmds))
+        story.append(tbl)
+        story.append(Spacer(1, 24))
+
+        # ── Per-student detailed section ──────────────────────────────────
+        story.append(Paragraph("📋 Individual Student Submission Details", section_style))
+
+        for idx, part in enumerate(all_participations, 1):
+            student = part.student
+            # Student header
+            student_header_style = ParagraphStyle(
+                'StudentHeader',
                 parent=styles['Normal'],
                 fontSize=10,
-                alignment=TA_CENTER,
-                textColor=colors.HexColor('#7f8c8d'),
-                spaceAfter=12
+                fontName='Helvetica-Bold',
+                textColor=colors.white,
+                backColor=colors.HexColor('#2c3e50'),
+                borderPadding=6,
+                spaceAfter=4,
             )
-            story.append(Paragraph("No leaderboard data available for this contest.", no_data_style))
-        
+            story.append(Paragraph(
+                f"#{idx}  {student.name}  ({student.register_number or '—'})  "
+                f"Score: {part.total_score}  |  Solved: {part.problems_solved}/{len(problems)}",
+                student_header_style
+            ))
+
+            # Submissions for this student
+            subs = (
+                ContestSubmission.objects
+                .filter(contest=contest, student=student)
+                .select_related('problem')
+                .order_by('problem__id', '-score', '-submitted_at')
+            )
+
+            if not subs.exists():
+                story.append(Paragraph("  No submissions.", styles['Normal']))
+            else:
+                sub_data = [['Problem', 'Language', 'Status', 'Score', 'Cases', 'Submitted At']]
+                for sub in subs:
+                    sub_data.append([
+                        (sub.problem.title[:30] + '…') if sub.problem and len(sub.problem.title) > 30 else (sub.problem.title if sub.problem else '—'),
+                        sub.language or '—',
+                        sub.status or '—',
+                        str(sub.score or 0),
+                        f"{sub.passed_cases}/{sub.total_cases}" if sub.passed_cases is not None else '—',
+                        sub.submitted_at.strftime('%H:%M:%S') if sub.submitted_at else '—',
+                    ])
+
+                sub_tbl = Table(
+                    sub_data,
+                    colWidths=[2.2*inch, 0.8*inch, 1.1*inch, 0.6*inch, 0.7*inch, 0.9*inch],
+                    repeatRows=1,
+                )
+                sub_tbl.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#34495e')),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+                    ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor('#bdc3c7')),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9fa')]),
+                ]))
+                # Colour accepted rows green
+                for r_idx, sub in enumerate(subs, 1):
+                    if sub.status == 'Accepted':
+                        sub_tbl.setStyle(TableStyle([
+                            ('BACKGROUND', (0, r_idx), (-1, r_idx), colors.HexColor('#d1fae5')),
+                        ]))
+                story.append(sub_tbl)
+
+            story.append(Spacer(1, 10))
+
         story.append(Spacer(1, 20))
         return story
 

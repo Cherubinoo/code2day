@@ -1,6 +1,7 @@
 // Contest Detail Modal - View contest analytics and student submissions
 import { useState, useEffect } from 'react';
-import { X, Trophy, Users, Clock, CheckCircle, XCircle, Eye, Code } from 'lucide-react';
+import { X, Trophy, Users, Clock, CheckCircle, XCircle, Eye, Code, Download, ChevronDown, ChevronUp } from 'lucide-react';
+import { getCsrfToken } from '../../lib/appUtils';
 
 const ContestDetailModal = ({ contestId, onClose }) => {
   const [contest, setContest] = useState(null);
@@ -10,6 +11,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentSubmissions, setStudentSubmissions] = useState([]);
   const [submissionsLoading, setSubmissionsLoading] = useState(false);
+  const [downloadingReport, setDownloadingReport] = useState(false);
 
   useEffect(() => {
     loadContestData();
@@ -19,20 +21,15 @@ const ContestDetailModal = ({ contestId, onClose }) => {
     setLoading(true);
     setError(null);
     try {
-      // Fetch contest details
       const detailRes = await fetch(`/api/contests/${contestId}/`, { credentials: 'include' });
       if (detailRes.ok) {
-        const detailData = await detailRes.json();
-        setContest(detailData);
+        setContest(await detailRes.json());
       } else {
         throw new Error('Failed to load contest details');
       }
-
-      // Fetch contest analytics (optional, might not exist for pending contests)
       const analyticsRes = await fetch(`/api/contests/${contestId}/analytics/`, { credentials: 'include' });
       if (analyticsRes.ok) {
-        const analyticsData = await analyticsRes.json();
-        setAnalytics(analyticsData);
+        setAnalytics(await analyticsRes.json());
       }
     } catch (err) {
       setError(err.message);
@@ -42,17 +39,20 @@ const ContestDetailModal = ({ contestId, onClose }) => {
   }
 
   async function handleStudentClick(student) {
+    // Toggle — clicking the same student again collapses the panel
+    if (selectedStudent?.register_number === student.register_number) {
+      setSelectedStudent(null);
+      setStudentSubmissions([]);
+      return;
+    }
     setSelectedStudent(student);
     setSubmissionsLoading(true);
     setStudentSubmissions([]);
-    
     try {
-      // Fetch student's submissions for this contest
       const res = await fetch(
         `/api/contests/${contestId}/student/${student.register_number}/submissions/`,
         { credentials: 'include' }
       );
-      
       if (res.ok) {
         const data = await res.json();
         setStudentSubmissions(data.submissions || []);
@@ -61,6 +61,34 @@ const ContestDetailModal = ({ contestId, onClose }) => {
       console.error('Failed to load student submissions:', err);
     } finally {
       setSubmissionsLoading(false);
+    }
+  }
+
+  async function handleDownloadReport() {
+    setDownloadingReport(true);
+    try {
+      const res = await fetch(`/api/contests/${contestId}/report/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || 'Failed to generate report');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `contest_report_${contestId}_${new Date().toISOString().slice(0,10)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Report error: ${err.message}`);
+    } finally {
+      setDownloadingReport(false);
     }
   }
 
@@ -174,16 +202,28 @@ const ContestDetailModal = ({ contestId, onClose }) => {
               </p>
             )}
           </div>
-          <button onClick={onClose} style={{
-            padding: 8,
-            borderRadius: 6,
-            border: 'none',
-            background: '#f3f4f6',
-            cursor: 'pointer',
-            marginLeft: 16,
-          }}>
-            <X size={20} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 16 }}>
+            <button
+              onClick={handleDownloadReport}
+              disabled={downloadingReport}
+              style={{
+                padding: '9px 18px', borderRadius: 9, border: 'none',
+                background: downloadingReport ? '#9ca3af' : '#2D6A4F',
+                color: 'white', fontWeight: 700, fontSize: 13,
+                cursor: downloadingReport ? 'not-allowed' : 'pointer',
+                display: 'flex', alignItems: 'center', gap: 7,
+              }}
+            >
+              <Download size={15} />
+              {downloadingReport ? 'Generating...' : 'Download Report'}
+            </button>
+            <button onClick={onClose} style={{
+              padding: 8, borderRadius: 6, border: 'none',
+              background: '#f3f4f6', cursor: 'pointer',
+            }}>
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         {/* Stats Cards */}
@@ -383,174 +423,76 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                           }}
                         >
                           <Eye size={14} />
-                          View
+                          {selectedStudent?.register_number === participant.register_number ? 'Hide' : 'View'}
                         </button>
                       </td>
                     </tr>
+
+                    {/* Inline submission detail — expands below the row */}
+                    {selectedStudent?.register_number === participant.register_number && (
+                      <tr>
+                        <td colSpan={8} style={{ padding: 0, background: '#f0fdf4', borderBottom: '2px solid #bbf7d0' }}>
+                          <div style={{ padding: '16px 24px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                              <span style={{ fontWeight: 700, fontSize: 14, color: '#065f46' }}>
+                                Submissions by {participant.name}
+                              </span>
+                              {submissionsLoading && (
+                                <span style={{ fontSize: 12, color: '#6b7280' }}>Loading...</span>
+                              )}
+                            </div>
+
+                            {!submissionsLoading && studentSubmissions.length === 0 && (
+                              <p style={{ margin: 0, fontSize: 13, color: '#6b7280' }}>No submissions found.</p>
+                            )}
+
+                            {!submissionsLoading && studentSubmissions.length > 0 && (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {studentSubmissions.map((sub, i) => (
+                                  <div key={i} style={{
+                                    padding: '12px 16px', background: 'white', borderRadius: 10,
+                                    border: `1px solid ${sub.status === 'Accepted' || sub.status === 'Correct' ? '#bbf7d0' : '#fecaca'}`,
+                                    display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+                                  }}>
+                                    <span style={{
+                                      padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700,
+                                      background: sub.status === 'Accepted' || sub.status === 'Correct' ? '#d1fae5' : '#fee2e2',
+                                      color: sub.status === 'Accepted' || sub.status === 'Correct' ? '#059669' : '#dc2626',
+                                      display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap',
+                                    }}>
+                                      {sub.status === 'Accepted' || sub.status === 'Correct'
+                                        ? <CheckCircle size={12} /> : <XCircle size={12} />}
+                                      {sub.status}
+                                    </span>
+                                    <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>{sub.problem_title}</span>
+                                    {sub.language && <span style={{ fontSize: 12, color: '#6b7280' }}>{sub.language}</span>}
+                                    {sub.passed_cases != null && (
+                                      <span style={{ fontSize: 12, color: '#6b7280' }}>
+                                        {sub.passed_cases}/{sub.total_cases} cases
+                                      </span>
+                                    )}
+                                    {sub.score != null && (
+                                      <span style={{ fontSize: 12, fontWeight: 700, color: '#4f46e5' }}>
+                                        Score: {sub.score}
+                                      </span>
+                                    )}
+                                    <span style={{ fontSize: 11, color: '#9ca3af', whiteSpace: 'nowrap' }}>
+                                      {new Date(sub.submitted_at).toLocaleTimeString()}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                   ))}
                 </tbody>
               </table>
             </div>
           )}
         </div>
-
-        {/* Student Submission Detail Panel */}
-        {selectedStudent && (
-          <div style={{
-            padding: '24px 32px',
-            background: '#f9fafb',
-            borderTop: '2px solid #e5e7eb',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ margin: 0, fontSize: 18 }}>
-                Submissions by {selectedStudent.name}
-              </h3>
-              <button
-                onClick={() => setSelectedStudent(null)}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 6,
-                  border: '1px solid #d1d5db',
-                  background: 'white',
-                  cursor: 'pointer',
-                  fontSize: 13,
-                }}
-              >
-                Close
-              </button>
-            </div>
-
-            {submissionsLoading ? (
-              <div style={{ padding: 40, textAlign: 'center' }}>
-                <p style={{ color: '#666' }}>Loading submissions...</p>
-              </div>
-            ) : studentSubmissions.length === 0 ? (
-              <div style={{
-                padding: 40,
-                textAlign: 'center',
-                background: 'white',
-                borderRadius: 12,
-                border: '1px solid #e5e7eb',
-              }}>
-                <Code size={48} style={{ color: '#9ca3af', marginBottom: 16 }} />
-                <p style={{ color: '#666', margin: 0 }}>No submissions found</p>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {studentSubmissions.map((submission, idx) => (
-                  <div key={idx} style={{
-                    padding: 20,
-                    background: 'white',
-                    borderRadius: 12,
-                    border: '1px solid #e5e7eb',
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', marginBottom: 12 }}>
-                      <div>
-                        <h4 style={{ margin: 0, fontSize: 16, marginBottom: 4 }}>
-                          {submission.problem_title}
-                        </h4>
-                        <p style={{ margin: 0, fontSize: 13, color: '#666' }}>
-                          Submitted {new Date(submission.submitted_at).toLocaleString()}
-                        </p>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        {submission.status === 'Accepted' || submission.status === 'Correct' ? (
-                          <span style={{
-                            padding: '4px 12px',
-                            borderRadius: 12,
-                            background: '#d1fae5',
-                            color: '#059669',
-                            fontSize: 12,
-                            fontWeight: 600,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 4,
-                          }}>
-                            <CheckCircle size={14} />
-                            {submission.status}
-                          </span>
-                        ) : (
-                          <span style={{
-                            padding: '4px 12px',
-                            borderRadius: 12,
-                            background: '#fee2e2',
-                            color: '#dc2626',
-                            fontSize: 12,
-                            fontWeight: 600,
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 4,
-                          }}>
-                            <XCircle size={14} />
-                            {submission.status}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
-                      gap: 12,
-                      padding: 12,
-                      background: '#f9fafb',
-                      borderRadius: 8,
-                    }}>
-                      {contest.contest_type !== 'aptitude' && (
-                        <>
-                          <div>
-                            <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Language</div>
-                            <div style={{ fontSize: 14, fontWeight: 500, color: '#374151' }}>
-                              {submission.language}
-                            </div>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Test Cases</div>
-                            <div style={{ fontSize: 14, fontWeight: 500, color: '#374151' }}>
-                              {submission.passed_cases} / {submission.total_cases}
-                            </div>
-                          </div>
-                        </>
-                      )}
-                      {contest.contest_type === 'aptitude' && (
-                        <div>
-                          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Selected Option</div>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: '#374151' }}>
-                            Option {submission.selected_option}
-                          </div>
-                        </div>
-                      )}
-                      {submission.execution_time && (
-                        <div>
-                          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Execution Time</div>
-                          <div style={{ fontSize: 14, fontWeight: 500, color: '#374151' }}>
-                            {submission.execution_time}
-                          </div>
-                        </div>
-                      )}
-                      {submission.memory && (
-                        <div>
-                          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Memory</div>
-                          <div style={{ fontSize: 14, fontWeight: 500, color: '#374151' }}>
-                            {submission.memory}
-                          </div>
-                        </div>
-                      )}
-                      {submission.score !== undefined && (
-                        <div>
-                          <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Score</div>
-                          <div style={{ fontSize: 14, fontWeight: 600, color: '#4f46e5' }}>
-                            {submission.score}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </>
     )}
       </div>
