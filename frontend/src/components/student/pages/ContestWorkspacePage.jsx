@@ -131,14 +131,23 @@ function ContestWorkspacePage({ contestId, onBack }) {
     // Re-enter fullscreen if user exits it
     const handleFullscreenChange = () => {
       if (!document.fullscreenElement && isContestActiveRef.current) {
-        showToast('⚠️ Please stay in fullscreen during the contest!', 'error');
-        setTimeout(() => {
-          if (isContestActiveRef.current) {
+        showToast('⚠️ Please stay in fullscreen during the contest! Click anywhere to return.', 'error');
+        
+        const reenter = () => {
+          if (!document.fullscreenElement && isContestActiveRef.current) {
             const el2 = document.documentElement;
             if (el2.requestFullscreen) el2.requestFullscreen().catch(() => {});
             else if (el2.webkitRequestFullscreen) el2.webkitRequestFullscreen();
           }
-        }, 1500);
+        };
+
+        // Attempt immediate re-entry (may fail without gesture)
+        reenter();
+        // Fallback: re-enter on next click
+        document.addEventListener('click', reenter, { once: true });
+        
+        // Secondary fallback: delayed re-entry
+        setTimeout(reenter, 1000);
       }
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);

@@ -1,41 +1,4 @@
-/* Header Alignment and Scrolling Fix */
-
-.topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  height: 72px;
-  background: rgba(255, 255, 255, 0.8);
-  backdrop-filter: blur(12px);
-  border-bottom: 1px solid rgba(57, 72, 42, 0.1);
-  position: sticky;
-  top: 0;
-  z-index: 1000;
-  gap: 20px;
-}
-
-.brand-block {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  min-width: fit-content;
-  gap: 12px;
-}
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.brand-text strong {
-  line-height: 1.2;
-}
-
-.brand-text p {
-  line-height: 1.2;
-}
+/* Navigation Scrolling and Alignment Fix (preserving original TopBar container styles) */
 
 .topnav {
   flex: 1;
@@ -45,8 +8,9 @@
   gap: 8px;
   overflow-x: auto;
   padding: 8px 0;
-  mask-image: linear-gradient(to right, transparent, black 40px, black calc(100% - 40px), transparent);
-  -webkit-mask-image: linear-gradient(to right, transparent, black 40px, black calc(100% - 40px), transparent);
+  /* Use a subtle mask to indicate more items on scroll */
+  mask-image: linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent);
+  -webkit-mask-image: linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent);
 }
 
 /* Hide scrollbar but allow scrolling */
@@ -86,29 +50,10 @@
   color: white;
 }
 
-.account-block {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  justify-content: flex-end;
-}
-
 @media (max-width: 1024px) {
   .topnav {
     justify-content: flex-start;
     padding-left: 20px;
     padding-right: 20px;
-  }
-}
-
-@media (max-width: 768px) {
-  .topbar {
-    padding: 0 16px;
-    height: 64px;
-  }
-  
-  .account-info {
-    display: none;
   }
 }
