@@ -5386,13 +5386,9 @@ class StudentContestStopView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Check if contest is programming type (only programming contests can be stopped manually)
-        if contest.contest_type != 'programming':
-            return Response(
-                {"detail": "Only programming contests can be stopped manually."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
+        # Allow both programming and aptitude contests to be stopped manually
+        # (Previously this was restricted to programming only)
+        
         # Stop the contest
         participation.is_active = False
         participation.completed_at = timezone.now()
@@ -5402,7 +5398,26 @@ class StudentContestStopView(APIView):
             time_spent = timezone.now() - participation.started_at
             participation.time_spent_seconds = int(time_spent.total_seconds())
         
-        participation.manually_stopped = True  # Add this field to track manual stops
+        # Recalculate final score and problems solved one last time
+        if contest.contest_type == 'programming':
+            from django.db.models import Sum
+            submissions = ContestSubmission.objects.filter(
+                contest=contest,
+                student=request.user.student_profile
+            )
+            participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
+            participation.problems_solved = submissions.filter(status='Accepted').values('problem').distinct().count()
+        else:
+            # Aptitude contest
+            from django.db.models import Sum
+            submissions = AptitudeContestSubmission.objects.filter(
+                contest=contest,
+                student=request.user.student_profile
+            )
+            participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
+            participation.problems_solved = submissions.filter(is_correct=True).count()
+
+        participation.manually_stopped = True
         participation.save()
 
         return Response({

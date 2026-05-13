@@ -221,7 +221,7 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
     const action = () => {
       async function finish() {
         try {
-          const response = await fetch(`/api/student/contests/${contestId}/auto-submit/`, {
+          const response = await fetch(`/api/student/contests/${contestId}/stop/`, {
             method: "POST",
             ...buildJsonPostOptions({}),
           });
