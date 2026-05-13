@@ -94,14 +94,10 @@ jobs:
           docker compose up -d --no-deps backend frontend
           echo "✓ Containers up"
 
-          # ── 4. Run migrations & Seed Data ──────────────────────────────────
+          # ── 4. Run migrations ──────────────────────────────────────────────
           echo "→ Migrations..."
           docker exec code2day-backend python manage.py migrate --noinput
           echo "✓ Migrations done"
-
-          echo "→ Seeding Aptitude Data (Extra)..."
-          docker exec code2day-backend python manage.py load_extra_aptitude
-          echo "✓ Seeding complete"
 
           # ── 5. Collect static files ────────────────────────────────────────
           echo "→ Static files..."
