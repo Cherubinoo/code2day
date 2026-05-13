@@ -4,11 +4,22 @@ import StudentContestsPage from './StudentContestsPage';
 import ContestWorkspacePage from './ContestWorkspacePage';
 import AptitudeContestWorkspacePage from './AptitudeContestWorkspacePage';
 
-const ContestContainer = ({ targetContestId, setTargetContestId }) => {
+const ContestContainer = ({ targetContestId, setTargetContestId, onToggleWorkspace }) => {
   const [view, setView] = useState('list'); // 'list' or 'workspace'
   const [selectedContestId, setSelectedContestId] = useState(null);
   const [contestType, setContestType] = useState(null); // 'programming' or 'aptitude'
   const [loadingType, setLoadingType] = useState(false);
+
+  // Sync isInsideWorkspace state with parent
+  useEffect(() => {
+    if (onToggleWorkspace) {
+      onToggleWorkspace(view === 'workspace');
+    }
+    // Cleanup: reset when leaving contest page
+    return () => {
+      if (onToggleWorkspace) onToggleWorkspace(false);
+    };
+  }, [view, onToggleWorkspace]);
 
   function handleNavigateToContest(contestId) {
     console.log('Navigating to contest workspace:', contestId);

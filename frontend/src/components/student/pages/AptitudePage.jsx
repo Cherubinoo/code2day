@@ -2,12 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { ChevronRight, Brain, Calculator, MessageSquare, BookOpen, ChevronDown } from 'lucide-react';
 import AptitudeQuizPage from './AptitudeQuizPage';
 
-export default function AptitudePage() {
+export default function AptitudePage({ onToggleWorkspace }) {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCats, setExpandedCats] = useState({});
   const [expandedSubcats, setExpandedSubcats] = useState({});
   const [practiceTopicId, setPracticeTopicId] = useState(null);
+
+  // Sync isInsideWorkspace state with parent
+  useEffect(() => {
+    if (onToggleWorkspace) {
+      onToggleWorkspace(Boolean(practiceTopicId));
+    }
+    // Cleanup
+    return () => {
+      if (onToggleWorkspace) onToggleWorkspace(false);
+    };
+  }, [practiceTopicId, onToggleWorkspace]);
 
   useEffect(() => {
     const fetchTopics = () => {

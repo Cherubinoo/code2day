@@ -20,6 +20,7 @@ import RoadmapsPage from "./components/student/pages/RoadmapsPage";
 import DevelopersProfile from "./components/common/DevelopersProfile";
 import Footer from "./components/common/Footer";
 import "./layout-fix.css";
+import "./header-fix.css";
 import {
   authStorageKey,
   conceptOptions,
@@ -138,6 +139,7 @@ function App() {
   );
 
   const [targetContestId, setTargetContestId] = useState(null);
+  const [isInsideWorkspace, setIsInsideWorkspace] = useState(false);
   const isLoggedIn = Boolean(activeRegisterNumber);
 
   // Initialize CSRF token on app startup
@@ -1163,6 +1165,7 @@ function App() {
         <ContestContainer
           targetContestId={targetContestId}
           setTargetContestId={setTargetContestId}
+          onToggleWorkspace={setIsInsideWorkspace}
         />
       );
       break;
@@ -1200,7 +1203,7 @@ function App() {
       );
       break;
     case "aptitude":
-      activeView = <AptitudePage />;
+      activeView = <AptitudePage onToggleWorkspace={setIsInsideWorkspace} />;
       break;
     case "discuss":
       activeView = (
@@ -1441,6 +1444,7 @@ function App() {
           navItems={navItems}
           setActivePage={navigate}
           userType={userType}
+          hideNav={isInsideWorkspace || (sessionMode === "contest" && activePage === "problems")}
         />
       )}
       <main className="main-shell" style={!isLoggedIn ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0 } : {}}>

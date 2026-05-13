@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { ChevronDown, LayoutGrid, Bell, X, MessageSquare, ExternalLink, Mail } from "lucide-react";
 import { buildJsonPostOptions } from "../../lib/appUtils";
 
-function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, userType }) {
+function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, userType, hideNav }) {
   const [manageOpen, setManageOpen] = useState(false);
 
   // Admin navigation items
@@ -54,7 +54,7 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
             {dashboard.institution?.short_code?.substring(0, 2).toUpperCase() || 'C2D'}
           </div>
         )}
-        <div>
+        <div className="brand-text">
           <strong style={{ color: 'var(--olive-950)', fontSize: '1rem', fontWeight: 800 }}>
             {dashboard.institution?.display_name || dashboard.institution?.name || "code-2day"}
           </strong>
@@ -64,52 +64,54 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
         </div>
       </div>
 
-      <nav className="topnav">
-        {items.map((item) => (
-          <div key={item.id} className="nav-item-wrapper">
-            {item.dropdown ? (
-              <div className="nav-dropdown">
+      {!hideNav && (
+        <nav className="topnav">
+          {items.map((item) => (
+            <div key={item.id} className="nav-item-wrapper">
+              {item.dropdown ? (
+                <div className="nav-dropdown">
+                  <button
+                    type="button"
+                    className={`nav-link ${item.dropdown.some(d => d.id === activePage) ? "active" : ""}`}
+                    onClick={() => setManageOpen(!manageOpen)}
+                  >
+                    <item.icon className="nav-icon" size={16} />
+                    {item.label}
+                    <ChevronDown size={14} className={`dropdown-chevron ${manageOpen ? "open" : ""}`} />
+                  </button>
+                  {manageOpen && (
+                    <div className="dropdown-menu">
+                      {item.dropdown.map((subItem) => (
+                        <button
+                          key={subItem.id}
+                          type="button"
+                          className={subItem.id === activePage ? "dropdown-item active" : "dropdown-item"}
+                          onClick={() => {
+                            setActivePage(subItem.id);
+                            setManageOpen(false);
+                          }}
+                        >
+                          <subItem.icon size={14} />
+                          {subItem.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
                 <button
                   type="button"
-                  className={`nav-link ${item.dropdown.some(d => d.id === activePage) ? "active" : ""}`}
-                  onClick={() => setManageOpen(!manageOpen)}
+                  className={item.id === activePage ? "nav-link active" : "nav-link"}
+                  onClick={() => setActivePage(item.id)}
                 >
-                  <item.icon className="nav-icon" size={16} />
+                  {item.icon && <item.icon className="nav-icon" size={16} />}
                   {item.label}
-                  <ChevronDown size={14} className={`dropdown-chevron ${manageOpen ? "open" : ""}`} />
                 </button>
-                {manageOpen && (
-                  <div className="dropdown-menu">
-                    {item.dropdown.map((subItem) => (
-                      <button
-                        key={subItem.id}
-                        type="button"
-                        className={subItem.id === activePage ? "dropdown-item active" : "dropdown-item"}
-                        onClick={() => {
-                          setActivePage(subItem.id);
-                          setManageOpen(false);
-                        }}
-                      >
-                        <subItem.icon size={14} />
-                        {subItem.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <button
-                type="button"
-                className={item.id === activePage ? "nav-link active" : "nav-link"}
-                onClick={() => setActivePage(item.id)}
-              >
-                {item.icon && <item.icon className="nav-icon" size={16} />}
-                {item.label}
-              </button>
-            )}
-          </div>
-        ))}
-      </nav>
+              )}
+            </div>
+          ))}
+        </nav>
+      )}
 
       <div className="account-block">
         <NotificationInbox />
