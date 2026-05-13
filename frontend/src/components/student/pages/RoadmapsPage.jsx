@@ -7,7 +7,8 @@ import {
   BookOpen, 
   Target, 
   CheckCircle2, 
-  Youtube 
+  Youtube,
+  Map
 } from 'lucide-react';
 
 function RoleRoadmapDetail({ roadmap, setSelectedRoadmapId, setActivePage }) {
