@@ -24,12 +24,16 @@ export default defineConfig({
   plugins: [react(), stripMonacoBrokenSourceMaps()],
   server: {
     port: 5173,
+    allowedHosts: ["code2day.ramcoad.com"],
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
       },
     },
+  },
+  preview: {
+    allowedHosts: ["code2day.ramcoad.com"],
   },
   optimizeDeps: {
     include: ['@monaco-editor/react'],
