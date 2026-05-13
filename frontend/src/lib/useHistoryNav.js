@@ -18,12 +18,21 @@ import { useCallback, useEffect, useState } from "react";
 
 /** Map page IDs → URL paths */
 export const PAGE_PATHS = {
-  explore:  "/",
-  roadmaps: "/roadmaps",
-  problems: "/problems",
-  contest:  "/contest",
-  progress: "/progress",
-  discuss:  "/discuss",
+  explore:       "/",
+  roadmaps:      "/roadmaps",
+  problems:      "/problems",
+  contest:       "/contest",
+  progress:      "/progress",
+  discuss:       "/discuss",
+  company:       "/company",
+  aptitude:      "/aptitude",
+  admin:         "/admin",
+  hod:           "/hod",
+  staff:         "/staff",
+  ja:            "/ja",
+  announcements: "/announcements",
+  institution:   "/institution",
+  developers:    "/developers",
 };
 
 /** Reverse map: URL paths → page IDs */
