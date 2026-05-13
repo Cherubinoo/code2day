@@ -47,20 +47,35 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
           <img 
             src={dashboard.institution.logo_url || dashboard.institution.logo_display_url} 
             alt="Logo" 
-            style={{ height: 32, width: 'auto', marginRight: 12, objectFit: 'contain' }}
+            style={{ height: 60, width: 'auto', marginRight: 16, objectFit: 'contain' }}
           />
         ) : (
-          <div className="brand-badge" style={{ background: 'var(--olive-900)' }}>
-            {dashboard.institution?.short_code?.substring(0, 2).toUpperCase() || 'C2D'}
+          <div className="brand-badge" style={{ background: 'var(--olive-900)', width: 48, height: 48, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, marginRight: 16 }}>
+            🏛️
           </div>
         )}
-        <div className="brand-text">
-          <strong style={{ color: 'var(--olive-950)', fontSize: '1rem', fontWeight: 800 }}>
+        <div style={{ textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+          <h1 style={{ 
+            color: "#dc2626", margin: 0, fontSize: "1.25rem", fontWeight: 800,
+            letterSpacing: "0.5px", textTransform: "uppercase", lineHeight: 1.2
+          }}>
             {dashboard.institution?.display_name || dashboard.institution?.name || "code-2day"}
-          </strong>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-soft)', margin: 0 }}>
-            {getDashboardTitle()}
-          </p>
+          </h1>
+          {dashboard.institution?.subheading && (
+            <h2 style={{ 
+              color: "#eab308", margin: "2px 0", fontSize: "0.8rem",
+              fontWeight: 700, textTransform: "uppercase", lineHeight: 1.2
+            }}>
+              {dashboard.institution.subheading}
+            </h2>
+          )}
+          {dashboard.institution?.address && (
+            <div style={{ fontSize: "0.65rem", color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
+              {dashboard.institution.address.split('\n').map((line, i) => (
+                <p key={i} style={{ margin: 0 }}>{line.trim ? line.trim() : line}</p>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
