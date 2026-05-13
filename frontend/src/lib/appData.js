@@ -222,43 +222,283 @@ export const roleTracks = [
     id: "frontend-developer",
     role: "Frontend Developer",
     title: "UI Logic Sprint",
+    duration: "~18 weeks",
     focus: "Arrays, strings, browser logic, component thinking",
-    status: "Roadmap update soon",
+    status: "Ready",
+    phases: [
+      {
+        name: "Phase 1 — Core Web Foundations",
+        duration: "3 weeks",
+        topics: ["HTML5 Semantics", "Accessibility (ARIA)", "CSS Grid & Flexbox", "Custom Properties", "Responsive Design", "Browser DevTools", "Git & GitHub"]
+      },
+      {
+        name: "Phase 2 — JavaScript Deep Dive",
+        duration: "4 weeks",
+        topics: ["ES2024+ Features", "Closures & Scope", "Promises & async/await", "Array/String methods", "DOM Manipulation", "Fetch API", "Event Loop internals"]
+      },
+      {
+        name: "Phase 3 — React 19 & TypeScript",
+        duration: "5 weeks",
+        topics: ["React 19 Actions & Server Components", "TypeScript generics", "Custom Hooks", "React Query v5", "Zustand state management", "Vite & Turbopack"]
+      },
+      {
+        name: "Phase 4 — Styling Systems",
+        duration: "3 weeks",
+        topics: ["Tailwind CSS v4", "shadcn/ui", "Design Tokens", "Storybook 8", "Radix UI", "Figma-to-Code workflow"]
+      },
+      {
+        name: "Phase 5 — Performance & Modern Stack",
+        duration: "3 weeks",
+        topics: ["Core Web Vitals", "Next.js 15 App Router", "Edge Functions", "Vercel AI SDK", "WebAssembly basics", "Micro-frontends"]
+      }
+    ],
+    youtube: [
+      { name: "Fireship", detail: "100 Seconds + React deep dives" },
+      { name: "Kevin Powell", detail: "Advanced CSS mastery" },
+      { name: "Jack Herrington", detail: "React 19 & patterns" },
+      { name: "Theo (t3.gg)", detail: "Modern full stack" }
+    ],
+    courses: [
+      { name: "The Odin Project", link: "theodinproject.com", detail: "free full frontend path" },
+      { name: "Total TypeScript", link: "totaltypescript.com", detail: "by Matt Pocock" },
+      { name: "CSS for JS Devs", link: "css-for-js.dev", detail: "by Josh W. Comeau" },
+      { name: "Zero to Mastery", link: "zerotomastery.io", detail: "React Developer 2025" }
+    ]
   },
   {
     id: "backend-developer",
     role: "Backend Developer",
-    title: "API and Data Structures",
+    title: "API & Data Structures",
+    duration: "~20 weeks",
     focus: "Hashing, SQL, trees, service-style problem solving",
-    status: "Roadmap update soon",
+    status: "Ready",
+    phases: [
+      {
+        name: "Phase 1 — DSA Foundations",
+        duration: "4 weeks",
+        topics: ["Big O Notation", "Hashing & Hash Maps", "Binary Trees & BST", "Heaps", "Graph Traversal (BFS/DFS)", "Two Pointers", "Sliding Window"]
+      },
+      {
+        name: "Phase 2 — Server & API Fundamentals",
+        duration: "4 weeks",
+        topics: ["Node.js Event Loop", "Express.js / Fastify", "REST API design", "HTTP & Status Codes", "Middleware patterns", "Rate limiting", "JWT Authentication"]
+      },
+      {
+        name: "Phase 3 — Databases & SQL",
+        duration: "4 weeks",
+        topics: ["SQL Joins & Aggregation", "Indexes & Query Plans", "Transactions & ACID", "PostgreSQL advanced", "Redis Caching", "Drizzle/Prisma ORM", "MongoDB basics"]
+      },
+      {
+        name: "Phase 4 — System Design Basics",
+        duration: "4 weeks",
+        topics: ["Load Balancing", "Microservices vs Monolith", "Message Queues (Kafka/RabbitMQ)", "API Gateways", "OAuth 2.0/OIDC", "Docker", "tRPC & GraphQL"]
+      },
+      {
+        name: "Phase 5 — Cloud & Production",
+        duration: "4 weeks",
+        topics: ["AWS/GCP core services", "Container orchestration", "CI/CD Pipelines", "Observability & Logging", "gRPC", "Serverless Functions", "Security best practices"]
+      }
+    ],
+    youtube: [
+      { name: "Hussein Nasser", detail: "Backend engineering deep dives" },
+      { name: "ByteByteGo", detail: "System design explained" },
+      { name: "Fireship", detail: "Backend & DevOps shorts" },
+      { name: "NeetCode", detail: "DSA problem breakdowns" }
+    ],
+    courses: [
+      { name: "Boot.dev", link: "boot.dev", detail: "Backend Developer path (Go/Python)" },
+      { name: "NeetCode.io", link: "neetcode.io", detail: "DSA + System Design" },
+      { name: "Udemy", link: "udemy.com", detail: "Node.js, Express, MongoDB Bootcamp (Jonas S.)" },
+      { name: "freeCodeCamp", link: "freecodecamp.org", detail: "Back End Dev & APIs (free)" }
+    ]
   },
   {
     id: "full-stack-developer",
     role: "Full Stack Developer",
     title: "Product Builder Path",
+    duration: "~22 weeks",
     focus: "Mixed DSA, SQL, implementation, debugging",
-    status: "Roadmap update soon",
+    status: "Ready",
+    phases: [
+      {
+        name: "Phase 1 — Unified Foundations",
+        duration: "3 weeks",
+        topics: ["JS/TS fundamentals", "Git workflow", "Linux CLI basics", "HTTP protocol", "JSON & REST", "Debugging tools"]
+      },
+      {
+        name: "Phase 2 — Frontend with React",
+        duration: "4 weeks",
+        topics: ["React 19", "Next.js 15 App Router", "TypeScript", "Tailwind CSS", "shadcn/ui", "React Hook Form", "Zod validation"]
+      },
+      {
+        name: "Phase 3 — Backend + Database",
+        duration: "5 weeks",
+        topics: ["Node.js / Bun runtime", "tRPC or REST APIs", "PostgreSQL", "Drizzle ORM", "Redis", "Auth.js / Clerk", "File uploads with S3"]
+      },
+      {
+        name: "Phase 4 — DSA & Implementation",
+        duration: "5 weeks",
+        topics: ["Binary Search", "Stacks & Queues", "Linked Lists", "Dynamic Programming", "SQL optimization", "Debugging strategies", "Code review skills"]
+      },
+      {
+        name: "Phase 5 — Deploy & Scale",
+        duration: "5 weeks",
+        topics: ["Vercel / Railway deployment", "Docker basics", "GitHub Actions CI/CD", "Observability", "Performance profiling", "AI integrations (LLM APIs)", "SaaS product patterns"]
+      }
+    ],
+    youtube: [
+      { name: "Theo (t3.gg)", detail: "Full stack with T3 Stack" },
+      { name: "Traversy Media", detail: "Full stack projects" },
+      { name: "Web Dev Simplified", detail: "Clear concept breakdowns" },
+      { name: "Hamed Bahram", detail: "Next.js deep dives" }
+    ],
+    courses: [
+      { name: "Fullstack Open", link: "fullstackopen.com", detail: "University of Helsinki (free)" },
+      { name: "create.t3.gg", link: "create.t3.gg", detail: "T3 Stack docs & starter (free)" },
+      { name: "Udemy", link: "udemy.com", detail: "MERN Stack Front To Back 2025" },
+      { name: "Zero to Mastery", link: "zerotomastery.io", detail: "Full Stack Developer" }
+    ]
   },
   {
     id: "data-analyst",
     role: "Data Analyst",
-    title: "SQL and Reporting",
+    title: "SQL & Reporting",
+    duration: "~16 weeks",
     focus: "Joins, aggregation, query logic, clean reporting",
-    status: "Roadmap update soon",
+    status: "Ready",
+    phases: [
+      {
+        name: "Phase 1 — SQL from Zero to Fluent",
+        duration: "4 weeks",
+        topics: ["SELECT fundamentals", "JOINs (inner/outer/cross)", "GROUP BY & Aggregation", "Subqueries & CTEs", "Window Functions (ROW_NUMBER, RANK, LAG/LEAD)", "NULL handling", "Index basics"]
+      },
+      {
+        name: "Phase 2 — Python for Analysis",
+        duration: "3 weeks",
+        topics: ["pandas DataFrames", "NumPy arrays", "Data cleaning & wrangling", "Matplotlib / Seaborn", "Jupyter Notebooks", "String & date parsing", "EDA workflows"]
+      },
+      {
+        name: "Phase 3 — BI Tools & Visualization",
+        duration: "3 weeks",
+        topics: ["Power BI Desktop", "DAX basics", "Tableau fundamentals", "Chart design best practices", "Dashboard storytelling", "Google Looker Studio"]
+      },
+      {
+        name: "Phase 4 — Data Warehousing & dbt",
+        duration: "3 weeks",
+        topics: ["Star vs Snowflake schema", "BigQuery / Snowflake", "dbt Core (models, tests, docs)", "ETL vs ELT", "Airflow basics", "Data quality checks"]
+      },
+      {
+        name: "Phase 5 — Business & Advanced Analytics",
+        duration: "3 weeks",
+        topics: ["A/B Testing & statistics", "Cohort analysis", "Funnel metrics", "Revenue attribution", "Excel advanced (pivot tables, Power Query)", "AI-assisted analysis"]
+      }
+    ],
+    youtube: [
+      { name: "Alex The Analyst", detail: "Full analyst playlist" },
+      { name: "Luke Barousse", detail: "Data analyst roadmap 2025" },
+      { name: "Tina Huang", detail: "SQL & data science" },
+      { name: "Ken Jee", detail: "Data career & projects" }
+    ],
+    courses: [
+      { name: "Kaggle", link: "kaggle.com/learn", detail: "free SQL & Python courses" },
+      { name: "DataCamp", link: "datacamp.com", detail: "Data Analyst with SQL career track" },
+      { name: "Udemy", link: "udemy.com", detail: "The Complete SQL Bootcamp by Jose Portilla" },
+      { name: "dbt Learn", link: "courses.getdbt.com", detail: "Official free dbt fundamentals" }
+    ]
   },
   {
     id: "software-engineer",
     role: "Software Engineer",
     title: "Placement Core Track",
+    duration: "~20 weeks",
     focus: "Binary search, stacks, linked lists, contest fundamentals",
-    status: "Roadmap update soon",
+    status: "Ready",
+    phases: [
+      {
+        name: "Phase 1 — Complexity & Problem Thinking",
+        duration: "2 weeks",
+        topics: ["Big O", "Theta", "Omega", "Amortized analysis", "Space vs time tradeoffs", "Recursion tree method", "Benchmarking & profiling"]
+      },
+      {
+        name: "Phase 2 — Linear Data Structures",
+        duration: "4 weeks",
+        topics: ["Arrays & Dynamic arrays", "Singly & Doubly Linked Lists", "Stacks & Queues", "Monotonic Stacks", "Two Pointers", "Sliding Window", "Prefix Sums"]
+      },
+      {
+        name: "Phase 3 — Non-Linear Structures",
+        duration: "5 weeks",
+        topics: ["Binary Trees traversal (in/pre/post)", "Binary Search Trees", "Heaps & Heapify", "Graphs (adjacency list/matrix)", "BFS & DFS patterns", "Topological Sort", "Union-Find / Disjoint Set"]
+      },
+      {
+        name: "Phase 4 — Algorithms & Patterns",
+        duration: "5 weeks",
+        topics: ["Binary Search variants", "Divide & Conquer", "Greedy algorithms", "Backtracking", "DP — 1D & 2D (knapsack, LCS, LIS)", "String algorithms (KMP)", "Bit manipulation"]
+      },
+      {
+        name: "Phase 5 — Contest & Mock Practice",
+        duration: "4 weeks",
+        topics: ["Codeforces Div 2 problems", "LeetCode weekly contests", "System Design basics", "STAR behavioral answers", "Peer mock interviews", "Resume optimization"]
+      }
+    ],
+    youtube: [
+      { name: "NeetCode", detail: "LeetCode solutions with pattern recognition" },
+      { name: "Abdul Bari", detail: "Algorithm deep dives (must-watch)" },
+      { name: "Striver (TakeUForward)", detail: "DSA sheet walkthroughs" },
+      { name: "Errichto", detail: "Competitive programming techniques" }
+    ],
+    courses: [
+      { name: "Striver's A-Z DSA Sheet", link: "takeuforward.org", detail: "free sheet walkthroughs" },
+      { name: "NeetCode.io", link: "neetcode.io", detail: "Roadmap + 150 problems" },
+      { name: "Udemy", link: "udemy.com", detail: "Master the Coding Interview by Andrei Neagoie" },
+      { name: "AlgoExpert", link: "algoexpert.io", detail: "160 curated problems" }
+    ]
   },
   {
     id: "qa-automation-engineer",
     role: "QA Automation Engineer",
-    title: "Logic and Validation Track",
+    title: "Logic & Validation Track",
+    duration: "~18 weeks",
     focus: "Edge cases, parsing, state checking, practical coding",
-    status: "Roadmap update soon",
+    status: "Ready",
+    phases: [
+      {
+        name: "Phase 1 — Testing Fundamentals",
+        duration: "3 weeks",
+        topics: ["Test types (unit/integration/E2E)", "Test pyramid strategy", "Black box vs white box", "Bug lifecycle", "Equivalence partitioning", "Boundary value analysis", "Test case design"]
+      },
+      {
+        name: "Phase 2 — API Testing & Validation",
+        duration: "4 weeks",
+        topics: ["REST API concepts", "Postman collections & environments", "JSON Schema validation", "Auth testing (JWT/OAuth)", "Error code coverage", "Data-driven testing", "pytest / REST Assured"]
+      },
+      {
+        name: "Phase 3 — UI Test Automation",
+        duration: "4 weeks",
+        topics: ["Playwright (industry standard in 2025)", "Cypress fundamentals", "Page Object Model", "Locator strategies", "Flakiness handling", "Screenshot diffing", "Accessibility automation (axe-core)"]
+      },
+      {
+        name: "Phase 4 — State & Logic Testing",
+        duration: "3 weeks",
+        topics: ["State machine testing", "Decision table testing", "Pairwise testing", "Edge case enumeration", "Regex & parsing checks", "Form validation edge cases", "Race condition testing"]
+      },
+      {
+        name: "Phase 5 — CI/CD & Reporting",
+        duration: "4 weeks",
+        topics: ["GitHub Actions for tests", "Docker test environments", "Allure Reports", "Jira/Zephyr integration", "Performance testing with k6", "Security testing basics", "Test coverage metrics"]
+      }
+    ],
+    youtube: [
+      { name: "Playwright Official", detail: "Modern E2E testing tutorials" },
+      { name: "SDET Unicorns", detail: "Full QA roadmap 2025" },
+      { name: "Naveen AutomationLabs", detail: "Selenium & API testing" },
+      { name: "Execute Automation", detail: "Cypress & Playwright series" }
+    ],
+    courses: [
+      { name: "Test Automation University", link: "testautomationu.applitools.com", detail: "by Applitools (free)" },
+      { name: "Udemy", link: "udemy.com", detail: "Playwright with TypeScript (LambdaTest)" },
+      { name: "Udemy", link: "udemy.com", detail: "Complete Java Selenium WebDriver by Rahul Shetty" },
+      { name: "Ministry of Testing Dojo", link: "ministryoftesting.com", detail: "Professional QA community" }
+    ]
   },
 ];
 
