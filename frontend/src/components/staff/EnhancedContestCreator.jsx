@@ -156,22 +156,15 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
       if (selectedTopics.length > 0) {
         selectedTopics.forEach(id => params.append('topic_id', id));
       }
-      // Note: If no topics selected, we load ALL questions (no topic_id filter)
       
       if (selectedDifficulty !== 'all') params.append('difficulty', selectedDifficulty);
       if (searchQuery) params.append('q', searchQuery);
-      
-      console.log('Loading aptitude questions with params:', params.toString());
-      console.log('Selected topics:', selectedTopics);
+      params.append('limit', '2000'); // Higher limit for contest creation
       
       const res = await fetch(`/api/aptitude/questions/?${params}`, { credentials: 'include' });
       if (res.ok) {
         const data = await res.json();
-        console.log('Loaded aptitude questions:', data?.length || 0);
-        console.log('Sample loaded questions:', data?.slice(0, 3));
         setAptitudeQuestions(data || []);
-      } else {
-        console.error('Failed to load aptitude questions:', res.status);
       }
     } catch (err) {
       console.error('Error loading aptitude questions:', err);
@@ -197,24 +190,30 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
   }
 
   function selectRandomByTopic(topicId, count) {
-    console.log('selectRandomByTopic called with:', { topicId, count });
-    console.log('Available aptitudeQuestions:', aptitudeQuestions.length);
-    
-    // Debug: Show all available questions with their topic IDs
-    console.log('Sample aptitude questions:', aptitudeQuestions.slice(0, 3).map(q => ({
-      id: q.id,
-      topic_id: q.topic_id,
-      topic: q.topic,
-      difficulty: q.difficulty
-    })));
-    
-    const topicQuestions = aptitudeQuestions.filter(q => q.topic_id.toString() === topicId.toString());
-    console.log('Filtered topicQuestions for topic', topicId, ':', topicQuestions.length);
+    // Find this topic and all its subtopic IDs
+    const getAllChildrenIds = (id) => {
+      let ids = [id.toString()];
+      aptitudeTopics.forEach(cat => {
+        if (cat.id.toString() === id.toString()) {
+          (cat.subcategories || []).forEach(sub => {
+            ids.push(sub.id.toString());
+            (sub.topics || []).forEach(t => ids.push(t.id.toString()));
+          });
+        }
+        (cat.subcategories || []).forEach(sub => {
+          if (sub.id.toString() === id.toString()) {
+            (sub.topics || []).forEach(t => ids.push(t.id.toString()));
+          }
+        });
+      });
+      return ids;
+    };
+
+    const targetIds = getAllChildrenIds(topicId);
+    const topicQuestions = aptitudeQuestions.filter(q => targetIds.includes(q.topic_id?.toString()));
     
     if (!topicQuestions.length) {
-      console.log('No questions found for topic:', topicId);
-      console.log('Available topic IDs in questions:', [...new Set(aptitudeQuestions.map(q => q.topic_id))]);
-      alert(`No questions found for this topic (ID: ${topicId}). Available questions: ${aptitudeQuestions.length}`);
+      alert(`No questions found for this topic selection. Try selecting more topics or clearing filters.`);
       return;
     }
 
@@ -222,15 +221,12 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     const selected = shuffled.slice(0, Math.min(count, shuffled.length));
     const selectedIds = selected.map(q => q.id.toString());
 
-    console.log('Selected question IDs:', selectedIds);
-
     setFormData(prev => ({
       ...prev,
       aptitude_question_ids: [...new Set([...prev.aptitude_question_ids, ...selectedIds])],
     }));
     
-    console.log('Updated formData.aptitude_question_ids');
-    alert(`✅ Selected ${selected.length} questions from topic: ${topicQuestions[0]?.topic || topicId}`);
+    return selected.length;
   }
 
   function applyTopicWisePercentageSelection() {
@@ -942,33 +938,44 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                           ))
                         ) : (
                           aptitudeTopics.map(cat => (
-                            <div key={cat.id}>
-                              <div style={{ fontSize: 11, fontWeight: 700, color: '#666', marginTop: 8, marginBottom: 4, textTransform: 'uppercase' }}>
+                            <div key={cat.id} style={{ marginBottom: 10 }}>
+                              <label style={{ display: 'flex', alignItems: 'center', fontSize: 11, fontWeight: 700, color: '#374151', marginTop: 8, marginBottom: 4, textTransform: 'uppercase', cursor: 'pointer' }}>
+                                <input 
+                                  type="checkbox"
+                                  checked={selectedTopics.includes(cat.id.toString())}
+                                  onChange={(e) => {
+                                    const idStr = cat.id.toString();
+                                    if (e.target.checked) setSelectedTopics([...selectedTopics, idStr]);
+                                    else setSelectedTopics(selectedTopics.filter(t => t !== idStr));
+                                  }}
+                                  style={{ marginRight: 6 }}
+                                />
                                 {cat.title}
-                              </div>
+                              </label>
                               {(cat.subcategories || []).map(sub => (
-                                <div key={sub.id} style={{ marginLeft: 8 }}>
-                                  <div style={{ fontSize: 11, fontWeight: 600, color: '#4f46e5', marginBottom: 2 }}>
+                                <div key={sub.id} style={{ marginLeft: 12, marginBottom: 4 }}>
+                                  <label style={{ display: 'flex', alignItems: 'center', fontSize: 11, fontWeight: 600, color: '#4f46e5', marginBottom: 2, cursor: 'pointer' }}>
+                                    <input 
+                                      type="checkbox"
+                                      checked={selectedTopics.includes(sub.id.toString())}
+                                      onChange={(e) => {
+                                        const idStr = sub.id.toString();
+                                        if (e.target.checked) setSelectedTopics([...selectedTopics, idStr]);
+                                        else setSelectedTopics(selectedTopics.filter(t => t !== idStr));
+                                      }}
+                                      style={{ marginRight: 6 }}
+                                    />
                                     {sub.title}
-                                  </div>
+                                  </label>
                                   {(sub.topics || []).map(topic => (
-                                    <label key={topic.id} style={{ display: 'flex', alignItems: 'center', padding: '3px 0', cursor: 'pointer', fontSize: 13, marginLeft: 8 }}>
+                                    <label key={topic.id} style={{ display: 'flex', alignItems: 'center', padding: '3px 0', cursor: 'pointer', fontSize: 13, marginLeft: 16 }}>
                                       <input
                                         type="checkbox"
                                         checked={selectedTopics.includes(topic.id.toString())}
                                         onChange={(e) => {
                                           const idStr = topic.id.toString();
-                                          if (e.target.checked) {
-                                            const newTopics = [...selectedTopics, idStr];
-                                            setSelectedTopics(newTopics);
-                                            // Immediately load questions for the new selection
-                                            setTimeout(() => loadAptitudeQuestions(), 100);
-                                          } else {
-                                            const newTopics = selectedTopics.filter(t => t !== idStr);
-                                            setSelectedTopics(newTopics);
-                                            // Reload questions for remaining topics
-                                            setTimeout(() => loadAptitudeQuestions(), 100);
-                                          }
+                                          if (e.target.checked) setSelectedTopics([...selectedTopics, idStr]);
+                                          else setSelectedTopics(selectedTopics.filter(t => t !== idStr));
                                         }}
                                         style={{ marginRight: 8 }}
                                       />
@@ -1420,19 +1427,87 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                       </div>
                       
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {/* Bulk Selection Tool */}
+                        {selectedTopics.length > 1 && (
+                          <div style={{ 
+                            background: '#f8fafc', 
+                            padding: 12, 
+                            borderRadius: 10, 
+                            border: '1px dashed #cbd5e1',
+                            marginBottom: 10,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between'
+                          }}>
+                            <div style={{ fontSize: 12, fontWeight: 600 }}>Bulk Pick:</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <input 
+                                type="number" 
+                                id="bulk-pick-count" 
+                                placeholder="Qty" 
+                                defaultValue={5}
+                                style={{ width: 50, padding: '4px', borderRadius: 4, border: '1px solid #94a3b8', fontSize: 12 }}
+                              />
+                              <button 
+                                type="button"
+                                onClick={() => {
+                                  const qty = parseInt(document.getElementById('bulk-pick-count').value);
+                                  let totalAdded = 0;
+                                  selectedTopics.forEach(tid => {
+                                    const added = selectRandomByTopic(tid, qty);
+                                    totalAdded += (added || 0);
+                                  });
+                                  alert(`✅ Bulk pick complete! Added ~${totalAdded} questions.`);
+                                }}
+                                style={{ background: '#0369a1', color: 'white', border: 'none', padding: '4px 12px', borderRadius: 4, fontSize: 12, cursor: 'pointer' }}
+                              >
+                                Pick from Each
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         {selectedTopics.map(topicId => {
                           // Find topic name from aptitudeTopics
                           let topicName = 'Unknown Topic';
+                          let isParent = false;
                           if (Array.isArray(aptitudeTopics)) {
                             aptitudeTopics.forEach(cat => {
+                              if (cat.id.toString() === topicId.toString()) {
+                                topicName = `[CAT] ${cat.title}`;
+                                isParent = true;
+                              }
                               (cat.subcategories || []).forEach(sub => {
+                                if (sub.id.toString() === topicId.toString()) {
+                                  topicName = `[SUB] ${sub.title}`;
+                                  isParent = true;
+                                }
                                 const found = (sub.topics || []).find(t => t?.id?.toString() === topicId?.toString());
                                 if (found) topicName = `${sub.title}: ${found.title}`;
                               });
                             });
                           }
 
-                          const availableCount = (aptitudeQuestions || []).filter(q => q?.topic_id?.toString() === topicId?.toString()).length;
+                          // Calculate available count (including children)
+                          const getAllChildrenIds = (id) => {
+                            let ids = [id.toString()];
+                            aptitudeTopics.forEach(cat => {
+                              if (cat.id.toString() === id.toString()) {
+                                (cat.subcategories || []).forEach(sub => {
+                                  ids.push(sub.id.toString());
+                                  (sub.topics || []).forEach(t => ids.push(t.id.toString()));
+                                });
+                              }
+                              (cat.subcategories || []).forEach(sub => {
+                                if (sub.id.toString() === id.toString()) {
+                                  (sub.topics || []).forEach(t => ids.push(t.id.toString()));
+                                }
+                              });
+                            });
+                            return ids;
+                          };
+                          const childrenIds = getAllChildrenIds(topicId);
+                          const availableCount = (aptitudeQuestions || []).filter(q => childrenIds.includes(q.topic_id?.toString())).length;
 
                           return (
                             <div key={topicId} style={{ 
@@ -1443,21 +1518,20 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                               background: 'white',
                               padding: '8px 12px',
                               borderRadius: 8,
-                              border: '1px solid #e0f2fe'
+                              border: isParent ? '1px solid #bae6fd' : '1px solid #e0f2fe'
                             }}>
-                              <div style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{topicName}</div>
+                              <div style={{ flex: 1, fontSize: 13, fontWeight: isParent ? 700 : 500 }}>{topicName}</div>
                               <div style={{ fontSize: 11, color: '#666' }}>({availableCount} available)</div>
                               
-                              {/* Count-based selection only */}
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <input
                                   type="number"
                                   id={`count-${topicId}`}
-                                  placeholder="Enter count"
+                                  placeholder="Qty"
                                   min={0}
                                   max={availableCount}
                                   style={{
-                                    width: 60,
+                                    width: 50,
                                     padding: '4px 6px',
                                     border: '1px solid #3b82f6',
                                     borderRadius: 4,
@@ -1469,11 +1543,9 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                                   type="button"
                                   onClick={() => {
                                     const val = parseInt(document.getElementById(`count-${topicId}`).value);
-                                    console.log(`Individual Pick clicked for topic ${topicId}, count: ${val}`);
                                     if (val > 0) {
                                       selectRandomByTopic(topicId, val);
-                                    } else {
-                                      alert('Please enter a number greater than 0');
+                                      alert('✅ Picked!');
                                     }
                                   }}
                                   style={{
@@ -1495,23 +1567,19 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                         })}
                       </div>
 
-                      <div style={{ marginTop: 12 }}>
+                      <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
                         <button
                           type="button"
                           onClick={() => {
-                            console.log('Apply Topic Selection clicked');
-                            console.log('Selected topics:', selectedTopics);
-                            
                             selectedTopics.forEach(topicId => {
                               const val = parseInt(document.getElementById(`count-${topicId}`).value);
-                              console.log(`Topic ${topicId}: count = ${val}`);
                               if (val > 0) selectRandomByTopic(topicId, val);
                             });
-                            alert('✅ Count-based selection applied.');
+                            alert('✅ All selections applied.');
                           }}
                           style={{
-                            width: '100%',
-                            padding: '8px 16px',
+                            flex: 1,
+                            padding: '10px',
                             background: '#3b82f6',
                             color: 'white',
                             border: 'none',
@@ -1521,7 +1589,23 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                             cursor: 'pointer',
                           }}
                         >
-                          Apply Topic Selection
+                          Apply All Topic Counts
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormData(prev => ({...prev, aptitude_question_ids: []}))}
+                          style={{
+                            padding: '10px 16px',
+                            background: '#fee2e2',
+                            color: '#dc2626',
+                            border: '1px solid #fecaca',
+                            borderRadius: 8,
+                            fontSize: 12,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Clear All
                         </button>
                       </div>
 

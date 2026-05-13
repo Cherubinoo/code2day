@@ -6022,6 +6022,7 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
         difficulty = request.query_params.get('difficulty')
         solved_status = request.query_params.get('status') # 'solved', 'unsolved', 'all'
         search = request.query_params.get('q')
+        limit = request.query_params.get('limit', 1000) # Increased default limit
         
         profile, _, _ = self.get_authenticated_profile(request)
         is_student = hasattr(profile, 'register_number')
@@ -6033,8 +6034,21 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
         qs = AptitudeQuestion.objects.all().select_related('topic')
         
         if topic_ids:
-            qs = qs.filter(topic_id__in=topic_ids)
-        if difficulty and difficulty != 'All':
+            # Enhanced filtering: Include subtopics recursively if a parent topic is selected
+            all_topic_ids = set()
+            for tid in topic_ids:
+                try:
+                    all_topic_ids.add(int(tid))
+                    # Get all subtopics (recursive-ish, 2 levels deep is enough for our structure)
+                    subtopic_ids = AptitudeTopic.objects.filter(
+                        Q(parent_id=tid) | Q(parent__parent_id=tid)
+                    ).values_list('id', flat=True)
+                    all_topic_ids.update(subtopic_ids)
+                except ValueError:
+                    continue
+            qs = qs.filter(topic_id__in=all_topic_ids)
+
+        if difficulty and difficulty != 'all' and difficulty != 'All':
             qs = qs.filter(difficulty__iexact=difficulty)
         if search:
             qs = qs.filter(question_text__icontains=search)
@@ -6048,10 +6062,17 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
                 qs = qs.exclude(id__in=solved_ids)
             
         data = []
-        for q in qs[:100]: # Limit to 100 for performance
+        # Limit the queryset to avoid memory issues, but use a larger default
+        try:
+            limit = int(limit)
+        except ValueError:
+            limit = 1000
+            
+        for q in qs[:limit]:
             data.append({
                 "id": q.id,
                 "topic": q.topic.title,
+                "topic_id": q.topic.id,
                 "question_text": q.question_text,
                 "difficulty": q.difficulty,
                 "option_a": q.option_a,

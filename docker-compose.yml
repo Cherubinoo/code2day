@@ -55,6 +55,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./dataset:/app/dataset
     restart: unless-stopped
     <<: *default-logging
     depends_on:
