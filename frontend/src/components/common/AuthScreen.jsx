@@ -139,6 +139,7 @@ function AuthScreen({
     }
 
     const { display_name, name, subheading, address, logo_url } = selectedInstitution;
+    const isRamco = (name?.toLowerCase().includes("ramco") || display_name?.toLowerCase().includes("ramco"));
 
     return (
       <div style={{
@@ -147,29 +148,56 @@ function AuthScreen({
         gap: "16px", borderBottom: "1px solid #e5e7eb",
         boxShadow: "0 1px 3px rgba(0,0,0,0.06)", flexShrink: 0,
       }}>
-        {logo_url ? (
+        {isRamco ? (
+          <img src="/logo/logo.jpeg" alt="Ramco Logo"
+            style={{ height: 75, width: "auto", objectFit: "contain" }} />
+        ) : logo_url ? (
           <img src={logo_url} alt={`${name} Logo`}
             style={{ height: 60, width: "auto", objectFit: "contain" }} />
         ) : (
           <div style={{ width: 48, height: 48, background: "#f3f4f6", borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>🏛️</div>
         )}
         <div style={{ textAlign: "center" }}>
-          <h1 style={{ color: "#dc2626", margin: 0, fontSize: 20, fontWeight: 800,
-            letterSpacing: "0.5px", textTransform: "uppercase" }}>
-            {display_name || name}
-          </h1>
-          {subheading && (
-            <h2 style={{ color: "#eab308", margin: "2px 0", fontSize: 13,
-              fontWeight: 700, textTransform: "uppercase" }}>
-              {subheading}
-            </h2>
-          )}
-          {address && (
-            <div style={{ fontSize: 10.5, color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
-              {address.split('\n').map((line, i) => (
-                <p key={i} style={{ margin: 0 }}>{line.trim ? line.trim() : line}</p>
-              ))}
-            </div>
+          {isRamco ? (
+            <>
+              <h1 style={{ 
+                color: "#dc2626", margin: 0, fontSize: 20, fontWeight: 800,
+                letterSpacing: "0.5px", textTransform: "uppercase" 
+              }}>
+                RAMCO INSTITUTE OF TECHNOLOGY
+              </h1>
+              <h2 style={{ 
+                color: "#eab308", margin: "2px 0", fontSize: 13,
+                fontWeight: 700, textTransform: "uppercase" 
+              }}>
+                (AN AUTONOMOUS INSTITUTION)
+              </h2>
+              <div style={{ fontSize: 10.5, color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
+                <p style={{ margin: 0 }}>Approved By AICTE, New Delhi & Affiliated to Anna University</p>
+                <p style={{ margin: 0 }}>NAAC Accredited with 'A+' Grade & An ISO 9001:2015 Certified Institution</p>
+                <p style={{ margin: 0 }}>Rajapalayam, Tamil Nadu, India - 626 117.</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <h1 style={{ color: "#dc2626", margin: 0, fontSize: 20, fontWeight: 800,
+                letterSpacing: "0.5px", textTransform: "uppercase" }}>
+                {display_name || name}
+              </h1>
+              {subheading && (
+                <h2 style={{ color: "#eab308", margin: "2px 0", fontSize: 13,
+                  fontWeight: 700, textTransform: "uppercase" }}>
+                  {subheading}
+                </h2>
+              )}
+              {address && (
+                <div style={{ fontSize: 10.5, color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
+                  {address.split('\n').map((line, i) => (
+                    <p key={i} style={{ margin: 0 }}>{line.trim ? line.trim() : line}</p>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

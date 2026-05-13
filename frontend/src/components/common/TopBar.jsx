@@ -43,7 +43,13 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
   return (
     <header className="topbar">
       <div className="brand-block">
-        {dashboard.institution?.logo_url || dashboard.institution?.logo_display_url ? (
+        {(dashboard.institution?.name?.toLowerCase().includes("ramco") || dashboard.institution?.display_name?.toLowerCase().includes("ramco")) ? (
+          <img 
+            src="/logo/logo.jpeg" 
+            alt="Ramco Logo" 
+            style={{ height: 75, width: 'auto', marginRight: 16, objectFit: 'contain' }}
+          />
+        ) : (dashboard.institution?.logo_url || dashboard.institution?.logo_display_url) ? (
           <img 
             src={dashboard.institution.logo_url || dashboard.institution.logo_display_url} 
             alt="Logo" 
@@ -55,26 +61,50 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
           </div>
         )}
         <div style={{ textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          <h1 style={{ 
-            color: "#dc2626", margin: 0, fontSize: "1.25rem", fontWeight: 800,
-            letterSpacing: "0.5px", textTransform: "uppercase", lineHeight: 1.2
-          }}>
-            {dashboard.institution?.display_name || dashboard.institution?.name || "code-2day"}
-          </h1>
-          {dashboard.institution?.subheading && (
-            <h2 style={{ 
-              color: "#eab308", margin: "2px 0", fontSize: "0.8rem",
-              fontWeight: 700, textTransform: "uppercase", lineHeight: 1.2
-            }}>
-              {dashboard.institution.subheading}
-            </h2>
-          )}
-          {dashboard.institution?.address && (
-            <div style={{ fontSize: "0.65rem", color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
-              {dashboard.institution.address.split('\n').map((line, i) => (
-                <p key={i} style={{ margin: 0 }}>{line.trim ? line.trim() : line}</p>
-              ))}
-            </div>
+          {(dashboard.institution?.name?.toLowerCase().includes("ramco") || dashboard.institution?.display_name?.toLowerCase().includes("ramco")) ? (
+            <>
+              <h1 style={{ 
+                color: "#dc2626", margin: 0, fontSize: "1.35rem", fontWeight: 800,
+                letterSpacing: "0.5px", textTransform: "uppercase", lineHeight: 1.2
+              }}>
+                RAMCO INSTITUTE OF TECHNOLOGY
+              </h1>
+              <h2 style={{ 
+                color: "#eab308", margin: "2px 0", fontSize: "0.85rem",
+                fontWeight: 700, textTransform: "uppercase", lineHeight: 1.2
+              }}>
+                (AN AUTONOMOUS INSTITUTION)
+              </h2>
+              <div style={{ fontSize: "0.65rem", color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
+                <p style={{ margin: 0 }}>Approved By AICTE, New Delhi & Affiliated to Anna University</p>
+                <p style={{ margin: 0 }}>NAAC Accredited with 'A+' Grade & An ISO 9001:2015 Certified Institution</p>
+                <p style={{ margin: 0 }}>Rajapalayam, Tamil Nadu, India - 626 117.</p>
+              </div>
+            </>
+          ) : (
+            <>
+              <h1 style={{ 
+                color: "#dc2626", margin: 0, fontSize: "1.25rem", fontWeight: 800,
+                letterSpacing: "0.5px", textTransform: "uppercase", lineHeight: 1.2
+              }}>
+                {dashboard.institution?.display_name || dashboard.institution?.name || "code-2day"}
+              </h1>
+              {dashboard.institution?.subheading && (
+                <h2 style={{ 
+                  color: "#eab308", margin: "2px 0", fontSize: "0.8rem",
+                  fontWeight: 700, textTransform: "uppercase", lineHeight: 1.2
+                }}>
+                  {dashboard.institution.subheading}
+                </h2>
+              )}
+              {dashboard.institution?.address && (
+                <div style={{ fontSize: "0.65rem", color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
+                  {dashboard.institution.address.split('\n').map((line, i) => (
+                    <p key={i} style={{ margin: 0 }}>{line.trim ? line.trim() : line}</p>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
