@@ -359,10 +359,10 @@ function RoadmapLibrary({ roleTracks, setActivePage, setSelectedRoadmapId }) {
       <section className="page-header roadmap-header">
         <div>
           <p className="kicker">Role Roadmaps</p>
-          <h1>Guided learning paths for 2025.</h1>
+          <h1>Pick a role. Follow the path.</h1>
           <p className="body-copy" style={{ maxWidth: '680px' }}>
-            Structured curriculums designed to take you from beginner to job-ready in your chosen field.
-            Each roadmap includes phases, YouTube channels, and curated courses.
+            Structured curriculums built around real job roles — from foundations to production-ready skills.
+            Each roadmap breaks down into phases, curated courses, and YouTube channels worth your time.
           </p>
         </div>
         <button type="button" className="ghost-button" onClick={() => setActivePage('explore')}>
