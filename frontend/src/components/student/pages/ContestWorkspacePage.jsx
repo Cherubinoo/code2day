@@ -8,6 +8,7 @@ import { starterCodeByLanguage, editorLanguageByChoice } from "../../../lib/appD
 import { formatDuration } from "../../../lib/appUtils";
 import { buildJsonPostOptions } from "../../../lib/appUtils";
 import { validateLanguageMatch, getLanguageMismatchError, detectLanguageFromCode } from "../../../lib/languageDetector";
+import { AlertCircle } from "lucide-react";
 import DoubleConfirmModal from "../../common/DoubleConfirmModal";
 
 loader.config({ monaco });
@@ -38,6 +39,7 @@ function Toast({ message, type = 'success', onDone }) {
 
 function ContestWorkspacePage({ contestId, onBack }) {
   // Contest data
+  const [isFullscreen, setIsFullscreen] = useState(true);
   const [contest, setContest] = useState(null);
   const [confirmState, setConfirmState] = useState({ show: false, m1: '', m2: '', onConfirm: null, firstOk: false });
   const [toast, setToast] = useState(null); // { message, type }
@@ -130,24 +132,11 @@ function ContestWorkspacePage({ contestId, onBack }) {
 
     // Re-enter fullscreen if user exits it
     const handleFullscreenChange = () => {
-      if (!document.fullscreenElement && isContestActiveRef.current) {
-        showToast('⚠️ Please stay in fullscreen during the contest! Click anywhere to return.', 'error');
-        
-        const reenter = () => {
-          if (!document.fullscreenElement && isContestActiveRef.current) {
-            const el2 = document.documentElement;
-            if (el2.requestFullscreen) el2.requestFullscreen().catch(() => {});
-            else if (el2.webkitRequestFullscreen) el2.webkitRequestFullscreen();
-          }
-        };
-
-        // Attempt immediate re-entry (may fail without gesture)
-        reenter();
-        // Fallback: re-enter on next click
-        document.addEventListener('click', reenter, { once: true });
-        
-        // Secondary fallback: delayed re-entry
-        setTimeout(reenter, 1000);
+      const isFull = !!document.fullscreenElement || !!document.webkitFullscreenElement;
+      setIsFullscreen(isFull);
+      
+      if (!isFull && isContestActiveRef.current) {
+        showToast('⚠️ Full screen exit detected! You must stay in full screen to continue.', 'error');
       }
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);

@@ -25,6 +25,7 @@ function Toast({ message, type = 'success', onDone }) {
 }
 
 function AptitudeContestWorkspacePage({ contestId, onBack }) {
+  const [isFullscreen, setIsFullscreen] = useState(true);
   const [contest, setContest] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -89,24 +90,11 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     const handleFullscreenChange = () => {
-      if (!document.fullscreenElement && isContestActiveRef.current) {
-        showToast('⚠️ Please stay in fullscreen during the contest! Click anywhere to return.', 'error');
-        
-        const reenter = () => {
-          if (!document.fullscreenElement && isContestActiveRef.current) {
-            const el2 = document.documentElement;
-            if (el2.requestFullscreen) el2.requestFullscreen().catch(() => {});
-            else if (el2.webkitRequestFullscreen) el2.webkitRequestFullscreen();
-          }
-        };
-
-        // Attempt immediate re-entry
-        reenter();
-        // Fallback: re-enter on next click
-        document.addEventListener('click', reenter, { once: true });
-        
-        // Secondary fallback: delayed re-entry
-        setTimeout(reenter, 1000);
+      const isFull = !!document.fullscreenElement || !!document.webkitFullscreenElement;
+      setIsFullscreen(isFull);
+      
+      if (!isFull && isContestActiveRef.current) {
+        showToast('⚠️ Full screen exit detected! You must stay in full screen to continue.', 'error');
       }
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -620,12 +608,49 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
         />
       )}
 
-      <style>{`
-        @keyframes slideDown {
-          from { opacity: 0; transform: translateX(-50%) translateY(-20px); }
-          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
-      `}</style>
+      {/* Fullscreen Lock Overlay */}
+      {!isFullscreen && isContestActiveRef.current && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(15, 23, 42, 0.98)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          zIndex: 999999, textAlign: 'center', color: 'white', backdropFilter: 'blur(10px)',
+          padding: '24px'
+        }}>
+          <div style={{
+            background: 'white', borderRadius: '32px', padding: '48px', maxWidth: '500px',
+            color: '#0f172a', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)'
+          }}>
+            <div style={{ 
+              width: '80px', height: '80px', background: '#fee2e2', borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#ef4444', marginBottom: '24px', margin: '0 auto'
+            }}>
+              <AlertCircle size={48} />
+            </div>
+            <h2 style={{ fontSize: '2rem', fontWeight: 900, marginBottom: '16px', color: '#1e293b' }}>Anti-Cheat Warning</h2>
+            <p style={{ fontSize: '1.1rem', color: '#64748b', lineHeight: 1.6, marginBottom: '32px' }}>
+              Full screen mode is mandatory for this aptitude contest. You must re-enter full screen to continue.
+            </p>
+            <button
+              onClick={() => {
+                const el = document.documentElement;
+                if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+                else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+              }}
+              style={{ 
+                width: '100%', padding: '18px', borderRadius: '16px', fontSize: '1.1rem', 
+                fontWeight: 800, background: '#4f46e5', color: 'white', border: 'none', cursor: 'pointer'
+              }}
+            >
+              Re-enter Full Screen
+            </button>
+            <p style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '16px' }}>
+              Exiting full screen multiple times may be reported to your institution.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
