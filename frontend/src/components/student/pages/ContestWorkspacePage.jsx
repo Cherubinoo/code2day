@@ -224,36 +224,27 @@ function ContestWorkspacePage({ contestId, onBack }) {
     fetchContestData();
   }, [contestId]);
 
-  // Timer logic - countdown from contest duration
+  // Timer logic — use session_end_time from participation (already capped at access_end_time)
   useEffect(() => {
-    if (!contest?.participation?.started_at || !contest?.duration_minutes) {
+    if (!contest?.participation?.session_end_time) {
       return;
     }
 
-    const startTime = new Date(contest.participation.started_at).getTime();
-    const durationMs = contest.duration_minutes * 60 * 1000;
+    const sessionEnd = new Date(contest.participation.session_end_time).getTime();
 
-    const interval = setInterval(async () => {
-      const now = Date.now();
-      const elapsed = now - startTime;
-      const remaining = durationMs - elapsed;
+    function tick() {
+      const remaining = Math.max(0, Math.floor((sessionEnd - Date.now()) / 1000));
+      setContestSecondsLeft(remaining);
 
       if (remaining <= 0) {
-        setContestSecondsLeft(0);
         clearInterval(interval);
-        // Auto-submit on time expiry
         if (!autoSubmittedRef.current) {
           autoSubmittedRef.current = true;
           isContestActiveRef.current = false;
-          try {
-            await fetch(`/api/student/contests/${contestId}/auto-submit/`, {
-              method: "POST",
-              ...buildJsonPostOptions({}),
-            });
-          } catch (err) {
-            console.error("Auto-submit error:", err);
-          }
-          // Clear contest cache on completion
+          fetch(`/api/student/contests/${contestId}/auto-submit/`, {
+            method: "POST",
+            ...buildJsonPostOptions({}),
+          }).catch((err) => console.error("Auto-submit error:", err));
           try {
             Object.keys(localStorage)
               .filter(k => k.startsWith(`c2d-contest-${contestId}`))
@@ -265,13 +256,13 @@ function ContestWorkspacePage({ contestId, onBack }) {
             onBack();
           }, 3000);
         }
-      } else {
-        setContestSecondsLeft(Math.floor(remaining / 1000));
       }
-    }, 1000);
+    }
 
+    tick(); // run immediately so there's no 1-second blank
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [contest]);
+  }, [contest?.participation?.session_end_time]);
 
   // Problem timer
   useEffect(() => {
@@ -785,7 +776,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
                     type="button"
                     className="ghost-button dense-action"
                     onClick={handleRunCode}
-                    disabled={executionBusy}
+                    disabled={executionBusy || contestSecondsLeft === 0}
                   >
                     {executionBusy ? "Running…" : "Run"}
                   </button>
@@ -793,9 +784,9 @@ function ContestWorkspacePage({ contestId, onBack }) {
                     type="button"
                     className="primary-button dense-action"
                     onClick={handleSubmitCode}
-                    disabled={executionBusy}
+                    disabled={executionBusy || contestSecondsLeft === 0}
                   >
-                    {executionBusy ? "Submitting…" : "Submit"}
+                    {executionBusy ? "Submitting…" : contestSecondsLeft === 0 ? "Time's Up" : "Submit"}
                   </button>
                 </div>
               </div>

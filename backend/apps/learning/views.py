@@ -5207,7 +5207,9 @@ class StudentContestDetailView(APIView):
             "contest_type": contest.contest_type,
             "start_time": contest.start_time,
             "end_time": contest.end_time,
+            "access_end_time": contest.access_end_time,
             "duration_minutes": contest.duration_minutes,
+            "session_duration_minutes": contest.session_duration_minutes or contest.duration_minutes,
             "problem_count": contest.problems.count(),
             "aptitude_question_count": contest.aptitude_questions.count(),
             "is_active": is_active,
@@ -5216,9 +5218,12 @@ class StudentContestDetailView(APIView):
             "problems": problems_data,
             "participation": {
                 "started_at": participation.started_at,
+                "session_end_time": participation.session_end_time,
+                "remaining_time_seconds": participation.remaining_time_seconds,
                 "problems_solved": participation.problems_solved,
                 "total_score": participation.total_score,
                 "time_spent_seconds": participation.time_spent_seconds,
+                "is_active": participation.is_active,
             } if participation else None,
         })
 
@@ -5550,10 +5555,17 @@ class StudentContestProblemView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Check if contest has ended
+        # Check if contest has ended (global access window)
         if contest.is_ended:
             return Response(
                 {"detail": "Contest has ended."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if this student's personal session has expired
+        if participation.is_session_expired or not participation.is_active:
+            return Response(
+                {"detail": "Your contest session has expired."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -5633,7 +5645,7 @@ class StudentContestSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Check if contest has ended
+        # Check if contest has ended (global access window)
         if contest.is_ended:
             # End participation if still active
             if participation.is_active:
@@ -5641,6 +5653,15 @@ class StudentContestSubmitView(APIView):
             
             return Response(
                 {"detail": "Contest has ended. No more submissions allowed."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if this student's personal session has expired
+        if participation.is_session_expired or not participation.is_active:
+            if participation.is_active:
+                participation.end_participation(auto_submitted=True)
+            return Response(
+                {"detail": "Your contest session has expired. No more submissions allowed."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
