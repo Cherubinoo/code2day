@@ -5750,7 +5750,7 @@ button.tab-pill {
 }
 :root {
   --sidebar-width: 260px;
-  --header-height: 64px;
+  --header-height: 0px; /* sidebar uses sticky, not fixed — no offset needed */
 }
 
 .hod-sidebar {
@@ -5759,12 +5759,12 @@ button.tab-pill {
   border-right: 1px solid var(--border-soft);
   display: flex;
   flex-direction: column;
-  position: fixed; /* Changed from sticky to fixed */
-  top: var(--header-height);
-  left: 0;
-  bottom: 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
   z-index: 50;
   transition: all 0.3s ease;
+  overflow-y: auto;
 }
 
 .admin-sidebar {
@@ -5773,18 +5773,18 @@ button.tab-pill {
   border-right: 1px solid var(--border-soft);
   display: flex;
   flex-direction: column;
-  position: fixed;
-  top: var(--header-height);
-  left: 0;
-  bottom: 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
   z-index: 100;
+  overflow-y: auto;
 }
 
 
 
 
 .admin-dashboard-layout, .hod-dashboard-layout {
-  display: block; /* Changed from flex to block since sidebar is fixed */
+  display: flex;
   min-height: 100vh;
   background: var(--bg-2);
   width: 100%;
@@ -5792,7 +5792,9 @@ button.tab-pill {
 }
 
 .hod-main-content {
-  margin-left: 260px !important;
+  flex: 1;
+  min-width: 0;
+  margin-left: 0 !important;
   padding: clamp(20px, 2.5vw, 40px);
   min-height: 100vh;
   position: relative;
@@ -5804,7 +5806,7 @@ button.tab-pill {
 
 .hod-main-content.no-padding {
   padding: 0 !important;
-  margin-left: 260px !important;
+  margin-left: 0 !important;
   width: calc(100% - 260px);
 }
 
@@ -7164,13 +7166,11 @@ html.discuss-page {
   }
 
   .hod-main-content {
-    margin-left: 240px !important;
     padding: 28px 24px;
   }
 
   .hod-main-content.no-padding {
-    margin-left: 240px !important;
-    width: calc(100% - 240px);
+    width: auto;
   }
 
   /* Admin header font */
@@ -7205,13 +7205,11 @@ html.discuss-page {
   }
 
   .hod-main-content {
-    margin-left: 220px !important;
     padding: 20px 18px;
   }
 
   .hod-main-content.no-padding {
-    margin-left: 220px !important;
-    width: calc(100% - 220px);
+    width: auto;
   }
 
   /* Collapse sidebar labels — show only icons */
@@ -7379,9 +7377,7 @@ html.discuss-page {
   }
 
   .account-block {
-    position: absolute;
-    top: 12px;
-    right: 12px;
+    align-self: flex-end;
   }
 
   /* Page headers */
