@@ -19,17 +19,16 @@ from apps.learning.models import Department, Institution, StudentProfile
 
 # ── Students to seed ──────────────────────────────────────────────────────────
 # Format: (register_number, name)
-# Names are placeholders — the import_students command will overwrite them
-# with real names from the source DB on the next sync.
+# Names sourced from local DB (collegeadmissiondb.personaldetails)
 MISSING_STUDENTS = [
-    ("953623243001", "Student 953623243001"),
-    ("953623243002", "Student 953623243002"),
-    ("953623243003", "Student 953623243003"),
-    ("953623243004", "Student 953623243004"),
-    ("953623243005", "Student 953623243005"),
-    ("953623243023", "Student 953623243023"),
-    ("953623243049", "Student 953623243049"),
-    ("953623243109", "Student 953623243109"),
+    ("953623243001", "ABI ALIAS MAHALAKSHMI R"),
+    ("953623243002", "Abinaya S"),
+    ("953623243003", "ABI RAJESHWARI P"),
+    ("953623243004", "AKASH V"),
+    ("953623243005", "AKSHAY A"),
+    ("953623243023", "DELIGHT CHERUBINO I"),
+    ("953623243049", "KISHORREKUMAR S"),
+    ("953623243109", "UMADEVI K"),
 ]
 
 
@@ -53,19 +52,38 @@ class Command(BaseCommand):
 
         created_count = 0
         skipped_count = 0
+        updated_count = 0
 
         with transaction.atomic():
-            for register_number, placeholder_name in MISSING_STUDENTS:
-                if StudentProfile.objects.filter(register_number=register_number).exists():
-                    self.stdout.write(f"  SKIP (exists): {register_number}")
-                    skipped_count += 1
+            for register_number, real_name in MISSING_STUDENTS:
+                existing = StudentProfile.objects.filter(register_number=register_number).first()
+
+                if existing:
+                    # Fix placeholder name if it was seeded with a generic name
+                    needs_update = (
+                        existing.name != real_name or
+                        existing.title in ("", existing.register_number, f"Student {register_number}")
+                    )
+                    if needs_update:
+                        existing.name = real_name
+                        existing.title = real_name
+                        existing.save(update_fields=["name", "title"])
+                        # Also sync the Django User first_name
+                        if existing.account:
+                            existing.account.first_name = real_name[:150]
+                            existing.account.save(update_fields=["first_name"])
+                        self.stdout.write(self.style.SUCCESS(f"  UPDATED name: {register_number} → {real_name}"))
+                        updated_count += 1
+                    else:
+                        self.stdout.write(f"  SKIP (already correct): {register_number} — {existing.name}")
+                        skipped_count += 1
                     continue
 
                 # Create Django User account
                 user, _ = User.objects.get_or_create(
                     username=register_number,
                     defaults={
-                        "first_name": placeholder_name[:150],
+                        "first_name": real_name[:150],
                         "is_active": True,
                     }
                 )
@@ -78,19 +96,15 @@ class Command(BaseCommand):
                     institution=institution,
                     department=department,
                     register_number=register_number,
-                    name=placeholder_name,
-                    title=placeholder_name,
+                    name=real_name,
+                    title=real_name,
                     batch="23-27",
                     import_source="seed_missing_students",
                 )
 
-                self.stdout.write(self.style.SUCCESS(f"  CREATED: {register_number}"))
+                self.stdout.write(self.style.SUCCESS(f"  CREATED: {register_number} — {real_name}"))
                 created_count += 1
 
         self.stdout.write(self.style.SUCCESS(
-            f"\nDone — created {created_count}, skipped {skipped_count} (already existed)."
+            f"\nDone — created {created_count}, updated {updated_count}, skipped {skipped_count}."
         ))
-        if created_count > 0:
-            self.stdout.write(
-                "Note: Names are placeholders. Run import_students to sync real names from the source DB."
-            )

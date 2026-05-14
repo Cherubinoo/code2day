@@ -427,6 +427,25 @@ def get_discussion_messages(user, profile, profile_type, thread_type="general", 
     return qs.none()
 
 
+def _best_score_per_problem(contest, student):
+    """
+    Return the sum of the best (highest) Accepted score per problem for a student.
+    Only counts Accepted submissions — Wrong Answer partial scores are excluded.
+    This is the canonical way to compute a student's contest total_score.
+    """
+    from django.db.models import Max
+    rows = (
+        ContestSubmission.objects.filter(
+            contest=contest,
+            student=student,
+            status='Accepted',
+        )
+        .values('problem')
+        .annotate(best=Max('score'))
+    )
+    return sum(r['best'] for r in rows)
+
+
 def execute_problem_test_case_batch(
     *,
     problem,
@@ -3485,7 +3504,7 @@ class ContestAnalyticsView(APIView):
             else:
                 student_submissions = ContestSubmission.objects.filter(contest=contest, student=student)
                 solved_count = student_submissions.filter(status='Accepted').values('problem').distinct().count()
-                total_score = student_submissions.aggregate(total=Sum('score'))['total'] or 0
+                total_score = _best_score_per_problem(contest, student)
             
             # Only include students who have submitted
             if student_submissions.count() == 0:
@@ -5325,12 +5344,12 @@ class StudentContestAutoSubmitView(APIView):
         
         # Calculate final score and problems solved
         if participation.contest.contest_type == 'programming':
-            submissions = ContestSubmission.objects.filter(
+            participation.total_score = _best_score_per_problem(participation.contest, student)
+            participation.problems_solved = ContestSubmission.objects.filter(
                 contest_id=contest_id,
-                student=student
-            )
-            participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
-            participation.problems_solved = submissions.filter(status='Accepted').values('problem').distinct().count()
+                student=student,
+                status='Accepted',
+            ).values('problem').distinct().count()
         else:
             # Aptitude contest
             submissions = AptitudeContestSubmission.objects.filter(
@@ -5400,13 +5419,12 @@ class StudentContestStopView(APIView):
         
         # Recalculate final score and problems solved one last time
         if contest.contest_type == 'programming':
-            from django.db.models import Sum
-            submissions = ContestSubmission.objects.filter(
+            participation.total_score = _best_score_per_problem(contest, request.user.student_profile)
+            participation.problems_solved = ContestSubmission.objects.filter(
                 contest=contest,
-                student=request.user.student_profile
-            )
-            participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
-            participation.problems_solved = submissions.filter(status='Accepted').values('problem').distinct().count()
+                student=request.user.student_profile,
+                status='Accepted',
+            ).values('problem').distinct().count()
         else:
             # Aptitude contest
             from django.db.models import Sum
@@ -5461,14 +5479,14 @@ class StudentContestSessionStatusView(APIView):
         if participation.is_session_expired and participation.is_active:
             participation.end_participation(auto_submitted=True)
             
-            # Calculate final score
+            # Calculate final score — only count Accepted submissions
             if participation.contest.contest_type == 'programming':
-                submissions = ContestSubmission.objects.filter(
+                participation.total_score = _best_score_per_problem(participation.contest, student)
+                participation.problems_solved = ContestSubmission.objects.filter(
                     contest_id=contest_id,
-                    student=student
-                )
-                participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
-                participation.problems_solved = submissions.filter(status='Accepted').values('problem').distinct().count()
+                    student=student,
+                    status='Accepted',
+                ).values('problem').distinct().count()
             else:
                 submissions = AptitudeContestSubmission.objects.filter(
                     contest_id=contest_id,
