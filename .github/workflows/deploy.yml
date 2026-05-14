@@ -108,7 +108,8 @@ jobs:
           echo "→ Ensuring institution + department mappings..."
           docker exec code2day-backend python manage.py setup_ramco_institution
           docker exec code2day-backend python manage.py setup_departments_and_map --institution-id 9536
-          echo "✓ Institution and department mappings done"
+          docker exec code2day-backend python manage.py seed_missing_students
+          echo "✓ Institution, department mappings and missing students done"
 
           # ── 6. Collect static files ────────────────────────────────────────
           echo "→ Static files..."
