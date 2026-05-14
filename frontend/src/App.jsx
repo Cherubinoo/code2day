@@ -1411,6 +1411,64 @@ function App() {
     return <MaintenanceScreen message={maintenanceMessage} onRetry={() => window.location.reload()} onBack={handleMaintenanceBack} />;
   }
 
+  // ── Mobile blocker — require a proper desktop/laptop screen ──────────────
+  if (typeof window !== 'undefined' && window.innerWidth < 900) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'linear-gradient(135deg, #1f2816 0%, #39482a 100%)',
+        padding: '32px 24px',
+        textAlign: 'center',
+      }}>
+        <div style={{
+          background: 'rgba(255,255,255,0.07)',
+          border: '1px solid rgba(255,255,255,0.12)',
+          borderRadius: 20,
+          padding: '40px 32px',
+          maxWidth: 360,
+          width: '100%',
+        }}>
+          <div style={{ fontSize: 56, marginBottom: 20 }}>🖥️</div>
+          <h1 style={{
+            color: '#f8f6ef',
+            fontSize: '1.5rem',
+            fontWeight: 900,
+            margin: '0 0 12px',
+            letterSpacing: '-0.02em',
+          }}>
+            Desktop Only
+          </h1>
+          <p style={{
+            color: 'rgba(248,246,239,0.65)',
+            fontSize: '0.95rem',
+            lineHeight: 1.6,
+            margin: '0 0 24px',
+          }}>
+            code-2day is designed for laptops and desktops. Please open it on a larger screen for the best experience.
+          </p>
+          <div style={{
+            background: 'rgba(196,151,67,0.15)',
+            border: '1px solid rgba(196,151,67,0.3)',
+            borderRadius: 10,
+            padding: '12px 16px',
+            color: '#c49743',
+            fontSize: '0.82rem',
+            fontWeight: 600,
+          }}>
+            Minimum screen width: 900px
+          </div>
+        </div>
+        <p style={{ color: 'rgba(255,255,255,0.3)', fontSize: '0.75rem', marginTop: 24 }}>
+          code-2day · Ramco Institute of Technology
+        </p>
+      </div>
+    );
+  }
+
   // JA 2-step verification gate — shown after password is correct, before session is created
   if (pendingJaLogin) {
     return (
