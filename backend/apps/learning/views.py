@@ -3607,7 +3607,8 @@ class AptitudeContestSubmitView(APIView):
         return Response({
             "success": True,
             "is_correct": is_correct,
-            "score": score
+            "score": score,
+            "correct_count": participation.problems_solved,
         })
 
 

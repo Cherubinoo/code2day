@@ -33,6 +33,7 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
   
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState({}); // {questionId: selectedOption}
+  const [correctCount, setCorrectCount] = useState(0); // tracks correctly answered questions
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   const [contestSecondsLeft, setContestSecondsLeft] = useState(null);
@@ -131,14 +132,17 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
         
         // Load existing answers if any
         const initialAnswers = {};
+        let initialCorrect = 0;
         if (data.problems) {
           data.problems.forEach(q => {
             if (q.student_answer) {
               initialAnswers[q.id] = q.student_answer;
+              if (q.is_correct) initialCorrect++;
             }
           });
         }
         setAnswers(initialAnswers);
+        setCorrectCount(initialCorrect);
         
         setLoading(false);
       } catch (err) {
@@ -150,48 +154,40 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
     fetchContestData();
   }, [contestId]);
 
-  // Timer logic
+  // Timer logic — use session_end_time from participation (already capped at access_end_time)
   useEffect(() => {
-    if (!contest?.participation?.started_at || !contest?.duration_minutes) {
+    if (!contest?.participation?.session_end_time) {
       return;
     }
 
-    const startTime = new Date(contest.participation.started_at).getTime();
-    const durationMs = contest.duration_minutes * 60 * 1000;
+    const sessionEnd = new Date(contest.participation.session_end_time).getTime();
 
-    const interval = setInterval(async () => {
-      const now = Date.now();
-      const elapsed = now - startTime;
-      const remaining = durationMs - elapsed;
+    function tick() {
+      const remaining = Math.max(0, Math.floor((sessionEnd - Date.now()) / 1000));
+      setContestSecondsLeft(remaining);
 
       if (remaining <= 0) {
-        setContestSecondsLeft(0);
         clearInterval(interval);
-        // Auto-finish when time is up
         if (!autoSubmittedRef.current) {
           autoSubmittedRef.current = true;
           isContestActiveRef.current = false;
-          try {
-            await fetch(`/api/student/contests/${contestId}/auto-submit/`, {
-              method: "POST",
-              ...buildJsonPostOptions({}),
-            });
-          } catch (err) {
-            console.error("Auto-submit error:", err);
-          }
+          fetch(`/api/student/contests/${contestId}/auto-submit/`, {
+            method: "POST",
+            ...buildJsonPostOptions({}),
+          }).catch((err) => console.error("Auto-submit error:", err));
           showToast('⏰ Time is up! Your aptitude contest has been submitted automatically.', 'warning');
           setTimeout(() => {
             if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
             onBack();
           }, 3000);
         }
-      } else {
-        setContestSecondsLeft(Math.floor(remaining / 1000));
       }
-    }, 1000);
+    }
 
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
-  }, [contest]);
+  }, [contest?.participation?.session_end_time]);
 
   const handleOptionSelect = async (questionId, option) => {
     if (isSubmitting) return;
@@ -205,11 +201,17 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
         ...buildJsonPostOptions({
           question_id: questionId,
           selected_option: option,
-          time_taken: 0 // Could track this if needed
+          time_taken: 0
         })
       });
       
-      if (!res.ok) {
+      if (res.ok) {
+        const data = await res.json();
+        // Server returns authoritative correct count
+        if (typeof data.correct_count === 'number') {
+          setCorrectCount(data.correct_count);
+        }
+      } else {
         console.error("Failed to save answer");
       }
     } catch (err) {
@@ -357,14 +359,14 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>Questions</span>
               <span style={{ fontSize: 12, color: '#64748b', background: '#f1f5f9', padding: '2px 8px', borderRadius: 12 }}>
-                {totalAnswered} / {questions.length} Answered
+                {correctCount} / {questions.length} Completed
               </span>
             </div>
             <div style={{ height: 6, background: '#f1f5f9', borderRadius: 3, overflow: 'hidden' }}>
               <div style={{ 
                 height: '100%', 
                 background: '#4f46e5', 
-                width: `${(totalAnswered / questions.length) * 100}%`,
+                width: `${questions.length > 0 ? (correctCount / questions.length) * 100 : 0}%`,
                 transition: 'width 0.3s ease'
               }} />
             </div>

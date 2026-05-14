@@ -815,7 +815,7 @@ function ContestCard({ contest, isUpcoming, isCompleted, onStart }) {
             <div>
               <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Solved</div>
               <div style={{ fontSize: 16, fontWeight: 600, color: '#059669' }}>
-                {contest.participation.problems_solved}/{contest.contest_type === 'aptitude' ? contest.aptitude_question_count : contest.problem_count}
+                {contest.participation.problems_solved}
               </div>
             </div>
             <div>
