@@ -5645,6 +5645,16 @@ class StudentContestSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # Coerce language_id to int — request.data delivers it as a string
+        # unlike CodeRunView which uses CodeRunSerializer (IntegerField)
+        try:
+            language_id = int(language_id)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": f"Invalid language_id: {language_id!r}. Must be an integer."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Execute code using the execution engine
         try:
             # Get test cases for the problem
@@ -5717,7 +5727,10 @@ class StudentContestSubmitView(APIView):
             else:
                 status_str = "Wrong Answer"
 
-            score = int((passed_cases / total_cases) * 100) if total_cases > 0 else 0
+            # Difficulty-based max score: Easy=100, Medium=200, Hard=300
+            DIFFICULTY_MAX = {"Easy": 100, "Medium": 200, "Hard": 300}
+            max_score = DIFFICULTY_MAX.get(problem.difficulty, 100)
+            score = int((passed_cases / total_cases) * max_score) if total_cases > 0 else 0
 
             # Create contest submission
             submission = ContestSubmission.objects.create(
@@ -5732,18 +5745,23 @@ class StudentContestSubmitView(APIView):
 
             # Update participation if problem is solved
             if status_str == 'Accepted':
-                # Check if this is the first time solving this problem
-                previous_accepted = ContestSubmission.objects.filter(
-                    contest=contest,
-                    student=student,
-                    problem=problem,
-                    status='Accepted'
-                ).exclude(id=submission.id).exists()
+                # Recalculate total_score as best score per problem (prevents score > 100 per problem)
+                from django.db.models import Max as DMax
+                best_scores = (
+                    ContestSubmission.objects.filter(
+                        contest=contest,
+                        student=student,
+                        status='Accepted',
+                    )
+                    .values('problem')
+                    .annotate(best=DMax('score'))
+                )
+                new_total = sum(row['best'] for row in best_scores)
+                new_solved = best_scores.count()
 
-                if not previous_accepted:
-                    participation.problems_solved += 1
-                    participation.total_score += int(score)
-                    participation.save(update_fields=['problems_solved', 'total_score'])
+                participation.total_score = new_total
+                participation.problems_solved = new_solved
+                participation.save(update_fields=['problems_solved', 'total_score'])
 
             # Keep contest-level counters in sync
             try:
@@ -5757,6 +5775,7 @@ class StudentContestSubmitView(APIView):
                     "id": submission.id,
                     "status": submission.status,
                     "score": submission.score,
+                    "max_score": max_score,
                     "passed_cases": passed_cases,
                     "total_cases": total_cases,
                     "test_results": test_results,
@@ -6178,8 +6197,8 @@ class StudentReportPDFView(APIView):
             buffer, 
             institution=student.institution,
             pagesize=A4, 
-            topMargin=0.5*inch, 
-            bottomMargin=0.5*inch
+            topMargin=1.6*inch, 
+            bottomMargin=0.6*inch
         )
         
         # Custom styles
@@ -6594,8 +6613,8 @@ class StaffReportPDFView(APIView):
             buffer, 
             institution=target_staff.institution,
             pagesize=A4, 
-            topMargin=0.5*inch, 
-            bottomMargin=0.5*inch
+            topMargin=1.6*inch, 
+            bottomMargin=0.6*inch
         )
         
         # Custom styles

@@ -143,7 +143,7 @@ function BatchDetailView({ batchCode, jaInfo, onBack, onRefresh }) {
   const [showMoveModal, setShowMoveModal] = useState(null);
   const [moveBatch, setMoveBatch] = useState('');
   const [confirmState, setConfirmState] = useState({ show: false, m1: '', m2: '', onConfirm: null });
-  const [form, setForm] = useState({ register_number: '', name: '', title: '', personal_email: '', mobile_number: '', gender: '', batch: batchCode });
+  const [form, setForm] = useState({ register_number: '', name: '', personal_email: '', mobile_number: '', gender: '', batch: batchCode });
   const [submitting, setSubmitting] = useState(false);
   const [lastAdded, setLastAdded] = useState(null); // register_number of last added student
   const [downloadingReport, setDownloadingReport] = useState(false);
@@ -202,7 +202,7 @@ function BatchDetailView({ batchCode, jaInfo, onBack, onRefresh }) {
       if (!res.ok) throw new Error(data.detail || 'Failed to add student');
       setLastAdded(form.register_number);
       setMsg({ type: 'success', text: `Student "${form.name}" added to batch "${form.batch}" successfully.` });
-      setForm({ register_number: '', name: '', title: '', personal_email: '', mobile_number: '', gender: '', batch: batchCode });
+      setForm({ register_number: '', name: '', personal_email: '', mobile_number: '', gender: '', batch: batchCode });
       setShowAddForm(false);
       load();
       onRefresh();
@@ -374,31 +374,36 @@ function BatchDetailView({ batchCode, jaInfo, onBack, onRefresh }) {
       {/* Add student form */}
       {showAddForm && (
         <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 14, padding: 20, marginBottom: 20 }}>
-          <h4 style={{ margin: '0 0 14px', fontSize: 14, fontWeight: 800, color: '#065f46' }}>Add New Student to Batch {batchCode}</h4>
+          <h4 style={{ margin: '0 0 4px', fontSize: 14, fontWeight: 800, color: '#065f46' }}>Add New Student to Batch {batchCode}</h4>
+          <p style={{ margin: '0 0 14px', fontSize: 12, color: '#6b7280' }}>Fields marked * are required.</p>
           <form onSubmit={handleAddStudent}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 14 }}>
-              {[
-                { key: 'register_number', label: 'Register Number *', placeholder: '953623243001' },
-                { key: 'name', label: 'Full Name *', placeholder: 'Arun Kumar' },
-                { key: 'title', label: 'Title', placeholder: 'Mr. Arun Kumar' },
-                { key: 'personal_email', label: 'Email', placeholder: 'arun@example.com' },
-                { key: 'mobile_number', label: 'Mobile', placeholder: '9876543210' },
-              ].map(f => (
-                <div key={f.key}>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>{f.label}</label>
-                  <input
-                    value={form[f.key]}
-                    onChange={e => setForm(prev => ({ ...prev, [f.key]: e.target.value }))}
-                    placeholder={f.placeholder}
-                    style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }}
-                  />
-                </div>
-              ))}
+            {/* Required fields */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12, marginBottom: 12 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Register Number *</label>
+                <input
+                  value={form.register_number}
+                  onChange={e => setForm(prev => ({ ...prev, register_number: e.target.value }))}
+                  placeholder="953623243001"
+                  required
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Full Name *</label>
+                <input
+                  value={form.name}
+                  onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="Arun Kumar"
+                  required
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }}
+                />
+              </div>
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Batch *</label>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <select
-                    value={form.batch}
+                    value={allBatches.some(b => b.batch === form.batch) ? form.batch : ''}
                     onChange={e => setForm(prev => ({ ...prev, batch: e.target.value }))}
                     style={{ flex: 1, padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13 }}
                   >
@@ -410,25 +415,50 @@ function BatchDetailView({ batchCode, jaInfo, onBack, onRefresh }) {
                   <input
                     value={form.batch}
                     onChange={e => setForm(prev => ({ ...prev, batch: e.target.value }))}
-                    placeholder="Or type new batch"
+                    placeholder="Or type new"
                     style={{ flex: 1, padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }}
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Optional fields */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 14 }}>
               <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Gender</label>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Email <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <input
+                  type="email"
+                  value={form.personal_email}
+                  onChange={e => setForm(prev => ({ ...prev, personal_email: e.target.value }))}
+                  placeholder="arun@example.com"
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Mobile <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <input
+                  type="tel"
+                  value={form.mobile_number}
+                  onChange={e => setForm(prev => ({ ...prev, mobile_number: e.target.value }))}
+                  placeholder="9876543210"
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Gender <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
                 <select
                   value={form.gender}
                   onChange={e => setForm(prev => ({ ...prev, gender: e.target.value }))}
                   style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }}
                 >
-                  <option value="">Select</option>
+                  <option value="">— Select —</option>
                   <option value="Male">Male</option>
                   <option value="Female">Female</option>
                   <option value="Other">Other</option>
                 </select>
               </div>
             </div>
+
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="submit" disabled={submitting} style={{ padding: '9px 20px', borderRadius: 9, border: 'none', background: submitting ? '#9ca3af' : '#2D6A4F', color: 'white', fontWeight: 700, cursor: submitting ? 'not-allowed' : 'pointer' }}>
                 {submitting ? 'Adding...' : 'Add Student'}

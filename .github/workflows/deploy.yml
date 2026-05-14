@@ -99,12 +99,23 @@ jobs:
           docker exec code2day-backend python manage.py migrate --noinput
           echo "✓ Migrations done"
 
-          # ── 5. Collect static files ────────────────────────────────────────
+          # ── 5. Sync students from source DB (safe — skips if source unreachable) ──
+          echo "→ Syncing students from source DB..."
+          docker exec code2day-backend python manage.py import_students \
+            && echo "✓ Student sync complete" \
+            || echo "⚠ Student sync skipped (source DB unreachable — existing data unchanged)"
+
+          echo "→ Ensuring institution + department mappings..."
+          docker exec code2day-backend python manage.py setup_ramco_institution
+          docker exec code2day-backend python manage.py setup_departments_and_map --institution-id 9536
+          echo "✓ Institution and department mappings done"
+
+          # ── 6. Collect static files ────────────────────────────────────────
           echo "→ Static files..."
           docker exec code2day-backend python manage.py collectstatic --noinput
           echo "✓ Done"
 
-          # ── 6. Health check ────────────────────────────────────────────────
+          # ── 7. Health check ────────────────────────────────────────────────
           sleep 8
           BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/)
           FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/)

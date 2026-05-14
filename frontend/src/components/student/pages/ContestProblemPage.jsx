@@ -169,6 +169,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
 
     setIsRunning(true);
     setOutput('Running code...');
+    setTestResults(null); // clear previous submission results
 
     try {
       const result = await runCodeExecution({
@@ -237,14 +238,14 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
         // Header
         if (sub.status === 'Accepted') {
           lines.push(`✅ Accepted — All ${sub.total_cases} test case(s) passed!`);
-          lines.push(`Score: ${sub.score}/100`);
+          lines.push(`Score: ${sub.score}/${sub.max_score ?? sub.score}`);
         } else if (sub.status === 'Compilation Error') {
           lines.push(`🔴 Compilation Error`);
           lines.push('');
           lines.push(sub.compile_error || 'Check your syntax.');
         } else {
           lines.push(`❌ ${sub.status} — ${sub.passed_cases}/${sub.total_cases} test case(s) passed`);
-          lines.push(`Score: ${sub.score}/100`);
+          lines.push(`Score: ${sub.score}/${sub.max_score ?? 100}`);
         }
 
         // Per-test-case breakdown (sample cases only)
@@ -630,11 +631,15 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
         </div>
       </section>
 
-      {/* Console Section - ProblemsPage style */}
+      {/* Console Section */}
       <section className="surface-card output-card judge-output">
         <div className="section-head">
           <h3>Console</h3>
-          <span>Run output and execution notes</span>
+          <span>
+            {testResults
+              ? `${testResults.passed_cases ?? 0}/${testResults.total_cases ?? 0} test cases passed`
+              : 'Run output and execution notes'}
+          </span>
         </div>
 
         <label htmlFor="execution-input" className="filter-label">Custom Input</label>
@@ -646,10 +651,157 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
           placeholder="Optional stdin for a custom run. Leave blank to run the problem's sample cases."
           disabled={isTimeUp}
         />
-        
-        <div className="output-panel-shell">
-          <pre className="output-panel compact-output">{output || 'Run your code to see output here...'}</pre>
-        </div>
+
+        {/* ── Submission verdict + test case cards ── */}
+        {testResults ? (
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+
+            {/* Overall verdict banner */}
+            <div style={{
+              padding: '12px 16px',
+              borderRadius: 10,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              background: testResults.status === 'Accepted'
+                ? 'linear-gradient(135deg,#d1fae5,#a7f3d0)'
+                : testResults.status === 'Compilation Error'
+                  ? 'linear-gradient(135deg,#fef3c7,#fde68a)'
+                  : 'linear-gradient(135deg,#fee2e2,#fecaca)',
+              border: `1px solid ${testResults.status === 'Accepted' ? '#6ee7b7' : testResults.status === 'Compilation Error' ? '#fcd34d' : '#fca5a5'}`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 20 }}>
+                  {testResults.status === 'Accepted' ? '✅' : testResults.status === 'Compilation Error' ? '🔴' : '❌'}
+                </span>
+                <div>
+                  <div style={{
+                    fontWeight: 800, fontSize: '1rem',
+                    color: testResults.status === 'Accepted' ? '#065f46' : testResults.status === 'Compilation Error' ? '#92400e' : '#991b1b',
+                  }}>
+                    {testResults.status}
+                  </div>
+                  {testResults.status !== 'Compilation Error' && (
+                    <div style={{ fontSize: '0.8rem', color: '#555', marginTop: 2 }}>
+                      {testResults.passed_cases}/{testResults.total_cases} test cases passed
+                    </div>
+                  )}
+                </div>
+              </div>
+              {testResults.status !== 'Compilation Error' && (
+                <div style={{
+                  fontWeight: 800, fontSize: '1.1rem',
+                  color: testResults.status === 'Accepted' ? '#065f46' : '#991b1b',
+                }}>
+                  {testResults.score}/{testResults.max_score ?? 100}
+                </div>
+              )}
+            </div>
+
+            {/* Compilation error detail */}
+            {testResults.status === 'Compilation Error' && testResults.compile_error && (
+              <pre style={{
+                background: '#1e1e1e', color: '#f87171',
+                padding: '12px 14px', borderRadius: 8,
+                fontSize: '0.82rem', overflowX: 'auto',
+                margin: 0, lineHeight: 1.6,
+              }}>
+                {testResults.compile_error}
+              </pre>
+            )}
+
+            {/* Runtime error (no test results) */}
+            {!testResults.test_results?.length && testResults.stderr && (
+              <pre style={{
+                background: '#1e1e1e', color: '#f87171',
+                padding: '12px 14px', borderRadius: 8,
+                fontSize: '0.82rem', overflowX: 'auto',
+                margin: 0, lineHeight: 1.6,
+              }}>
+                {testResults.stderr}
+              </pre>
+            )}
+
+            {/* Per-test-case cards */}
+            {testResults.test_results && testResults.test_results.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#666', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>
+                  Test Cases
+                </div>
+                {testResults.test_results.map((tc) => (
+                  <div key={tc.case} style={{
+                    borderRadius: 10,
+                    border: `1px solid ${tc.passed ? '#6ee7b7' : '#fca5a5'}`,
+                    overflow: 'hidden',
+                    background: tc.passed ? '#f0fdf4' : '#fff5f5',
+                  }}>
+                    {/* Case header */}
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '8px 14px',
+                      background: tc.passed ? '#dcfce7' : '#fee2e2',
+                      borderBottom: `1px solid ${tc.passed ? '#bbf7d0' : '#fecaca'}`,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: 14 }}>{tc.passed ? '✓' : '✗'}</span>
+                        <span style={{ fontWeight: 700, fontSize: '0.88rem', color: tc.passed ? '#166534' : '#991b1b' }}>
+                          Case {tc.case}
+                        </span>
+                        <span style={{
+                          fontSize: '0.72rem', fontWeight: 600,
+                          padding: '2px 7px', borderRadius: 6,
+                          background: tc.passed ? '#bbf7d0' : '#fecaca',
+                          color: tc.passed ? '#166534' : '#991b1b',
+                        }}>
+                          {tc.status}
+                        </span>
+                      </div>
+                      {tc.time && (
+                        <span style={{ fontSize: '0.75rem', color: '#888' }}>⏱ {tc.time}s</span>
+                      )}
+                    </div>
+
+                    {/* Case body */}
+                    <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6, fontSize: '0.82rem' }}>
+                      {tc.stdin && tc.stdin !== '(hidden)' && (
+                        <div>
+                          <span style={{ fontWeight: 700, color: '#555', display: 'block', marginBottom: 2 }}>Input</span>
+                          <pre style={{ margin: 0, background: '#f1f5f9', padding: '6px 10px', borderRadius: 6, color: '#334155', overflowX: 'auto', lineHeight: 1.5 }}>{tc.stdin}</pre>
+                        </div>
+                      )}
+                      {tc.stdin === '(hidden)' && (
+                        <div style={{ color: '#888', fontStyle: 'italic' }}>Hidden test case</div>
+                      )}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <div>
+                          <span style={{ fontWeight: 700, color: '#555', display: 'block', marginBottom: 2 }}>Expected</span>
+                          <pre style={{ margin: 0, background: '#f1f5f9', padding: '6px 10px', borderRadius: 6, color: '#334155', overflowX: 'auto', lineHeight: 1.5 }}>{tc.expected || '(empty)'}</pre>
+                        </div>
+                        <div>
+                          <span style={{ fontWeight: 700, color: tc.passed ? '#166534' : '#991b1b', display: 'block', marginBottom: 2 }}>Got</span>
+                          <pre style={{ margin: 0, background: tc.passed ? '#f0fdf4' : '#fff1f2', padding: '6px 10px', borderRadius: 6, color: tc.passed ? '#166534' : '#991b1b', overflowX: 'auto', lineHeight: 1.5 }}>{tc.actual || '(no output)'}</pre>
+                        </div>
+                      </div>
+                      {tc.stderr && (
+                        <div>
+                          <span style={{ fontWeight: 700, color: '#dc2626', display: 'block', marginBottom: 2 }}>Error</span>
+                          <pre style={{ margin: 0, background: '#1e1e1e', padding: '6px 10px', borderRadius: 6, color: '#f87171', overflowX: 'auto', lineHeight: 1.5, fontSize: '0.78rem' }}>{tc.stderr}</pre>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Plain run output */
+          <div className="output-panel-shell">
+            <pre className="output-panel compact-output">
+              {isRunning ? 'Running…' : (output || 'Run your code to see output here...')}
+            </pre>
+          </div>
+        )}
       </section>
     </div>
   );

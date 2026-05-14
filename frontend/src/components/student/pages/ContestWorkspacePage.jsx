@@ -55,13 +55,21 @@ function ContestWorkspacePage({ contestId, onBack }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Selected problem
-  const [selectedProblemIndex, setSelectedProblemIndex] = useState(0);
+  // ── Cache helpers — keyed per contest + problem + language ───────────────
+  const cacheKey = (slug, lang) => `c2d-contest-${contestId}-${slug}-${lang}`;
+  const sessionKey = `c2d-contest-session-${contestId}`;
+
+  // Selected problem — restore last position from cache
+  const [selectedProblemIndex, setSelectedProblemIndex] = useState(() => {
+    try { return parseInt(localStorage.getItem(`${sessionKey}-idx`) || '0', 10) || 0; } catch { return 0; }
+  });
   const [selectedProblemDetails, setSelectedProblemDetails] = useState(null);
   const selectedProblem = problems[selectedProblemIndex] || null;
 
-  // Editor state
-  const [selectedLanguage, setSelectedLanguage] = useState("JavaScript");
+  // Editor state — restore language from cache
+  const [selectedLanguage, setSelectedLanguage] = useState(() => {
+    try { return localStorage.getItem(`${sessionKey}-lang`) || 'JavaScript'; } catch { return 'JavaScript'; }
+  });
   const [code, setCode] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -245,6 +253,12 @@ function ContestWorkspacePage({ contestId, onBack }) {
           } catch (err) {
             console.error("Auto-submit error:", err);
           }
+          // Clear contest cache on completion
+          try {
+            Object.keys(localStorage)
+              .filter(k => k.startsWith(`c2d-contest-${contestId}`))
+              .forEach(k => localStorage.removeItem(k));
+          } catch {}
           showToast('⏰ Time is up! Your contest has been submitted automatically.', 'warning');
           setTimeout(() => {
             if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -268,15 +282,31 @@ function ContestWorkspacePage({ contestId, onBack }) {
     return () => clearInterval(interval);
   }, [selectedProblemIndex]);
 
-  // Reset code when problem or language changes
+  // Restore cached code when problem or language changes; fall back to starter code
   useEffect(() => {
-    if (selectedProblem) {
-      setCode(starterCodeByLanguage[selectedLanguage] || "// Write your solution here");
-      setProblemSecondsElapsed(0);
-      setOutputLog("Run your code to see output here.");
-      setExecutionMeta({ status: "Ready", time: null, memory: null });
-    }
-  }, [selectedProblem, selectedLanguage]);
+    if (!selectedProblem) return;
+    const key = cacheKey(selectedProblem.slug, selectedLanguage);
+    const cached = (() => { try { return localStorage.getItem(key); } catch { return null; } })();
+    setCode(cached || starterCodeByLanguage[selectedLanguage] || "// Write your solution here");
+    setProblemSecondsElapsed(0);
+    setOutputLog("Run your code to see output here.");
+    setExecutionMeta({ status: "Ready", time: null, memory: null });
+  }, [selectedProblem?.slug, selectedLanguage]);
+
+  // Persist code to localStorage on every change
+  useEffect(() => {
+    if (!selectedProblem || !code) return;
+    try { localStorage.setItem(cacheKey(selectedProblem.slug, selectedLanguage), code); } catch {}
+  }, [code]);
+
+  // Persist selected problem index and language so refresh restores position
+  useEffect(() => {
+    try { localStorage.setItem(`${sessionKey}-idx`, String(selectedProblemIndex)); } catch {}
+  }, [selectedProblemIndex]);
+
+  useEffect(() => {
+    try { localStorage.setItem(`${sessionKey}-lang`, selectedLanguage); } catch {}
+  }, [selectedLanguage]);
 
   // Handle run code
   const handleRunCode = useCallback(async () => {
@@ -368,14 +398,14 @@ function ContestWorkspacePage({ contestId, onBack }) {
 
       if (sub.status === 'Accepted') {
         lines.push(`✅ Accepted — All ${sub.total_cases} test case(s) passed!`);
-        lines.push(`Score: ${sub.score}/100`);
+        lines.push(`Score: ${sub.score}/${sub.max_score ?? sub.score}`);
       } else if (sub.status === 'Compilation Error') {
         lines.push(`🔴 Compilation Error`);
         lines.push('');
         lines.push(sub.compile_error || 'Check your syntax.');
       } else {
         lines.push(`❌ ${sub.status || 'Wrong Answer'} — ${sub.passed_cases}/${sub.total_cases} test case(s) passed`);
-        lines.push(`Score: ${sub.score}/100`);
+        lines.push(`Score: ${sub.score}/${sub.max_score ?? 100}`);
       }
 
       if (sub.test_results && sub.test_results.length > 0) {
@@ -414,7 +444,22 @@ function ContestWorkspacePage({ contestId, onBack }) {
           is_solved: true,
         };
         setProblems(updatedProblems);
-        showToast('✅ Solution accepted! Problem solved.', 'success');
+
+        // Find next unsolved problem
+        const nextIdx = updatedProblems.findIndex(
+          (p, i) => i !== selectedProblemIndex && !p.is_solved && !p.solved
+        );
+
+        if (nextIdx !== -1) {
+          showToast(`✅ Accepted! Moving to problem ${nextIdx + 1}…`, 'success');
+          setTimeout(() => {
+            setSelectedProblemIndex(nextIdx);
+            setProblemDetailTab('current');
+          }, 1800);
+        } else {
+          // All problems solved
+          showToast('🎉 All problems solved! Great work!', 'success');
+        }
       } else {
         showToast(`Submitted: ${sub.status || 'Wrong Answer'} — ${sub.passed_cases}/${sub.total_cases} cases passed`, 'error');
       }
@@ -443,6 +488,12 @@ function ContestWorkspacePage({ contestId, onBack }) {
           }
 
           isContestActiveRef.current = false;
+          // Clear contest cache on completion
+          try {
+            Object.keys(localStorage)
+              .filter(k => k.startsWith(`c2d-contest-${contestId}`))
+              .forEach(k => localStorage.removeItem(k));
+          } catch {}
           showToast('🎉 Contest submitted successfully! Redirecting...', 'success');
           setTimeout(() => {
             if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
@@ -474,6 +525,12 @@ function ContestWorkspacePage({ contestId, onBack }) {
           }
 
           isContestActiveRef.current = false;
+          // Clear contest cache on completion
+          try {
+            Object.keys(localStorage)
+              .filter(k => k.startsWith(`c2d-contest-${contestId}`))
+              .forEach(k => localStorage.removeItem(k));
+          } catch {}
           showToast('Contest submitted. Returning to contest list...', 'success');
           setTimeout(() => {
             if (document.fullscreenElement) document.exitFullscreen().catch(() => {});

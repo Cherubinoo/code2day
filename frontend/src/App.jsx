@@ -673,12 +673,14 @@ function App() {
       console.log("Lookup response:", payload);
       console.log("User type detected:", payload.user_type);
 
-      // Check if user type matches selected login type
+      // If user type doesn't match the selected tab, auto-switch instead of erroring
       if (loginType === "student" && payload.user_type !== "student") {
-        throw new Error("This ID is not a student account. Please use Staff Login.");
+        // Auto-switch to Staff Login tab and continue
+        setLoginType("staff");
       }
       if (loginType === "staff" && payload.user_type === "student") {
-        throw new Error("This ID is a student account. Please use Student Login.");
+        // Auto-switch to Student Login tab and continue
+        setLoginType("student");
       }
 
       setAuthStudent({

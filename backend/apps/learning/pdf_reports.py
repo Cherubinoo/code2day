@@ -142,22 +142,36 @@ class WatermarkDocTemplate(BaseDocTemplate):
         # ── 2. Draw Header ──
         canvas.saveState()
         
-        # Logo
-        logo_path = None
+        # Logo — try logo_file path first, then logo_url via HTTP
+        logo_image = None
         if inst:
+            # Try local file first (fastest, no network)
             if inst.logo_file:
-                try: logo_path = inst.logo_file.path
-                except: pass
-            elif inst.logo_url:
-                logo_path = inst.logo_url
-        
-        if logo_path:
+                try:
+                    logo_image = inst.logo_file.path
+                except Exception:
+                    logo_image = None
+            # Fall back to URL
+            if not logo_image and inst.logo_url:
+                try:
+                    resp = requests.get(inst.logo_url, timeout=5)
+                    resp.raise_for_status()
+                    logo_image = ImageReader(io.BytesIO(resp.content))
+                except Exception:
+                    logo_image = None
+
+        if logo_image:
             try:
-                canvas.drawImage(logo_path, margin, page_height - 1.0 * inch, width=0.75 * inch, height=0.75 * inch, mask='auto')
-            except: pass
-        
-        # Text block
-        text_x = page_width/2 + 0.5*inch
+                logo_x = margin
+                logo_y = page_height - 1.1 * inch
+                canvas.drawImage(logo_image, logo_x, logo_y,
+                                 width=0.85 * inch, height=0.85 * inch,
+                                 preserveAspectRatio=True, mask='auto')
+            except Exception:
+                pass
+
+        # Text block — centred in the remaining width after logo
+        text_x = margin + 0.95 * inch + (page_width - margin - 0.95 * inch - margin) / 2
         
         # Display Name (Red)
         canvas.setFont("Helvetica-Bold", 14)
@@ -168,14 +182,14 @@ class WatermarkDocTemplate(BaseDocTemplate):
         if subheading:
             canvas.setFont("Helvetica-Bold", 9)
             canvas.setFillColor(colors.HexColor('#FFA000'))
-            canvas.drawCentredString(text_x, page_height - 0.6*inch, subheading.upper())
+            canvas.drawCentredString(text_x, page_height - 0.62*inch, subheading.upper())
         
         # Address lines (Blue/Grey)
         if address:
             canvas.setFont("Helvetica", 7.5)
             canvas.setFillColor(colors.HexColor('#2c3e50'))
             address_lines = address.split('\n')
-            y = page_height - (0.72 * inch if subheading else 0.6 * inch)
+            y = page_height - (0.76 * inch if subheading else 0.62 * inch)
             for line in address_lines[:3]:
                 canvas.drawCentredString(text_x, y, line.strip())
                 y -= 11
@@ -183,7 +197,7 @@ class WatermarkDocTemplate(BaseDocTemplate):
         # Red line
         canvas.setStrokeColor(colors.HexColor('#ED1C24'))
         canvas.setLineWidth(1.2)
-        canvas.line(margin, page_height - 1.05*inch, page_width - margin, page_height - 1.05*inch)
+        canvas.line(margin, page_height - 1.2*inch, page_width - margin, page_height - 1.2*inch)
         
         canvas.restoreState()
 
@@ -342,7 +356,8 @@ def _generate_insights(contest, participations, problems, contest_type):
         max_possible = n_problems
         norm_avg = round((avg_score / max_possible) * 100, 1) if max_possible else 0
     else:
-        max_possible = 100 * n_problems
+        DIFFICULTY_MAX = {"Easy": 100, "Medium": 200, "Hard": 300}
+        max_possible = sum(DIFFICULTY_MAX.get(getattr(p, 'difficulty', 'Easy'), 100) for p in problems) if problems else n_problems * 100
         norm_avg = round((avg_score / max_possible) * 100, 1) if max_possible else 0
 
     if norm_avg >= 75:
@@ -431,7 +446,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
                 buffer, institution=contest.institution,
                 pagesize=A4,
                 rightMargin=0.6*inch, leftMargin=0.6*inch,
-                topMargin=1.2*inch, bottomMargin=0.6*inch,
+                topMargin=1.6*inch, bottomMargin=0.6*inch,
             )
             story = self._build_story(contest, profile)
             doc.build(story)
@@ -460,7 +475,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             return True
         return False
 
-    def _normalise_score(self, raw_score, n_problems, contest_type):
+    def _normalise_score(self, raw_score, n_problems, contest_type, problems=None):
         """Normalise a score to a 0-100 scale"""
         if not n_problems or n_problems == 0:
             return 0
@@ -468,8 +483,13 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             # Each aptitude question is 1 mark
             return round((raw_score / n_problems) * 100, 1)
         else:
-            # Each programming problem is 100 marks max (as per StudentContestSubmitView)
-            return round((raw_score / (n_problems * 100)) * 100, 1)
+            # Difficulty-weighted max: Easy=100, Medium=200, Hard=300
+            DIFFICULTY_MAX = {"Easy": 100, "Medium": 200, "Hard": 300}
+            if problems:
+                max_possible = sum(DIFFICULTY_MAX.get(getattr(p, 'difficulty', 'Easy'), 100) for p in problems)
+            else:
+                max_possible = 100 * n_problems  # fallback if problems not passed
+            return round((raw_score / max_possible) * 100, 1) if max_possible else 0
 
     # ------------------------------------------------------------------
     # Master story builder
@@ -588,8 +608,8 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
 
         raw_avg = participations.aggregate(a=Avg('total_score'))['a'] or 0
         raw_max = participations.aggregate(m=Max('total_score'))['m'] or 0
-        avg_norm = self._normalise_score(raw_avg, n_problems, contest.contest_type)
-        max_norm = self._normalise_score(raw_max, n_problems, contest.contest_type)
+        avg_norm = self._normalise_score(raw_avg, n_problems, contest.contest_type, problems if not is_apt else None)
+        max_norm = self._normalise_score(raw_max, n_problems, contest.contest_type, problems if not is_apt else None)
 
         start_dt = contest.access_start_time or contest.start_time
         end_dt   = contest.access_end_time   or contest.end_time
