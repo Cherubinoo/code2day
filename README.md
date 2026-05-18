@@ -1,6 +1,8 @@
-# code2day.ramcoad.comRamcoad Platform: Comprehensive Project Documentation
+# Ramcoad Platform: Comprehensive Project Documentation
 
-Ramcoad code2day.ramcoad.com is a state-of-the-art educational, assessment, and contest platform engineered to deliver structured learning modules, aptitude tests, and highly secure programming contests. The platform is designed with a multi-tenant architecture, catering to different institutions with strict role-based access control, advanced anti-cheat mechanisms, and high-performance asynchronous code execution.
+**Live Access:** [code2day.ramcoad.com](https://code2day.ramcoad.com)
+
+Ramcoad is a state-of-the-art educational, assessment, and contest platform engineered to deliver structured learning modules, aptitude tests, and highly secure programming contests. The platform is designed with a multi-tenant architecture, catering to different institutions with strict role-based access control, advanced anti-cheat mechanisms, and high-performance asynchronous code execution.
 
 ---
 
