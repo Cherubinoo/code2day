@@ -133,6 +133,14 @@ class StudentProfile(models.Model):
     last_login_on = models.DateField(null=True, blank=True)
     campus_rank = models.CharField(max_length=60, blank=True, default="")
     tracked_companies = models.JSONField(default=list, blank=True)
+    mentor = models.ForeignKey(
+        "StaffProfile",
+        on_delete=models.SET_NULL,
+        related_name="mentees",
+        null=True,
+        blank=True,
+        help_text="Staff assigned as mentor for this student",
+    )
 
     def __str__(self):
         return self.register_number or self.name
@@ -759,6 +767,43 @@ class StaffProfile(models.Model):
         if self.account:
             return self.account.check_password(raw_password)
         return False
+
+
+class BatchAdvisor(models.Model):
+    """Assigns a class advisor (staff) to a batch within a department."""
+
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name="batch_advisors",
+    )
+    batch = models.CharField(max_length=20, help_text="Batch name e.g. 23-27")
+    advisor = models.ForeignKey(
+        StaffProfile,
+        on_delete=models.CASCADE,
+        related_name="advised_batches",
+        help_text="Staff member who is the class advisor for this batch",
+    )
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    assigned_by = models.ForeignKey(
+        StaffProfile,
+        on_delete=models.SET_NULL,
+        related_name="batch_advisor_assignments",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "batch_advisors"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["batch", "department"],
+                name="unique_batch_department_advisor",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.advisor.name} → {self.batch} ({self.department.code})"
 
 
 class Contest(models.Model):

@@ -99,6 +99,14 @@ from .views import (
     AptitudeQuestionSubmitView,
     AptitudeContestSubmitView,
     InstitutionBrandingPreviewView,
+    JAStaffListView,
+    JABatchAdvisorView,
+    JABatchAdvisorDeleteView,
+    JAMentorAssignView,
+    JAMentorListView,
+    StaffMentorDashboardView,
+    StaffClassAdvisorDashboardView,
+    StudentMentorAdvisorView,
 )
 
 # Import file management views
@@ -255,6 +263,17 @@ urlpatterns = [
     path("ja/import/", JABulkImportView.as_view(), name="ja-bulk-import"),
     path("ja/import/template/", JAExcelTemplateView.as_view(), name="ja-excel-template"),
     path("ja/import/report/", JAImportReportView.as_view(), name="ja-import-report"),
+    # JA — advisor & mentor management
+    path("ja/staff/", JAStaffListView.as_view(), name="ja-staff-list"),
+    path("ja/advisors/", JABatchAdvisorView.as_view(), name="ja-advisors"),
+    path("ja/advisors/<str:batch_code>/", JABatchAdvisorDeleteView.as_view(), name="ja-advisor-delete"),
+    path("ja/mentors/", JAMentorListView.as_view(), name="ja-mentor-list"),
+    path("ja/mentors/assign/", JAMentorAssignView.as_view(), name="ja-mentor-assign"),
+    # Staff — mentor & class advisor dashboards
+    path("staff/mentor/dashboard/", StaffMentorDashboardView.as_view(), name="staff-mentor-dashboard"),
+    path("staff/advisor/dashboard/", StaffClassAdvisorDashboardView.as_view(), name="staff-advisor-dashboard"),
+    # Student — mentor/advisor info
+    path("student/mentor-advisor/", StudentMentorAdvisorView.as_view(), name="student-mentor-advisor"),
 
     # Executor Direct API
     path("executor/system_info/", ExecutorSystemInfoView.as_view(), name="executor-system-info"),

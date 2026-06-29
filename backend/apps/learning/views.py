@@ -20,6 +20,7 @@ from rest_framework.views import APIView
 from .auth_utils import RateLimitExceeded, StudentAuthMixin, UnifiedAuthMixin, check_rate_limit
 from .data import FALLBACK_DASHBOARD, FALLBACK_PROBLEMS
 from .models import (
+    BatchAdvisor,
     Contest,
     ContestParticipation,
     ContestSubmission,
@@ -8556,3 +8557,496 @@ class JAImportReportView(APIView):
         )
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
+
+
+# =============================================================================
+# JA — Advisor & Mentor Management
+# =============================================================================
+
+class JAStaffListView(APIView):
+    """JA: list all active staff in their department (for advisor/mentor assignment)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        staff = StaffProfile.objects.filter(
+            institution=profile.institution,
+            department=profile.department,
+            is_active=True,
+        ).order_by('name')
+
+        data = [
+            {
+                "id": s.id,
+                "faculty_id": s.faculty_id,
+                "name": s.name,
+                "role": s.role,
+                "role_display": s.get_role_display(),
+            }
+            for s in staff
+        ]
+        return Response({"staff": data})
+
+
+class JABatchAdvisorView(APIView):
+    """
+    JA: get or set the class advisor for a batch.
+    GET  /api/ja/advisors/           → list all batch→advisor assignments in dept
+    POST /api/ja/advisors/           → assign / update an advisor for a batch
+         body: { batch, advisor_id }
+    DELETE /api/ja/advisors/<batch>/ → remove advisor assignment for a batch
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        assignments = BatchAdvisor.objects.filter(
+            department=profile.department,
+        ).select_related('advisor', 'assigned_by')
+
+        data = []
+        for a in assignments:
+            # Count students in this batch
+            student_count = StudentProfile.objects.filter(
+                department=profile.department,
+                institution=profile.institution,
+                batch=a.batch,
+            ).count()
+            data.append({
+                "batch": a.batch,
+                "student_count": student_count,
+                "advisor": {
+                    "id": a.advisor.id,
+                    "faculty_id": a.advisor.faculty_id,
+                    "name": a.advisor.name,
+                    "role": a.advisor.role,
+                },
+                "assigned_at": a.assigned_at.isoformat(),
+                "assigned_by": a.assigned_by.name if a.assigned_by else None,
+            })
+
+        # Also include batches with no advisor
+        all_batches = (
+            StudentProfile.objects
+            .filter(institution=profile.institution, department=profile.department)
+            .exclude(batch='')
+            .values_list('batch', flat=True)
+            .distinct()
+        )
+        assigned_batches = {d['batch'] for d in data}
+        for b in all_batches:
+            if b not in assigned_batches:
+                student_count = StudentProfile.objects.filter(
+                    department=profile.department,
+                    institution=profile.institution,
+                    batch=b,
+                ).count()
+                data.append({
+                    "batch": b,
+                    "student_count": student_count,
+                    "advisor": None,
+                    "assigned_at": None,
+                    "assigned_by": None,
+                })
+
+        data.sort(key=lambda x: x['batch'], reverse=True)
+        return Response({"assignments": data})
+
+    def post(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        batch = (request.data.get('batch') or '').strip()
+        advisor_id = request.data.get('advisor_id')
+
+        if not batch:
+            return Response({"detail": "batch is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not advisor_id:
+            return Response({"detail": "advisor_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Verify advisor belongs to same institution/department
+        try:
+            advisor = StaffProfile.objects.get(
+                id=advisor_id,
+                institution=profile.institution,
+            )
+        except StaffProfile.DoesNotExist:
+            return Response({"detail": "Staff member not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Upsert batch advisor
+        assignment, created = BatchAdvisor.objects.update_or_create(
+            batch=batch,
+            department=profile.department,
+            defaults={
+                "advisor": advisor,
+                "assigned_by": profile,
+            }
+        )
+
+        action = "assigned" if created else "updated"
+        logger.info(
+            "JA %s %s class advisor %s to batch %s",
+            profile.faculty_id, action, advisor.faculty_id, batch
+        )
+
+        return Response({
+            "detail": f"Class advisor {action} for batch '{batch}'.",
+            "batch": batch,
+            "advisor": {
+                "id": advisor.id,
+                "faculty_id": advisor.faculty_id,
+                "name": advisor.name,
+            },
+        }, status=status.HTTP_200_OK)
+
+
+class JABatchAdvisorDeleteView(APIView):
+    """JA: remove a class advisor assignment for a batch."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, batch_code):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        deleted, _ = BatchAdvisor.objects.filter(
+            batch=batch_code,
+            department=profile.department,
+        ).delete()
+
+        if not deleted:
+            return Response({"detail": "No advisor assigned to this batch."}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({"detail": f"Advisor removed from batch '{batch_code}'."})
+
+
+class JAMentorAssignView(APIView):
+    """
+    JA: assign or remove a mentor for one or more students.
+    POST /api/ja/mentors/assign/
+    body: { mentor_id: int|null, register_numbers: [str, ...] }
+    - mentor_id null → remove mentor
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        mentor_id = request.data.get('mentor_id')  # None = unassign
+        register_numbers = request.data.get('register_numbers', [])
+
+        if not register_numbers:
+            return Response({"detail": "register_numbers list is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        mentor = None
+        if mentor_id:
+            try:
+                mentor = StaffProfile.objects.get(id=mentor_id, institution=profile.institution)
+            except StaffProfile.DoesNotExist:
+                return Response({"detail": "Staff member not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        updated = StudentProfile.objects.filter(
+            register_number__in=register_numbers,
+            institution=profile.institution,
+            department=profile.department,
+        ).update(mentor=mentor)
+
+        action = f"assigned mentor {mentor.name}" if mentor else "removed mentor"
+        logger.info("JA %s %s for %d students", profile.faculty_id, action, updated)
+
+        return Response({
+            "detail": f"{action.capitalize()} for {updated} student(s).",
+            "updated": updated,
+        })
+
+
+class JAMentorListView(APIView):
+    """JA: list all mentor assignments in the department."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        # Group students by mentor
+        students = (
+            StudentProfile.objects
+            .filter(institution=profile.institution, department=profile.department)
+            .select_related('mentor')
+            .order_by('batch', 'register_number')
+        )
+
+        mentor_map = {}  # mentor_id → { mentor_info, students }
+        unassigned = []
+
+        for s in students:
+            if s.mentor_id:
+                if s.mentor_id not in mentor_map:
+                    m = s.mentor
+                    mentor_map[s.mentor_id] = {
+                        "mentor": {
+                            "id": m.id,
+                            "faculty_id": m.faculty_id,
+                            "name": m.name,
+                            "role": m.role,
+                        },
+                        "students": [],
+                    }
+                mentor_map[s.mentor_id]["students"].append({
+                    "id": s.id,
+                    "register_number": s.register_number,
+                    "name": s.name,
+                    "batch": s.batch,
+                })
+            else:
+                unassigned.append({
+                    "id": s.id,
+                    "register_number": s.register_number,
+                    "name": s.name,
+                    "batch": s.batch,
+                })
+
+        return Response({
+            "mentor_groups": list(mentor_map.values()),
+            "unassigned": unassigned,
+            "unassigned_count": len(unassigned),
+        })
+
+
+# =============================================================================
+# Staff — Mentor & Class Advisor views (for staff members themselves)
+# =============================================================================
+
+def _staff_guard(request):
+    """Returns (staff_profile, None) or (None, Response)."""
+    if not request.user.is_authenticated or not hasattr(request.user, 'staff_profile'):
+        return None, Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+    profile = request.user.staff_profile
+    if not profile.is_active:
+        return None, Response({"detail": "Your account has been disabled."}, status=status.HTTP_403_FORBIDDEN)
+    return profile, None
+
+
+class StaffMentorDashboardView(APIView):
+    """
+    Staff: get their mentees list with stats.
+    GET /api/staff/mentor/dashboard/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, err = _staff_guard(request)
+        if err:
+            return err
+
+        mentees = (
+            StudentProfile.objects
+            .filter(mentor=profile)
+            .select_related('account', 'department')
+            .order_by('batch', 'register_number')
+        )
+
+        mentee_data = []
+        for s in mentees:
+            # Get solved count
+            solved_count = getattr(s, 'solved_problems', None)
+            if solved_count is None:
+                from .models import SolvedProblem
+                solved_count = SolvedProblem.objects.filter(student=s).count()
+
+            mentee_data.append({
+                "id": s.id,
+                "register_number": s.register_number,
+                "name": s.name,
+                "batch": s.batch,
+                "department": s.department.name if s.department else "",
+                "personal_email": s.personal_email,
+                "mobile_number": s.mobile_number,
+                "gender": s.gender,
+                "current_streak": s.current_streak,
+                "login_days": s.login_days,
+                "last_active": s.last_login_on.isoformat() if s.last_login_on else None,
+                "solved_count": solved_count,
+                "is_active": s.account.is_active if s.account else True,
+            })
+
+        # Group by batch
+        batch_groups = {}
+        for m in mentee_data:
+            b = m['batch'] or 'Unknown'
+            if b not in batch_groups:
+                batch_groups[b] = []
+            batch_groups[b].append(m)
+
+        return Response({
+            "mentor": {
+                "id": profile.id,
+                "faculty_id": profile.faculty_id,
+                "name": profile.name,
+                "role": profile.role,
+                "department": profile.department.name if profile.department else "",
+            },
+            "total_mentees": len(mentee_data),
+            "mentees": mentee_data,
+            "batch_groups": [
+                {"batch": b, "students": students}
+                for b, students in sorted(batch_groups.items(), reverse=True)
+            ],
+        })
+
+
+class StaffClassAdvisorDashboardView(APIView):
+    """
+    Staff: get all data for batches where they are the class advisor.
+    GET /api/staff/advisor/dashboard/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, err = _staff_guard(request)
+        if err:
+            return err
+
+        # Find all batches where this staff is the advisor
+        advisor_assignments = BatchAdvisor.objects.filter(advisor=profile).select_related('department')
+
+        if not advisor_assignments.exists():
+            return Response({
+                "advisor": {
+                    "id": profile.id,
+                    "name": profile.name,
+                    "faculty_id": profile.faculty_id,
+                },
+                "is_class_advisor": False,
+                "batches": [],
+            })
+
+        batches_data = []
+        for assignment in advisor_assignments:
+            students = (
+                StudentProfile.objects
+                .filter(
+                    department=assignment.department,
+                    batch=assignment.batch,
+                )
+                .select_related('account', 'mentor')
+                .order_by('register_number')
+            )
+
+            student_list = []
+            for s in students:
+                from .models import SolvedProblem
+                solved_count = SolvedProblem.objects.filter(student=s).count()
+                student_list.append({
+                    "id": s.id,
+                    "register_number": s.register_number,
+                    "name": s.name,
+                    "batch": s.batch,
+                    "personal_email": s.personal_email,
+                    "mobile_number": s.mobile_number,
+                    "gender": s.gender,
+                    "current_streak": s.current_streak,
+                    "login_days": s.login_days,
+                    "last_active": s.last_login_on.isoformat() if s.last_login_on else None,
+                    "solved_count": solved_count,
+                    "is_active": s.account.is_active if s.account else True,
+                    "mentor": {
+                        "id": s.mentor.id,
+                        "name": s.mentor.name,
+                        "faculty_id": s.mentor.faculty_id,
+                    } if s.mentor else None,
+                })
+
+            # Batch-level stats
+            total = len(student_list)
+            active = sum(1 for s in student_list if s['is_active'])
+            avg_solved = (sum(s['solved_count'] for s in student_list) / total) if total else 0
+            avg_streak = (sum(s['current_streak'] for s in student_list) / total) if total else 0
+
+            batches_data.append({
+                "batch": assignment.batch,
+                "department": assignment.department.name,
+                "department_code": assignment.department.code,
+                "total_students": total,
+                "active_students": active,
+                "avg_solved": round(avg_solved, 1),
+                "avg_streak": round(avg_streak, 1),
+                "students": student_list,
+            })
+
+        return Response({
+            "advisor": {
+                "id": profile.id,
+                "name": profile.name,
+                "faculty_id": profile.faculty_id,
+                "role": profile.role,
+            },
+            "is_class_advisor": True,
+            "batches": batches_data,
+        })
+
+
+# =============================================================================
+# Student — Mentor & Advisor info view
+# =============================================================================
+
+class StudentMentorAdvisorView(APIView):
+    """
+    Student: get their assigned mentor and class advisor info.
+    GET /api/student/mentor-advisor/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not hasattr(request.user, 'student_profile'):
+            return Response({"detail": "Student access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        student = request.user.student_profile
+
+        # Mentor info
+        mentor_info = None
+        if student.mentor:
+            m = student.mentor
+            mentor_info = {
+                "id": m.id,
+                "faculty_id": m.faculty_id,
+                "name": m.name,
+                "role": m.role,
+                "role_display": m.get_role_display(),
+                "department": m.department.name if m.department else "",
+            }
+
+        # Class advisor info
+        advisor_info = None
+        if student.batch and student.department:
+            assignment = BatchAdvisor.objects.filter(
+                batch=student.batch,
+                department=student.department,
+            ).select_related('advisor', 'advisor__department').first()
+            if assignment:
+                a = assignment.advisor
+                advisor_info = {
+                    "id": a.id,
+                    "faculty_id": a.faculty_id,
+                    "name": a.name,
+                    "role": a.role,
+                    "role_display": a.get_role_display(),
+                    "department": a.department.name if a.department else "",
+                }
+
+        return Response({
+            "mentor": mentor_info,
+            "class_advisor": advisor_info,
+            "batch": student.batch,
+            "department": student.department.name if student.department else "",
+        })
