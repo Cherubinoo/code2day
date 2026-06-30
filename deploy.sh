@@ -117,6 +117,11 @@ else
 fi
 echo ""
 
+# Step 6b: Reset all user passwords (forces first-login on next access)
+echo -e "${BLUE}[6b/7] Resetting all user passwords...${NC}"
+docker-compose exec -T backend python manage.py truncate_passwords --exclude-superusers
+echo ""
+
 # Step 7: Verify deployment
 echo -e "${BLUE}[7/7] Verifying deployment...${NC}"
 echo ""

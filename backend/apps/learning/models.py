@@ -121,6 +121,7 @@ class StudentProfile(models.Model):
     import_source = models.CharField(max_length=120, blank=True, default="")
     role = models.CharField(max_length=25, choices=ROLE_CHOICES, default="student")
     batch = models.CharField(max_length=20, blank=True, default="")
+    section = models.CharField(max_length=5, blank=True, default="")
     department = models.ForeignKey(
         Department,
         on_delete=models.SET_NULL,
@@ -133,6 +134,14 @@ class StudentProfile(models.Model):
     last_login_on = models.DateField(null=True, blank=True)
     campus_rank = models.CharField(max_length=60, blank=True, default="")
     tracked_companies = models.JSONField(default=list, blank=True)
+    mentor = models.ForeignKey(
+        "StaffProfile",
+        on_delete=models.SET_NULL,
+        related_name="mentees",
+        null=True,
+        blank=True,
+        help_text="Staff assigned as mentor for this student",
+    )
 
     def __str__(self):
         return self.register_number or self.name
@@ -586,6 +595,8 @@ class DiscussionMessage(models.Model):
         ("general", "General Discussion"),
         ("individual", "Direct Message"),
         ("batch", "Batch Discussion"),
+        ("section", "Section Discussion"),
+        ("mentor_group", "Mentor Group Chat"),
         ("staff", "Staff Room"),
         ("hod_tp_ja", "HOD / TPU / JA / TPO Panel"),
         ("problem", "Problem Specific"),
@@ -621,6 +632,7 @@ class DiscussionMessage(models.Model):
     )
     thread_type = models.CharField(max_length=20, choices=THREAD_TYPES, default="general")
     batch_name = models.CharField(max_length=100, null=True, blank=True)
+    section = models.CharField(max_length=5, blank=True, default="")
     institution = models.ForeignKey(
         'Institution',
         on_delete=models.CASCADE,
@@ -759,6 +771,45 @@ class StaffProfile(models.Model):
         if self.account:
             return self.account.check_password(raw_password)
         return False
+
+
+class BatchAdvisor(models.Model):
+    """Assigns a class advisor (staff) to a section within a batch/department."""
+
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.CASCADE,
+        related_name="batch_advisors",
+    )
+    batch = models.CharField(max_length=20, help_text="Batch name e.g. 23-27")
+    section = models.CharField(max_length=5, blank=True, default="", help_text="Section A/B/C etc.")
+    advisor = models.ForeignKey(
+        StaffProfile,
+        on_delete=models.CASCADE,
+        related_name="advised_batches",
+        help_text="Staff member who is the class advisor for this batch/section",
+    )
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    assigned_by = models.ForeignKey(
+        StaffProfile,
+        on_delete=models.SET_NULL,
+        related_name="batch_advisor_assignments",
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        db_table = "batch_advisors"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["batch", "section", "department"],
+                name="unique_batch_section_department_advisor",
+            )
+        ]
+
+    def __str__(self):
+        sec = f" Sec {self.section}" if self.section else ""
+        return f"{self.advisor.name} → {self.batch}{sec} ({self.department.code})"
 
 
 class Contest(models.Model):

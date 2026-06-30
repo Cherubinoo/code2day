@@ -1,6 +1,6 @@
 // Staff Dashboard - Staff view with contests and batch-wise analytics
 import { useState, useEffect } from 'react';
-import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare } from 'lucide-react';
+import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare, GraduationCap, UserCheck } from 'lucide-react';
 import EnhancedContestCreator from './EnhancedContestCreator';
 import StudentAnalyticsModal from './StudentAnalyticsModal';
 import ContestDetailModal from '../common/ContestDetailModal';
@@ -167,6 +167,8 @@ const StaffDashboard = ({ institutionId }) => {
     { id: 'performance', label: 'Performance', icon: Trophy },
     { id: 'contests', label: 'Contests', icon: BookOpen },
     { id: 'batches', label: 'Batches', icon: Users },
+    { id: 'mentor', label: 'My Mentees', icon: UserCheck },
+    { id: 'advisor', label: 'Class Advisor', icon: GraduationCap },
     { id: 'reports', label: 'Reports', icon: FileText },
     { id: 'chat', label: 'Discuss', icon: MessageSquare },
   ];
@@ -335,7 +337,7 @@ const StaffDashboard = ({ institutionId }) => {
                     <Users size={24} />
                   </div>
                   <div>
-                    <h4>ASSIGNED STUDENTS</h4>
+                    <h4>MENTEES</h4>
                     <div className="value">{staff.assigned_students || 0}</div>
                   </div>
                 </div>
@@ -1232,9 +1234,312 @@ const StaffDashboard = ({ institutionId }) => {
             />
           </div>
         )}
+
+        {/* Mentor Dashboard Tab */}
+        {activeTab === 'mentor' && (
+          <div className="tab-container">
+            <StaffMentorTab onViewProgress={reg => setSelectedStudentForAnalytics(reg)} />
+          </div>
+        )}
+
+        {/* Class Advisor Dashboard Tab */}
+        {activeTab === 'advisor' && (
+          <div className="tab-container">
+            <StaffAdvisorTab />
+          </div>
+        )}
       </main>
     </div>
   );
 };
+
+
+// ─── Staff Mentor Tab ────────────────────────────────────────────────────────
+
+function StaffMentorTab({ onViewProgress }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState('');
+  const [expandedBatch, setExpandedBatch] = useState(null);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/staff/mentor/dashboard/', { credentials: 'include' });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Failed to load');
+      setData(d);
+      if (d.batch_groups?.length) setExpandedBatch(d.batch_groups[0].batch);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>Loading mentees...</div>;
+  if (error) return (
+    <div style={{ padding: 20, background: '#fee2e2', borderRadius: 10, color: '#991b1b', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <span>{error}</span>
+      <button onClick={load} style={{ padding: '6px 14px', borderRadius: 7, border: 'none', background: '#dc2626', color: 'white', cursor: 'pointer', fontSize: 13, fontWeight: 700 }}>Retry</button>
+    </div>
+  );
+  if (!data) return null;
+
+  if (data.total_mentees === 0) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center', color: '#9ca3af' }}>
+        <UserCheck size={48} style={{ marginBottom: 16, opacity: 0.3 }} />
+        <h3 style={{ margin: '0 0 8px', color: '#374151' }}>No mentees assigned</h3>
+        <p style={{ margin: 0, fontSize: 14 }}>Ask the JA to assign students to you as their mentor.</p>
+        <button onClick={load} style={{ marginTop: 16, padding: '8px 20px', borderRadius: 9, border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#374151' }}>
+          Refresh
+        </button>
+      </div>
+    );
+  }
+
+  const filtered = search
+    ? data.mentees.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.register_number.includes(search))
+    : null;
+
+  return (
+    <div>
+      {/* Stats */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 16, marginBottom: 28 }}>
+        {[
+          { label: 'Total Mentees', value: data.total_mentees, color: '#2D6A4F' },
+          { label: 'Avg Solved', value: data.total_mentees ? Math.round(data.mentees.reduce((a, s) => a + s.solved_count, 0) / data.total_mentees) : 0, color: '#1d4ed8' },
+          { label: 'Active Today', value: data.mentees.filter(s => s.last_active === new Date().toISOString().slice(0,10)).length, color: '#7c3aed' },
+        ].map(card => (
+          <div key={card.label} style={{ background: 'white', borderRadius: 14, padding: '18px 20px', border: '1px solid #e5e7eb', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+            <div style={{ fontSize: 28, fontWeight: 900, color: card.color }}>{card.value}</div>
+            <div style={{ fontSize: 13, color: '#6b7280', fontWeight: 500 }}>{card.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Search + Refresh */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+        <div style={{ flex: 1, position: 'relative' }}>
+          <Users size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search mentees by name or register number..."
+            style={{ width: '100%', padding: '10px 14px 10px 34px', borderRadius: 10, border: '1px solid #d1d5db', fontSize: 14, boxSizing: 'border-box' }} />
+        </div>
+        <button onClick={load} disabled={loading} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid #d1d5db', background: 'white', cursor: loading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 13, color: '#374151', whiteSpace: 'nowrap' }}>
+          ↺ Refresh
+        </button>
+      </div>
+
+      {filtered ? (
+        <MenteeTable students={filtered} onViewProgress={onViewProgress} />
+      ) : (
+        data.batch_groups.map(g => (
+          <div key={g.batch} style={{ background: 'white', borderRadius: 16, border: '1px solid #e5e7eb', marginBottom: 16, overflow: 'hidden' }}>
+            <button
+              onClick={() => setExpandedBatch(expandedBatch === g.batch ? null : g.batch)}
+              style={{ width: '100%', padding: '16px 20px', border: 'none', background: expandedBatch === g.batch ? '#f0fdf4' : 'white', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', textAlign: 'left' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ fontWeight: 800, fontSize: 16, color: '#111827' }}>Batch {g.batch}</span>
+                <span style={{ background: '#d1fae5', color: '#065f46', padding: '2px 10px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{g.students.length} mentees</span>
+              </div>
+              <span style={{ color: '#6b7280', fontSize: 18 }}>{expandedBatch === g.batch ? '▾' : '▸'}</span>
+            </button>
+            {expandedBatch === g.batch && <MenteeTable students={g.students} onViewProgress={onViewProgress} />}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function MenteeTable({ students, onViewProgress }) {
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr style={{ background: '#f9fafb' }}>
+            {['Register No.', 'Name', 'Batch', 'Section', 'Solved', 'Streak', 'Last Active', 'Status', 'Progress'].map(h => (
+              <th key={h} style={{ padding: '11px 14px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {students.map((s, i) => (
+            <tr key={s.register_number} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
+              <td style={{ padding: '11px 14px', fontFamily: 'monospace', fontWeight: 700, fontSize: 12, color: '#374151' }}>{s.register_number}</td>
+              <td style={{ padding: '11px 14px', fontSize: 13, fontWeight: 600 }}>{s.name}</td>
+              <td style={{ padding: '11px 14px' }}><span style={{ background: '#f3f4f6', color: '#374151', padding: '2px 8px', borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{s.batch || '—'}</span></td>
+              <td style={{ padding: '11px 14px' }}>{s.section ? <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 8, fontSize: 12, fontWeight: 700 }}>{s.section}</span> : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+              <td style={{ padding: '11px 14px' }}><span style={{ background: '#dbeafe', color: '#1e40af', padding: '2px 10px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{s.solved_count}</span></td>
+              <td style={{ padding: '11px 14px', fontSize: 13, color: s.current_streak > 0 ? '#065f46' : '#9ca3af', fontWeight: 600 }}>{s.current_streak > 0 ? `🔥 ${s.current_streak}` : '—'}</td>
+              <td style={{ padding: '11px 14px', fontSize: 12, color: '#6b7280' }}>{s.last_active || '—'}</td>
+              <td style={{ padding: '11px 14px' }}>
+                <span style={{ background: s.is_active ? '#d1fae5' : '#fee2e2', color: s.is_active ? '#065f46' : '#991b1b', padding: '2px 10px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
+                  {s.is_active ? 'Active' : 'Blocked'}
+                </span>
+              </td>
+              <td style={{ padding: '11px 14px' }}>
+                <button
+                  onClick={() => onViewProgress(s.register_number)}
+                  style={{ padding: '5px 12px', borderRadius: 7, border: '1px solid #2D6A4F', background: 'white', color: '#2D6A4F', cursor: 'pointer', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}
+                >
+                  View Progress
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ─── Staff Class Advisor Tab ─────────────────────────────────────────────────
+
+function StaffAdvisorTab() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedBatch, setSelectedBatch] = useState(null);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    async function load() {
+      try {
+        const res = await fetch('/api/staff/advisor/dashboard/', { credentials: 'include' });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail || 'Failed to load');
+        setData(d);
+        if (d.batches?.length) setSelectedBatch(`${d.batches[0].batch}:${d.batches[0].section}`);
+      } catch (e) {
+        setError(e.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
+  }, []);
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>Loading batch data...</div>;
+  if (error) return <div style={{ padding: 20, background: '#fee2e2', borderRadius: 10, color: '#991b1b' }}>{error}</div>;
+  if (!data) return null;
+
+  if (!data.is_class_advisor) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center', color: '#9ca3af' }}>
+        <GraduationCap size={48} style={{ marginBottom: 16, opacity: 0.3 }} />
+        <h3 style={{ margin: '0 0 8px', color: '#374151' }}>Not assigned as class advisor</h3>
+        <p style={{ margin: 0, fontSize: 14 }}>Ask the JA to assign you as class advisor for a batch.</p>
+      </div>
+    );
+  }
+
+  const batchKey = b => `${b.batch}:${b.section}`;
+  const currentBatch = data.batches.find(b => batchKey(b) === selectedBatch);
+  const filteredStudents = search && currentBatch
+    ? currentBatch.students.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.register_number.includes(search))
+    : currentBatch?.students || [];
+
+  return (
+    <div>
+      {/* Batch/Section selector tabs */}
+      {data.batches.length > 1 && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 20, flexWrap: 'wrap' }}>
+          {data.batches.map(b => (
+            <button
+              key={batchKey(b)}
+              onClick={() => { setSelectedBatch(batchKey(b)); setSearch(''); }}
+              style={{
+                padding: '8px 18px', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                border: selectedBatch === batchKey(b) ? 'none' : '1px solid #d1d5db',
+                background: selectedBatch === batchKey(b) ? '#2D6A4F' : 'white',
+                color: selectedBatch === batchKey(b) ? 'white' : '#374151',
+              }}
+            >
+              Batch {b.batch}{b.section ? ` · Sec ${b.section}` : ''} <span style={{ opacity: 0.7 }}>({b.total_students})</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {currentBatch && (
+        <>
+          {/* Batch stats */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 16, marginBottom: 24 }}>
+            {[
+              { label: 'Total Students', value: currentBatch.total_students, color: '#2D6A4F' },
+              { label: 'Active Students', value: currentBatch.active_students, color: '#1d4ed8' },
+              { label: 'Avg Problems Solved', value: currentBatch.avg_solved, color: '#7c3aed' },
+              { label: 'Avg Streak', value: `${currentBatch.avg_streak} days`, color: '#b45309' },
+            ].map(card => (
+              <div key={card.label} style={{ background: 'white', borderRadius: 14, padding: '18px 20px', border: '1px solid #e5e7eb', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                <div style={{ fontSize: 26, fontWeight: 900, color: card.color }}>{card.value}</div>
+                <div style={{ fontSize: 12, color: '#6b7280', fontWeight: 500, marginTop: 2 }}>{card.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Search */}
+          <div style={{ position: 'relative', marginBottom: 16 }}>
+            <Users size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search students..."
+              style={{ width: '100%', padding: '10px 14px 10px 34px', borderRadius: 10, border: '1px solid #d1d5db', fontSize: 14, boxSizing: 'border-box' }} />
+          </div>
+
+          {/* Students table */}
+          <div style={{ background: 'white', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontWeight: 800, fontSize: 15, color: '#111827' }}>
+                Batch {currentBatch.batch}{currentBatch.section ? ` · Section ${currentBatch.section}` : ''} — {currentBatch.department}
+              </span>
+              <span style={{ background: '#dbeafe', color: '#1e40af', padding: '3px 12px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{filteredStudents.length} students</span>
+            </div>
+            {filteredStudents.length === 0 ? (
+              <div style={{ padding: 30, textAlign: 'center', color: '#9ca3af' }}>No students found.</div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: '#f9fafb' }}>
+                      {['Register No.', 'Name', 'Section', 'Solved', 'Streak', 'Last Active', 'Mentor', 'Status'].map(h => (
+                        <th key={h} style={{ padding: '11px 14px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredStudents.map((s, i) => (
+                      <tr key={s.register_number} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
+                        <td style={{ padding: '11px 14px', fontFamily: 'monospace', fontWeight: 700, fontSize: 12, color: '#374151' }}>{s.register_number}</td>
+                        <td style={{ padding: '11px 14px', fontSize: 13, fontWeight: 600 }}>{s.name}</td>
+                        <td style={{ padding: '11px 14px' }}>{s.section ? <span style={{ background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 8, fontSize: 12, fontWeight: 700 }}>{s.section}</span> : <span style={{ color: '#9ca3af' }}>—</span>}</td>
+                        <td style={{ padding: '11px 14px' }}><span style={{ background: '#dbeafe', color: '#1e40af', padding: '2px 10px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{s.solved_count}</span></td>
+                        <td style={{ padding: '11px 14px', fontSize: 13, color: s.current_streak > 0 ? '#065f46' : '#9ca3af', fontWeight: 600 }}>{s.current_streak > 0 ? `🔥 ${s.current_streak}` : '—'}</td>
+                        <td style={{ padding: '11px 14px', fontSize: 12, color: '#6b7280' }}>{s.last_active || '—'}</td>
+                        <td style={{ padding: '11px 14px', fontSize: 12, color: s.mentor ? '#1e40af' : '#9ca3af' }}>
+                          {s.mentor ? s.mentor.name : <em>Not assigned</em>}
+                        </td>
+                        <td style={{ padding: '11px 14px' }}>
+                          <span style={{ background: s.is_active ? '#d1fae5' : '#fee2e2', color: s.is_active ? '#065f46' : '#991b1b', padding: '2px 10px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
+                            {s.is_active ? 'Active' : 'Blocked'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default StaffDashboard;

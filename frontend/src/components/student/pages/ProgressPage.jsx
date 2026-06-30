@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   TrendingUp, 
   Brain, 
@@ -18,9 +18,12 @@ import {
   Minus,
   Search,
   Trophy,
-  Users
+  Users,
+  GraduationCap,
+  UserCheck
 } from 'lucide-react';
 import ContestDashboardWidget from '../ContestDashboardWidget';
+import { PerformanceDashboard, AptitudeProgressRadar } from '../../common/PerformanceCharts';
 
 const shimmerStyles = `
   @keyframes shimmer {
@@ -100,14 +103,90 @@ const BadgeCard = ({ badge, earned, setSelectedBadge }) => {
   );
 };
 
+// ─── Mentor & Class Advisor Card ─────────────────────────────────────────────
+
+function useMentorAdvisor() {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    fetch('/api/student/mentor-advisor/', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setData(d); })
+      .catch(() => {});
+  }, []);
+  return data;
+}
+
+function MentorAdvisorCard() {
+  const data = useMentorAdvisor();
+  if (!data) return null;
+  const { mentor, class_advisor } = data;
+  if (!mentor && !class_advisor) return null;
+
+  return (
+    <div className="surface-card" style={{ background: 'white', borderRadius: 32, padding: 32, boxShadow: '0 15px 35px rgba(0,0,0,0.03)', border: '1px solid var(--border-soft)' }}>
+      <h2 style={{ fontSize: '1.2rem', fontWeight: 900, marginBottom: 20, color: 'var(--text-hard)' }}>My Faculty</h2>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {mentor && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: '#f0fdf4', borderRadius: 18, border: '1px solid #bbf7d0' }}>
+            <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <UserCheck size={20} color="#065f46" />
+            </div>
+            <div>
+              <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#059669', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Mentor</div>
+              <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#111827' }}>{mentor.name}</div>
+              <div style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 500 }}>{mentor.faculty_id}</div>
+            </div>
+          </div>
+        )}
+
+        {class_advisor && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', background: '#eff6ff', borderRadius: 18, border: '1px solid #bfdbfe' }}>
+            <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#dbeafe', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <GraduationCap size={20} color="#1d4ed8" />
+            </div>
+            <div>
+              <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#1d4ed8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Class Advisor</div>
+              <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#111827' }}>{class_advisor.name}</div>
+              <div style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 500 }}>{class_advisor.faculty_id}</div>
+            </div>
+          </div>
+        )}
+
+        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 500, paddingTop: 4 }}>
+          Batch <strong>{data.batch}</strong>{data.section ? <> · Section <strong>{data.section}</strong></> : ''} · {data.department}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, onNavigateToContest, problemSet }) {
-  const [activeTab, setActiveTab] = useState("overall"); 
+  const [activeTab, setActiveTab] = useState("overall");
   const [selectedBadge, setSelectedBadge] = useState(null);
   const [selectedCompanyDetail, setSelectedCompanyDetail] = useState(null);
   const [isTrackingModalOpen, setIsTrackingModalOpen] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [modalSearchTerm, setModalSearchTerm] = useState("");
+  const [selfAnalytics, setSelfAnalytics] = useState(null);
+  const [localTracked, setLocalTracked] = useState(() => dashboard?.user?.tracked_companies || []);
+
+  useEffect(() => {
+    fetch('/api/student/analytics/', { credentials: 'include' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setSelfAnalytics(d.analytics); })
+      .catch(() => {});
+  }, []);
+
+  // Sync local tracked list whenever dashboard loads / changes from the server
+  useEffect(() => {
+    if (Array.isArray(dashboard?.user?.tracked_companies)) {
+      setLocalTracked(dashboard.user.tracked_companies);
+    }
+  }, [dashboard?.user?.tracked_companies]);
 
   if (!dashboard) {
     return <div style={{ padding: 40, textAlign: 'center' }}>Loading unified progress...</div>;
@@ -123,8 +202,8 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
   const totalCodingInSystem = user.total_problems_count || 1; // Prevent div by 0
 
 
-  // Company Track - Real tracked logic (includes solved problem titles)
-  const trackedCompaniesList = user.tracked_companies || [];
+  // Company Track - uses local state so UI updates instantly on toggle
+  const trackedCompaniesList = localTracked;
   
   const allAvailableCompanies = useMemo(() => {
     if (!problemSet) return [];
@@ -175,69 +254,53 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
 
   const toggleTrackedCompany = async (companyName) => {
     if (isUpdating) return;
-    
-    // 1. Calculate the new state optimistically
-    const currentTracked = dashboard?.user?.tracked_companies || [];
-    const isCurrentlyTracked = currentTracked.includes(companyName);
-    const newList = isCurrentlyTracked 
-      ? currentTracked.filter(c => c !== companyName)
-      : [...currentTracked, companyName];
-    
-    // Keep a reference to the old dashboard for rollback
-    const previousDashboard = { ...dashboard };
 
-    // 2. Update UI immediately (Optimistic Update)
-    if (setDashboard) {
-      setDashboard(prev => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          user: { ...prev.user, tracked_companies: newList },
-          student: { ...(prev.student || {}), tracked_companies: newList }
-        };
-      });
-    }
+    const snapshot = [...localTracked];
+    const isCurrentlyTracked = snapshot.includes(companyName);
+    const newList = isCurrentlyTracked
+      ? snapshot.filter(c => c !== companyName)
+      : [...snapshot, companyName];
 
+    // Instant UI update — no prop-propagation delay
+    setLocalTracked(newList);
     setIsUpdating(true);
+
     try {
-      const getCookie = (name) => {
-        let cookieValue = null;
-        if (document.cookie && document.cookie !== '') {
-          const cookies = document.cookie.split(';');
-          for (let i = 0; i < cookies.length; i++) {
-            const cookie = cookies[i].trim();
-            if (cookie.substring(0, name.length + 1) === (name + '=')) {
-              cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-              break;
-            }
-          }
+      const getCookie = name => {
+        for (const cookie of document.cookie.split(';')) {
+          const [k, v] = cookie.trim().split('=');
+          if (k === name) return decodeURIComponent(v || '');
         }
-        return cookieValue;
+        return '';
       };
-      
-      const csrftoken = getCookie('csrftoken') || "";
 
       const response = await fetch('/api/dashboard/tracked-companies/', {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
-          'X-CSRFToken': csrftoken 
+          'X-CSRFToken': getCookie('csrftoken'),
         },
         body: JSON.stringify({ companies: newList }),
-        credentials: 'include'
+        credentials: 'include',
       });
-      
-      if (!response.ok) {
-        throw new Error("Server rejected update");
-      }
-      
-      // Successfully updated on server, no need to do anything as UI is already updated
-    } catch (error) {
-      console.error("Failed to update tracked companies, rolling back:", error);
-      // Rollback to previous state on failure
+
+      if (!response.ok) throw new Error('Server rejected update');
+
+      const data = await response.json();
+      // Use authoritative list from server response
+      const authoritative = Array.isArray(data.tracked_companies) ? data.tracked_companies : newList;
+      setLocalTracked(authoritative);
+
       if (setDashboard) {
-        setDashboard(previousDashboard);
+        setDashboard(prev => prev ? {
+          ...prev,
+          user: { ...prev.user, tracked_companies: authoritative },
+          student: { ...(prev.student || {}), tracked_companies: authoritative },
+        } : prev);
       }
+    } catch (error) {
+      console.error('Failed to update tracked companies, rolling back:', error);
+      setLocalTracked(snapshot);
     } finally {
       setIsUpdating(false);
     }
@@ -253,6 +316,13 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
   
   const contestsAttended = (contestHistory || []).length;
   const contestWins = (contestHistory || []).filter(c => c.solved > 0).length;
+
+  // ── Performance charts data (from self-analytics API) ─────────────────────
+  const scoreHistory = selfAnalytics?.score_history || [];
+  const topicAccuracy = selfAnalytics?.topic_accuracy || [];
+  const testsCompleted = selfAnalytics?.tests_completed || 0;
+  const avgScore = selfAnalytics?.avg_score || 0;
+  const peakScore = selfAnalytics?.peak_score || 0;
 
   const tabs = [
     { id: "overall", label: "Dashboard", icon: <TrendingUp size={18} /> },
@@ -405,6 +475,16 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
 
       {/* Main Content Areas */}
       {activeTab === "overall" && (
+        <>
+        {/* Performance Charts — score history + topic radar */}
+        <PerformanceDashboard
+          scoreHistory={scoreHistory}
+          topicAccuracy={topicAccuracy}
+          testsCompleted={testsCompleted}
+          avgScore={avgScore}
+          peakScore={peakScore}
+        />
+
         <div className="tab-fade" style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 40 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 40 }}>
             <div className="surface-card" style={{ background: 'white', borderRadius: 32, padding: 40, boxShadow: '0 15px 35px rgba(0,0,0,0.03)' }}>
@@ -476,8 +556,12 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                 </div>
               </div>
             </div>
+
+            {/* Mentor & Class Advisor */}
+            <MentorAdvisorCard />
           </div>
         </div>
+        </>
       )}
 
       {/* Coding Tab */}
@@ -649,22 +733,28 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
               </p>
             </div>
 
-            <div style={{ padding: 32, borderRadius: 28, background: 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)', border: '1px solid #e2e8f0' }}>
-               <h4 style={{ margin: '0 0 16px 0', fontSize: '1.1rem', fontWeight: 800 }}>Mastery Insights</h4>
-               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                 {(dashboard?.aptitude_stats || []).length > 0 ? (
-                   dashboard.aptitude_stats.map(stat => (
-                     <div key={stat.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                       <span style={{ color: 'var(--text-soft)', fontWeight: 600 }}>{stat.name}</span>
-                       <span style={{ fontWeight: 800 }}>{Math.round(stat.percentage || 0)}%</span>
-                     </div>
-                   ))
-                 ) : (
-                   <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem' }}>No modules completed yet. Start practicing to see insights!</p>
-                 )}
-               </div>
+            <div style={{ padding: 32, borderRadius: 28, background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)', border: '1px solid rgba(134,239,172,0.2)' }}>
+              <h4 style={{ margin: '0 0 20px 0', fontSize: '1.1rem', fontWeight: 800, color: '#166534' }}>Contest Performance</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {[
+                  ['Tests Taken', testsCompleted],
+                  ['Avg Score', `${(avgScore || 0).toFixed(1)}%`],
+                  ['Peak Score', `${(peakScore || 0).toFixed(1)}%`],
+                  ['Topics Explored', topicAccuracy.length],
+                ].map(([label, val]) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(134,239,172,0.15)' }}>
+                    <span style={{ fontWeight: 600, color: '#166534', fontSize: '0.95rem' }}>{label}</span>
+                    <span style={{ fontWeight: 900, color: '#15803d', fontSize: '1.15rem' }}>{val}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
+
+          <AptitudeProgressRadar
+            topicAccuracy={topicAccuracy}
+            aptitudeStats={dashboard?.aptitude_stats || []}
+          />
 
           <div className="section-head" style={{ marginTop: 48 }}>
             <h3 style={{ fontSize: '1.4rem', fontWeight: 900 }}>Aptitude Badges</h3>

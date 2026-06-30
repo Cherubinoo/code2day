@@ -6,6 +6,7 @@ from io import BytesIO
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
+from django.db import IntegrityError
 from django.db.models import Count, Q, Sum, Avg, Max, Max
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
@@ -20,6 +21,7 @@ from rest_framework.views import APIView
 from .auth_utils import RateLimitExceeded, StudentAuthMixin, UnifiedAuthMixin, check_rate_limit
 from .data import FALLBACK_DASHBOARD, FALLBACK_PROBLEMS
 from .models import (
+    BatchAdvisor,
     Contest,
     ContestParticipation,
     ContestSubmission,
@@ -362,7 +364,7 @@ def calculate_campus_rank_helper(student):
 
 
 
-def get_discussion_messages(user, profile, profile_type, thread_type="general", other_user_reg=None, batch_name=None, problem_slug=None):
+def get_discussion_messages(user, profile, profile_type, thread_type="general", other_user_reg=None, batch_name=None, problem_slug=None, section=None, mentor_id=None):
     """
     Fetch and cleanup messages based on access rules.
     Messages older than 24h are deleted on every request for this view.
@@ -384,10 +386,10 @@ def get_discussion_messages(user, profile, profile_type, thread_type="general", 
         elif profile_type in ["staff", "hod", "ja", "tpu"]:
             # Staff/HOD see messages for the batch they requested
             if not batch_name:
-                return qs.none() 
+                return qs.none()
             return qs.filter(thread_type="general", batch_name=batch_name)
         return qs.none()
-    
+
     if thread_type == "individual" and other_user_reg:
         # We filter the messages directly by matching the identifier against sender/recipient profile fields.
         # This handles collisions where a register number might match a username or faculty ID of a different user.
@@ -407,6 +409,28 @@ def get_discussion_messages(user, profile, profile_type, thread_type="general", 
     if thread_type == "batch" and batch_name:
         return qs.filter(thread_type="batch", batch_name=batch_name)
 
+    if thread_type == "section" and batch_name and section:
+        # Section chat — scoped to a specific batch + section
+        return qs.filter(thread_type="section", batch_name=batch_name, section=section)
+
+    if thread_type == "mentor_group":
+        # Mentor group chat — all messages for a given mentor's group
+        # mentor_id identifies whose group room this is (the staff member)
+        if not mentor_id:
+            return qs.none()
+        try:
+            mentor_staff = StaffProfile.objects.get(id=mentor_id)
+        except StaffProfile.DoesNotExist:
+            return qs.none()
+        # Verify access: must be the mentor themselves or one of their mentees
+        if profile_type == "student":
+            if not hasattr(profile, 'mentor') or profile.mentor_id != mentor_id:
+                return qs.none()
+        elif profile_type in ["staff", "hod", "tpu", "ja"]:
+            if profile.id != mentor_id:
+                return qs.none()
+        return qs.filter(thread_type="mentor_group", batch_name=str(mentor_id))
+
     if thread_type == "staff":
         if profile_type in ["staff", "hod"] and profile.department:
             return qs.filter(thread_type="staff", department=profile.department)
@@ -421,8 +445,6 @@ def get_discussion_messages(user, profile, profile_type, thread_type="general", 
 
     if thread_type == "problem" and problem_slug:
         return qs.filter(thread_type="problem", problem__slug=problem_slug)
-
-    return qs.none()
 
     return qs.none()
 
@@ -945,10 +967,17 @@ class UpdateTrackedCompaniesView(UnifiedAuthMixin, APIView):
         companies = request.data.get("companies", [])
         if not isinstance(companies, list):
             return Response({"detail": "Companies must be a list."}, status=status.HTTP_400_BAD_REQUEST)
-        
-        profile.tracked_companies = [c.strip() for c in companies if isinstance(c, str) and c.strip()]
-        profile.save(update_fields=["tracked_companies"])
-        
+
+        try:
+            profile.tracked_companies = [c.strip() for c in companies if isinstance(c, str) and c.strip()]
+            profile.save(update_fields=["tracked_companies"])
+        except Exception:
+            logger.exception("Failed to save tracked companies for student %s", getattr(profile, 'register_number', '?'))
+            return Response(
+                {"detail": "Failed to update tracked companies. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
         return Response({"status": "success", "tracked_companies": profile.tracked_companies})
 
 
@@ -1088,27 +1117,37 @@ class ProblemProgressUpdateView(StudentAuthMixin, APIView):
         )
         status_label = "Accepted" if progress_state == "completed" else "Started"
 
-        submission = Submission.objects.create(
-            student=profile,
-            problem=problem,
-            language=language,
-            status=status_label,
-        )
-
-        if progress_state == "completed":
-            Notification.objects.create(
-                recipient=profile.account,
-                title="🎯 Problem Solved!",
-                message=f"Congratulations! You've successfully solved '{problem.title}'.",
-                link=f"/problems?slug={problem.slug}"
+        try:
+            submission = Submission.objects.create(
+                student=profile,
+                problem=problem,
+                language=language,
+                status=status_label,
             )
 
-        activity_type = "solve" if progress_state == "completed" else "practice"
-        StudentActivity.objects.get_or_create(
-            student=profile,
-            activity_date=timezone.localdate(),
-            activity_type=activity_type,
-        )
+            if progress_state == "completed":
+                Notification.objects.create(
+                    recipient=profile.account,
+                    title="🎯 Problem Solved!",
+                    message=f"Congratulations! You've successfully solved '{problem.title}'.",
+                    link=f"/problems?slug={problem.slug}"
+                )
+
+            activity_type = "solve" if progress_state == "completed" else "practice"
+            StudentActivity.objects.get_or_create(
+                student=profile,
+                activity_date=timezone.localdate(),
+                activity_type=activity_type,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to save problem progress for student %s, problem %s",
+                getattr(profile, 'register_number', '?'), problem.slug,
+            )
+            return Response(
+                {"detail": "Failed to save progress. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         return Response(
             {
@@ -1931,10 +1970,24 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
         other_user_reg = request.query_params.get("other_user_reg")
         batch_name = request.query_params.get("batch_name")
         problem_slug = request.query_params.get("problem_slug")
+        section = (request.query_params.get("section") or "").strip().upper()
+        mentor_id_str = request.query_params.get("mentor_id")
+        mentor_id = int(mentor_id_str) if mentor_id_str and mentor_id_str.isdigit() else None
 
         # Security check for staff/hod rooms
         if thread_type in ["staff", "hod_tp_ja"] and profile_type == "student":
             return Response({"detail": "Access denied to this channel."}, status=403)
+
+        # Section chat access: student must be in that batch+section
+        if thread_type == "section" and profile_type == "student":
+            if not section or profile.section != section:
+                return Response({"detail": "Access denied to this section."}, status=403)
+            batch_name = profile.batch
+
+        # Mentor group access: student must have that mentor
+        if thread_type == "mentor_group" and profile_type == "student":
+            if not mentor_id or not profile.mentor or profile.mentor.id != mentor_id:
+                return Response({"detail": "Access denied to this mentor group."}, status=403)
 
         messages_qs = get_discussion_messages(
             request.user,
@@ -1943,7 +1996,9 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
             thread_type=thread_type,
             other_user_reg=other_user_reg,
             batch_name=batch_name,
-            problem_slug=problem_slug
+            problem_slug=problem_slug,
+            section=section,
+            mentor_id=mentor_id,
         ).order_by("created_at")
 
         # Mark messages sent TO the current user as read when they view the thread
@@ -1955,7 +2010,7 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
                 is_read=False,
                 link__icontains=f"other_user_reg={other_user_reg}"
             ).update(is_read=True)
-        elif thread_type in ["general", "staff", "hod_tp_ja"]:
+        elif thread_type in ["general", "staff", "hod_tp_ja", "section", "mentor_group"]:
             # For group channels, just clear all notifications for that channel
             Notification.objects.filter(
                 recipient=request.user,
@@ -1980,11 +2035,37 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
         recipient_reg = data.get("recipient_reg")
         batch_name = data.get("batch_name")
         problem_slug = data.get("problem_slug")
+        section = (data.get("section") or "").strip().upper()
+        mentor_id_str = str(data.get("mentor_id") or "")
+        mentor_id = int(mentor_id_str) if mentor_id_str.isdigit() else None
         body = data["body"]
 
         # 1. Validation and Security
         if thread_type == "general" and profile_type == "student":
             batch_name = profile.batch
+
+        if thread_type == "section":
+            # Section chat — auto-fill batch+section from student profile
+            if profile_type == "student":
+                if not profile.section:
+                    return Response({"detail": "You are not assigned to a section."}, status=403)
+                batch_name = profile.batch
+                section = profile.section
+            elif not batch_name or not section:
+                return Response({"detail": "batch_name and section are required."}, status=400)
+
+        if thread_type == "mentor_group":
+            if profile_type == "student":
+                if not profile.mentor:
+                    return Response({"detail": "You do not have an assigned mentor."}, status=403)
+                mentor_id = profile.mentor.id
+                batch_name = str(mentor_id)
+            elif profile_type in ["staff", "hod", "tpu"]:
+                # Staff posting to their own group
+                mentor_id = profile.id
+                batch_name = str(mentor_id)
+            else:
+                return Response({"detail": "Access denied."}, status=403)
 
         if thread_type == "individual":
             if not recipient_reg:
@@ -2000,7 +2081,7 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
                     recipient_staff = StaffProfile.objects.filter(faculty_id__iexact=recipient_reg, institution=profile.institution).first()
                     if not recipient_staff:
                         return Response({"detail": "Staff member not found in your institution."}, status=403)
-                
+
                 recipient = recipient_staff.account
             else:
                 recipient = User.objects.filter(
@@ -2040,6 +2121,7 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
             problem=problem,
             thread_type=thread_type,
             batch_name=batch_name,
+            section=section,
             institution=getattr(profile, 'institution', None),
             department=getattr(profile, 'department', None),
             body=body,
@@ -2057,7 +2139,7 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
                 message=body[:60] + "..." if len(body) > 60 else body,
                 link=f"/discuss?thread_type=individual&other_user_reg={sender_reg}"
             )
-        elif thread_type in ["staff", "hod_tp_ja", "general"]:
+        elif thread_type in ["staff", "hod_tp_ja", "general", "section", "mentor_group"]:
             # For group channels, we notify relevant people
             recipients_qs = User.objects.none()
             room_name = "General Chat"
@@ -2080,6 +2162,24 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
                 )
                 if batch_name:
                     room_name = f"Batch {batch_name} Chat"
+            elif thread_type == "section" and batch_name and section:
+                recipients_qs = User.objects.filter(
+                    student_profile__batch=batch_name,
+                    student_profile__section=section,
+                    student_profile__institution=getattr(profile, 'institution', None),
+                )
+                room_name = f"Section {section} Chat"
+            elif thread_type == "mentor_group" and mentor_id:
+                # Notify all mentees + the mentor
+                try:
+                    mentor_staff = StaffProfile.objects.get(id=mentor_id)
+                    recipients_qs = User.objects.filter(
+                        Q(student_profile__mentor_id=mentor_id) |
+                        Q(staff_profile__id=mentor_id)
+                    )
+                    room_name = f"Mentor Group ({mentor_staff.name})"
+                except StaffProfile.DoesNotExist:
+                    pass
 
             # Filter out the sender
             recipients = recipients_qs.exclude(id=request.user.id).distinct()
@@ -2088,6 +2188,10 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
             notif_link = f"/discuss?thread_type={thread_type}"
             if thread_type == "general" and batch_name:
                 notif_link += f"&batch_name={batch_name}"
+            elif thread_type == "section" and batch_name and section:
+                notif_link += f"&batch_name={batch_name}&section={section}"
+            elif thread_type == "mentor_group" and mentor_id:
+                notif_link += f"&mentor_id={mentor_id}"
 
             notifications = [
                 Notification(
@@ -2973,7 +3077,7 @@ class StaffDetailView(APIView):
                     "name": target_staff.institution.name,
                 } if target_staff.institution else None,
                 "days_active": days_active,
-                "assigned_students": total_students,
+                "assigned_students": StudentProfile.objects.filter(mentor=target_staff).count(),
             },
             "analytics": {
                 "total_solved": SolvedProblem.objects.filter(
@@ -3576,33 +3680,43 @@ class AptitudeContestSubmitView(APIView):
         is_correct = (selected_option == question.correct_option)
         score = 1 if is_correct else 0 # Simple scoring for now
 
-        submission, created = AptitudeContestSubmission.objects.update_or_create(
-            contest=contest,
-            student=student,
-            question=question,
-            defaults={
-                'selected_option': selected_option,
-                'is_correct': is_correct,
-                'score': score,
-                'time_taken_seconds': time_taken
-            }
-        )
+        try:
+            submission, created = AptitudeContestSubmission.objects.update_or_create(
+                contest=contest,
+                student=student,
+                question=question,
+                defaults={
+                    'selected_option': selected_option,
+                    'is_correct': is_correct,
+                    'score': score,
+                    'time_taken_seconds': time_taken
+                }
+            )
 
-        # Update Participation stats
-        participation, _ = ContestParticipation.objects.get_or_create(
-            contest=contest,
-            student=student,
-            defaults={
-                'has_started': True,
-                'manually_stopped': False
-            }
-        )
-        
-        # Recalculate total score and solved count for accuracy
-        all_subs = AptitudeContestSubmission.objects.filter(contest=contest, student=student)
-        participation.total_score = all_subs.aggregate(total=Sum('score'))['total'] or 0
-        participation.problems_solved = all_subs.filter(is_correct=True).count()
-        participation.save(update_fields=['total_score', 'problems_solved'])
+            # Update Participation stats
+            participation, _ = ContestParticipation.objects.get_or_create(
+                contest=contest,
+                student=student,
+                defaults={
+                    'has_started': True,
+                    'manually_stopped': False
+                }
+            )
+
+            # Recalculate total score and solved count for accuracy
+            all_subs = AptitudeContestSubmission.objects.filter(contest=contest, student=student)
+            participation.total_score = all_subs.aggregate(total=Sum('score'))['total'] or 0
+            participation.problems_solved = all_subs.filter(is_correct=True).count()
+            participation.save(update_fields=['total_score', 'problems_solved'])
+        except Exception:
+            logger.exception(
+                "Failed to record aptitude submission for student %s, contest %s, question %s",
+                getattr(student, 'register_number', '?'), contest_id, question_id,
+            )
+            return Response(
+                {"detail": "Failed to record your answer. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         return Response({
             "success": True,
@@ -4670,7 +4784,7 @@ class StudentIndividualAnalyticsView(APIView):
         # Get recent activity (last 30 days)
         thirty_days_ago = timezone.now() - timedelta(days=30)
         recent_activity = []
-        
+
         recent_solutions = ProblemSolution.objects.filter(
             student=student,
             submitted_at__gte=thirty_days_ago
@@ -4732,13 +4846,68 @@ class StudentIndividualAnalyticsView(APIView):
                 project_insights.append({'skill': skill, 'count': count})
         project_insights = project_insights[:6]
 
-        return Response({
-            "student": {
-                "register_number": student.register_number,
-                "name": student.name,
-                "batch": student.batch,
-                "department": student.department.name if student.department else None,
-                "current_streak": student.current_streak,
+        # ── Score History (from ContestParticipation) ─────────────────────────
+        cp_qs = ContestParticipation.objects.filter(
+            student=student, is_active=False
+        ).select_related('contest').order_by('started_at')[:25]
+
+        score_history = []
+        for idx, cp in enumerate(cp_qs, 1):
+            contest = cp.contest
+            if contest.contest_type == 'aptitude':
+                total_q = contest.aptitude_questions.count()
+                correct_q = AptitudeContestSubmission.objects.filter(
+                    contest=contest, student=student, is_correct=True
+                ).count()
+                score_pct = round(correct_q / max(1, total_q) * 100, 1)
+            else:
+                total_p = contest.problems.count()
+                score_pct = round(cp.problems_solved / max(1, total_p) * 100, 1)
+            score_history.append({
+                'label': f'Test {idx}',
+                'title': contest.title,
+                'score_pct': score_pct,
+                'date': cp.started_at.strftime('%Y-%m-%d'),
+                'contest_type': contest.contest_type,
+            })
+
+        tests_completed = len(score_history)
+        avg_score = round(sum(s['score_pct'] for s in score_history) / tests_completed, 2) if tests_completed else 0
+        peak_score = max((s['score_pct'] for s in score_history), default=0)
+
+        # ── Topic Accuracy (from AptitudeContestSubmission by topic) ──────────
+        try:
+            topic_acc_qs = AptitudeContestSubmission.objects.filter(
+                student=student
+            ).select_related('question__topic__parent').values(
+                'question__topic__title', 'question__topic__parent__title'
+            ).annotate(
+                total=Count('id'),
+                correct=Count('id', filter=Q(is_correct=True))
+            ).order_by('-total')[:20]
+
+            topic_accuracy = [
+                {
+                    'topic': t['question__topic__title'],
+                    'category': t['question__topic__parent__title'] or t['question__topic__title'],
+                    'accuracy': round(t['correct'] / t['total'] * 100, 1) if t['total'] else 0,
+                    'total': t['total'],
+                    'correct': t['correct'],
+                }
+                for t in topic_acc_qs
+            ]
+        except Exception:
+            logger.exception("Failed to compute topic_accuracy for student %s (individual analytics)", register_number)
+            topic_accuracy = []
+
+        try:
+            return Response({
+                "student": {
+                    "register_number": student.register_number,
+                    "name": student.name,
+                    "batch": student.batch,
+                    "department": student.department.name if student.department else None,
+                    "current_streak": student.current_streak,
                 "login_days": student.login_days,
                 "campus_rank": f"#{calculate_campus_rank_helper(student)}",
             },
@@ -4756,8 +4925,137 @@ class StudentIndividualAnalyticsView(APIView):
                 },
                 "company_insights": company_insights,
                 "project_insights": project_insights,
+                "score_history": score_history,
+                "topic_accuracy": topic_accuracy,
+                "tests_completed": tests_completed,
+                "avg_score": avg_score,
+                "peak_score": peak_score,
             }
         })
+        except Exception:
+            logger.exception("Failed to build analytics response for student %s", register_number)
+            return Response(
+                {"detail": "Failed to load analytics. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class StudentSelfAnalyticsView(APIView):
+    """Student views their own detailed analytics — mirrors staff view but self-scoped."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not hasattr(request.user, 'student_profile'):
+            return Response({"detail": "Student access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        student = request.user.student_profile
+
+        solved_problems = SolvedProblem.objects.filter(student=student).select_related('problem')
+
+        difficulty_breakdown = {"Easy": 0, "Medium": 0, "Hard": 0}
+        for sp in solved_problems:
+            difficulty_breakdown[sp.problem.difficulty] = difficulty_breakdown.get(sp.problem.difficulty, 0) + 1
+
+        thirty_days_ago = timezone.now() - timedelta(days=30)
+        recent_activity = []
+        recent_solutions = ProblemSolution.objects.filter(
+            student=student, submitted_at__gte=thirty_days_ago
+        ).select_related('problem').order_by('-submitted_at')[:20]
+        for sol in recent_solutions:
+            recent_activity.append({
+                "date": sol.submitted_at.isoformat(),
+                "problem": sol.problem.title,
+                "difficulty": sol.problem.difficulty,
+                "status": sol.status,
+                "language": sol.language,
+            })
+
+        total_time_spent = ProblemSession.objects.filter(
+            student=student, is_active=False
+        ).aggregate(total=Sum('time_spent_seconds'))['total'] or 0
+
+        aptitude_solved = SolvedAptitude.objects.filter(student=student).count()
+        total_aptitude = AptitudeQuestion.objects.count()
+
+        # Score history
+        cp_qs = ContestParticipation.objects.filter(
+            student=student, is_active=False
+        ).select_related('contest').order_by('started_at')[:25]
+
+        score_history = []
+        for idx, cp in enumerate(cp_qs, 1):
+            contest = cp.contest
+            if contest.contest_type == 'aptitude':
+                total_q = contest.aptitude_questions.count()
+                correct_q = AptitudeContestSubmission.objects.filter(
+                    contest=contest, student=student, is_correct=True
+                ).count()
+                score_pct = round(correct_q / max(1, total_q) * 100, 1)
+            else:
+                total_p = contest.problems.count()
+                score_pct = round(cp.problems_solved / max(1, total_p) * 100, 1)
+            score_history.append({
+                'label': f'Test {idx}',
+                'title': contest.title,
+                'score_pct': score_pct,
+                'date': cp.started_at.strftime('%Y-%m-%d'),
+                'contest_type': contest.contest_type,
+            })
+
+        tests_completed = len(score_history)
+        avg_score = round(sum(s['score_pct'] for s in score_history) / tests_completed, 2) if tests_completed else 0
+        peak_score = max((s['score_pct'] for s in score_history), default=0)
+
+        # Topic accuracy
+        try:
+            topic_acc_qs = AptitudeContestSubmission.objects.filter(
+                student=student
+            ).select_related('question__topic__parent').values(
+                'question__topic__title', 'question__topic__parent__title'
+            ).annotate(
+                total=Count('id'),
+                correct=Count('id', filter=Q(is_correct=True))
+            ).order_by('-total')[:20]
+
+            topic_accuracy = [
+                {
+                    'topic': t['question__topic__title'],
+                    'category': t['question__topic__parent__title'] or t['question__topic__title'],
+                    'accuracy': round(t['correct'] / t['total'] * 100, 1) if t['total'] else 0,
+                    'total': t['total'],
+                    'correct': t['correct'],
+                }
+                for t in topic_acc_qs
+            ]
+        except Exception:
+            logger.exception("Failed to compute topic_accuracy for self-analytics (student %s)", getattr(student, 'register_number', '?'))
+            topic_accuracy = []
+
+        try:
+            return Response({
+                "analytics": {
+                    "solved_count": solved_problems.count(),
+                    "difficulty_breakdown": difficulty_breakdown,
+                    "recent_activity": recent_activity,
+                    "time_spent_hours": round(total_time_spent / 3600, 2),
+                    "aptitude": {
+                        "solved": aptitude_solved,
+                        "total": total_aptitude,
+                        "percentage": round(aptitude_solved / total_aptitude * 100, 1) if total_aptitude else 0,
+                    },
+                    "score_history": score_history,
+                    "topic_accuracy": topic_accuracy,
+                    "tests_completed": tests_completed,
+                    "avg_score": avg_score,
+                    "peak_score": peak_score,
+                }
+            })
+        except Exception:
+            logger.exception("Failed to build self-analytics response for student %s", getattr(student, 'register_number', '?'))
+            return Response(
+                {"detail": "Failed to load analytics. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class ContestApprovalView(APIView):
@@ -4795,29 +5093,40 @@ class ContestApprovalView(APIView):
             )
 
         action = request.data.get('action')  # 'approve' or 'reject'
-        
-        if action == 'approve':
-            contest.approve(profile)
-            # Auto-publish on approval
-            publish_contest_helper(contest)
-            return Response({
-                "detail": "Contest approved and published successfully.",
-                "contest_id": contest.id,
-                "status": contest.status,
-            })
-        elif action == 'reject':
-            reason = request.data.get('reason', '')
-            contest.reject(reason)
-            return Response({
-                "detail": "Contest rejected.",
-                "contest_id": contest.id,
-                "status": contest.status,
-                "reason": reason,
-            })
-        else:
+
+        if action not in ('approve', 'reject'):
             return Response(
                 {"detail": "Invalid action. Use 'approve' or 'reject'."},
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            if action == 'approve':
+                contest.approve(profile)
+                # Auto-publish on approval
+                publish_contest_helper(contest)
+                return Response({
+                    "detail": "Contest approved and published successfully.",
+                    "contest_id": contest.id,
+                    "status": contest.status,
+                })
+            else:
+                reason = request.data.get('reason', '')
+                contest.reject(reason)
+                return Response({
+                    "detail": "Contest rejected.",
+                    "contest_id": contest.id,
+                    "status": contest.status,
+                    "reason": reason,
+                })
+        except Exception:
+            logger.exception(
+                "Failed to %s contest %s for HOD %s",
+                action, contest_id, profile.faculty_id,
+            )
+            return Response(
+                {"detail": f"Failed to {action} contest. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
@@ -4900,8 +5209,15 @@ class ContestPublishView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        publish_contest_helper(contest)
-        
+        try:
+            publish_contest_helper(contest)
+        except Exception:
+            logger.exception("Failed to publish contest %s for staff %s", contest_id, profile.faculty_id)
+            return Response(
+                {"detail": "Failed to publish contest. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
         return Response({
             "detail": "Contest published successfully.",
             "contest_id": contest.id,
@@ -5294,11 +5610,24 @@ class StudentContestStartView(APIView):
             })
 
         # Create participation with session timing
-        participation = ContestParticipation.objects.create(
-            contest=contest,
-            student=student,
-            manually_stopped=False  # Explicitly set default value
-        )
+        try:
+            participation = ContestParticipation.objects.create(
+                contest=contest,
+                student=student,
+                manually_stopped=False  # Explicitly set default value
+            )
+        except IntegrityError:
+            # Race condition: another request created the record between our check and create
+            participation = ContestParticipation.objects.filter(contest=contest, student=student).first()
+            if not participation:
+                logger.exception("IntegrityError creating participation for student %s, contest %s", getattr(student, 'register_number', '?'), contest_id)
+                return Response({"detail": "Failed to start contest. Please try again."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception:
+            logger.exception("Failed to start contest %s for student %s", contest_id, getattr(student, 'register_number', '?'))
+            return Response(
+                {"detail": "Failed to start contest session. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         return Response({
             "detail": "Contest session started successfully.",
@@ -5345,27 +5674,37 @@ class StudentContestAutoSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # End the participation with auto-submit flag
-        participation.end_participation(auto_submitted=True)
-        
-        # Calculate final score and problems solved
-        if participation.contest.contest_type == 'programming':
-            participation.total_score = _best_score_per_problem(participation.contest, student)
-            participation.problems_solved = ContestSubmission.objects.filter(
-                contest_id=contest_id,
-                student=student,
-                status='Accepted',
-            ).values('problem').distinct().count()
-        else:
-            # Aptitude contest
-            submissions = AptitudeContestSubmission.objects.filter(
-                contest_id=contest_id,
-                student=student
+        try:
+            # End the participation with auto-submit flag
+            participation.end_participation(auto_submitted=True)
+
+            # Calculate final score and problems solved
+            if participation.contest.contest_type == 'programming':
+                participation.total_score = _best_score_per_problem(participation.contest, student)
+                participation.problems_solved = ContestSubmission.objects.filter(
+                    contest_id=contest_id,
+                    student=student,
+                    status='Accepted',
+                ).values('problem').distinct().count()
+            else:
+                # Aptitude contest
+                submissions = AptitudeContestSubmission.objects.filter(
+                    contest_id=contest_id,
+                    student=student
+                )
+                participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
+                participation.problems_solved = submissions.filter(is_correct=True).count()
+
+            participation.save(update_fields=['total_score', 'problems_solved'])
+        except Exception:
+            logger.exception(
+                "Failed to auto-submit contest %s for student %s",
+                contest_id, getattr(student, 'register_number', '?'),
             )
-            participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
-            participation.problems_solved = submissions.filter(is_correct=True).count()
-        
-        participation.save(update_fields=['total_score', 'problems_solved'])
+            return Response(
+                {"detail": "Failed to auto-submit contest. Please contact support."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         return Response({
             "detail": "Contest auto-submitted due to session expiry.",
@@ -7968,7 +8307,7 @@ class JABatchDetailView(APIView):
                 department=profile.department,
                 batch=batch_code
             )
-            .select_related('account')
+            .select_related('account', 'mentor')
             .order_by('register_number')
         )
 
@@ -7979,10 +8318,14 @@ class JABatchDetailView(APIView):
                 "register_number": s.register_number,
                 "name": s.name,
                 "batch": s.batch,
+                "section": s.section,
                 "personal_email": s.personal_email,
                 "mobile_number": s.mobile_number,
                 "gender": s.gender,
                 "is_active": s.account.is_active if s.account else True,
+                "mentor_id": s.mentor_id,
+                "mentor_name": s.mentor.name if s.mentor_id else None,
+                "mentor_faculty_id": s.mentor.faculty_id if s.mentor_id else None,
             })
 
         return Response({
@@ -8034,9 +8377,9 @@ class JAStudentCreateView(APIView):
         name = (data.get('name') or '').strip()
         batch = (data.get('batch') or '').strip()
 
-        if not register_number or not name or not batch:
+        if not register_number or not name:
             return Response(
-                {"detail": "register_number, name, and batch are required."},
+                {"detail": "register_number and name are required."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -8048,26 +8391,42 @@ class JAStudentCreateView(APIView):
 
         # Create Django User account
         from django.contrib.auth.hashers import make_password
-        user = User.objects.create(
-            username=register_number,
-            password=make_password(None),  # unusable password until first login
-            is_active=True,
-        )
 
-        student = StudentProfile.objects.create(
-            account=user,
-            institution=profile.institution,
-            department=profile.department,
-            register_number=register_number,
-            name=name,
-            title=data.get('title', name),
-            batch=batch,
-            personal_email=data.get('personal_email', ''),
-            mobile_number=data.get('mobile_number', ''),
-            gender=data.get('gender', ''),
-        )
+        section = (data.get('section') or '').strip().upper()
 
-        logger.info("JA %s created student %s in batch %s", profile.faculty_id, register_number, batch)
+        try:
+            user = User.objects.create(
+                username=register_number,
+                password=make_password(None),  # unusable password until first login
+                is_active=True,
+            )
+            student = StudentProfile.objects.create(
+                account=user,
+                institution=profile.institution,
+                department=profile.department,
+                register_number=register_number,
+                name=name,
+                title=data.get('title', name),
+                batch=batch,
+                section=section,
+                personal_email=data.get('personal_email', ''),
+                mobile_number=data.get('mobile_number', ''),
+                gender=data.get('gender', ''),
+            )
+        except IntegrityError:
+            # Duplicate register_number that slipped past the exists() check (race condition)
+            return Response(
+                {"detail": f"Student with register number '{register_number}' already exists."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            logger.exception("Failed to create student %s for JA %s", register_number, profile.faculty_id)
+            return Response(
+                {"detail": "Failed to create student. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        logger.info("JA %s created student %s in batch %s section %s", profile.faculty_id, register_number, batch, section or "—")
 
         return Response({
             "detail": "Student created successfully.",
@@ -8076,6 +8435,7 @@ class JAStudentCreateView(APIView):
                 "register_number": student.register_number,
                 "name": student.name,
                 "batch": student.batch,
+                "section": student.section,
             },
         }, status=status.HTTP_201_CREATED)
 
@@ -8111,6 +8471,59 @@ class JAStudentDeleteView(APIView):
 
         return Response({
             "detail": f"Student '{student_name}' ({register_number}) has been removed.",
+        })
+
+
+class JAStudentUpdateView(APIView):
+    """JA: update a student's name, mobile number, batch, and/or section.
+    PATCH /api/ja/students/<register_number>/update/
+    Body: { name?: str, mobile_number?: str, batch?: str, section?: str }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, register_number):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        student = StudentProfile.objects.filter(
+            register_number=register_number,
+            institution=profile.institution,
+            department=profile.department,
+        ).first()
+        if not student:
+            return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        fields_updated = []
+        name = (request.data.get('name') or '').strip()
+        mobile = (request.data.get('mobile_number') or '').strip()
+
+        if name:
+            student.name = name
+            fields_updated.append('name')
+        if 'mobile_number' in request.data:
+            student.mobile_number = mobile
+            fields_updated.append('mobile_number')
+        if 'batch' in request.data:
+            student.batch = (request.data.get('batch') or '').strip()
+            fields_updated.append('batch')
+        if 'section' in request.data:
+            raw_section = (request.data.get('section') or '').strip().upper()
+            student.section = raw_section
+            fields_updated.append('section')
+
+        if not fields_updated:
+            return Response({"detail": "Nothing to update."}, status=status.HTTP_400_BAD_REQUEST)
+
+        student.save(update_fields=fields_updated)
+
+        return Response({
+            "detail": "Student updated successfully.",
+            "register_number": student.register_number,
+            "name": student.name,
+            "mobile_number": student.mobile_number,
+            "batch": student.batch,
+            "section": student.section,
         })
 
 
@@ -8150,9 +8563,42 @@ class JAStudentMoveView(APIView):
         })
 
 
+class JABulkBatchAssignView(APIView):
+    """JA: assign multiple students to a batch at once.
+    POST /api/ja/students/assign-batch/
+    Body: { batch: "23-27", register_numbers: ["REG001", "REG002"] }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        batch = (request.data.get('batch') or '').strip()
+        register_numbers = request.data.get('register_numbers', [])
+
+        if not batch:
+            return Response({"detail": "batch is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not register_numbers or not isinstance(register_numbers, list):
+            return Response({"detail": "register_numbers must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
+
+        updated = StudentProfile.objects.filter(
+            register_number__in=register_numbers,
+            institution=profile.institution,
+            department=profile.department,
+        ).update(batch=batch)
+
+        return Response({
+            "detail": f"{updated} student(s) assigned to batch '{batch}'.",
+            "updated": updated,
+            "batch": batch,
+        })
+
+
 class JABulkImportView(APIView):
     """JA: bulk import students from an uploaded Excel (.xlsx) file.
-    
+
     Optional POST param: default_batch — used when a row's batch column is empty.
     """
     permission_classes = [IsAuthenticated]
@@ -8222,6 +8668,7 @@ class JABulkImportView(APIView):
             register_number = get_col('register_number')
             name = get_col('name')
             batch = get_col('batch') or default_batch
+            section = get_col('section').upper()
 
             if not register_number or not name:
                 errors.append({"row": row_num, "reason": "Missing register_number or name."})
@@ -8249,6 +8696,7 @@ class JABulkImportView(APIView):
                     name=name,
                     title=get_col('title') or name,
                     batch=batch,
+                    section=section,
                     personal_email=get_col('personal_email'),
                     mobile_number=get_col('mobile_number'),
                     gender=get_col('gender'),
@@ -8258,6 +8706,7 @@ class JABulkImportView(APIView):
                     "register_number": register_number,
                     "name": name,
                     "batch": batch,
+                    "section": section,
                     "title": student.title,
                     "personal_email": student.personal_email,
                     "mobile_number": student.mobile_number,
@@ -8311,6 +8760,7 @@ class JAExcelTemplateView(APIView):
             "register_number",
             "name",
             "batch",
+            "section",
             "title",
             "personal_email",
             "mobile_number",
@@ -8334,9 +8784,9 @@ class JAExcelTemplateView(APIView):
 
         # ── Sample rows ───────────────────────────────────────────────────────
         sample_rows = [
-            ["953623243001", "Arun Kumar", "23-27", "Mr. Arun Kumar", "arun@example.com", "9876543210", "Male"],
-            ["953623243002", "Priya Sharma", "23-27", "Ms. Priya Sharma", "priya@example.com", "9876543211", "Female"],
-            ["953623243003", "Ravi Raj", "23-27", "Mr. Ravi Raj", "", "", "Male"],
+            ["953623243001", "Arun Kumar", "23-27", "A", "Mr. Arun Kumar", "arun@example.com", "9876543210", "Male"],
+            ["953623243002", "Priya Sharma", "23-27", "B", "Ms. Priya Sharma", "priya@example.com", "9876543211", "Female"],
+            ["953623243003", "Ravi Raj", "23-27", "A", "Mr. Ravi Raj", "", "", "Male"],
         ]
 
         sample_fill = PatternFill(start_color="F0FFF4", end_color="F0FFF4", fill_type="solid")
@@ -8348,7 +8798,7 @@ class JAExcelTemplateView(APIView):
                 cell.alignment = Alignment(vertical="center")
 
         # ── Column widths ─────────────────────────────────────────────────────
-        col_widths = [20, 25, 12, 30, 30, 16, 10]
+        col_widths = [20, 25, 12, 10, 30, 30, 16, 10]
         for col_num, width in enumerate(col_widths, 1):
             ws.column_dimensions[openpyxl.utils.get_column_letter(col_num)].width = width
 
@@ -8362,6 +8812,7 @@ class JAExcelTemplateView(APIView):
             ("name", "YES", "Full name of the student"),
             ("batch", "YES", "Batch code (e.g. 23-27)"),
             ("title", "No", "Display title (e.g. Mr. John Doe). Defaults to name if blank."),
+            ("section", "No", "Section within the batch: A or B"),
             ("personal_email", "No", "Personal email address"),
             ("mobile_number", "No", "10-digit mobile number"),
             ("gender", "No", "Male / Female / Other"),
@@ -8407,13 +8858,18 @@ class JAStudentListView(APIView):
         students = StudentProfile.objects.filter(
             institution=profile.institution,
             department=profile.department,
-        ).select_related('account').order_by('batch', 'register_number')
+        ).select_related('account', 'mentor').order_by('batch', 'register_number')
 
         batch = request.query_params.get('batch')
+        section_param = (request.query_params.get('section') or '').strip()
         search = request.query_params.get('search', '').strip()
 
         if batch:
             students = students.filter(batch=batch)
+        if section_param == '__none__':
+            students = students.filter(section='')
+        elif section_param:
+            students = students.filter(section=section_param.upper())
         if search:
             students = students.filter(
                 Q(name__icontains=search) | Q(register_number__icontains=search)
@@ -8426,10 +8882,14 @@ class JAStudentListView(APIView):
                 "register_number": s.register_number,
                 "name": s.name,
                 "batch": s.batch,
+                "section": s.section,
                 "personal_email": s.personal_email,
                 "mobile_number": s.mobile_number,
                 "gender": s.gender,
                 "is_active": s.account.is_active if s.account else True,
+                "mentor_id": s.mentor_id,
+                "mentor_name": s.mentor.name if s.mentor_id else None,
+                "mentor_faculty_id": s.mentor.faculty_id if s.mentor_id else None,
             })
 
         return Response({"students": data, "total": len(data)})
@@ -8556,3 +9016,545 @@ class JAImportReportView(APIView):
         )
         response['Content-Disposition'] = f'attachment; filename="{filename}"'
         return response
+
+
+# =============================================================================
+# JA — Advisor & Mentor Management
+# =============================================================================
+
+class JAStaffListView(APIView):
+    """JA: list all active staff in their department (for advisor/mentor assignment)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        staff = StaffProfile.objects.filter(
+            institution=profile.institution,
+            department=profile.department,
+            is_active=True,
+        ).order_by('name')
+
+        data = [
+            {
+                "id": s.id,
+                "faculty_id": s.faculty_id,
+                "name": s.name,
+                "role": s.role,
+                "role_display": s.get_role_display(),
+            }
+            for s in staff
+        ]
+        return Response({"staff": data})
+
+
+class JABatchAdvisorView(APIView):
+    """
+    JA: get or set the class advisor for a batch section.
+    GET  /api/ja/advisors/           → flat list of all batch+section→advisor rows
+    POST /api/ja/advisors/           → assign/update advisor for a batch+section
+         body: { batch, section, advisor_id }
+    """
+    permission_classes = [IsAuthenticated]
+
+    SECTIONS = ["A", "B", "C"]
+
+    def get(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        # All existing advisor assignments
+        assignments = BatchAdvisor.objects.filter(
+            department=profile.department,
+        ).select_related('advisor', 'assigned_by')
+        advisor_map = {}  # (batch, section) → assignment obj
+        for a in assignments:
+            advisor_map[(a.batch, a.section)] = a
+
+        # All batches that have students
+        all_batches = list(
+            StudentProfile.objects
+            .filter(institution=profile.institution, department=profile.department)
+            .exclude(batch='')
+            .values_list('batch', flat=True)
+            .distinct()
+            .order_by('batch')
+        )
+
+        data = []
+        for batch in all_batches:
+            for section in self.SECTIONS:
+                student_count = StudentProfile.objects.filter(
+                    institution=profile.institution,
+                    department=profile.department,
+                    batch=batch,
+                    section=section,
+                ).count()
+                a = advisor_map.get((batch, section))
+                data.append({
+                    "batch": batch,
+                    "section": section,
+                    "student_count": student_count,
+                    "advisor": {
+                        "id": a.advisor.id,
+                        "faculty_id": a.advisor.faculty_id,
+                        "name": a.advisor.name,
+                        "role": a.advisor.role,
+                    } if a else None,
+                    "assigned_at": a.assigned_at.isoformat() if a else None,
+                    "assigned_by": a.assigned_by.name if (a and a.assigned_by) else None,
+                })
+
+        return Response({"assignments": data})
+
+    def post(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        batch = (request.data.get('batch') or '').strip()
+        section = (request.data.get('section') or '').strip().upper()
+        advisor_id = request.data.get('advisor_id')
+
+        if not batch:
+            return Response({"detail": "batch is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not section:
+            return Response({"detail": "section is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not advisor_id:
+            return Response({"detail": "advisor_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            advisor = StaffProfile.objects.get(id=advisor_id, institution=profile.institution)
+        except StaffProfile.DoesNotExist:
+            return Response({"detail": "Staff member not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        assignment, created = BatchAdvisor.objects.update_or_create(
+            batch=batch,
+            section=section,
+            department=profile.department,
+            defaults={"advisor": advisor, "assigned_by": profile},
+        )
+
+        action = "assigned" if created else "updated"
+        logger.info(
+            "JA %s %s class advisor %s to batch %s section %s",
+            profile.faculty_id, action, advisor.faculty_id, batch, section
+        )
+
+        return Response({
+            "detail": f"Class advisor {action} for batch '{batch}' section '{section}'.",
+            "batch": batch,
+            "section": section,
+            "advisor": {"id": advisor.id, "faculty_id": advisor.faculty_id, "name": advisor.name},
+        }, status=status.HTTP_200_OK)
+
+
+class JABatchAdvisorDeleteView(APIView):
+    """JA: remove a class advisor assignment for a batch+section.
+    DELETE /api/ja/advisors/<batch_code>/?section=A
+    """
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, batch_code):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        section = (request.query_params.get('section') or '').strip().upper()
+
+        qs = BatchAdvisor.objects.filter(batch=batch_code, department=profile.department)
+        if section:
+            qs = qs.filter(section=section)
+
+        deleted, _ = qs.delete()
+
+        if not deleted:
+            return Response({"detail": "No advisor assignment found."}, status=status.HTTP_404_NOT_FOUND)
+
+        label = f"batch '{batch_code}' section '{section}'" if section else f"batch '{batch_code}'"
+        return Response({"detail": f"Advisor removed from {label}."})
+
+
+class JABulkSectionAssignView(APIView):
+    """JA: assign multiple students to a section at once.
+    POST /api/ja/students/assign-section/
+    Body: { section: "A", register_numbers: ["REG001", "REG002"] }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        section = (request.data.get('section') or '').strip().upper()
+        register_numbers = request.data.get('register_numbers', [])
+
+        if not section:
+            return Response({"detail": "section is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not register_numbers or not isinstance(register_numbers, list):
+            return Response({"detail": "register_numbers must be a non-empty list."}, status=status.HTTP_400_BAD_REQUEST)
+
+        updated = StudentProfile.objects.filter(
+            register_number__in=register_numbers,
+            institution=profile.institution,
+            department=profile.department,
+        ).update(section=section)
+
+        return Response({
+            "detail": f"{updated} student(s) assigned to section '{section}'.",
+            "updated": updated,
+            "section": section,
+        })
+
+
+class JAMentorAssignView(APIView):
+    """
+    JA: assign or remove a mentor for one or more students.
+    POST /api/ja/mentors/assign/
+    body: { mentor_id: int|null, register_numbers: [str, ...] }
+    - mentor_id null → remove mentor
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        mentor_id = request.data.get('mentor_id')  # None = unassign
+        register_numbers = request.data.get('register_numbers', [])
+
+        if not register_numbers:
+            return Response({"detail": "register_numbers list is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Strip None/empty values that can't match a register_number
+        valid_reg_numbers = [r for r in register_numbers if r]
+        if not valid_reg_numbers:
+            return Response({"detail": "No valid register numbers provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        mentor = None
+        if mentor_id:
+            try:
+                mentor = StaffProfile.objects.get(id=mentor_id, institution=profile.institution)
+            except StaffProfile.DoesNotExist:
+                return Response({"detail": "Staff member not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            updated = StudentProfile.objects.filter(
+                register_number__in=valid_reg_numbers,
+                institution=profile.institution,
+                department=profile.department,
+            ).update(mentor=mentor)
+        except Exception:
+            logger.exception("Failed to update mentor assignment for JA %s", profile.faculty_id)
+            return Response(
+                {"detail": "Failed to update mentor assignment. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        if updated == 0:
+            return Response(
+                {"detail": "No matching students found. They may not belong to your department."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        action = f"assigned mentor {mentor.name}" if mentor else "removed mentor"
+        logger.info("JA %s %s for %d students", profile.faculty_id, action, updated)
+
+        return Response({
+            "detail": f"{action.capitalize()} for {updated} student(s).",
+            "updated": updated,
+        })
+
+
+class JAMentorListView(APIView):
+    """JA: list all mentor assignments in the department."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        # Group students by mentor
+        batch_filter = (request.query_params.get('batch') or '').strip()
+        qs = StudentProfile.objects.filter(institution=profile.institution, department=profile.department)
+        if batch_filter:
+            qs = qs.filter(batch=batch_filter)
+        students = qs.select_related('mentor').order_by('batch', 'register_number')
+
+        mentor_map = {}  # mentor_id → { mentor_info, students }
+        unassigned = []
+
+        for s in students:
+            if s.mentor_id:
+                if s.mentor_id not in mentor_map:
+                    m = s.mentor
+                    mentor_map[s.mentor_id] = {
+                        "mentor": {
+                            "id": m.id,
+                            "faculty_id": m.faculty_id,
+                            "name": m.name,
+                            "role": m.role,
+                        },
+                        "students": [],
+                    }
+                mentor_map[s.mentor_id]["students"].append({
+                    "id": s.id,
+                    "register_number": s.register_number,
+                    "name": s.name,
+                    "batch": s.batch,
+                    "section": s.section,
+                })
+            else:
+                unassigned.append({
+                    "id": s.id,
+                    "register_number": s.register_number,
+                    "name": s.name,
+                    "batch": s.batch,
+                    "section": s.section,
+                })
+
+        return Response({
+            "mentor_groups": list(mentor_map.values()),
+            "unassigned": unassigned,
+            "unassigned_count": len(unassigned),
+        })
+
+
+# =============================================================================
+# Staff — Mentor & Class Advisor views (for staff members themselves)
+# =============================================================================
+
+def _staff_guard(request):
+    """Returns (staff_profile, None) or (None, Response)."""
+    if not request.user.is_authenticated or not hasattr(request.user, 'staff_profile'):
+        return None, Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+    profile = request.user.staff_profile
+    if not profile.is_active:
+        return None, Response({"detail": "Your account has been disabled."}, status=status.HTTP_403_FORBIDDEN)
+    return profile, None
+
+
+class StaffMentorDashboardView(APIView):
+    """
+    Staff: get their mentees list with stats.
+    GET /api/staff/mentor/dashboard/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, err = _staff_guard(request)
+        if err:
+            return err
+
+        mentees = (
+            StudentProfile.objects
+            .filter(mentor=profile)
+            .select_related('account', 'department')
+            .order_by('batch', 'register_number')
+        )
+
+        mentees = mentees.annotate(solved_count=Count('solved_problems', distinct=True))
+
+        mentee_data = []
+        for s in mentees:
+            mentee_data.append({
+                "id": s.id,
+                "register_number": s.register_number,
+                "name": s.name,
+                "batch": s.batch,
+                "section": s.section,
+                "department": s.department.name if s.department else "",
+                "personal_email": s.personal_email,
+                "mobile_number": s.mobile_number,
+                "gender": s.gender,
+                "current_streak": s.current_streak,
+                "login_days": s.login_days,
+                "last_active": s.last_login_on.isoformat() if s.last_login_on else None,
+                "solved_count": s.solved_count,
+                "is_active": s.account.is_active if s.account else True,
+            })
+
+        # Group by batch
+        batch_groups = {}
+        for m in mentee_data:
+            b = m['batch'] or 'Unknown'
+            if b not in batch_groups:
+                batch_groups[b] = []
+            batch_groups[b].append(m)
+
+        return Response({
+            "mentor": {
+                "id": profile.id,
+                "faculty_id": profile.faculty_id,
+                "name": profile.name,
+                "role": profile.role,
+                "department": profile.department.name if profile.department else "",
+            },
+            "total_mentees": len(mentee_data),
+            "mentees": mentee_data,
+            "batch_groups": [
+                {"batch": b, "students": students}
+                for b, students in sorted(batch_groups.items(), reverse=True)
+            ],
+        })
+
+
+class StaffClassAdvisorDashboardView(APIView):
+    """
+    Staff: get all data for batches where they are the class advisor.
+    GET /api/staff/advisor/dashboard/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, err = _staff_guard(request)
+        if err:
+            return err
+
+        # Find all batches where this staff is the advisor
+        advisor_assignments = BatchAdvisor.objects.filter(advisor=profile).select_related('department')
+
+        if not advisor_assignments.exists():
+            return Response({
+                "advisor": {
+                    "id": profile.id,
+                    "name": profile.name,
+                    "faculty_id": profile.faculty_id,
+                },
+                "is_class_advisor": False,
+                "batches": [],
+            })
+
+        batches_data = []
+        for assignment in advisor_assignments:
+            qs = StudentProfile.objects.filter(
+                department=assignment.department,
+                batch=assignment.batch,
+            )
+            if assignment.section:
+                qs = qs.filter(section=assignment.section)
+            students = qs.select_related('account', 'mentor').order_by('register_number')
+
+            student_list = []
+            for s in students:
+                from .models import SolvedProblem
+                solved_count = SolvedProblem.objects.filter(student=s).count()
+                student_list.append({
+                    "id": s.id,
+                    "register_number": s.register_number,
+                    "name": s.name,
+                    "batch": s.batch,
+                    "section": s.section,
+                    "personal_email": s.personal_email,
+                    "mobile_number": s.mobile_number,
+                    "gender": s.gender,
+                    "current_streak": s.current_streak,
+                    "login_days": s.login_days,
+                    "last_active": s.last_login_on.isoformat() if s.last_login_on else None,
+                    "solved_count": solved_count,
+                    "is_active": s.account.is_active if s.account else True,
+                    "mentor": {
+                        "id": s.mentor.id,
+                        "name": s.mentor.name,
+                        "faculty_id": s.mentor.faculty_id,
+                    } if s.mentor else None,
+                })
+
+            # Batch-level stats
+            total = len(student_list)
+            active = sum(1 for s in student_list if s['is_active'])
+            avg_solved = (sum(s['solved_count'] for s in student_list) / total) if total else 0
+            avg_streak = (sum(s['current_streak'] for s in student_list) / total) if total else 0
+
+            batches_data.append({
+                "batch": assignment.batch,
+                "section": assignment.section,
+                "department": assignment.department.name,
+                "department_code": assignment.department.code,
+                "total_students": total,
+                "active_students": active,
+                "avg_solved": round(avg_solved, 1),
+                "avg_streak": round(avg_streak, 1),
+                "students": student_list,
+            })
+
+        return Response({
+            "advisor": {
+                "id": profile.id,
+                "name": profile.name,
+                "faculty_id": profile.faculty_id,
+                "role": profile.role,
+            },
+            "is_class_advisor": True,
+            "batches": batches_data,
+        })
+
+
+# =============================================================================
+# Student — Mentor & Advisor info view
+# =============================================================================
+
+class StudentMentorAdvisorView(APIView):
+    """
+    Student: get their assigned mentor and class advisor info.
+    GET /api/student/mentor-advisor/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not hasattr(request.user, 'student_profile'):
+            return Response({"detail": "Student access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        student = request.user.student_profile
+
+        # Mentor info
+        mentor_info = None
+        if student.mentor:
+            m = student.mentor
+            mentor_info = {
+                "id": m.id,
+                "faculty_id": m.faculty_id,
+                "name": m.name,
+                "role": m.role,
+                "role_display": m.get_role_display(),
+                "department": m.department.name if m.department else "",
+            }
+
+        # Class advisor info
+        advisor_info = None
+        if student.batch and student.department:
+            advisor_qs = BatchAdvisor.objects.filter(
+                batch=student.batch,
+                department=student.department,
+            ).select_related('advisor', 'advisor__department')
+            # Match the student's section first; fall back to unsectioned advisor
+            if student.section:
+                assignment = advisor_qs.filter(section=student.section).first()
+                if not assignment:
+                    assignment = advisor_qs.filter(section='').first()
+            else:
+                assignment = advisor_qs.filter(section='').first() or advisor_qs.first()
+            if assignment:
+                a = assignment.advisor
+                advisor_info = {
+                    "id": a.id,
+                    "faculty_id": a.faculty_id,
+                    "name": a.name,
+                    "role": a.role,
+                    "role_display": a.get_role_display(),
+                    "department": a.department.name if a.department else "",
+                }
+
+        return Response({
+            "mentor": mentor_info,
+            "class_advisor": advisor_info,
+            "batch": student.batch,
+            "section": student.section,
+            "department": student.department.name if student.department else "",
+        })

@@ -5,8 +5,11 @@ from .views import (
     JABatchListView,
     JABatchDetailView,
     JAStudentCreateView,
+    JAStudentUpdateView,
     JAStudentDeleteView,
     JAStudentMoveView,
+    JABulkBatchAssignView,
+    JABulkSectionAssignView,
     JABulkImportView,
     JAExcelTemplateView,
     JAStudentListView,
@@ -65,6 +68,7 @@ from .views import (
     StudentDetailView,
     StudentBlockToggleView,
     StudentIndividualAnalyticsView,
+    StudentSelfAnalyticsView,
     UpdateTrackedCompaniesView,
     StaffLookupView,
     StaffFirstLoginView,
@@ -99,6 +103,14 @@ from .views import (
     AptitudeQuestionSubmitView,
     AptitudeContestSubmitView,
     InstitutionBrandingPreviewView,
+    JAStaffListView,
+    JABatchAdvisorView,
+    JABatchAdvisorDeleteView,
+    JAMentorAssignView,
+    JAMentorListView,
+    StaffMentorDashboardView,
+    StaffClassAdvisorDashboardView,
+    StudentMentorAdvisorView,
 )
 
 # Import file management views
@@ -206,6 +218,7 @@ urlpatterns = [
     # Student Management
     path("students/filter/", DepartmentStudentsFilterView.as_view(), name="students-filter"),
     path("students/<str:register_number>/analytics/", StudentIndividualAnalyticsView.as_view(), name="student-analytics"),
+    path("student/analytics/", StudentSelfAnalyticsView.as_view(), name="student-self-analytics"),
 
     # Admin Auth
     path("auth/admin/", AdminLookupView.as_view(), name="admin-lookup"),
@@ -250,11 +263,25 @@ urlpatterns = [
     path("ja/batches/<str:batch_code>/", JABatchDetailView.as_view(), name="ja-batch-detail"),
     path("ja/students/", JAStudentListView.as_view(), name="ja-student-list"),
     path("ja/students/create/", JAStudentCreateView.as_view(), name="ja-student-create"),
+    path("ja/students/assign-batch/", JABulkBatchAssignView.as_view(), name="ja-bulk-batch-assign"),
+    path("ja/students/assign-section/", JABulkSectionAssignView.as_view(), name="ja-bulk-section-assign"),
+    path("ja/students/<str:register_number>/update/", JAStudentUpdateView.as_view(), name="ja-student-update"),
     path("ja/students/<str:register_number>/delete/", JAStudentDeleteView.as_view(), name="ja-student-delete"),
     path("ja/students/<str:register_number>/move/", JAStudentMoveView.as_view(), name="ja-student-move"),
     path("ja/import/", JABulkImportView.as_view(), name="ja-bulk-import"),
     path("ja/import/template/", JAExcelTemplateView.as_view(), name="ja-excel-template"),
     path("ja/import/report/", JAImportReportView.as_view(), name="ja-import-report"),
+    # JA — advisor & mentor management
+    path("ja/staff/", JAStaffListView.as_view(), name="ja-staff-list"),
+    path("ja/advisors/", JABatchAdvisorView.as_view(), name="ja-advisors"),
+    path("ja/advisors/<str:batch_code>/", JABatchAdvisorDeleteView.as_view(), name="ja-advisor-delete"),
+    path("ja/mentors/", JAMentorListView.as_view(), name="ja-mentor-list"),
+    path("ja/mentors/assign/", JAMentorAssignView.as_view(), name="ja-mentor-assign"),
+    # Staff — mentor & class advisor dashboards
+    path("staff/mentor/dashboard/", StaffMentorDashboardView.as_view(), name="staff-mentor-dashboard"),
+    path("staff/advisor/dashboard/", StaffClassAdvisorDashboardView.as_view(), name="staff-advisor-dashboard"),
+    # Student — mentor/advisor info
+    path("student/mentor-advisor/", StudentMentorAdvisorView.as_view(), name="student-mentor-advisor"),
 
     # Executor Direct API
     path("executor/system_info/", ExecutorSystemInfoView.as_view(), name="executor-system-info"),
