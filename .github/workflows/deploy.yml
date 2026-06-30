@@ -116,6 +116,11 @@ jobs:
           docker exec code2day-backend python manage.py collectstatic --noinput
           echo "✓ Done"
 
+          # ── 6b. Reset all user passwords (forces first-login on next access) ──
+          echo "→ Resetting user passwords..."
+          docker exec code2day-backend python manage.py truncate_passwords --exclude-superusers
+          echo "✓ Passwords reset"
+
           # ── 7. Health check ────────────────────────────────────────────────
           sleep 8
           BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/)
