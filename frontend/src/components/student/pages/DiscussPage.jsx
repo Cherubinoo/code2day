@@ -23,11 +23,12 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
 
   const profile = studentProfile || staffProfile;
 
-  const [activeTab, setActiveTab] = useState("general"); 
+  const [activeTab, setActiveTab] = useState("general");
   const [activeThreadId, setActiveThreadId] = useState("general");
   const [activeBatch, setActiveBatch] = useState(studentProfile?.batch || "");
   const [activeRecipientReg, setActiveRecipientReg] = useState("");
   const [activeRecipientName, setActiveRecipientName] = useState("");
+  const [activeMentorId, setActiveMentorId] = useState(studentProfile?.mentor_id || null);
   
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState("");
@@ -78,7 +79,7 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
       clearInterval(interval);
       clearInterval(notifInterval);
     };
-  }, [activeTab, activeRecipientReg, activeBatch]);
+  }, [activeTab, activeRecipientReg, activeBatch, activeMentorId]);
 
   // Helper to check if a channel has unread messages
   const hasUnread = (threadType, batchName = null) => {
@@ -197,8 +198,18 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
     if (activeTab === "general") {
       params.append("batch_name", activeBatch);
     } else if (activeTab === "individual") {
-      if (!activeRecipientReg) return; // Individual needs a recipient
+      if (!activeRecipientReg) return;
       params.append("other_user_reg", activeRecipientReg);
+    } else if (activeTab === "section") {
+      if (isStudent && studentProfile?.section) {
+        params.append("section", studentProfile.section);
+      } else if (!isStudent && activeBatch) {
+        params.append("batch_name", activeBatch);
+      }
+    } else if (activeTab === "mentor_group") {
+      const mid = isStudent ? (studentProfile?.mentor_id || activeMentorId) : staffProfile?.id;
+      if (!mid) return;
+      params.append("mentor_id", mid);
     }
     // For 'staff' and 'hod_tp_ja', no extra params needed currently
 
@@ -245,6 +256,13 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
       payload.batch_name = activeBatch;
     } else if (activeTab === "individual") {
       payload.recipient_reg = activeRecipientReg;
+    } else if (activeTab === "section") {
+      if (isStudent && studentProfile?.section) {
+        payload.section = studentProfile.section;
+      }
+    } else if (activeTab === "mentor_group") {
+      const mid = isStudent ? (studentProfile?.mentor_id || activeMentorId) : staffProfile?.id;
+      if (mid) payload.mentor_id = mid;
     }
 
     setBusy(true);
@@ -305,6 +323,11 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
       payload.batch_name = activeBatch;
     } else if (activeTab === "individual") {
       payload.recipient_reg = activeRecipientReg;
+    } else if (activeTab === "section") {
+      if (isStudent && studentProfile?.section) payload.section = studentProfile.section;
+    } else if (activeTab === "mentor_group") {
+      const mid = isStudent ? (studentProfile?.mentor_id || activeMentorId) : staffProfile?.id;
+      if (mid) payload.mentor_id = mid;
     }
 
     try {
@@ -331,12 +354,36 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
     setSearchResults([]);
   };
 
+  const hasMentorGroup = isStudent
+    ? !!studentProfile?.mentor_id
+    : (isStaff && !!staffProfile?.id);
+
+  const hasSectionChat = isStudent
+    ? !!studentProfile?.section
+    : isStaff;
+
   const channels = [
-    { 
-      id: "general", 
-      label: isStudent ? "Batch Chat" : "General Chat", 
-      icon: isStudent ? Trophy : Hash, 
-      visible: true 
+    {
+      id: "general",
+      label: isStudent ? "Batch Chat" : "General Chat",
+      icon: isStudent ? Trophy : Hash,
+      visible: true
+    },
+    {
+      id: "section",
+      label: isStudent
+        ? `Section ${studentProfile?.section || ""} Chat`
+        : "Section Chat",
+      icon: Users,
+      visible: hasSectionChat
+    },
+    {
+      id: "mentor_group",
+      label: isStudent
+        ? `Mentor Group${studentProfile?.mentor_name ? ` (${studentProfile.mentor_name})` : ""}`
+        : "My Mentor Group",
+      icon: UserPlus,
+      visible: hasMentorGroup
     },
     { id: "staff", label: "Staff Room", icon: LayoutGrid, visible: isStaff || isAdmin },
     { id: "hod_tp_ja", label: "HOD & Admin", icon: Users, visible: isHOD || isAdmin || userType === "tpu" || userType === "ja" },
@@ -389,6 +436,16 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
                 </button>
                 
                 {ch.id === "general" && activeTab === "general" && isStaff && (
+                  <div className="batch-filter-box">
+                    <select value={activeBatch} onChange={(e) => setActiveBatch(e.target.value)}>
+                      <option value="">Select Batch...</option>
+                      {batches.map(b => (
+                        <option key={b.batch} value={b.batch}>{b.batch}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {ch.id === "section" && activeTab === "section" && isStaff && (
                   <div className="batch-filter-box">
                     <select value={activeBatch} onChange={(e) => setActiveBatch(e.target.value)}>
                       <option value="">Select Batch...</option>
@@ -591,11 +648,24 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
         <header className="chat-header-v2">
           <div className="chat-header-info-v2">
             <div className="chat-header-icon-v2">
-              {activeTab === "general" ? (isStudent ? <Trophy size={20} /> : <Hash size={20} />) : <User size={20} />}
+              {activeTab === "general" ? (isStudent ? <Trophy size={20} /> : <Hash size={20} />)
+                : activeTab === "section" ? <Users size={20} />
+                : activeTab === "mentor_group" ? <UserPlus size={20} />
+                : <User size={20} />}
             </div>
             <div>
-              <h2>{activeTab === "general" ? (activeBatch ? `Batch ${activeBatch}` : (isStudent ? "Batch Chat" : "General Chat")) : (activeRecipientName || "Direct Message")}</h2>
-              {activeTab !== "general" && activeRecipientReg && (
+              <h2>
+                {activeTab === "general"
+                  ? (activeBatch ? `Batch ${activeBatch}` : (isStudent ? "Batch Chat" : "General Chat"))
+                  : activeTab === "section"
+                  ? (isStudent ? `Section ${studentProfile?.section || ""} Chat` : `Section Chat (${activeBatch || "Select Batch"})`)
+                  : activeTab === "mentor_group"
+                  ? (isStudent
+                      ? `Mentor Group${studentProfile?.mentor_name ? ` — ${studentProfile.mentor_name}` : ""}`
+                      : `My Mentor Group`)
+                  : (activeRecipientName || "Direct Message")}
+              </h2>
+              {activeTab !== "general" && activeTab !== "section" && activeTab !== "mentor_group" && activeRecipientReg && (
                 <span className="recipient-reg-v2">{activeRecipientReg}</span>
               )}
             </div>

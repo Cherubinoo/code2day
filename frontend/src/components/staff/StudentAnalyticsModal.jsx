@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { X, TrendingUp, Award, Activity, FileText, Briefcase, Layout } from 'lucide-react';
 import ReportFilterModal from '../common/ReportFilterModal';
+import { PerformanceDashboard } from '../common/PerformanceCharts';
 
 const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
   const [analytics, setAnalytics] = useState(null);
@@ -217,6 +218,15 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
 
         {/* Content */}
         <div style={{ padding: 24 }}>
+          {/* Performance Charts */}
+          <PerformanceDashboard
+            scoreHistory={data.score_history || []}
+            topicAccuracy={data.topic_accuracy || []}
+            testsCompleted={data.tests_completed || 0}
+            avgScore={data.avg_score || 0}
+            peakScore={data.peak_score || 0}
+          />
+
           {/* Stats Grid */}
           <div style={{
             display: 'grid',

@@ -21,6 +21,9 @@ class StaffProfileSerializer(serializers.ModelSerializer):
 
 class StudentProfileSerializer(serializers.ModelSerializer):
     password_is_set = serializers.BooleanField(read_only=True)
+    mentor_id = serializers.IntegerField(source='mentor.id', read_only=True, allow_null=True)
+    mentor_name = serializers.CharField(source='mentor.name', read_only=True, allow_null=True)
+    mentor_faculty_id = serializers.CharField(source='mentor.faculty_id', read_only=True, allow_null=True)
 
     class Meta:
         model = StudentProfile
@@ -37,12 +40,16 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             "mother_name",
             "role",
             "batch",
+            "section",
             "department",
             "current_streak",
             "login_days",
             "campus_rank",
             "tracked_companies",
             "password_is_set",
+            "mentor_id",
+            "mentor_name",
+            "mentor_faculty_id",
         )
 
 
@@ -168,8 +175,8 @@ class DiscussionMessageSerializer(serializers.ModelSerializer):
     class Meta:
         model = DiscussionMessage
         fields = (
-            "id", "sender_name", "sender_reg", "recipient_name", 
-            "thread_type", "batch_name", "body", "is_read", 
+            "id", "sender_name", "sender_reg", "recipient_name",
+            "thread_type", "batch_name", "section", "body", "is_read",
             "problem_slug", "created_at", "is_self",
             "is_poll", "poll_options", "poll_results", "user_vote"
         )
@@ -232,6 +239,8 @@ class DiscussionMessageCreateSerializer(serializers.Serializer):
     recipient_reg = serializers.CharField(required=False, allow_blank=True)
     batch_name = serializers.CharField(required=False, allow_blank=True)
     problem_slug = serializers.CharField(required=False, allow_blank=True)
+    section = serializers.CharField(required=False, allow_blank=True, max_length=5)
+    mentor_id = serializers.IntegerField(required=False, allow_null=True)
     is_poll = serializers.BooleanField(default=False)
     poll_options = serializers.ListField(child=serializers.CharField(), required=False, default=list)
 

@@ -14,6 +14,7 @@ import DoubleConfirmModal from "../../common/DoubleConfirmModal";
 loader.config({ monaco });
 
 const POPULAR_LANGUAGES = ["C", "C++", "Java", "JavaScript", "Python"];
+const MAX_VIOLATIONS = 3;
 
 // ── Toast notification component ──────────────────────────────────────────────
 function Toast({ message, type = 'success', onDone }) {
@@ -37,6 +38,105 @@ function Toast({ message, type = 'success', onDone }) {
   );
 }
 
+// ── Violation warning modal ────────────────────────────────────────────────────
+function ViolationModal({ count, reason, onContinue, onReEnterFullscreen }) {
+  const isFinal = count >= MAX_VIOLATIONS;
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(15,23,42,0.96)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 999998, backdropFilter: 'blur(8px)',
+    }}>
+      <div style={{
+        background: 'white', borderRadius: 24, padding: '48px 40px',
+        maxWidth: 480, width: '90%', textAlign: 'center',
+        boxShadow: '0 25px 60px rgba(0,0,0,0.4)',
+      }}>
+        <div style={{
+          width: 72, height: 72, borderRadius: '50%',
+          background: isFinal ? '#fee2e2' : '#fef3c7',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          margin: '0 auto 20px',
+          color: isFinal ? '#dc2626' : '#d97706',
+        }}>
+          <AlertCircle size={40} />
+        </div>
+        <h2 style={{ margin: '0 0 8px', fontSize: '1.5rem', fontWeight: 800, color: '#0f172a' }}>
+          {isFinal ? 'Contest Auto-Submitted' : `Warning ${count} of ${MAX_VIOLATIONS}`}
+        </h2>
+        <p style={{ margin: '0 0 16px', color: '#64748b', fontSize: 14, lineHeight: 1.6 }}>
+          <strong style={{ color: '#dc2626' }}>{reason}</strong>
+        </p>
+        {isFinal ? (
+          <p style={{ margin: '0 0 28px', color: '#64748b', fontSize: 14, lineHeight: 1.6 }}>
+            You have exceeded the maximum number of violations ({MAX_VIOLATIONS}). Your contest has been
+            automatically submitted and your attempt has been recorded.
+          </p>
+        ) : (
+          <p style={{ margin: '0 0 28px', color: '#64748b', fontSize: 14, lineHeight: 1.6 }}>
+            {MAX_VIOLATIONS - count} warning(s) remaining before automatic submission.
+            Any further violation will be counted.
+          </p>
+        )}
+        {!isFinal && (
+          <button
+            onClick={onReEnterFullscreen || onContinue}
+            style={{
+              width: '100%', padding: '14px', borderRadius: 12,
+              background: '#4f46e5', color: 'white', border: 'none',
+              fontWeight: 700, fontSize: 15, cursor: 'pointer',
+            }}
+          >
+            Re-enter Full Screen &amp; Continue
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Register number watermark overlay ─────────────────────────────────────────
+function Watermark({ registerNumber }) {
+  if (!registerNumber) return null;
+  const text = registerNumber.toUpperCase();
+  // Build a repeating pattern using a single rotated stripe
+  const rows = [];
+  for (let r = -5; r < 20; r++) {
+    for (let c = -5; c < 20; c++) {
+      rows.push(
+        <span
+          key={`${r}-${c}`}
+          style={{
+            position: 'absolute',
+            left: `${c * 18}%`,
+            top: `${r * 8}%`,
+            transform: 'rotate(-30deg)',
+            fontSize: 12,
+            fontWeight: 600,
+            color: 'rgba(99,102,241,0.12)',
+            letterSpacing: '0.15em',
+            userSelect: 'none',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {text}
+        </span>
+      );
+    }
+  }
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      pointerEvents: 'none',
+      zIndex: 9000,
+      overflow: 'hidden',
+    }}>
+      {rows}
+    </div>
+  );
+}
+
 function ContestWorkspacePage({ contestId, onBack }) {
   // Contest data
   const [isFullscreen, setIsFullscreen] = useState(true);
@@ -45,6 +145,16 @@ function ContestWorkspacePage({ contestId, onBack }) {
   const [toast, setToast] = useState(null); // { message, type }
   const autoSubmittedRef = useRef(false);
   const isContestActiveRef = useRef(true); // tracks if we're still in contest
+
+  // Violation tracking
+  const violationCountRef = useRef(0);
+  const [violationModal, setViolationModal] = useState(null); // { count, reason } | null
+  const violationLockRef = useRef(false); // prevent stacking violations during modal display
+
+  // Register number watermark — read from localStorage (set at login via authStorageKey)
+  const registerNumber = (() => {
+    try { return window.localStorage.getItem('code2day-register-number') || ''; } catch { return ''; }
+  })();
 
   const showToast = (message, type = 'success') => setToast({ message, type });
 
@@ -90,6 +200,54 @@ function ContestWorkspacePage({ contestId, onBack }) {
   // Problem detail tab
   const [problemDetailTab, setProblemDetailTab] = useState("current");
 
+  // ── Violation handler ─────────────────────────────────────────────────────
+  const recordViolation = useCallback(async (reason) => {
+    if (!isContestActiveRef.current) return;
+    if (violationLockRef.current) return; // ignore while modal is shown
+    violationLockRef.current = true;
+
+    violationCountRef.current += 1;
+    const count = violationCountRef.current;
+
+    if (count > MAX_VIOLATIONS) {
+      violationLockRef.current = false;
+      return;
+    }
+
+    setViolationModal({ count, reason });
+
+    if (count >= MAX_VIOLATIONS) {
+      // Auto-submit
+      isContestActiveRef.current = false;
+      autoSubmittedRef.current = true;
+      try {
+        await fetch(`/api/student/contests/${contestId}/auto-submit/`, {
+          method: 'POST',
+          ...buildJsonPostOptions({}),
+        });
+      } catch {}
+      try {
+        Object.keys(localStorage)
+          .filter(k => k.startsWith(`c2d-contest-${contestId}`))
+          .forEach(k => localStorage.removeItem(k));
+      } catch {}
+      setTimeout(() => {
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        onBack();
+      }, 4000);
+    }
+    // lock stays until user dismisses modal (or auto-redirect fires)
+  }, [contestId, onBack]);
+
+  const dismissViolationModal = useCallback(() => {
+    setViolationModal(null);
+    violationLockRef.current = false;
+    // re-enter fullscreen after dismissing
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  }, []);
+
   // ── Fullscreen + anti-cheat enforcement ──────────────────────────────────
   useEffect(() => {
     // Enter fullscreen on mount
@@ -101,21 +259,20 @@ function ContestWorkspacePage({ contestId, onBack }) {
     const blockPaste = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      showToast('Pasting is not allowed during a contest.', 'error');
+      recordViolation('Paste detected — pasting is not allowed during a contest.');
     };
     document.addEventListener('paste', blockPaste, true);
 
     // Detect tab/window visibility change
     const handleVisibility = () => {
       if (document.hidden && isContestActiveRef.current) {
-        showToast('⚠️ Tab switching is not allowed! Return to the contest.', 'error');
+        recordViolation('Tab switch or window blur detected — you must stay on this page.');
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
     // Block keyboard shortcuts that could switch tabs or open devtools
     const blockKeys = (e) => {
-      // Ctrl+T, Ctrl+W, Ctrl+Tab, Alt+Tab, F12, Ctrl+Shift+I/J/C
       if (
         (e.ctrlKey && ['t', 'w', 'Tab'].includes(e.key)) ||
         (e.altKey && e.key === 'Tab') ||
@@ -142,9 +299,9 @@ function ContestWorkspacePage({ contestId, onBack }) {
     const handleFullscreenChange = () => {
       const isFull = !!document.fullscreenElement || !!document.webkitFullscreenElement;
       setIsFullscreen(isFull);
-      
+
       if (!isFull && isContestActiveRef.current) {
-        showToast('⚠️ Full screen exit detected! You must stay in full screen to continue.', 'error');
+        recordViolation('Fullscreen exit detected — you must remain in fullscreen during the contest.');
       }
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -162,7 +319,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
         document.exitFullscreen().catch(() => {});
       }
     };
-  }, []);
+  }, [recordViolation]);
 
   // Fetch problem details when selected problem changes
   useEffect(() => {
@@ -196,26 +353,20 @@ function ContestWorkspacePage({ contestId, onBack }) {
   useEffect(() => {
     async function fetchContestData() {
       try {
-        console.log('Fetching contest data for ID:', contestId);
         const response = await fetch(`/api/student/contests/${contestId}/`, {
           credentials: "include",
         });
 
-        console.log('Contest response status:', response.status);
-
         if (!response.ok) {
           const errorData = await response.json();
-          console.error('Contest error:', errorData);
           throw new Error(errorData.detail || "Failed to load contest");
         }
 
         const data = await response.json();
-        console.log('Contest data:', data);
         setContest(data);
         setProblems(data.problems || []);
         setLoading(false);
       } catch (err) {
-        console.error("Error fetching contest:", err);
         setError(err.message);
         setLoading(false);
       }
@@ -366,7 +517,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
 
     try {
       const languageId = getLanguageIdForChoice(selectedLanguage);
-      
+
       const response = await fetch(`/api/student/contests/${contestId}/problems/${selectedProblem.slug}/submit/`, {
         method: "POST",
         ...buildJsonPostOptions({
@@ -579,6 +730,9 @@ function ContestWorkspacePage({ contestId, onBack }) {
 
   return (
     <div className="page-stack problem-page">
+      {/* Register number watermark */}
+      <Watermark registerNumber={registerNumber} />
+
       {/* ── Workspace Header ── */}
       <section className="page-header compact-header problem-page-header">
         <div className="workspace-title-row">
@@ -601,15 +755,25 @@ function ContestWorkspacePage({ contestId, onBack }) {
               {contestSecondsLeft !== null ? formatDuration(contestSecondsLeft) : "00:00"}
             </strong>
           </div>
+          {/* Violation indicator */}
+          {violationCountRef.current > 0 && (
+            <div style={{
+              background: violationCountRef.current >= MAX_VIOLATIONS ? '#dc2626' : '#f59e0b',
+              color: 'white', padding: '4px 12px', borderRadius: 20,
+              fontSize: 12, fontWeight: 700,
+            }}>
+              ⚠ {violationCountRef.current}/{MAX_VIOLATIONS} Warnings
+            </div>
+          )}
           {selectedProblem && (
             <span className={`difficulty-chip ${selectedProblem.difficulty.toLowerCase()}`}>
               {selectedProblem.difficulty}
             </span>
           )}
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button 
-              type="button" 
-              className="ghost-button dense-action" 
+            <button
+              type="button"
+              className="ghost-button dense-action"
               onClick={handleLeaveContest}
               style={{ color: '#dc2626' }}
             >
@@ -901,8 +1065,9 @@ function ContestWorkspacePage({ contestId, onBack }) {
           </article>
         </section>
       </section>
+
       {confirmState.show && (
-        <DoubleConfirmModal 
+        <DoubleConfirmModal
           show={confirmState.show}
           m1={confirmState.m1}
           m2={confirmState.m2}
@@ -914,6 +1079,16 @@ function ContestWorkspacePage({ contestId, onBack }) {
             if (cb) await cb();
           }}
           onCancel={() => setConfirmState(prev => ({ ...prev, show: false }))}
+        />
+      )}
+
+      {/* Violation warning modal */}
+      {violationModal && (
+        <ViolationModal
+          count={violationModal.count}
+          reason={violationModal.reason}
+          onContinue={dismissViolationModal}
+          onReEnterFullscreen={dismissViolationModal}
         />
       )}
 

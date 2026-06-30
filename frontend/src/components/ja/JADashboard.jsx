@@ -1,5 +1,6 @@
 // JA (Junior Admin) Dashboard
-// Features: Manage students in their department — batches, bulk import, add/delete students
+// Features: Manage students in their department — batches, bulk import, add/delete/add individual students
+//           Assign class advisors to batches, assign mentors to students
 // Access: JA role only, department-scoped, requires 2-step verification on login
 
 import { useState, useEffect, useRef } from 'react';
@@ -7,10 +8,12 @@ import {
   Users, FolderOpen, Upload, Download, Plus, Trash2, Search,
   ChevronRight, ArrowLeft, AlertTriangle, CheckCircle, XCircle,
   RefreshCw, FileSpreadsheet, UserPlus, MoveRight, Building2,
-  BarChart3, Shield
+  BarChart3, Shield, UserCheck, GraduationCap, BookOpen, Edit2, X, Pencil
 } from 'lucide-react';
 import { getCsrfToken } from '../../lib/appUtils';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
+
+const SECTIONS = ['A', 'B', 'C'];
 
 // ─── tiny helpers ────────────────────────────────────────────────────────────
 
@@ -143,11 +146,14 @@ function BatchDetailView({ batchCode, jaInfo, onBack, onRefresh }) {
   const [showMoveModal, setShowMoveModal] = useState(null);
   const [moveBatch, setMoveBatch] = useState('');
   const [confirmState, setConfirmState] = useState({ show: false, m1: '', m2: '', onConfirm: null });
-  const [form, setForm] = useState({ register_number: '', name: '', personal_email: '', mobile_number: '', gender: '', batch: batchCode });
+  const [form, setForm] = useState({ register_number: '', name: '', personal_email: '', mobile_number: '', gender: '', batch: batchCode, section: '' });
   const [submitting, setSubmitting] = useState(false);
-  const [lastAdded, setLastAdded] = useState(null); // register_number of last added student
+  const [lastAdded, setLastAdded] = useState(null);
   const [downloadingReport, setDownloadingReport] = useState(false);
   const [allBatches, setAllBatches] = useState([]);
+  const [editingReg, setEditingReg] = useState(null);
+  const [editForm, setEditForm] = useState({ name: '', mobile_number: '', batch: '', section: '' });
+  const [editSaving, setEditSaving] = useState(false);
 
   const askDouble = (onConfirm, m1, m2) => setConfirmState({ show: true, m1, m2, onConfirm });
 
@@ -202,7 +208,7 @@ function BatchDetailView({ batchCode, jaInfo, onBack, onRefresh }) {
       if (!res.ok) throw new Error(data.detail || 'Failed to add student');
       setLastAdded(form.register_number);
       setMsg({ type: 'success', text: `Student "${form.name}" added to batch "${form.batch}" successfully.` });
-      setForm({ register_number: '', name: '', personal_email: '', mobile_number: '', gender: '', batch: batchCode });
+      setForm({ register_number: '', name: '', personal_email: '', mobile_number: '', gender: '', batch: batchCode, section: '' });
       setShowAddForm(false);
       load();
       onRefresh();
@@ -262,6 +268,32 @@ function BatchDetailView({ batchCode, jaInfo, onBack, onRefresh }) {
       `Remove student "${name}" (${registerNumber})?`,
       `FINAL WARNING: This permanently deletes the student account and all associated data.`
     );
+  }
+
+  function startEdit(s) {
+    setEditingReg(s.register_number);
+    setEditForm({ name: s.name, mobile_number: s.mobile_number || '', batch: s.batch || '', section: s.section || '' });
+  }
+
+  async function handleEditSave(registerNumber) {
+    if (!editForm.name.trim()) { setMsg({ type: 'error', text: 'Name cannot be empty.' }); return; }
+    setEditSaving(true); setMsg(null);
+    try {
+      const res = await fetch(`/api/ja/students/${encodeURIComponent(registerNumber)}/update/`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({ name: editForm.name.trim(), mobile_number: editForm.mobile_number.trim(), batch: editForm.batch.trim(), section: editForm.section.trim().toUpperCase() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to update');
+      setStudents(prev => prev.map(s => s.register_number === registerNumber ? { ...s, name: data.name, mobile_number: data.mobile_number, batch: data.batch, section: data.section } : s));
+      setEditingReg(null);
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    } finally {
+      setEditSaving(false);
+    }
   }
 
   async function handleMove(registerNumber) {
@@ -457,6 +489,19 @@ function BatchDetailView({ batchCode, jaInfo, onBack, onRefresh }) {
                   <option value="Other">Other</option>
                 </select>
               </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Section <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <select
+                  value={form.section}
+                  onChange={e => setForm(prev => ({ ...prev, section: e.target.value }))}
+                  style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }}
+                >
+                  <option value="">— Select —</option>
+                  <option value="A">Section A</option>
+                  <option value="B">Section B</option>
+                  <option value="C">Section C</option>
+                </select>
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: 10 }}>
@@ -479,46 +524,101 @@ function BatchDetailView({ batchCode, jaInfo, onBack, onRefresh }) {
             <p>{search ? 'No students match your search.' : 'No students in this batch yet.'}</p>
           </div>
         ) : (
+          <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: '#f9fafb' }}>
-                {['Register No.', 'Name', 'Email', 'Mobile', 'Status', 'Actions'].map(h => (
+                {['Register No.', 'Name', 'Batch', 'Section', 'Mentor', 'Email', 'Mobile', 'Status', 'Actions'].map(h => (
                   <th key={h} style={{ padding: '12px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((s, i) => (
-                <tr key={s.register_number} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
+              {filtered.map((s, i) => {
+                const isEditing = editingReg === s.register_number;
+                return (
+                <tr key={s.register_number} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none', background: isEditing ? '#f0fdf4' : 'white' }}>
                   <td style={{ padding: '12px 16px', fontWeight: 700, fontSize: 13, color: '#111827', fontFamily: 'monospace' }}>{s.register_number}</td>
-                  <td style={{ padding: '12px 16px', fontSize: 14, color: '#111827' }}>{s.name}</td>
+                  <td style={{ padding: '12px 16px', fontSize: 14, color: '#111827' }}>
+                    {isEditing
+                      ? <input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                          style={{ padding: '5px 8px', borderRadius: 7, border: '1.5px solid #2D6A4F', fontSize: 13, width: 150, outline: 'none' }} autoFocus />
+                      : s.name}
+                  </td>
+                  <td style={{ padding: '12px 16px' }}>
+                    {isEditing
+                      ? <input value={editForm.batch} onChange={e => setEditForm(f => ({ ...f, batch: e.target.value }))}
+                          placeholder="e.g. 23-27"
+                          style={{ padding: '5px 8px', borderRadius: 7, border: '1.5px solid #2D6A4F', fontSize: 13, width: 90, outline: 'none' }} />
+                      : <span style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>{s.batch || '—'}</span>}
+                  </td>
+                  <td style={{ padding: '12px 16px' }}>
+                    {isEditing
+                      ? <select value={editForm.section} onChange={e => setEditForm(f => ({ ...f, section: e.target.value }))}
+                          style={{ padding: '5px 8px', borderRadius: 7, border: '1.5px solid #2D6A4F', fontSize: 13, outline: 'none' }}>
+                          <option value="">— None —</option>
+                          {SECTIONS.map(sec => <option key={sec} value={sec}>Section {sec}</option>)}
+                        </select>
+                      : s.section ? <Badge color="blue">Sec {s.section}</Badge> : <span style={{ color: '#9ca3af', fontSize: 13 }}>—</span>}
+                  </td>
+                  <td style={{ padding: '12px 16px', fontSize: 13 }}>
+                    {s.mentor_name
+                      ? <span style={{ color: '#2D6A4F', fontWeight: 600 }}>{s.mentor_name}</span>
+                      : <span style={{ color: '#9ca3af' }}>—</span>}
+                  </td>
                   <td style={{ padding: '12px 16px', fontSize: 13, color: '#6b7280' }}>{s.personal_email || '—'}</td>
-                  <td style={{ padding: '12px 16px', fontSize: 13, color: '#6b7280' }}>{s.mobile_number || '—'}</td>
+                  <td style={{ padding: '12px 16px', fontSize: 13, color: '#6b7280' }}>
+                    {isEditing
+                      ? <input value={editForm.mobile_number} onChange={e => setEditForm(f => ({ ...f, mobile_number: e.target.value }))}
+                          placeholder="Mobile number"
+                          style={{ padding: '5px 8px', borderRadius: 7, border: '1.5px solid #2D6A4F', fontSize: 13, width: 120, outline: 'none' }} />
+                      : (s.mobile_number || '—')}
+                  </td>
                   <td style={{ padding: '12px 16px' }}>
                     <Badge color={s.is_active ? 'green' : 'red'}>{s.is_active ? 'Active' : 'Blocked'}</Badge>
                   </td>
                   <td style={{ padding: '12px 16px' }}>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button
-                        onClick={() => { setShowMoveModal(s.register_number); setMoveBatch(''); }}
-                        title="Move to another batch"
-                        style={{ padding: '6px 10px', borderRadius: 7, border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600, color: '#374151' }}
-                      >
-                        <MoveRight size={13} /> Move
-                      </button>
-                      <button
-                        onClick={() => handleDelete(s.register_number, s.name)}
-                        title="Delete student"
-                        style={{ padding: '6px 10px', borderRadius: 7, border: '1px solid #fca5a5', background: '#fff5f5', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600, color: '#dc2626' }}
-                      >
-                        <Trash2 size={13} /> Remove
-                      </button>
-                    </div>
+                    {isEditing ? (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          onClick={() => handleEditSave(s.register_number)}
+                          disabled={editSaving}
+                          style={{ padding: '6px 12px', borderRadius: 7, border: 'none', background: editSaving ? '#9ca3af' : '#2D6A4F', color: 'white', cursor: editSaving ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 700 }}
+                        >
+                          {editSaving ? 'Saving…' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => setEditingReg(null)}
+                          style={{ padding: '6px 12px', borderRadius: 7, border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#374151' }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          onClick={() => startEdit(s)}
+                          title="Edit student details"
+                          style={{ padding: '6px 10px', borderRadius: 7, border: '1px solid #c7d2fe', background: '#eef2ff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600, color: '#4338ca' }}
+                        >
+                          <Pencil size={12} /> Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete(s.register_number, s.name)}
+                          title="Delete student"
+                          style={{ padding: '6px 10px', borderRadius: 7, border: '1px solid #fca5a5', background: '#fff5f5', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600, color: '#dc2626' }}
+                        >
+                          <Trash2 size={13} /> Remove
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
@@ -535,8 +635,42 @@ function StudentsTab({ jaInfo }) {
   const [batches, setBatches] = useState([]);
   const [msg, setMsg] = useState(null);
   const [confirmState, setConfirmState] = useState({ show: false, m1: '', m2: '', onConfirm: null });
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [allBatches, setAllBatches] = useState([]);
+  const [form, setForm] = useState({ register_number: '', name: '', batch: '', section: '', personal_email: '', mobile_number: '', gender: '' });
+  const [submitting, setSubmitting] = useState(false);
+  const [lastAdded, setLastAdded] = useState(null);
+  const [editingReg, setEditingReg] = useState(null);
+  const [editForm, setEditForm] = useState({ name: '', mobile_number: '', batch: '', section: '' });
+  const [editSaving, setEditSaving] = useState(false);
 
   const askDouble = (onConfirm, m1, m2) => setConfirmState({ show: true, m1, m2, onConfirm });
+
+  function startEdit(s) {
+    setEditingReg(s.register_number);
+    setEditForm({ name: s.name, mobile_number: s.mobile_number || '', batch: s.batch || '', section: s.section || '' });
+  }
+
+  async function handleEditSave(registerNumber) {
+    if (!editForm.name.trim()) { setMsg({ type: 'error', text: 'Name cannot be empty.' }); return; }
+    setEditSaving(true); setMsg(null);
+    try {
+      const res = await fetch(`/api/ja/students/${encodeURIComponent(registerNumber)}/update/`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({ name: editForm.name.trim(), mobile_number: editForm.mobile_number.trim(), batch: editForm.batch.trim(), section: editForm.section.trim().toUpperCase() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to update');
+      setStudents(prev => prev.map(s => s.register_number === registerNumber ? { ...s, name: data.name, mobile_number: data.mobile_number, batch: data.batch, section: data.section } : s));
+      setEditingReg(null);
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    } finally {
+      setEditSaving(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -548,7 +682,6 @@ function StudentsTab({ jaInfo }) {
       const data = await res.json();
       if (res.ok) {
         setStudents(data.students || []);
-        // Derive batch list from students
         const batchSet = new Set((data.students || []).map(s => s.batch).filter(Boolean));
         setBatches([...batchSet].sort());
       } else {
@@ -561,11 +694,51 @@ function StudentsTab({ jaInfo }) {
     }
   }
 
-  useEffect(() => { load(); }, [batchFilter]);
+  async function loadBatchList() {
+    try {
+      const res = await fetch('/api/ja/batches/', { credentials: 'include' });
+      if (res.ok) {
+        const d = await res.json();
+        setAllBatches(d.batches || []);
+      }
+    } catch (_) {}
+  }
+
+  useEffect(() => { load(); loadBatchList(); }, [batchFilter]);
 
   const filtered = students.filter(s =>
     !search || s.name.toLowerCase().includes(search.toLowerCase()) || (s.register_number || '').includes(search)
   );
+
+  async function handleAddStudent(e) {
+    e.preventDefault();
+    if (!form.register_number.trim() || !form.name.trim()) {
+      setMsg({ type: 'error', text: 'Register number and name are required.' });
+      return;
+    }
+    setSubmitting(true);
+    setMsg(null);
+    try {
+      const res = await fetch('/api/ja/students/create/', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to add student');
+      setLastAdded(form.register_number);
+      setMsg({ type: 'success', text: form.batch ? `Student "${form.name}" added to batch "${form.batch}".` : `Student "${form.name}" added (no batch assigned yet).` });
+      setForm({ register_number: '', name: '', batch: '', section: '', personal_email: '', mobile_number: '', gender: '' });
+      setShowAddForm(false);
+      load();
+      loadBatchList();
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   async function handleDelete(registerNumber, name) {
     askDouble(
@@ -602,6 +775,7 @@ function StudentsTab({ jaInfo }) {
 
       {msg && <Alert type={msg.type} message={msg.text} onClose={() => setMsg(null)} />}
 
+      {/* Toolbar */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
           <Search size={16} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
@@ -624,7 +798,82 @@ function StudentsTab({ jaInfo }) {
         <button onClick={load} style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 13 }}>
           <RefreshCw size={15} /> Refresh
         </button>
+        <button
+          onClick={() => setShowAddForm(v => !v)}
+          style={{ padding: '10px 18px', borderRadius: 10, border: 'none', background: '#2D6A4F', color: 'white', fontWeight: 700, fontSize: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
+        >
+          <UserPlus size={16} /> Add Student
+        </button>
       </div>
+
+      {/* Add student inline form */}
+      {showAddForm && (
+        <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 14, padding: 20, marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <h4 style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#065f46' }}>Add New Student</h4>
+            <button onClick={() => setShowAddForm(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280' }}><X size={16} /></button>
+          </div>
+          <p style={{ margin: '0 0 14px', fontSize: 12, color: '#6b7280' }}>Register number and name are required. Batch can be assigned later.</p>
+          <form onSubmit={handleAddStudent}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 12 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Register Number *</label>
+                <input value={form.register_number} onChange={e => setForm(p => ({ ...p, register_number: e.target.value }))} placeholder="953623243001" required style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Full Name *</label>
+                <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Arun Kumar" required style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Batch <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <select value={form.batch} onChange={e => setForm(p => ({ ...p, batch: e.target.value }))} style={{ width: '100%', padding: '9px 10px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13 }}>
+                  <option value="">— Assign later —</option>
+                  {allBatches.map(b => <option key={b.batch} value={b.batch}>{b.batch}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Email <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <input type="email" value={form.personal_email} onChange={e => setForm(p => ({ ...p, personal_email: e.target.value }))} placeholder="arun@example.com" style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Mobile <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <input type="tel" value={form.mobile_number} onChange={e => setForm(p => ({ ...p, mobile_number: e.target.value }))} placeholder="9876543210" style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Gender <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <select value={form.gender} onChange={e => setForm(p => ({ ...p, gender: e.target.value }))} style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13 }}>
+                  <option value="">— Select —</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Section <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <select value={form.section} onChange={e => setForm(p => ({ ...p, section: e.target.value }))} style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13 }}>
+                  <option value="">— Select —</option>
+                  <option value="A">Section A</option>
+                  <option value="B">Section B</option>
+                  <option value="C">Section C</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="submit" disabled={submitting} style={{ padding: '9px 20px', borderRadius: 9, border: 'none', background: submitting ? '#9ca3af' : '#2D6A4F', color: 'white', fontWeight: 700, cursor: submitting ? 'not-allowed' : 'pointer' }}>
+                {submitting ? 'Adding...' : 'Add Student'}
+              </button>
+              <button type="button" onClick={() => setShowAddForm(false)} style={{ padding: '9px 20px', borderRadius: 9, border: '1px solid #d1d5db', background: 'white', fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {lastAdded && (
+        <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '12px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <CheckCircle size={16} color="#065f46" />
+          <span style={{ fontSize: 13, color: '#065f46', fontWeight: 600 }}>Student <code>{lastAdded}</code> added successfully.</span>
+        </div>
+      )}
 
       <div style={{ background: 'white', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
         <div style={{ padding: '16px 24px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -641,35 +890,97 @@ function StudentsTab({ jaInfo }) {
             <p>No students found.</p>
           </div>
         ) : (
+          <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ background: '#f9fafb' }}>
-                {['Register No.', 'Name', 'Batch', 'Email', 'Mobile', 'Status', 'Action'].map(h => (
+                {['Register No.', 'Name', 'Batch', 'Section', 'Mentor', 'Email', 'Mobile', 'Status', 'Action'].map(h => (
                   <th key={h} style={{ padding: '11px 14px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((s, i) => (
-                <tr key={s.register_number} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
+              {filtered.map((s, i) => {
+                const isEditing = editingReg === s.register_number;
+                return (
+                <tr key={s.register_number} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none', background: isEditing ? '#f0fdf4' : 'white' }}>
                   <td style={{ padding: '11px 14px', fontWeight: 700, fontSize: 12, color: '#111827', fontFamily: 'monospace' }}>{s.register_number}</td>
-                  <td style={{ padding: '11px 14px', fontSize: 13 }}>{s.name}</td>
-                  <td style={{ padding: '11px 14px' }}><Badge color="gray">{s.batch || '—'}</Badge></td>
+                  <td style={{ padding: '11px 14px', fontSize: 13 }}>
+                    {isEditing
+                      ? <input value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+                          style={{ padding: '4px 8px', borderRadius: 7, border: '1.5px solid #2D6A4F', fontSize: 13, width: 150, outline: 'none' }} autoFocus />
+                      : s.name}
+                  </td>
+                  <td style={{ padding: '11px 14px' }}>
+                    {isEditing
+                      ? <input value={editForm.batch} onChange={e => setEditForm(f => ({ ...f, batch: e.target.value }))}
+                          placeholder="e.g. 23-27"
+                          style={{ padding: '4px 8px', borderRadius: 7, border: '1.5px solid #2D6A4F', fontSize: 12, width: 80, outline: 'none' }} />
+                      : <Badge color="gray">{s.batch || '—'}</Badge>}
+                  </td>
+                  <td style={{ padding: '11px 14px' }}>
+                    {isEditing
+                      ? <select value={editForm.section} onChange={e => setEditForm(f => ({ ...f, section: e.target.value }))}
+                          style={{ padding: '4px 8px', borderRadius: 7, border: '1.5px solid #2D6A4F', fontSize: 12, outline: 'none' }}>
+                          <option value="">— None —</option>
+                          {SECTIONS.map(sec => <option key={sec} value={sec}>Sec {sec}</option>)}
+                        </select>
+                      : s.section ? <Badge color="blue">Sec {s.section}</Badge> : <span style={{ color: '#9ca3af', fontSize: 12 }}>—</span>}
+                  </td>
+                  <td style={{ padding: '11px 14px', fontSize: 12 }}>
+                    {s.mentor_name
+                      ? <span style={{ color: '#2D6A4F', fontWeight: 600 }}>{s.mentor_name}</span>
+                      : <span style={{ color: '#9ca3af' }}>—</span>}
+                  </td>
                   <td style={{ padding: '11px 14px', fontSize: 12, color: '#6b7280' }}>{s.personal_email || '—'}</td>
-                  <td style={{ padding: '11px 14px', fontSize: 12, color: '#6b7280' }}>{s.mobile_number || '—'}</td>
+                  <td style={{ padding: '11px 14px', fontSize: 12, color: '#6b7280' }}>
+                    {isEditing
+                      ? <input value={editForm.mobile_number} onChange={e => setEditForm(f => ({ ...f, mobile_number: e.target.value }))}
+                          placeholder="Mobile"
+                          style={{ padding: '4px 8px', borderRadius: 7, border: '1.5px solid #2D6A4F', fontSize: 12, width: 120, outline: 'none' }} />
+                      : (s.mobile_number || '—')}
+                  </td>
                   <td style={{ padding: '11px 14px' }}><Badge color={s.is_active ? 'green' : 'red'}>{s.is_active ? 'Active' : 'Blocked'}</Badge></td>
                   <td style={{ padding: '11px 14px' }}>
-                    <button
-                      onClick={() => handleDelete(s.register_number, s.name)}
-                      style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid #fca5a5', background: '#fff5f5', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 4 }}
-                    >
-                      <Trash2 size={12} /> Remove
-                    </button>
+                    {isEditing ? (
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => handleEditSave(s.register_number)}
+                          disabled={editSaving}
+                          style={{ padding: '5px 10px', borderRadius: 7, border: 'none', background: editSaving ? '#9ca3af' : '#2D6A4F', color: 'white', cursor: editSaving ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 700 }}
+                        >
+                          {editSaving ? '…' : 'Save'}
+                        </button>
+                        <button
+                          onClick={() => setEditingReg(null)}
+                          style={{ padding: '5px 10px', borderRadius: 7, border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#374151' }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          onClick={() => startEdit(s)}
+                          style={{ padding: '5px 9px', borderRadius: 7, border: '1px solid #c7d2fe', background: '#eef2ff', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#4338ca', display: 'flex', alignItems: 'center', gap: 3 }}
+                        >
+                          <Pencil size={11} /> Edit
+                        </button>
+                        <button
+                          onClick={() => handleDelete(s.register_number, s.name)}
+                          style={{ padding: '5px 9px', borderRadius: 7, border: '1px solid #fca5a5', background: '#fff5f5', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 3 }}
+                        >
+                          <Trash2 size={11} /> Remove
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
@@ -687,6 +998,10 @@ function ImportTab({ jaInfo, onRefresh }) {
   const [batches, setBatches] = useState([]);
   const [downloadingReport, setDownloadingReport] = useState(false);
   const fileRef = useRef(null);
+  const [showSingleForm, setShowSingleForm] = useState(false);
+  const [singleForm, setSingleForm] = useState({ register_number: '', name: '', batch: '', section: '', personal_email: '', mobile_number: '', gender: '' });
+  const [singleSubmitting, setSingleSubmitting] = useState(false);
+  const [singleMsg, setSingleMsg] = useState(null);
 
   // Load existing batches for the dropdown
   useEffect(() => {
@@ -701,6 +1016,34 @@ function ImportTab({ jaInfo, onRefresh }) {
     }
     loadBatches();
   }, []);
+
+  async function handleAddSingle(e) {
+    e.preventDefault();
+    if (!singleForm.register_number.trim() || !singleForm.name.trim()) {
+      setSingleMsg({ type: 'error', text: 'Register number and name are required.' });
+      return;
+    }
+    setSingleSubmitting(true);
+    setSingleMsg(null);
+    try {
+      const res = await fetch('/api/ja/students/create/', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify(singleForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to add student');
+      setSingleMsg({ type: 'success', text: `Student "${singleForm.name}" (${singleForm.register_number}) added successfully.` });
+      setSingleForm({ register_number: '', name: '', batch: '', section: '', personal_email: '', mobile_number: '', gender: '' });
+      setShowSingleForm(false);
+      onRefresh();
+    } catch (err) {
+      setSingleMsg({ type: 'error', text: err.message });
+    } finally {
+      setSingleSubmitting(false);
+    }
+  }
 
   async function handleDownloadTemplate() {
     try {
@@ -780,6 +1123,80 @@ function ImportTab({ jaInfo, onRefresh }) {
     <div>
       {msg && <Alert type={msg.type} message={msg.text} onClose={() => setMsg(null)} />}
 
+      {/* Quick Add Single Student */}
+      <div style={{ background: 'white', borderRadius: 16, border: '1px solid #e5e7eb', padding: 24, marginBottom: 24 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showSingleForm ? 16 : 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 40, height: 40, borderRadius: 12, background: '#dbeafe', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <UserPlus size={20} color="#1d4ed8" />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#111827' }}>Quick Add Single Student</h3>
+              <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>Add one student without an Excel file</p>
+            </div>
+          </div>
+          <button
+            onClick={() => { setShowSingleForm(v => !v); setSingleMsg(null); }}
+            style={{ padding: '8px 16px', borderRadius: 9, border: 'none', background: showSingleForm ? '#f3f4f6' : '#1d4ed8', color: showSingleForm ? '#374151' : 'white', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+          >
+            {showSingleForm ? 'Cancel' : '+ Add Student'}
+          </button>
+        </div>
+
+        {singleMsg && <Alert type={singleMsg.type} message={singleMsg.text} onClose={() => setSingleMsg(null)} />}
+
+        {showSingleForm && (
+          <form onSubmit={handleAddSingle}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, marginBottom: 14 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Register Number *</label>
+                <input value={singleForm.register_number} onChange={e => setSingleForm(p => ({ ...p, register_number: e.target.value }))} placeholder="953623243001" required style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Full Name *</label>
+                <input value={singleForm.name} onChange={e => setSingleForm(p => ({ ...p, name: e.target.value }))} placeholder="Arun Kumar" required style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Batch <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <select value={singleForm.batch} onChange={e => setSingleForm(p => ({ ...p, batch: e.target.value }))} style={{ width: '100%', padding: '9px 10px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13 }}>
+                  <option value="">— Assign later —</option>
+                  {batches.map(b => <option key={b.batch} value={b.batch}>{b.batch}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Section <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <select value={singleForm.section} onChange={e => setSingleForm(p => ({ ...p, section: e.target.value }))} style={{ width: '100%', padding: '9px 10px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13 }}>
+                  <option value="">— Select —</option>
+                  <option value="A">Section A</option>
+                  <option value="B">Section B</option>
+                  <option value="C">Section C</option>
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Email <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <input type="email" value={singleForm.personal_email} onChange={e => setSingleForm(p => ({ ...p, personal_email: e.target.value }))} placeholder="arun@example.com" style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Mobile <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <input type="tel" value={singleForm.mobile_number} onChange={e => setSingleForm(p => ({ ...p, mobile_number: e.target.value }))} placeholder="9876543210" style={{ width: '100%', padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Gender <span style={{ fontWeight: 400, color: '#9ca3af' }}>(optional)</span></label>
+                <select value={singleForm.gender} onChange={e => setSingleForm(p => ({ ...p, gender: e.target.value }))} style={{ width: '100%', padding: '9px 10px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13 }}>
+                  <option value="">— Select —</option>
+                  <option value="Male">Male</option>
+                  <option value="Female">Female</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+            </div>
+            <button type="submit" disabled={singleSubmitting} style={{ padding: '9px 22px', borderRadius: 9, border: 'none', background: singleSubmitting ? '#9ca3af' : '#1d4ed8', color: 'white', fontWeight: 700, fontSize: 13, cursor: singleSubmitting ? 'not-allowed' : 'pointer' }}>
+              {singleSubmitting ? 'Adding...' : 'Add Student'}
+            </button>
+          </form>
+        )}
+      </div>
+
       {/* Template download */}
       <div style={{ background: 'white', borderRadius: 16, border: '1px solid #e5e7eb', padding: 24, marginBottom: 24 }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
@@ -792,6 +1209,7 @@ function ImportTab({ jaInfo, onRefresh }) {
               Download the Excel template for <strong>{jaInfo?.department?.name}</strong>.
               Required columns: <code>register_number</code>, <code>name</code>.
               The <code>batch</code> column is optional if you set a default batch below.
+              Optional: <code>section</code> (A or B).
             </p>
             <button
               onClick={handleDownloadTemplate}
@@ -926,7 +1344,7 @@ function ImportTab({ jaInfo, onRefresh }) {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr style={{ background: '#f0fdf4', position: 'sticky', top: 0 }}>
-                      {['Register No.', 'Name', 'Batch', 'Email'].map(h => (
+                      {['Register No.', 'Name', 'Batch', 'Section', 'Email'].map(h => (
                         <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 700, color: '#065f46', borderBottom: '1px solid #d1fae5' }}>{h}</th>
                       ))}
                     </tr>
@@ -937,6 +1355,7 @@ function ImportTab({ jaInfo, onRefresh }) {
                         <td style={{ padding: '7px 12px', fontFamily: 'monospace', fontWeight: 600 }}>{s.register_number}</td>
                         <td style={{ padding: '7px 12px' }}>{s.name}</td>
                         <td style={{ padding: '7px 12px' }}><Badge color="green">{s.batch}</Badge></td>
+                        <td style={{ padding: '7px 12px' }}>{s.section ? <Badge color="blue">Sec {s.section}</Badge> : <span style={{ color: '#9ca3af' }}>—</span>}</td>
                         <td style={{ padding: '7px 12px', color: '#6b7280' }}>{s.personal_email || '—'}</td>
                       </tr>
                     ))}
@@ -970,6 +1389,616 @@ function ImportTab({ jaInfo, onRefresh }) {
         </div>
       )}
     </div>
+  );
+}
+
+// --- Section Assignment Panel ------------------------------------------------
+
+function SectionAssignPanel({ jaInfo }) {
+  const [students, setStudents] = useState([]);
+  const [batches, setBatches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState(null);
+  const [selectedStudents, setSelectedStudents] = useState(new Set());
+  const [targetSection, setTargetSection] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [filterBatch, setFilterBatch] = useState('');
+  const [filterSection, setFilterSection] = useState('');
+  const [search, setSearch] = useState('');
+
+  async function load() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (filterBatch) params.set('batch', filterBatch);
+      if (filterSection) params.set('section', filterSection);
+      const [sRes, bRes] = await Promise.all([
+        fetch(`/api/ja/students/?${params}`, { credentials: 'include' }),
+        fetch('/api/ja/batches/', { credentials: 'include' }),
+      ]);
+      const sData = await sRes.json();
+      const bData = await bRes.json();
+      setStudents(sData.students || []);
+      const bl = bData.batches || [];
+      setBatches(bl);
+      if (bl.length && !filterBatch) setFilterBatch(bl[0].batch);
+    } catch (e) {
+      setMsg({ type: 'error', text: e.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, [filterBatch, filterSection]);
+
+  const toggleStudent = (regNo) => {
+    setSelectedStudents(prev => {
+      const next = new Set(prev); if (next.has(regNo)) next.delete(regNo); else next.add(regNo); return next;
+    });
+  };
+
+  const toggleAll = (list) => {
+    const allSel = list.every(s => selectedStudents.has(s.register_number));
+    setSelectedStudents(prev => {
+      const next = new Set(prev);
+      if (allSel) list.forEach(s => next.delete(s.register_number)); else list.forEach(s => next.add(s.register_number));
+      return next;
+    });
+  };
+
+  // Only client-side search remains; batch+section now filtered server-side
+  const displayed = students.filter(s => {
+    const searchMatch = !search || s.name.toLowerCase().includes(search.toLowerCase()) || s.register_number.includes(search);
+    return searchMatch;
+  });
+
+  const unassignedCount = students.filter(s => !s.section).length;
+
+  async function handleAssign() {
+    if (!targetSection) { setMsg({ type: 'error', text: 'Select a target section first.' }); return; }
+    if (selectedStudents.size === 0) { setMsg({ type: 'error', text: 'Select at least one student.' }); return; }
+    setSaving(true); setMsg(null);
+    try {
+      const res = await fetch('/api/ja/students/assign-section/', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({ section: targetSection, register_numbers: [...selectedStudents] }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Failed');
+      setMsg({ type: 'success', text: d.detail });
+      setSelectedStudents(new Set());
+      setTargetSection('');
+      load();
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      {msg && <Alert type={msg.type} message={msg.text} onClose={() => setMsg(null)} />}
+
+      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 12, padding: '14px 18px', marginBottom: 20, fontSize: 13, color: '#1e40af' }}>
+        <strong>Section Assignment</strong> — Select a batch, pick students using checkboxes, choose a target section (A / B / C), and click Assign.
+        {unassignedCount > 0 && <span style={{ marginLeft: 8, background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 6, fontWeight: 700 }}>{unassignedCount} without section</span>}
+      </div>
+
+      {/* Action bar */}
+      <div style={{ background: 'white', borderRadius: 14, border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: 20, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select value={filterBatch} onChange={e => { setFilterBatch(e.target.value); setSelectedStudents(new Set()); }} style={{ padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, minWidth: 150 }}>
+          <option value="">All Batches</option>
+          {batches.map(b => <option key={b.batch} value={b.batch}>Batch {b.batch}</option>)}
+        </select>
+        <select value={filterSection} onChange={e => { setFilterSection(e.target.value); setSelectedStudents(new Set()); }} style={{ padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13 }}>
+          <option value="">All Sections</option>
+          {SECTIONS.map(s => <option key={s} value={s}>Section {s}</option>)}
+          <option value="__none__">No section assigned</option>
+        </select>
+        <div style={{ flex: 1, minWidth: 160, position: 'relative' }}>
+          <Search size={15} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search students..." style={{ width: '100%', padding: '9px 12px 9px 32px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+        </div>
+        <select value={targetSection} onChange={e => setTargetSection(e.target.value)} style={{ padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13 }}>
+          <option value="">— Assign to section —</option>
+          {SECTIONS.map(s => <option key={s} value={s}>Section {s}</option>)}
+        </select>
+        <button
+          onClick={handleAssign}
+          disabled={saving || selectedStudents.size === 0 || !targetSection}
+          style={{ padding: '9px 18px', borderRadius: 9, border: 'none', background: (selectedStudents.size === 0 || !targetSection) ? '#e5e7eb' : '#2D6A4F', color: (selectedStudents.size === 0 || !targetSection) ? '#9ca3af' : 'white', fontWeight: 700, fontSize: 13, cursor: (selectedStudents.size === 0 || !targetSection) ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}
+        >
+          {saving ? 'Assigning...' : `Assign (${selectedStudents.size} selected)`}
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>Loading...</div>
+      ) : (
+        <div style={{ background: 'white', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
+            <span style={{ fontWeight: 700, fontSize: 14, color: '#111827' }}>
+              {filterBatch ? `Batch ${filterBatch}` : 'All Students'}
+              {filterSection && filterSection !== '__none__' ? ` · Section ${filterSection}` : ''}
+              {' '}<Badge color="blue">{displayed.length}</Badge>
+            </span>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#6b7280', cursor: 'pointer' }}>
+              <input type="checkbox" onChange={() => toggleAll(displayed)} checked={displayed.length > 0 && displayed.every(s => selectedStudents.has(s.register_number))} />
+              Select all
+            </label>
+          </div>
+          {displayed.length === 0 ? (
+            <div style={{ padding: 30, textAlign: 'center', color: '#9ca3af' }}>No students match the current filter.</div>
+          ) : (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f9fafb' }}>
+                  {['', 'Register No.', 'Name', 'Batch', 'Current Section'].map((h, i) => (
+                    <th key={i} style={{ padding: '10px 14px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {displayed.map((s, i) => (
+                  <tr key={s.register_number} onClick={() => toggleStudent(s.register_number)} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none', cursor: 'pointer', background: selectedStudents.has(s.register_number) ? '#eff6ff' : 'transparent' }}>
+                    <td style={{ padding: '10px 14px', width: 40 }}>
+                      <input type="checkbox" checked={selectedStudents.has(s.register_number)} onChange={() => toggleStudent(s.register_number)} onClick={e => e.stopPropagation()} />
+                    </td>
+                    <td style={{ padding: '10px 14px', fontFamily: 'monospace', fontWeight: 700, fontSize: 12, color: '#374151' }}>{s.register_number}</td>
+                    <td style={{ padding: '10px 14px', fontSize: 13, fontWeight: 600 }}>{s.name}</td>
+                    <td style={{ padding: '10px 14px' }}><Badge color="gray">{s.batch || '—'}</Badge></td>
+                    <td style={{ padding: '10px 14px' }}>
+                      {s.section
+                        ? <span style={{ background: '#d1fae5', color: '#065f46', padding: '3px 10px', borderRadius: 8, fontSize: 12, fontWeight: 700 }}>Sec {s.section}</span>
+                        : <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: 12 }}>Not assigned</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// --- Assignments Tab (Class Advisors + Mentor assignments) ------------------
+
+function AssignmentsTab({ jaInfo }) {
+  const [subTab, setSubTab] = useState('batch'); // 'batch' | 'advisors' | 'mentors'
+
+  return (
+    <div>
+      {/* Sub-tab switcher */}
+      <div style={{ display: 'flex', gap: 0, marginBottom: 24, background: '#f3f4f6', borderRadius: 12, padding: 4, width: 'fit-content' }}>
+        {[
+          { id: 'batch',    label: 'Section Assignment', icon: MoveRight },
+          { id: 'advisors', label: 'Class Advisors',   icon: GraduationCap },
+          { id: 'mentors',  label: 'Mentor Assignment', icon: BookOpen },
+        ].map(t => (
+          <button
+            key={t.id}
+            onClick={() => setSubTab(t.id)}
+            style={{
+              padding: '8px 20px', borderRadius: 9, border: 'none',
+              background: subTab === t.id ? 'white' : 'transparent',
+              color: subTab === t.id ? '#111827' : '#6b7280',
+              fontWeight: subTab === t.id ? 700 : 500,
+              fontSize: 13, cursor: 'pointer',
+              boxShadow: subTab === t.id ? '0 1px 4px rgba(0,0,0,0.1)' : 'none',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            <t.icon size={15} />{t.label}
+          </button>
+        ))}
+      </div>
+
+      {subTab === 'batch'    && <SectionAssignPanel jaInfo={jaInfo} />}
+      {subTab === 'advisors' && <ClassAdvisorPanel jaInfo={jaInfo} />}
+      {subTab === 'mentors'  && <MentorPanel jaInfo={jaInfo} />}
+    </div>
+  );
+}
+
+function ClassAdvisorPanel({ jaInfo }) {
+  const [assignments, setAssignments] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState(null);
+  // editing key = "batch:section"
+  const [editing, setEditing] = useState(null);
+  const [selectedAdvisor, setSelectedAdvisor] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [aRes, sRes] = await Promise.all([
+        fetch('/api/ja/advisors/', { credentials: 'include' }),
+        fetch('/api/ja/staff/', { credentials: 'include' }),
+      ]);
+      const aData = await aRes.json();
+      const sData = await sRes.json();
+      setAssignments(aData.assignments || []);
+      setStaff(sData.staff || []);
+    } catch (e) {
+      setMsg({ type: 'error', text: e.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function handleSave(batch, section) {
+    if (!selectedAdvisor) { setMsg({ type: 'error', text: 'Please select a staff member.' }); return; }
+    setSaving(true); setMsg(null);
+    try {
+      const res = await fetch('/api/ja/advisors/', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({ batch, section, advisor_id: parseInt(selectedAdvisor, 10) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to assign advisor');
+      setMsg({ type: 'success', text: data.detail });
+      setEditing(null); setSelectedAdvisor('');
+      load();
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRemove(batch, section) {
+    try {
+      const res = await fetch(`/api/ja/advisors/${encodeURIComponent(batch)}/?section=${encodeURIComponent(section)}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: { 'X-CSRFToken': getCsrfToken() },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed');
+      setMsg({ type: 'success', text: data.detail });
+      load();
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    }
+  }
+
+  // Group rows by batch for display
+  const batches = [...new Set(assignments.map(a => a.batch))].sort();
+  const SECTION_COLORS = { A: '#dbeafe', B: '#d1fae5', C: '#fef3c7' };
+  const SECTION_TEXT   = { A: '#1e40af', B: '#065f46', C: '#92400e' };
+
+  return (
+    <div>
+      {msg && <Alert type={msg.type} message={msg.text} onClose={() => setMsg(null)} />}
+
+      <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 12, padding: '14px 18px', marginBottom: 20, fontSize: 13, color: '#1e40af' }}>
+        <strong>Class Advisor Assignment</strong> — Assign one staff member as class advisor for each section within a batch. Each section (A / B / C) can have its own advisor.
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>Loading...</div>
+      ) : assignments.length === 0 ? (
+        <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>
+          <GraduationCap size={36} style={{ marginBottom: 10, opacity: 0.4 }} />
+          <p>No batches found. Create batches and assign students to sections first.</p>
+        </div>
+      ) : (
+        batches.map(batch => {
+          const batchRows = assignments.filter(a => a.batch === batch);
+          return (
+            <div key={batch} style={{ background: 'white', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden', marginBottom: 20 }}>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid #f3f4f6', background: '#f8fafc', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontWeight: 800, fontSize: 16, color: '#111827' }}>Batch {batch}</span>
+                <Badge color="gray">{batchRows.reduce((s, r) => s + r.student_count, 0)} students</Badge>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: '#f9fafb' }}>
+                    {['Section', 'Students', 'Class Advisor', 'Action'].map(h => (
+                      <th key={h} style={{ padding: '11px 20px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {batchRows.map((a, i) => {
+                    const key = `${a.batch}:${a.section}`;
+                    return (
+                      <tr key={key} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none' }}>
+                        <td style={{ padding: '13px 20px' }}>
+                          <span style={{ background: SECTION_COLORS[a.section] || '#f3f4f6', color: SECTION_TEXT[a.section] || '#374151', padding: '4px 12px', borderRadius: 8, fontWeight: 800, fontSize: 13 }}>
+                            Section {a.section}
+                          </span>
+                        </td>
+                        <td style={{ padding: '13px 20px' }}><Badge color="blue">{a.student_count}</Badge></td>
+                        <td style={{ padding: '13px 20px' }}>
+                          {editing === key ? (
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                              <select value={selectedAdvisor} onChange={e => setSelectedAdvisor(e.target.value)} style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, minWidth: 180 }}>
+                                <option value="">— Select staff —</option>
+                                {staff.map(s => <option key={s.id} value={s.id}>{s.name} ({s.faculty_id})</option>)}
+                              </select>
+                              <button onClick={() => handleSave(a.batch, a.section)} disabled={saving} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: '#2D6A4F', color: 'white', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+                                {saving ? '...' : 'Save'}
+                              </button>
+                              <button onClick={() => { setEditing(null); setSelectedAdvisor(''); }} style={{ padding: '7px 12px', borderRadius: 8, border: '1px solid #d1d5db', background: 'white', fontSize: 12, cursor: 'pointer' }}>Cancel</button>
+                            </div>
+                          ) : a.advisor ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <div style={{ width: 30, height: 30, borderRadius: '50%', background: '#dbeafe', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: '#1e40af' }}>
+                                {a.advisor.name[0]}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: 600, fontSize: 13, color: '#111827' }}>{a.advisor.name}</div>
+                                <div style={{ fontSize: 11, color: '#6b7280' }}>{a.advisor.faculty_id}</div>
+                              </div>
+                            </div>
+                          ) : (
+                            <span style={{ fontSize: 13, color: '#9ca3af' }}>Not assigned</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '13px 20px' }}>
+                          {editing !== key && (
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <button onClick={() => { setEditing(key); setSelectedAdvisor(a.advisor?.id?.toString() || ''); }} style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #d1d5db', background: 'white', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#374151', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Edit2 size={12} /> {a.advisor ? 'Change' : 'Assign'}
+                              </button>
+                              {a.advisor && (
+                                <button onClick={() => handleRemove(a.batch, a.section)} style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #fca5a5', background: '#fff5f5', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 4 }}>
+                                  <X size={12} /> Remove
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+}
+
+function MentorPanel({ jaInfo }) {
+  const [data, setData] = useState({ mentor_groups: [], unassigned: [], unassigned_count: 0 });
+  const [staff, setStaff] = useState([]);
+  const [batches, setBatches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState(null);
+  const [selectedStudents, setSelectedStudents] = useState(new Set());
+  const [bulkMentor, setBulkMentor] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [showUnassigned, setShowUnassigned] = useState(true);
+  const [assignedOnly, setAssignedOnly] = useState(false);
+  const [search, setSearch] = useState('');
+  const [batchFilter, setBatchFilter] = useState('');
+
+  async function load() {
+    setLoading(true);
+    try {
+      const mentorUrl = batchFilter ? `/api/ja/mentors/?batch=${encodeURIComponent(batchFilter)}` : '/api/ja/mentors/';
+      const [mRes, sRes, bRes] = await Promise.all([
+        fetch(mentorUrl, { credentials: 'include' }),
+        fetch('/api/ja/staff/', { credentials: 'include' }),
+        fetch('/api/ja/batches/', { credentials: 'include' }),
+      ]);
+      const mData = await mRes.json();
+      const sData = await sRes.json();
+      const bData = await bRes.json();
+      setData(mData);
+      setStaff(sData.staff || []);
+      setBatches(bData.batches || []);
+    } catch (e) {
+      setMsg({ type: 'error', text: e.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, [batchFilter]);
+
+  const toggleStudent = (regNo) => {
+    setSelectedStudents(prev => {
+      const next = new Set(prev);
+      if (next.has(regNo)) next.delete(regNo); else next.add(regNo);
+      return next;
+    });
+  };
+
+  const toggleAll = (list) => {
+    const allSelected = list.every(s => selectedStudents.has(s.register_number));
+    if (allSelected) {
+      setSelectedStudents(prev => { const next = new Set(prev); list.forEach(s => next.delete(s.register_number)); return next; });
+    } else {
+      setSelectedStudents(prev => { const next = new Set(prev); list.forEach(s => next.add(s.register_number)); return next; });
+    }
+  };
+
+  async function handleAssign() {
+    if (selectedStudents.size === 0) { setMsg({ type: 'error', text: 'Select at least one student.' }); return; }
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await fetch('/api/ja/mentors/assign/', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({
+          mentor_id: bulkMentor ? parseInt(bulkMentor, 10) : null,
+          register_numbers: [...selectedStudents],
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Failed');
+      setMsg({ type: 'success', text: d.detail });
+      setSelectedStudents(new Set());
+      setBulkMentor('');
+      load();
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // All students (flat) for search
+  const allStudents = [
+    ...data.unassigned,
+    ...data.mentor_groups.flatMap(g => g.students),
+  ];
+  const filtered = search
+    ? allStudents.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.register_number.includes(search))
+    : null;
+
+  return (
+    <div>
+      {msg && <Alert type={msg.type} message={msg.text} onClose={() => setMsg(null)} />}
+
+      <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: '14px 18px', marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+        <div style={{ fontSize: 13, color: '#92400e' }}>
+          <strong>Mentor Assignment</strong> — Select students, choose a mentor, click Assign.
+        </div>
+        <div style={{ display: 'flex', gap: 16 }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 22, fontWeight: 900, color: '#2D6A4F' }}>{data.mentor_groups.reduce((sum, g) => sum + g.students.length, 0)}</div>
+            <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase' }}>Assigned</div>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 22, fontWeight: 900, color: '#92400e' }}>{data.unassigned_count}</div>
+            <div style={{ fontSize: 11, color: '#6b7280', fontWeight: 700, textTransform: 'uppercase' }}>Unassigned</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bulk action bar */}
+      <div style={{ background: 'white', borderRadius: 14, border: '1px solid #e5e7eb', padding: '16px 20px', marginBottom: 20, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <select value={batchFilter} onChange={e => { setBatchFilter(e.target.value); setSelectedStudents(new Set()); }} style={{ padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, minWidth: 150 }}>
+          <option value="">All Batches</option>
+          {batches.map(b => <option key={b.batch} value={b.batch}>Batch {b.batch}</option>)}
+        </select>
+        <div style={{ flex: 1, minWidth: 200, position: 'relative' }}>
+          <Search size={15} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af' }} />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search students..." style={{ width: '100%', padding: '9px 12px 9px 32px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' }} />
+        </div>
+        <select value={bulkMentor} onChange={e => setBulkMentor(e.target.value)} style={{ padding: '9px 12px', borderRadius: 9, border: '1px solid #d1d5db', fontSize: 13, minWidth: 200 }}>
+          <option value="">— Remove mentor —</option>
+          {staff.map(s => <option key={s.id} value={s.id}>{s.name} ({s.faculty_id})</option>)}
+        </select>
+        <button
+          onClick={handleAssign}
+          disabled={saving || selectedStudents.size === 0}
+          style={{ padding: '9px 18px', borderRadius: 9, border: 'none', background: selectedStudents.size === 0 ? '#e5e7eb' : '#2D6A4F', color: selectedStudents.size === 0 ? '#9ca3af' : 'white', fontWeight: 700, fontSize: 13, cursor: selectedStudents.size === 0 ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}
+        >
+          {saving ? 'Saving...' : `Assign (${selectedStudents.size} selected)`}
+        </button>
+        <button
+          onClick={() => setAssignedOnly(v => !v)}
+          style={{ padding: '9px 14px', borderRadius: 9, border: `1px solid ${assignedOnly ? '#2D6A4F' : '#d1d5db'}`, background: assignedOnly ? '#f0fdf4' : 'white', color: assignedOnly ? '#2D6A4F' : '#374151', fontWeight: 700, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' }}
+        >
+          {assignedOnly ? '✓ Assigned only' : 'Assigned only'}
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>Loading...</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+          {/* Search results override */}
+          {filtered ? (
+            <div style={{ background: 'white', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 700, fontSize: 14, color: '#111827' }}>Search Results ({filtered.length})</span>
+                <input type="checkbox" onChange={() => toggleAll(filtered)} checked={filtered.length > 0 && filtered.every(s => selectedStudents.has(s.register_number))} />
+              </div>
+              <StudentMentorTable students={filtered} selectedStudents={selectedStudents} toggleStudent={toggleStudent} />
+            </div>
+          ) : (
+            <>
+              {/* Unassigned */}
+              {data.unassigned_count > 0 && !assignedOnly && (
+                <div style={{ background: 'white', borderRadius: 16, border: '1px solid #fde68a', overflow: 'hidden' }}>
+                  <div style={{ padding: '14px 20px', borderBottom: '1px solid #fef3c7', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fffbeb' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <button onClick={() => setShowUnassigned(v => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700, color: '#92400e' }}>
+                        {showUnassigned ? '▾' : '▸'} Unassigned Students
+                      </button>
+                      <Badge color="gray">{data.unassigned_count}</Badge>
+                    </div>
+                    <input type="checkbox" onChange={() => toggleAll(data.unassigned)} checked={data.unassigned.length > 0 && data.unassigned.every(s => selectedStudents.has(s.register_number))} />
+                  </div>
+                  {showUnassigned && <StudentMentorTable students={data.unassigned} selectedStudents={selectedStudents} toggleStudent={toggleStudent} />}
+                </div>
+              )}
+
+              {/* Mentor groups */}
+              {data.mentor_groups.map(g => (
+                <div key={g.mentor.id} style={{ background: 'white', borderRadius: 16, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+                  <div style={{ padding: '14px 20px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#dbeafe', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, color: '#1e40af' }}>
+                        {g.mentor.name[0]}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: '#111827' }}>{g.mentor.name}</div>
+                        <div style={{ fontSize: 12, color: '#6b7280' }}>{g.mentor.faculty_id} · {g.mentor.role}</div>
+                      </div>
+                      <Badge color="blue">{g.students.length} mentees</Badge>
+                    </div>
+                    <input type="checkbox" onChange={() => toggleAll(g.students)} checked={g.students.length > 0 && g.students.every(s => selectedStudents.has(s.register_number))} />
+                  </div>
+                  <StudentMentorTable students={g.students} selectedStudents={selectedStudents} toggleStudent={toggleStudent} />
+                </div>
+              ))}
+
+              {data.mentor_groups.length === 0 && data.unassigned_count === 0 && (
+                <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}>
+                  <BookOpen size={36} style={{ marginBottom: 10, opacity: 0.4 }} />
+                  <p>No students in the department yet.</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StudentMentorTable({ students, selectedStudents, toggleStudent }) {
+  if (!students.length) return <div style={{ padding: '16px 20px', color: '#9ca3af', fontSize: 13 }}>No students.</div>;
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <tbody>
+        {students.map((s, i) => (
+          <tr key={s.register_number} style={{ borderTop: i > 0 ? '1px solid #f3f4f6' : 'none', background: selectedStudents.has(s.register_number) ? '#f0fdf4' : 'transparent' }}>
+            <td style={{ padding: '10px 14px', width: 40 }}>
+              <input type="checkbox" checked={selectedStudents.has(s.register_number)} onChange={() => toggleStudent(s.register_number)} />
+            </td>
+            <td style={{ padding: '10px 14px', fontWeight: 600, fontSize: 12, fontFamily: 'monospace', color: '#374151' }}>{s.register_number}</td>
+            <td style={{ padding: '10px 14px', fontSize: 13, color: '#111827' }}>{s.name}</td>
+            <td style={{ padding: '10px 14px' }}><Badge color="gray">{s.batch || '—'}</Badge></td>
+            <td style={{ padding: '10px 14px' }}>{s.section ? <Badge color="blue">Sec {s.section}</Badge> : <span style={{ color: '#9ca3af', fontSize: 12 }}>—</span>}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -1125,10 +2154,11 @@ function BatchesTab({ batches, onRefresh, onSelectBatch, jaInfo }) {
 // =============================================================================
 
 const SIDEBAR_ITEMS = [
-  { id: 'overview', label: 'Overview',     icon: BarChart3 },
-  { id: 'batches',  label: 'Batches',      icon: FolderOpen },
-  { id: 'students', label: 'All Students', icon: Users },
-  { id: 'import',   label: 'Bulk Import',  icon: Upload },
+  { id: 'overview',     label: 'Overview',     icon: BarChart3 },
+  { id: 'batches',      label: 'Batches',      icon: FolderOpen },
+  { id: 'students',     label: 'All Students', icon: Users },
+  { id: 'assignments',  label: 'Assignments',  icon: UserCheck },
+  { id: 'import',       label: 'Bulk Import',  icon: Upload },
 ];
 
 function SidebarContent({ activeTab, setActiveTab, jaInfo, onClearBatch }) {
@@ -1288,6 +2318,9 @@ function JADashboard() {
             )}
             {activeTab === 'students' && (
               <StudentsTab jaInfo={jaInfo} />
+            )}
+            {activeTab === 'assignments' && (
+              <AssignmentsTab jaInfo={jaInfo} />
             )}
             {activeTab === 'import' && (
               <ImportTab jaInfo={jaInfo} onRefresh={loadDashboard} />

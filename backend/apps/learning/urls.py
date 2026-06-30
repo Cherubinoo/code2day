@@ -5,8 +5,11 @@ from .views import (
     JABatchListView,
     JABatchDetailView,
     JAStudentCreateView,
+    JAStudentUpdateView,
     JAStudentDeleteView,
     JAStudentMoveView,
+    JABulkBatchAssignView,
+    JABulkSectionAssignView,
     JABulkImportView,
     JAExcelTemplateView,
     JAStudentListView,
@@ -65,6 +68,7 @@ from .views import (
     StudentDetailView,
     StudentBlockToggleView,
     StudentIndividualAnalyticsView,
+    StudentSelfAnalyticsView,
     UpdateTrackedCompaniesView,
     StaffLookupView,
     StaffFirstLoginView,
@@ -214,6 +218,7 @@ urlpatterns = [
     # Student Management
     path("students/filter/", DepartmentStudentsFilterView.as_view(), name="students-filter"),
     path("students/<str:register_number>/analytics/", StudentIndividualAnalyticsView.as_view(), name="student-analytics"),
+    path("student/analytics/", StudentSelfAnalyticsView.as_view(), name="student-self-analytics"),
 
     # Admin Auth
     path("auth/admin/", AdminLookupView.as_view(), name="admin-lookup"),
@@ -258,6 +263,9 @@ urlpatterns = [
     path("ja/batches/<str:batch_code>/", JABatchDetailView.as_view(), name="ja-batch-detail"),
     path("ja/students/", JAStudentListView.as_view(), name="ja-student-list"),
     path("ja/students/create/", JAStudentCreateView.as_view(), name="ja-student-create"),
+    path("ja/students/assign-batch/", JABulkBatchAssignView.as_view(), name="ja-bulk-batch-assign"),
+    path("ja/students/assign-section/", JABulkSectionAssignView.as_view(), name="ja-bulk-section-assign"),
+    path("ja/students/<str:register_number>/update/", JAStudentUpdateView.as_view(), name="ja-student-update"),
     path("ja/students/<str:register_number>/delete/", JAStudentDeleteView.as_view(), name="ja-student-delete"),
     path("ja/students/<str:register_number>/move/", JAStudentMoveView.as_view(), name="ja-student-move"),
     path("ja/import/", JABulkImportView.as_view(), name="ja-bulk-import"),

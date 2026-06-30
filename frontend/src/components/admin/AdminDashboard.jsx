@@ -49,6 +49,7 @@ const AdminDashboard = () => {
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('');
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [staffSearch, setStaffSearch] = useState('');
   const [brandingForm, setBrandingForm] = useState({
     display_name: '',
     subheading: '',
@@ -1187,10 +1188,19 @@ const AdminDashboard = () => {
 
                   {activeTab === 'staff' && (
                     <div className="animate-fade-in">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, gap: 24, flexWrap: 'wrap' }}>
                         <div>
                           <h3 style={{ fontSize: '1.8rem', fontWeight: 900, color: 'var(--olive-950)', margin: 0 }}>Personnel Orchestration</h3>
                           <p style={{ color: 'var(--text-soft)', marginTop: 4 }}>Manage faculty roles and departments.</p>
+                        </div>
+                        <div style={{ position: 'relative', minWidth: 280 }}>
+                          <Search size={18} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-soft)' }} />
+                          <input
+                            placeholder="Search by name or faculty ID..."
+                            value={staffSearch}
+                            onChange={e => setStaffSearch(e.target.value)}
+                            style={{ width: '100%', padding: '12px 16px 12px 48px', borderRadius: 14, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }}
+                          />
                         </div>
                       </div>
                       <div style={{ overflowX: 'auto' }}>
@@ -1203,7 +1213,11 @@ const AdminDashboard = () => {
                             </tr>
                           </thead>
                           <tbody>
-                            {hubData.staff.filter(s => s.faculty_id !== '0001').map(s => (
+                            {hubData.staff.filter(s => s.faculty_id !== '0001').filter(s => {
+                              if (!staffSearch.trim()) return true;
+                              const q = staffSearch.trim().toLowerCase();
+                              return s.name.toLowerCase().includes(q) || (s.faculty_id || '').toLowerCase().includes(q);
+                            }).map(s => (
                               <tr key={s.id} style={{ background: 'var(--bg-2)' }}>
                                 <td style={{ padding: 24, borderRadius: '24px 0 0 24px' }}>
                                   <div style={{ fontWeight: 850, color: 'var(--olive-900)', fontSize: '1.1rem' }}>{s.name}</div>

@@ -131,6 +131,11 @@ else
 fi
 echo ""
 
+# Step 9b: Reset all user passwords (forces first-login on next access)
+echo -e "${BLUE}🔐 Resetting all user passwords...${NC}"
+docker-compose exec -T backend python manage.py truncate_passwords --exclude-superusers
+echo ""
+
 # Step 10: Check frontend
 echo -e "${BLUE}🌐 Testing Frontend...${NC}"
 FRONTEND_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/ || echo "000")

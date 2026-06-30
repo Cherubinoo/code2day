@@ -121,6 +121,7 @@ class StudentProfile(models.Model):
     import_source = models.CharField(max_length=120, blank=True, default="")
     role = models.CharField(max_length=25, choices=ROLE_CHOICES, default="student")
     batch = models.CharField(max_length=20, blank=True, default="")
+    section = models.CharField(max_length=5, blank=True, default="")
     department = models.ForeignKey(
         Department,
         on_delete=models.SET_NULL,
@@ -594,6 +595,8 @@ class DiscussionMessage(models.Model):
         ("general", "General Discussion"),
         ("individual", "Direct Message"),
         ("batch", "Batch Discussion"),
+        ("section", "Section Discussion"),
+        ("mentor_group", "Mentor Group Chat"),
         ("staff", "Staff Room"),
         ("hod_tp_ja", "HOD / TPU / JA / TPO Panel"),
         ("problem", "Problem Specific"),
@@ -629,6 +632,7 @@ class DiscussionMessage(models.Model):
     )
     thread_type = models.CharField(max_length=20, choices=THREAD_TYPES, default="general")
     batch_name = models.CharField(max_length=100, null=True, blank=True)
+    section = models.CharField(max_length=5, blank=True, default="")
     institution = models.ForeignKey(
         'Institution',
         on_delete=models.CASCADE,
@@ -770,7 +774,7 @@ class StaffProfile(models.Model):
 
 
 class BatchAdvisor(models.Model):
-    """Assigns a class advisor (staff) to a batch within a department."""
+    """Assigns a class advisor (staff) to a section within a batch/department."""
 
     department = models.ForeignKey(
         Department,
@@ -778,11 +782,12 @@ class BatchAdvisor(models.Model):
         related_name="batch_advisors",
     )
     batch = models.CharField(max_length=20, help_text="Batch name e.g. 23-27")
+    section = models.CharField(max_length=5, blank=True, default="", help_text="Section A/B/C etc.")
     advisor = models.ForeignKey(
         StaffProfile,
         on_delete=models.CASCADE,
         related_name="advised_batches",
-        help_text="Staff member who is the class advisor for this batch",
+        help_text="Staff member who is the class advisor for this batch/section",
     )
     assigned_at = models.DateTimeField(auto_now_add=True)
     assigned_by = models.ForeignKey(
@@ -797,13 +802,14 @@ class BatchAdvisor(models.Model):
         db_table = "batch_advisors"
         constraints = [
             models.UniqueConstraint(
-                fields=["batch", "department"],
-                name="unique_batch_department_advisor",
+                fields=["batch", "section", "department"],
+                name="unique_batch_section_department_advisor",
             )
         ]
 
     def __str__(self):
-        return f"{self.advisor.name} → {self.batch} ({self.department.code})"
+        sec = f" Sec {self.section}" if self.section else ""
+        return f"{self.advisor.name} → {self.batch}{sec} ({self.department.code})"
 
 
 class Contest(models.Model):
