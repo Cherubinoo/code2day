@@ -6036,8 +6036,8 @@ class StudentContestSubmitView(APIView):
 
         # Execute code using the execution engine
         try:
-            # Get test cases for the problem
-            test_cases = list(problem.test_cases.all().order_by('order'))
+            # Get test cases with fallback to problem examples
+            test_cases = build_runtime_test_cases(problem, sample_only=False)
 
             if not test_cases:
                 return Response(
@@ -6045,66 +6045,37 @@ class StudentContestSubmitView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Run against each test case — same pattern as CodeRunView
-            passed_cases = 0
-            total_cases = len(test_cases)
+            # Run all test cases through the full pipeline (wrapping + execution + comparison)
+            batch = execute_problem_test_case_batch(
+                problem=problem,
+                source_code=source_code,
+                language=language or "",
+                language_id=language_id,
+                test_cases=test_cases,
+                batch_kind="submit",
+            )
+
+            passed_cases = batch["passed_cases"]
+            total_cases = batch["total_cases"]
+            status_str = batch["status"]
+            compile_error = batch["compile_output"] or ""
+            first_stderr = batch["stderr"] or ""
+
+            # Add case number; hide stdin/expected for non-sample test cases
             test_results = []
-            compile_error = ""
-            first_stderr = ""
-
-            for idx, test_case in enumerate(test_cases):
-                prepared = prepare_execution_payload(
-                    problem=problem,
-                    source_code=source_code,
-                    language=language,
-                    stdin=test_case.stdin,
-                )
-                result = execute_judge0_submission(
-                    source_code=prepared["source_code"],
-                    language_id=language_id,
-                    stdin=prepared["stdin"],
-                )
-
-                actual_raw = (result.get("stdout") or "").strip()
-                expected = (test_case.expected_output or "").strip()
-                exec_status = result.get("status", "Unknown")
-                stderr = (result.get("stderr") or "").strip()
-                compile_out = (result.get("compile_output") or "").strip()
-
-                # Capture first compile error to surface it
-                if compile_out and not compile_error:
-                    compile_error = compile_out
-                if stderr and not first_stderr:
-                    first_stderr = stderr
-
-                passed = (
-                    exec_status == "Accepted"
-                    and normalize_comparable_output(actual_raw)
-                    == normalize_comparable_output(expected)
-                )
-                if passed:
-                    passed_cases += 1
-
-                # Include all test cases in the response (hidden ones show as "Hidden" input)
+            for idx, tr in enumerate(batch["test_results"]):
+                is_sample = tr.get("is_sample", True)
                 test_results.append({
                     "case": idx + 1,
-                    "passed": passed,
-                    "status": exec_status,
-                    "stdin": test_case.stdin if test_case.is_sample else "(hidden)",
-                    "expected": expected if test_case.is_sample else "(hidden)",
-                    "actual": actual_raw,
-                    "stderr": stderr,
-                    "compile_output": compile_out,
-                    "time": result.get("time") or "",
+                    "passed": tr["passed"],
+                    "status": tr["status"],
+                    "stdin": tr["stdin"] if is_sample else "(hidden)",
+                    "expected": tr["expected"] if is_sample else "(hidden)",
+                    "actual": tr["actual"],
+                    "stderr": tr.get("stderr", ""),
+                    "compile_output": tr.get("compile_output", ""),
+                    "time": tr.get("time", ""),
                 })
-
-            # Determine overall status
-            if compile_error:
-                status_str = "Compilation Error"
-            elif passed_cases == total_cases:
-                status_str = "Accepted"
-            else:
-                status_str = "Wrong Answer"
 
             # Difficulty-based max score: Easy=100, Medium=200, Hard=300
             DIFFICULTY_MAX = {"Easy": 100, "Medium": 200, "Hard": 300}

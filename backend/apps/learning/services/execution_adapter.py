@@ -149,9 +149,15 @@ def _split_top_level_arguments(raw_input: str) -> list[str]:
 
 def parse_argument_list(raw_input: str):
     """Parse argument list from raw input string.
-    
-    Returns a list of arguments. For single named argument (e.g., 'adjList = [...]'),
-    returns the value directly without extra wrapping.
+
+    Handles three formats:
+      - Named args:  "nums = [2,7], target = 9"  →  [[2,7], 9]
+      - Named+newline: "nums = [2,7]\ntarget = 9" →  [[2,7], 9]
+      - Plain values: "[2,7]\n9"                  →  [[2,7], 9]
+      - Single value: "[-2,1,3]"                  →  [-2,1,3]
+
+    Returns a list of arguments. For a single list argument (e.g. 'adjList = [...]'),
+    returns the list directly without extra wrapping.
     """
     cleaned = str(raw_input or "").strip()
     if not cleaned:
@@ -159,7 +165,19 @@ def parse_argument_list(raw_input: str):
 
     if "=" not in cleaned:
         parsed = _coerce_literal(cleaned)
-        return parsed if isinstance(parsed, list) else [parsed]
+
+        # Single list arg (e.g. maxSubArray) — return as-is so caller unpacks correctly
+        if isinstance(parsed, list):
+            return parsed
+
+        # Multi-line plain values without "=" (e.g. "[2,7,11,15]\n9")
+        if "\n" in cleaned:
+            lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+            if len(lines) > 1:
+                return [_coerce_literal(line) for line in lines]
+
+        # Single scalar or unparseable string
+        return [parsed]
 
     values = []
     parts = list(_split_top_level_arguments(cleaned))
@@ -169,11 +187,11 @@ def parse_argument_list(raw_input: str):
             continue
         _, raw_value = part.split("=", 1)
         values.append(_coerce_literal(raw_value))
-    
+
     # If only one value and it's a list, return it directly (not wrapped in another list)
     if len(values) == 1:
         return values[0] if isinstance(values[0], list) else values
-    
+
     return values
 
 
