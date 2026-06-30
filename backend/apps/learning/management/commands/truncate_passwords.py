@@ -1,8 +1,9 @@
 """
 truncate_passwords — deploy-time management command.
 
-Sets every Django User's password to unusable (Django's make_password(None)).
-Users will need to go through the first-login flow to set a new password.
+Sets every Django User's password to unusable (Django's make_password(None))
+AND clears the StaffProfile.password field so both students and staff are
+forced through the first-login flow on next access.
 
 Usage:
     python manage.py truncate_passwords
@@ -34,27 +35,42 @@ class Command(BaseCommand):
         dry_run = options['dry_run']
         exclude_superusers = options['exclude_superusers']
 
-        qs = User.objects.all()
+        # Django User queryset
+        user_qs = User.objects.all()
         if exclude_superusers:
-            qs = qs.filter(is_superuser=False)
+            user_qs = user_qs.filter(is_superuser=False)
 
-        count = qs.count()
+        user_count = user_qs.count()
+
+        # StaffProfile queryset — must also clear the separate password field
+        # so StaffProfile.password_is_set returns False and first-login is allowed
+        from apps.learning.models import StaffProfile
+        staff_qs = StaffProfile.objects.exclude(password='')
+        if exclude_superusers:
+            staff_qs = staff_qs.exclude(account__is_superuser=True)
+
+        staff_count = staff_qs.count()
 
         if dry_run:
             self.stdout.write(
                 self.style.WARNING(
-                    f"[DRY RUN] Would reset passwords for {count} user(s). "
+                    f"[DRY RUN] Would reset passwords for {user_count} User(s) "
+                    f"and clear StaffProfile.password for {staff_count} staff account(s). "
                     f"Run without --dry-run to apply."
                 )
             )
             return
 
-        # Set password to unusable — Django stores this as '!' prefix
-        updated = qs.update(password=make_password(None))
+        # Clear Django auth_user passwords
+        updated_users = user_qs.update(password=make_password(None))
+
+        # Clear StaffProfile.password so staff can use first-login flow
+        updated_staff = staff_qs.update(password='')
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"✓ Passwords cleared for {updated} user(s). "
+                f"✓ auth_user passwords cleared for {updated_users} user(s).\n"
+                f"✓ StaffProfile passwords cleared for {updated_staff} staff account(s).\n"
                 f"All affected users must set a new password on next login."
             )
         )
