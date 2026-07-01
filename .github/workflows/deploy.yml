@@ -112,7 +112,7 @@ jobs:
               echo "  ✓ ${LANG} already installed"
             else
               echo "  Installing ${LANG}..."
-              curl -sf -X POST "${PISTON_URL}/packages" \
+              curl -sf --max-time 300 -X POST "${PISTON_URL}/packages" \
                 -H "Content-Type: application/json" \
                 -d "{\"language\":\"${LANG}\",\"version\":\"*\"}" \
                 && echo "  ✓ ${LANG} done" \
