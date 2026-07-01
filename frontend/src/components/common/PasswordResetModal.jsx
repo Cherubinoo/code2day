@@ -4,6 +4,7 @@ import './PasswordResetModal.css';
 
 function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
   const [step, setStep] = useState("request");
+  const [registerNumber, setRegisterNumber] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [facultyId, setFacultyId] = useState("");
@@ -16,6 +17,7 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
 
   const handleReset = () => {
     setStep("request");
+    setRegisterNumber("");
     setEmail("");
     setPhone("");
     setFacultyId("");
@@ -36,15 +38,12 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
     e.preventDefault();
 
     if (userType === "student") {
-      if (!email.trim() || !phone.trim()) {
-        setError("Please enter both your email address and phone number");
-        return;
-      }
+      if (!registerNumber.trim()) { setError("Please enter your register number"); return; }
+      if (!email.trim()) { setError("Please enter your email address"); return; }
+      if (!phone.trim()) { setError("Please enter your phone number"); return; }
     } else {
-      if (!facultyId.trim() || !email.trim()) {
-        setError("Please enter both your Faculty ID and email address");
-        return;
-      }
+      if (!facultyId.trim()) { setError("Please enter your Faculty ID"); return; }
+      if (!email.trim()) { setError("Please enter your email address"); return; }
     }
 
     setLoading(true);
@@ -54,8 +53,17 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
     try {
       const body =
         userType === "student"
-          ? { user_type: "student", email: email.trim(), phone: phone.trim() }
-          : { user_type: "staff", faculty_id: facultyId.trim(), email: email.trim() };
+          ? {
+              user_type: "student",
+              register_number: registerNumber.trim(),
+              email: email.trim(),
+              phone: phone.trim(),
+            }
+          : {
+              user_type: "staff",
+              faculty_id: facultyId.trim(),
+              email: email.trim(),
+            };
 
       const response = await fetch("/api/auth/password-reset/", {
         ...buildJsonPostOptions(body),
@@ -64,7 +72,7 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(extractApiError(data, "Password reset request failed"));
+        throw new Error(extractApiError(data, "Verification failed. Please check your details."));
       }
 
       setResetToken(data.reset_token);
@@ -80,18 +88,9 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
   const handleCompleteReset = async (e) => {
     e.preventDefault();
 
-    if (!newPassword.trim()) {
-      setError("Please enter a new password");
-      return;
-    }
-    if (newPassword.length < 8) {
-      setError("Password must be at least 8 characters");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
+    if (!newPassword.trim()) { setError("Please enter a new password"); return; }
+    if (newPassword.length < 8) { setError("Password must be at least 8 characters"); return; }
+    if (newPassword !== confirmPassword) { setError("Passwords do not match"); return; }
 
     setLoading(true);
     setError("");
@@ -105,13 +104,11 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(extractApiError(data, "Password reset failed"));
+        throw new Error(extractApiError(data, "Password reset failed. Please try again."));
       }
 
       setMessage("Password reset successfully! You can now log in with your new password.");
-      setTimeout(() => {
-        handleClose();
-      }, 2500);
+      setTimeout(() => { handleClose(); }, 2500);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -135,52 +132,78 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
               <div className="form-section">
                 <h3>Verify Your Identity</h3>
                 {userType === "student" ? (
-                  <p>Enter the email address and phone number linked to your account.</p>
+                  <p>Enter your register number, email address, and phone number to verify your account.</p>
                 ) : (
-                  <p>Enter your Faculty ID and the email address linked to your account.</p>
+                  <p>Enter your Faculty ID and email address to verify your account.</p>
                 )}
               </div>
 
-              {userType === "staff" && (
-                <div className="form-field">
-                  <label htmlFor="faculty-id">Faculty ID</label>
-                  <input
-                    id="faculty-id"
-                    type="text"
-                    value={facultyId}
-                    onChange={(e) => setFacultyId(e.target.value)}
-                    placeholder="Enter your Faculty ID"
-                    disabled={loading}
-                    autoFocus
-                  />
-                </div>
-              )}
+              {userType === "student" ? (
+                <>
+                  <div className="form-field">
+                    <label htmlFor="reset-register">Register Number</label>
+                    <input
+                      id="reset-register"
+                      type="text"
+                      value={registerNumber}
+                      onChange={(e) => setRegisterNumber(e.target.value)}
+                      placeholder="e.g. 953623243023"
+                      disabled={loading}
+                      autoFocus
+                    />
+                  </div>
 
-              <div className="form-field">
-                <label htmlFor="reset-email">Email Address</label>
-                <input
-                  id="reset-email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="Enter your email address"
-                  disabled={loading}
-                  autoFocus={userType === "student"}
-                />
-              </div>
+                  <div className="form-field">
+                    <label htmlFor="reset-email">Email Address</label>
+                    <input
+                      id="reset-email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="Your registered email"
+                      disabled={loading}
+                    />
+                  </div>
 
-              {userType === "student" && (
-                <div className="form-field">
-                  <label htmlFor="reset-phone">Phone Number</label>
-                  <input
-                    id="reset-phone"
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    placeholder="Enter your 10-digit phone number"
-                    disabled={loading}
-                  />
-                </div>
+                  <div className="form-field">
+                    <label htmlFor="reset-phone">Phone Number</label>
+                    <input
+                      id="reset-phone"
+                      type="tel"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      placeholder="Your 10-digit mobile number"
+                      disabled={loading}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="form-field">
+                    <label htmlFor="faculty-id">Faculty ID</label>
+                    <input
+                      id="faculty-id"
+                      type="text"
+                      value={facultyId}
+                      onChange={(e) => setFacultyId(e.target.value)}
+                      placeholder="Enter your Faculty ID"
+                      disabled={loading}
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="form-field">
+                    <label htmlFor="reset-email">Email Address</label>
+                    <input
+                      id="reset-email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="Your registered email"
+                      disabled={loading}
+                    />
+                  </div>
+                </>
               )}
 
               <div className="form-actions">

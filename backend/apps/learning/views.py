@@ -7885,7 +7885,7 @@ class PasswordResetView(APIView):
     def post(self, request):
         """
         Verify identity and return a short-lived reset token.
-        Students: email + phone number.
+        Students: register number + email + phone.
         Staff:    faculty ID + email.
         """
         import re as _re
@@ -7894,12 +7894,13 @@ class PasswordResetView(APIView):
 
         try:
             if user_type == 'student':
+                register_number = (request.data.get('register_number') or '').strip()
                 email = (request.data.get('email') or '').strip()
                 phone = (request.data.get('phone') or '').strip()
 
-                if not email or not phone:
+                if not register_number or not email or not phone:
                     return Response(
-                        {'error': 'Email address and phone number are required'},
+                        {'error': 'Register number, email address, and phone number are all required'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
@@ -7911,26 +7912,38 @@ class PasswordResetView(APIView):
                     )
                 phone_last10 = phone_digits[-10:]
 
-                # Find by email on profile or on the linked User account
-                candidates = StudentProfile.objects.filter(
-                    account__isnull=False
-                ).filter(
-                    models.Q(personal_email__iexact=email) |
-                    models.Q(account__email__iexact=email)
-                ).select_related('account')
-
-                student = None
-                for candidate in candidates:
-                    stored = _re.sub(r'\D', '', candidate.mobile_number or '')
-                    if stored and stored[-10:] == phone_last10:
-                        student = candidate
-                        break
-
-                if student is None:
+                # Find by register number first
+                try:
+                    student = StudentProfile.objects.select_related('account').get(
+                        register_number=register_number
+                    )
+                except StudentProfile.DoesNotExist:
                     return Response(
-                        {'error': 'No account found with that email and phone number. '
-                                  'Please check your details and try again.'},
+                        {'error': 'No account found with that register number'},
                         status=status.HTTP_404_NOT_FOUND
+                    )
+
+                # Verify email matches
+                profile_email = (student.personal_email or '').lower()
+                user_email = (student.account.email if student.account else '').lower()
+                if email.lower() not in (profile_email, user_email) or not profile_email and not user_email:
+                    return Response(
+                        {'error': 'Email address does not match our records for that register number'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                # Verify phone matches (last 10 digits)
+                stored_digits = _re.sub(r'\D', '', student.mobile_number or '')
+                if not stored_digits or stored_digits[-10:] != phone_last10:
+                    return Response(
+                        {'error': 'Phone number does not match our records for that register number'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                if not student.account:
+                    return Response(
+                        {'error': 'Student account is not set up yet. Contact your administrator.'},
+                        status=status.HTTP_400_BAD_REQUEST
                     )
 
                 user = student.account
