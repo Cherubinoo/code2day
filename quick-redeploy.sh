@@ -21,6 +21,6 @@ echo "Status:"
 docker-compose ps
 echo ""
 echo "URLs:"
-echo "  • Frontend: http://localhost:5001"
+echo "  • Frontend: http://localhost:8001"
 echo "  • Backend: http://localhost:8000"
 echo "  • Judge0: http://localhost:2358"

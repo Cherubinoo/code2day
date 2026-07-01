@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Production Deployment Script
-# Deploy frontend on port 5001, backend on port 8000, and code2day.ramcoad.com
+# Deploy frontend on port 8001, backend on port 8000, and code2day.ramcoad.com
 
 set -e
 
@@ -138,8 +138,8 @@ else
     echo -e "${RED}✗${NC}"
 fi
 
-echo -n "  Frontend (5001): "
-if curl -s http://localhost:5001 > /dev/null 2>&1; then
+echo -n "  Frontend (8001): "
+if curl -s http://localhost:8001 > /dev/null 2>&1; then
     echo -e "${GREEN}✓${NC}"
 else
     echo -e "${RED}✗${NC}"
@@ -158,7 +158,7 @@ echo "║                     Deployment Complete!                              
 echo "╚══════════════════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo "📍 Access URLs:"
-echo "   • Frontend: http://localhost:5001"
+echo "   • Frontend: http://localhost:8001"
 echo "   • Backend: http://localhost:8000"
 echo "   • Domain: http://code2day.ramcoad.com (requires DNS/hosts setup)"
 echo "   • Judge0: http://localhost:2358"

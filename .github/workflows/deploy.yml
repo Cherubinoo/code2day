@@ -152,7 +152,7 @@ jobs:
           # ── 8. Health check ────────────────────────────────────────────────
           sleep 8
           BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/)
-          FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/)
+          FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8001/)
           EXECUTOR=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2358/api/v2/runtimes)
 
           echo "  Backend  → HTTP $BACKEND"

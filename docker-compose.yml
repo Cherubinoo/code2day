@@ -11,7 +11,7 @@ services:
   code2day-redis:
     image: redis:7-alpine
     container_name: code2day-redis
-    command: redis-server --requirepass judge0redis --appendonly no
+    command: redis-server --appendonly no
     volumes:
       - code2day-redis-data:/data
     restart: unless-stopped
@@ -64,7 +64,7 @@ services:
       - code2day-network
     command: gunicorn code2day.wsgi:application --bind 0.0.0.0:8000 --workers 12 --timeout 120 --max-requests 1000 --max-requests-jitter 100
 
-  # ── React Frontend (port 5001) ────────────────────────────────────────────────
+  # ── React Frontend (port 8001) ────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -72,7 +72,7 @@ services:
     image: code2day-frontend:latest
     container_name: code2day-frontend
     ports:
-      - "5001:80"
+      - "8001:80"
     restart: unless-stopped
     <<: *default-logging
     networks:

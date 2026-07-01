@@ -138,7 +138,7 @@ echo ""
 
 # Step 10: Check frontend
 echo -e "${BLUE}🌐 Testing Frontend...${NC}"
-FRONTEND_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/ || echo "000")
+FRONTEND_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8001/ || echo "000")
 if [ "$FRONTEND_HEALTH" = "200" ]; then
     echo -e "${GREEN}✅ Frontend is accessible (HTTP 200)${NC}"
 else
@@ -188,7 +188,7 @@ echo "   Production:  https://code2day.ramcoad.com"
 echo "   Backend API: https://code2day.ramcoad.com/api/"
 echo "   Judge0 API:  https://code2day.ramcoad.com/judge0/"
 echo ""
-echo "   Local Frontend:  http://localhost:5001"
+echo "   Local Frontend:  http://localhost:8001"
 echo "   Local Backend:   http://localhost:8000"
 echo "   Local Judge0:    http://localhost:2358"
 echo ""

@@ -46,7 +46,7 @@ server {
 
     # Frontend - serve static files
     location / {
-        proxy_pass http://127.0.0.1:5001;
+        proxy_pass http://127.0.0.1:8001;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -121,7 +121,7 @@ After=network.target
 Type=simple
 User=administrator
 WorkingDirectory=$FRONTEND_DIR
-ExecStart=/usr/bin/npm run preview -- --port 5001 --host 0.0.0.0
+ExecStart=/usr/bin/npm run preview -- --port 8001 --host 0.0.0.0
 Restart=always
 RestartSec=5
 
