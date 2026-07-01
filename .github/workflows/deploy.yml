@@ -127,7 +127,15 @@ jobs:
           install_if_missing "c++"
           echo "✓ Piston packages ready"
 
-          # ── 5. Run migrations ──────────────────────────────────────────────
+          # ── 5. Patch executor URL in .env → must point to Piston on port 2358 ──
+          sed -i 's|JUDGE0_BASE_URL=.*|JUDGE0_BASE_URL=http://code2day-executor:2358|' .env 2>/dev/null || true
+          echo "✓ JUDGE0_BASE_URL set to http://code2day-executor:2358"
+
+          # Restart backend so it picks up the updated .env
+          docker compose up -d --no-deps backend
+          sleep 5
+
+          # ── 6. Run migrations ──────────────────────────────────────────────
           echo "→ Migrations..."
           docker exec code2day-backend python manage.py migrate --noinput
           echo "✓ Migrations done"
