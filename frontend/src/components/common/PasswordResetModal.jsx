@@ -93,11 +93,11 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
 
     try {
       const response = await fetch("/api/auth/password-reset/", {
-        method: "PUT",
         ...buildJsonPostOptions({
           reset_token: resetToken,
           new_password: newPassword
-        })
+        }),
+        method: "PUT",
       });
 
       const data = await response.json();
