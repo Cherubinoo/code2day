@@ -9,6 +9,10 @@ export function extractApiError(payload, fallbackMessage) {
     return payload.detail;
   }
 
+  if (payload.error) {
+    return payload.error;
+  }
+
   const firstEntry = Object.values(payload)[0];
   if (Array.isArray(firstEntry) && firstEntry.length > 0) {
     return firstEntry[0];
