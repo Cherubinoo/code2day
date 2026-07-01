@@ -220,7 +220,7 @@ MEDIA_ROOT = BASE_DIR / "media"
 # Code Execution Engine
 # Env vars keep JUDGE0_ prefix for backward compat with server .env
 # ---------------------------------------------------------------------------
-EXECUTOR_BASE_URL = os.getenv("JUDGE0_BASE_URL", "http://code2day-executor:2000")
+EXECUTOR_BASE_URL = os.getenv("JUDGE0_BASE_URL", "http://code2day-executor:2358")
 EXECUTOR_TIMEOUT_SECONDS = int(os.getenv("JUDGE0_TIMEOUT_SECONDS", "30"))
 # Legacy aliases — do not remove (used in old imports)
 JUDGE0_BASE_URL = EXECUTOR_BASE_URL

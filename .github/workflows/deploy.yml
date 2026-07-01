@@ -97,7 +97,7 @@ jobs:
           # ── 4. Ensure Piston language packages ─────────────────────────────
           # Packages persist in the piston-data volume; only downloads on first run.
           echo "→ Ensuring Piston language packages..."
-          PISTON_URL="http://localhost:2000/api/v2"
+          PISTON_URL="http://localhost:2358/api/v2"
 
           # Wait for Piston to be ready (up to 60 s)
           for i in $(seq 1 30); do
@@ -127,15 +127,12 @@ jobs:
           install_if_missing "c++"
           echo "✓ Piston packages ready"
 
-          # ── 5. Update executor URL in .env to point at Piston ──────────────
-          sed -i 's|JUDGE0_BASE_URL=.*|JUDGE0_BASE_URL=http://code2day-executor:2000|' .env 2>/dev/null || true
-
-          # ── 6. Run migrations ──────────────────────────────────────────────
+          # ── 5. Run migrations ──────────────────────────────────────────────
           echo "→ Migrations..."
           docker exec code2day-backend python manage.py migrate --noinput
           echo "✓ Migrations done"
 
-          # ── 7. Sync students from source DB (safe — skips if source unreachable) ──
+          # ── 6. Sync students from source DB (safe — skips if source unreachable) ──
           echo "→ Syncing students from source DB..."
           docker exec code2day-backend python manage.py import_students \
             && echo "✓ Student sync complete" \
@@ -147,16 +144,16 @@ jobs:
           docker exec code2day-backend python manage.py seed_missing_students
           echo "✓ Institution, department mappings and missing students done"
 
-          # ── 8. Collect static files ────────────────────────────────────────
+          # ── 7. Collect static files ────────────────────────────────────────
           echo "→ Static files..."
           docker exec code2day-backend python manage.py collectstatic --noinput
           echo "✓ Done"
 
-          # ── 9. Health check ────────────────────────────────────────────────
+          # ── 8. Health check ────────────────────────────────────────────────
           sleep 8
           BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/)
           FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/)
-          EXECUTOR=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2000/api/v2/runtimes)
+          EXECUTOR=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2358/api/v2/runtimes)
 
           echo "  Backend  → HTTP $BACKEND"
           echo "  Frontend → HTTP $FRONTEND"
