@@ -192,6 +192,9 @@ function ContestWorkspacePage({ contestId, onBack }) {
     time: null,
     memory: null,
   });
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [executionPhase, setExecutionPhase] = useState("idle"); // "idle" | "compiling" | "running"
+  const timerRef = useRef(null);
 
   // Timer state
   const [contestSecondsLeft, setContestSecondsLeft] = useState(null);
@@ -467,8 +470,16 @@ function ContestWorkspacePage({ contestId, onBack }) {
     }
 
     setExecutionBusy(true);
+    setElapsedTime(0);
+    setExecutionPhase("running");
     setOutputLog("Running your code...");
     setExecutionMeta({ status: "Running", time: null, memory: null });
+
+    clearInterval(timerRef.current);
+    const start = Date.now();
+    timerRef.current = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - start) / 1000));
+    }, 500);
 
     try {
       const result = await runCodeExecution({
@@ -490,7 +501,9 @@ function ContestWorkspacePage({ contestId, onBack }) {
       setOutputLog(`Error: ${err.message}`);
       setExecutionMeta({ status: "Error", time: null, memory: null });
     } finally {
+      clearInterval(timerRef.current);
       setExecutionBusy(false);
+      setExecutionPhase("idle");
     }
   }, [selectedProblem, code, selectedLanguage, executionInput]);
 
@@ -512,8 +525,18 @@ function ContestWorkspacePage({ contestId, onBack }) {
     }
 
     setExecutionBusy(true);
+    setElapsedTime(0);
+    setExecutionPhase("compiling");
     setOutputLog("Submitting your solution...");
     setExecutionMeta({ status: "Submitting", time: null, memory: null });
+
+    clearInterval(timerRef.current);
+    const submitStart = Date.now();
+    timerRef.current = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - submitStart) / 1000);
+      setElapsedTime(elapsed);
+      if (elapsed >= 3) setExecutionPhase("running");
+    }, 500);
 
     try {
       const languageId = getLanguageIdForChoice(selectedLanguage);
@@ -610,7 +633,9 @@ function ContestWorkspacePage({ contestId, onBack }) {
       setOutputLog(`Submission error: ${err.message}`);
       setExecutionMeta({ status: "Error", time: null, memory: null });
     } finally {
+      clearInterval(timerRef.current);
       setExecutionBusy(false);
+      setExecutionPhase("idle");
     }
   }, [contestId, selectedProblem, code, selectedLanguage, problems, selectedProblemIndex]);
 
@@ -942,7 +967,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
                     onClick={handleRunCode}
                     disabled={executionBusy || contestSecondsLeft === 0}
                   >
-                    {executionBusy ? "Running…" : "Run"}
+                    {executionBusy && executionPhase === "running" ? `Running… ${elapsedTime}s` : "Run"}
                   </button>
                   <button
                     type="button"
@@ -950,7 +975,13 @@ function ContestWorkspacePage({ contestId, onBack }) {
                     onClick={handleSubmitCode}
                     disabled={executionBusy || contestSecondsLeft === 0}
                   >
-                    {executionBusy ? "Submitting…" : contestSecondsLeft === 0 ? "Time's Up" : "Submit"}
+                    {executionBusy
+                      ? executionPhase === "compiling"
+                        ? `Compiling… ${elapsedTime}s`
+                        : `Executing… ${elapsedTime}s`
+                      : contestSecondsLeft === 0
+                      ? "Time's Up"
+                      : "Submit"}
                   </button>
                 </div>
               </div>
@@ -981,7 +1012,17 @@ function ContestWorkspacePage({ contestId, onBack }) {
               placeholder="Optional stdin for a custom run."
             />
             <div className="output-panel-shell">
-              <pre className="output-panel compact-output">{outputLog}</pre>
+              {executionBusy ? (
+                <div className="output-panel compiling-overlay">
+                  <div className="compiling-spinner" />
+                  <div className="compiling-label">
+                    {executionPhase === "compiling" ? "Compiling…" : "Executing…"}
+                    <span className="compiling-elapsed">{elapsedTime}s</span>
+                  </div>
+                </div>
+              ) : (
+                <pre className="output-panel compact-output">{outputLog}</pre>
+              )}
             </div>
           </article>
         </section>
