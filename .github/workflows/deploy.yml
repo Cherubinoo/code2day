@@ -84,14 +84,14 @@ jobs:
           git reset --hard origin/main
           echo "✓ $(git log --oneline -1)"
 
-          # ── 2. Build backend and frontend ──────────────────────────────────
+          # ── 2. Build backend, frontend, and executor ───────────────────────
           echo "→ Building images..."
-          docker compose build backend frontend
+          docker compose build backend frontend code2day-executor
           echo "✓ Images built"
 
-          # ── 3. Restart backend and frontend only (code2day-executor untouched) ──
+          # ── 3. Restart backend, frontend, and executor ─────────────────────
           echo "→ Restarting..."
-          docker compose up -d --no-deps backend frontend
+          docker compose up -d --no-deps backend frontend code2day-executor
           echo "✓ Containers up"
 
           # ── 4. Run migrations ──────────────────────────────────────────────

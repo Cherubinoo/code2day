@@ -281,6 +281,26 @@ class Problem(models.Model):
     companies = models.TextField(blank=True, default="")
     source_dataset_id = models.CharField(max_length=50, blank=True, default="")
 
+    EXEC_TYPE_CHOICES = [
+        ("auto",        "Auto-detect from code"),
+        ("stdin",       "Standard Input / Output"),
+        ("function",    "Function-Based"),
+        ("class",       "Class / Object-Based"),
+        ("interactive", "Interactive"),
+    ]
+    execution_type = models.CharField(
+        max_length=20,
+        choices=EXEC_TYPE_CHOICES,
+        default="auto",
+        help_text="How test-case input is passed to the solution. 'auto' detects from code structure.",
+    )
+    function_name = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="Explicit function/method name to call. Leave blank to use slug-based detection.",
+    )
+
     def __str__(self):
         return self.title
 

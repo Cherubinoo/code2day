@@ -5,6 +5,29 @@ import json
 import re
 
 
+# ── Execution model constants ─────────────────────────────────────────────────
+# These define how the engine passes test-case input to the submitted code.
+EXEC_AUTO        = "auto"        # resolve at runtime
+EXEC_STDIN       = "stdin"       # user reads stdin / prints to stdout — no driver needed
+EXEC_FUNCTION    = "function"    # user defines a function; engine generates driver
+EXEC_CLASS       = "class"       # user defines a class; engine instantiates and calls methods
+EXEC_INTERACTIVE = "interactive" # judge ↔ program exchange (future)
+
+# Regex patterns that indicate the code already has its own entrypoint.
+# If matched → treat as EXEC_STDIN (no driver injection).
+_ENTRYPOINT_PATTERNS: dict[str, list[str]] = {
+    "Python":     [r'if\s+__name__\s*==\s*["\']__main__["\']'],
+    "Java":       [r'public\s+static\s+void\s+main\s*\(\s*String'],
+    "C":          [r'\bint\s+main\s*\('],
+    "C++":        [r'\bint\s+main\s*\('],
+    "JavaScript": [r'\brequire\s*\(\s*[\'"]readline[\'"]', r'process\.stdin\.on'],
+    "Go":         [r'\bfunc\s+main\s*\(\s*\)'],
+    "Rust":       [r'\bfn\s+main\s*\(\s*\)'],
+    "Kotlin":     [r'\bfun\s+main\s*\('],
+    "Swift":      [r'\bfunc\s+main\s*\(', r'@main'],
+}
+
+
 def build_function_name_candidates(slug: str, source_code: str = "") -> list[str]:
     """Build function name candidates from slug and extract from source code."""
     parts = [part for part in (slug or "").split("-") if part]
@@ -1095,10 +1118,66 @@ class Program {{
 
 
 def _build_python_wrapper(source_code: str, candidates: list[str]) -> str:
-    """Build Python wrapper that reads from stdin and calls the solution function."""
+    """
+    Build a Python driver that:
+      1. Injects standard DS class definitions (TreeNode, ListNode)
+      2. Reads JSON args from stdin
+      3. Finds and calls the solution function/method
+      4. Serialises the result back to stdout
+    """
     candidate_list = json.dumps(candidates)
-    return f"""{source_code}
+    return f"""
+# ── Data structure definitions (always available) ────────────────────────────
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+    def __repr__(self): return f"TreeNode({{self.val}})"
 
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val; self.next = next
+    def __repr__(self): return f"ListNode({{self.val}})"
+
+def __c2d_to_tree(vals):
+    if not vals or vals[0] is None: return None
+    from collections import deque as _dq
+    root = TreeNode(vals[0]); q = _dq([root]); i = 1
+    while q and i < len(vals):
+        node = q.popleft()
+        if i < len(vals) and vals[i] is not None:
+            node.left = TreeNode(vals[i]); q.append(node.left)
+        i += 1
+        if i < len(vals) and vals[i] is not None:
+            node.right = TreeNode(vals[i]); q.append(node.right)
+        i += 1
+    return root
+
+def __c2d_from_tree(root):
+    if not root: return []
+    from collections import deque as _dq
+    result, q = [], _dq([root])
+    while q:
+        node = q.popleft()
+        if node: result.append(node.val); q.append(node.left); q.append(node.right)
+        else: result.append(None)
+    while result and result[-1] is None: result.pop()
+    return result
+
+def __c2d_to_linked(vals):
+    if not vals: return None
+    head = ListNode(vals[0]); curr = head
+    for v in vals[1:]: curr.next = ListNode(v); curr = curr.next
+    return head
+
+def __c2d_from_linked(head):
+    result = []
+    while head: result.append(head.val); head = head.next
+    return result
+
+# ── Solution code ─────────────────────────────────────────────────────────────
+{source_code}
+
+# ── Driver ────────────────────────────────────────────────────────────────────
 import json as __code2day_json
 import sys as __code2day_sys
 import inspect as __code2day_inspect
@@ -1109,7 +1188,6 @@ def __code2day_find_solver():
         fn = globals().get(name)
         if callable(fn):
             return fn
-
     solution_cls = globals().get("Solution")
     if solution_cls:
         instance = solution_cls()
@@ -1117,16 +1195,16 @@ def __code2day_find_solver():
             method = getattr(instance, name, None)
             if callable(method):
                 return method
-
     raise NameError("Could not find a matching solver function for this problem.")
 
 def __code2day_serialize(value):
-    if value is None:
-        return "null"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, str):
-        return value
+    if value is None: return "null"
+    if isinstance(value, bool): return "true" if value else "false"
+    if isinstance(value, TreeNode):
+        return __code2day_json.dumps(__c2d_from_tree(value), separators=(",", ":"))
+    if isinstance(value, ListNode):
+        return __code2day_json.dumps(__c2d_from_linked(value), separators=(",", ":"))
+    if isinstance(value, str): return value
     return __code2day_json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 if __name__ == "__main__":
@@ -1134,26 +1212,25 @@ if __name__ == "__main__":
     args = __code2day_json.loads(raw) if raw else []
     if not isinstance(args, list):
         args = [args]
-    
+
     solver = __code2day_find_solver()
-    
-    # Try calling with unpacked args first, then with single arg if that fails
+
     try:
         sig = __code2day_inspect.signature(solver)
-        param_count = len([p for p in sig.parameters.values() if p.default is __code2day_inspect.Parameter.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)])
-        
+        param_count = len([
+            p for p in sig.parameters.values()
+            if p.default is __code2day_inspect.Parameter.empty
+            and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+        ])
         if param_count == 1 and len(args) > 1:
-            # Function expects 1 arg but we have multiple - wrap them
             result = solver(args)
         elif param_count > 1 and len(args) == 1 and isinstance(args[0], list):
-            # Function expects multiple args but we have 1 list - try unpacking
             result = solver(*args[0])
         else:
             result = solver(*args)
     except (TypeError, ValueError):
-        # Fallback: try calling with args as-is (single argument)
         result = solver(args)
-    
+
     __code2day_sys.stdout.write(__code2day_serialize(result))
 """
 
@@ -1994,248 +2071,163 @@ rl.on('close', () => {{
 '''.strip()
 
 
-def prepare_execution_payload(*, problem, source_code: str, language: str, stdin: str):
-    candidates = build_function_name_candidates(getattr(problem, "slug", ""), source_code)
-    
-    if not candidates:
-        return {"source_code": source_code, "stdin": stdin, "adapted": False}
-    
-    # Python
+# ── Execution type resolution ─────────────────────────────────────────────────
+
+def _has_entrypoint(source_code: str, language: str) -> bool:
+    """Return True if the code already has its own entry-point → use stdin mode."""
+    for pattern in _ENTRYPOINT_PATTERNS.get(language, []):
+        if re.search(pattern, source_code):
+            return True
+    return False
+
+
+def _resolve_execution_type(problem, source_code: str, language: str) -> str:
+    """
+    Determine execution type.
+    Priority: problem.execution_type (if not 'auto') > auto-detect from code.
+    """
+    if problem:
+        et = getattr(problem, "execution_type", EXEC_AUTO) or EXEC_AUTO
+        if et != EXEC_AUTO:
+            return et
+
+    # Auto-detect from code structure
+    if _has_entrypoint(source_code, language):
+        return EXEC_STDIN
+
     if language == "Python":
-        looks_like = _looks_like_python_function_solution(source_code, candidates)
-        if not looks_like:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        wrapper = _build_python_wrapper(source_code, candidates)
+        if "class Solution" in source_code:
+            return EXEC_CLASS
+        if re.search(r'\bdef\s+\w+\s*\(', source_code):
+            return EXEC_FUNCTION
+
+    elif language == "Java":
+        if re.search(r'\bclass\s+Solution\b', source_code):
+            return EXEC_CLASS
+        if re.search(r'(?:public|private|static).*\w+\s+\w+\s*\(', source_code):
+            return EXEC_FUNCTION
+
+    elif language in ("C", "C++", "CPP"):
+        if re.search(r'\b(?:int|long|float|double|char|void|bool|vector|string)\s+\w+\s*\(', source_code):
+            return EXEC_FUNCTION
+
+    elif language in ("JavaScript", "TypeScript", "Node.js"):
+        if re.search(r'\bfunction\s+\w+\s*\(|const\s+\w+\s*=\s*(?:function|\()', source_code):
+            return EXEC_FUNCTION
+
+    else:
+        # For other languages, if has function-like pattern, treat as function
+        if re.search(r'\bfunc\s+\w+|def\s+\w+|fn\s+\w+|fun\s+\w+', source_code):
+            return EXEC_FUNCTION
+
+    return EXEC_STDIN
+
+
+def _resolve_candidates(problem, source_code: str) -> list:
+    """
+    Build function-name candidates.
+    problem.function_name takes priority over slug-based auto-detection.
+    """
+    slug = getattr(problem, "slug", "") or ""
+    fn_name = getattr(problem, "function_name", "") or ""
+    candidates = build_function_name_candidates(slug, source_code)
+    if fn_name and fn_name not in candidates:
+        candidates.insert(0, fn_name)
+    return candidates
+
+
+# ── Language adapter dispatch table ──────────────────────────────────────────
+# Populated after all _looks_like_* and _build_* functions are defined above.
+# Maps language name → (detection_fn, driver_builder_fn)
+_ADAPTERS: dict = {}  # filled by _init_adapters() called below
+
+
+def _init_adapters():
+    global _ADAPTERS
+    _ADAPTERS = {
+        "Python":     (_looks_like_python_function_solution, _build_python_wrapper),
+        "Java":       (_looks_like_java_solution,            _build_java_wrapper),
+        "C":          (_looks_like_c_solution,               _build_c_wrapper),
+        "C++":        (_looks_like_cpp_solution,             _build_cpp_wrapper),
+        "CPP":        (_looks_like_cpp_solution,             _build_cpp_wrapper),
+        "JavaScript": (_looks_like_javascript_solution,      _build_javascript_wrapper),
+        "TypeScript": (_looks_like_javascript_solution,      _build_javascript_wrapper),
+        "Node.js":    (_looks_like_javascript_solution,      _build_javascript_wrapper),
+        "Go":         (_looks_like_go_solution,              _build_go_wrapper),
+        "Rust":       (_looks_like_rust_solution,            _build_rust_wrapper),
+        "Kotlin":     (_looks_like_kotlin_solution,          _build_kotlin_wrapper),
+        "Swift":      (_looks_like_swift_solution,           _build_swift_wrapper),
+        "C#":         (_looks_like_csharp_solution,          _build_csharp_wrapper),
+        "CSharp":     (_looks_like_csharp_solution,          _build_csharp_wrapper),
+        "Haskell":    (_looks_like_haskell_solution,         _build_haskell_wrapper),
+        "Lua":        (_looks_like_lua_solution,             _build_lua_wrapper),
+        "Perl":       (_looks_like_perl_solution,            _build_perl_wrapper),
+        "Scala":      (_looks_like_scala_solution,           _build_scala_wrapper),
+        "R":          (_looks_like_r_solution,               _build_r_wrapper),
+    }
+
+
+_init_adapters()
+
+
+def prepare_execution_payload(*, problem, source_code: str, language: str, stdin: str) -> dict:
+    """
+    Route a submission through the correct execution pipeline.
+
+    Architecture
+    ────────────
+    Problem ──► Execution Type ──► Language Adapter ──► Driver Generator
+                                                              │
+                                                    Compile / Interpret
+                                                              │
+                                                    Sandbox (Docker)
+                                                              │
+                                                    Execute Test Cases
+                                                              │
+                                                    Compare Expected Output
+
+    Execution Types
+    ───────────────
+    stdin       — code reads from stdin and writes to stdout (no driver injected)
+    function    — code defines a function; engine injects a driver to call it
+    class       — code defines a class; engine injects a driver to instantiate + call methods
+    interactive — back-and-forth with judge (pass-through, future)
+    """
+    exec_type = _resolve_execution_type(problem, source_code, language)
+
+    # ── STDIN / INTERACTIVE — pass through unchanged ──────────────────────────
+    if exec_type in (EXEC_STDIN, EXEC_INTERACTIVE):
         return {
-            "source_code": wrapper,
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
+            "source_code": source_code,
+            "stdin": stdin,
+            "adapted": False,
+            "exec_type": exec_type,
         }
-    
-    # Java
-    if language == "Java":
-        # Check if user already has a main() method
-        if re.search(r'public\s+static\s+void\s+main\s*\(', source_code):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        if not _looks_like_java_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_java_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # C
-    if language == "C":
-        if not _looks_like_c_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_c_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # C++
-    if language in ("C++", "CPP"):
-        if not _looks_like_cpp_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_cpp_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # C#
-    if language in ("C#", "CSharp"):
-        if not _looks_like_csharp_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_csharp_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # Go
-    if language == "Go":
-        # Check if user already has a main() function
-        if re.search(r'func\s+main\s*\(', source_code):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        if not _looks_like_go_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_go_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # Rust
-    if language == "Rust":
-        # Check if user already has a main() function
-        if re.search(r'fn\s+main\s*\(', source_code):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        if not _looks_like_rust_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_rust_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # Kotlin
-    if language == "Kotlin":
-        # Check if user already has a main() function
-        if re.search(r'fun\s+main\s*\(', source_code):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        if not _looks_like_kotlin_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_kotlin_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # Ruby
-    if language == "Ruby":
-        # Don't wrap Ruby - users must write their own complete script
-        return {"source_code": source_code, "stdin": stdin, "adapted": False}
-    
-    # PHP
-    if language == "PHP":
-        # Don't wrap PHP - users must write their own complete script
-        return {"source_code": source_code, "stdin": stdin, "adapted": False}
-    
-    # Swift
-    if language == "Swift":
-        # Check if user already has a main function
-        if re.search(r'func\s+main\s*\(|@main', source_code):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        if not _looks_like_swift_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_swift_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # R
-    if language == "R":
-        if not _looks_like_r_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_r_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # Haskell
-    if language == "Haskell":
-        if not _looks_like_haskell_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_haskell_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # Lua
-    if language == "Lua":
-        if not _looks_like_lua_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_lua_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # Perl
-    if language == "Perl":
-        if not _looks_like_perl_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_perl_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # Scala
-    if language == "Scala":
-        if not _looks_like_scala_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_scala_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # JavaScript / TypeScript
-    if language in ("JavaScript", "TypeScript", "Node.js"):
-        if not _looks_like_javascript_solution(source_code, candidates):
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        try:
-            args = parse_argument_list(stdin)
-        except Exception:
-            return {"source_code": source_code, "stdin": stdin, "adapted": False}
-        return {
-            "source_code": _build_javascript_wrapper(source_code, candidates),
-            "stdin": json.dumps(args, separators=(",", ":"), ensure_ascii=False),
-            "adapted": True,
-        }
-    
-    # Other languages: return as-is
-    return {"source_code": source_code, "stdin": stdin, "adapted": False}
+
+    # ── FUNCTION / CLASS — inject driver ─────────────────────────────────────
+    candidates = _resolve_candidates(problem, source_code)
+    if not candidates:
+        return {"source_code": source_code, "stdin": stdin, "adapted": False, "exec_type": EXEC_STDIN}
+
+    adapter = _ADAPTERS.get(language)
+    if not adapter:
+        # Language not in adapter table → treat as stdin
+        return {"source_code": source_code, "stdin": stdin, "adapted": False, "exec_type": EXEC_STDIN}
+
+    looks_like_fn, build_driver = adapter
+    if not looks_like_fn(source_code, candidates):
+        return {"source_code": source_code, "stdin": stdin, "adapted": False, "exec_type": EXEC_STDIN}
+
+    try:
+        args = parse_argument_list(stdin)
+        serialized_stdin = json.dumps(args, separators=(",", ":"), ensure_ascii=False)
+    except Exception:
+        return {"source_code": source_code, "stdin": stdin, "adapted": False, "exec_type": EXEC_STDIN}
+
+    driver = build_driver(source_code, candidates)
+    return {
+        "source_code": driver,
+        "stdin": serialized_stdin,
+        "adapted": True,
+        "exec_type": exec_type,
+    }
