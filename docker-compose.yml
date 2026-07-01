@@ -19,26 +19,24 @@ services:
     networks:
       - code2day-network
 
-  # ── Code Executor (Docker-based, no cgroup v1 needed) ─────────────────────
+  # ── Code Executor — Piston (https://github.com/engineer-man/piston) ────────
   code2day-executor:
-    build:
-      context: ./code-executor
-      dockerfile: Dockerfile
-    image: code2day-executor:latest
+    image: ghcr.io/engineer-man/piston
     container_name: code2day-executor
+    privileged: true
     ports:
-      - "2358:2358"
+      - "2000:2000"
     volumes:
-      # Mount Docker socket so executor can spawn containers
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /tmp:/tmp
+      - piston-data:/piston
     restart: unless-stopped
     <<: *default-logging
     environment:
-      - MAX_WORKERS=40
-      - CPU_TIME_LIMIT=10
-      - WALL_TIME_LIMIT=15
-      - MEMORY_LIMIT_MB=256
+      - PISTON_RUN_TIMEOUT=10000
+      - PISTON_COMPILE_TIMEOUT=10000
+      - PISTON_OUTPUT_MAX_SIZE=1048576
+      - PISTON_MAX_CONCURRENT_JOBS=40
+      - PISTON_MAX_PROCESS_COUNT=64
+      - PISTON_DISABLE_NETWORKING=true
     networks:
       - code2day-network
 
@@ -81,6 +79,7 @@ services:
 
 volumes:
   code2day-redis-data:
+  piston-data:
 
 networks:
   code2day-network:

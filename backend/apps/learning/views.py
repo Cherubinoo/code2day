@@ -4140,15 +4140,18 @@ class ExecutorSystemInfoView(APIView):
 
         try:
             req = urllib.request.Request(
-                f"{base_url}/system_info",
+                f"{base_url}/api/v2/runtimes",
                 headers={"Accept": "application/json"},
                 method="GET"
             )
             with urllib.request.urlopen(req, timeout=10) as response:
-                data = json.loads(response.read().decode('utf-8'))
+                runtimes = json.loads(response.read().decode('utf-8'))
                 return Response({
                     "status": "online",
-                    "executor_info": data
+                    "executor_info": {
+                        "engine": "piston",
+                        "runtimes": runtimes,
+                    }
                 })
         except Exception as e:
             return Response(

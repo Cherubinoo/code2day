@@ -84,30 +84,58 @@ jobs:
           git reset --hard origin/main
           echo "✓ $(git log --oneline -1)"
 
-          # ── 2. Build all images ────────────────────────────────────────────
-          echo "→ Building app images..."
-          docker compose build backend frontend code2day-executor
-          echo "✓ App images built"
-
-          echo "→ Building language sandbox images..."
-          docker build -t code2day-python:latest ./code-executor/images/python/
-          docker build -t code2day-node:latest   ./code-executor/images/node/
-          docker build -t code2day-java:latest   ./code-executor/images/java/
-          docker build -t code2day-c:latest      ./code-executor/images/c-cpp/
-          docker build -t code2day-cpp:latest    ./code-executor/images/c-cpp/
-          echo "✓ Language sandbox images built"
+          # ── 2. Build backend and frontend ──────────────────────────────────
+          echo "→ Building images..."
+          docker compose build backend frontend
+          echo "✓ Images built"
 
           # ── 3. Restart backend, frontend, and executor ─────────────────────
           echo "→ Restarting..."
           docker compose up -d --no-deps backend frontend code2day-executor
           echo "✓ Containers up"
 
-          # ── 4. Run migrations ──────────────────────────────────────────────
+          # ── 4. Ensure Piston language packages ─────────────────────────────
+          # Packages persist in the piston-data volume; only downloads on first run.
+          echo "→ Ensuring Piston language packages..."
+          PISTON_URL="http://localhost:2000/api/v2"
+
+          # Wait for Piston to be ready (up to 60 s)
+          for i in $(seq 1 30); do
+            curl -sf "${PISTON_URL}/runtimes" > /dev/null 2>&1 && break
+            echo "  Waiting for Piston... (${i}/30)"
+            sleep 2
+          done
+
+          install_if_missing() {
+            LANG="$1"
+            if curl -sf "${PISTON_URL}/runtimes" | grep -q "\"${LANG}\""; then
+              echo "  ✓ ${LANG} already installed"
+            else
+              echo "  Installing ${LANG}..."
+              curl -sf -X POST "${PISTON_URL}/packages" \
+                -H "Content-Type: application/json" \
+                -d "{\"language\":\"${LANG}\",\"version\":\"*\"}" \
+                && echo "  ✓ ${LANG} done" \
+                || echo "  ⚠ ${LANG} failed — retry next deploy"
+            fi
+          }
+
+          install_if_missing python
+          install_if_missing javascript
+          install_if_missing java
+          install_if_missing c
+          install_if_missing "c++"
+          echo "✓ Piston packages ready"
+
+          # ── 5. Update executor URL in .env to point at Piston ──────────────
+          sed -i 's|JUDGE0_BASE_URL=.*|JUDGE0_BASE_URL=http://code2day-executor:2000|' .env 2>/dev/null || true
+
+          # ── 6. Run migrations ──────────────────────────────────────────────
           echo "→ Migrations..."
           docker exec code2day-backend python manage.py migrate --noinput
           echo "✓ Migrations done"
 
-          # ── 5. Sync students from source DB (safe — skips if source unreachable) ──
+          # ── 7. Sync students from source DB (safe — skips if source unreachable) ──
           echo "→ Syncing students from source DB..."
           docker exec code2day-backend python manage.py import_students \
             && echo "✓ Student sync complete" \
@@ -119,16 +147,16 @@ jobs:
           docker exec code2day-backend python manage.py seed_missing_students
           echo "✓ Institution, department mappings and missing students done"
 
-          # ── 6. Collect static files ────────────────────────────────────────
+          # ── 8. Collect static files ────────────────────────────────────────
           echo "→ Static files..."
           docker exec code2day-backend python manage.py collectstatic --noinput
           echo "✓ Done"
 
-          # ── 7. Health check ────────────────────────────────────────────────
+          # ── 9. Health check ────────────────────────────────────────────────
           sleep 8
           BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/)
           FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5001/)
-          EXECUTOR=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2358/health)
+          EXECUTOR=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2000/api/v2/runtimes)
 
           echo "  Backend  → HTTP $BACKEND"
           echo "  Frontend → HTTP $FRONTEND"
