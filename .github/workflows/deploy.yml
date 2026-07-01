@@ -84,10 +84,18 @@ jobs:
           git reset --hard origin/main
           echo "✓ $(git log --oneline -1)"
 
-          # ── 2. Build backend, frontend, and executor ───────────────────────
-          echo "→ Building images..."
+          # ── 2. Build all images ────────────────────────────────────────────
+          echo "→ Building app images..."
           docker compose build backend frontend code2day-executor
-          echo "✓ Images built"
+          echo "✓ App images built"
+
+          echo "→ Building language sandbox images..."
+          docker build -t code2day-python:latest ./code-executor/images/python/
+          docker build -t code2day-node:latest   ./code-executor/images/node/
+          docker build -t code2day-java:latest   ./code-executor/images/java/
+          docker build -t code2day-c:latest      ./code-executor/images/c-cpp/
+          docker build -t code2day-cpp:latest    ./code-executor/images/c-cpp/
+          echo "✓ Language sandbox images built"
 
           # ── 3. Restart backend, frontend, and executor ─────────────────────
           echo "→ Restarting..."
