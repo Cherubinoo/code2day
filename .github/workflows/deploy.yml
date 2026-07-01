@@ -134,7 +134,7 @@ jobs:
 
           # ── 6. Sync students from source DB (safe — skips if source unreachable) ──
           echo "→ Syncing students from source DB..."
-          docker exec code2day-backend python manage.py import_students \
+          timeout 60 docker exec code2day-backend python manage.py import_students \
             && echo "✓ Student sync complete" \
             || echo "⚠ Student sync skipped (source DB unreachable — existing data unchanged)"
 
