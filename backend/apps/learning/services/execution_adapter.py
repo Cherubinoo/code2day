@@ -1184,10 +1184,12 @@ import inspect as __code2day_inspect
 
 def __code2day_find_solver():
     candidates = {candidate_list}
+    # 1. Check module-level globals by candidate names
     for name in candidates:
         fn = globals().get(name)
-        if callable(fn):
+        if callable(fn) and not isinstance(fn, type):
             return fn
+    # 2. Check Solution class methods by candidate names
     solution_cls = globals().get("Solution")
     if solution_cls:
         instance = solution_cls()
@@ -1195,7 +1197,25 @@ def __code2day_find_solver():
             method = getattr(instance, name, None)
             if callable(method):
                 return method
-    raise NameError("Could not find a matching solver function for this problem.")
+        # 3. Fallback: find the single public entry-point method on Solution
+        _own_methods = [
+            name for name, obj in vars(solution_cls).items()
+            if not name.startswith("_") and callable(obj)
+        ]
+        if len(_own_methods) == 1:
+            return getattr(instance, _own_methods[0])
+    # 4. Fallback: try any standalone function defined in user code
+    _known_internals = {"TreeNode", "ListNode"}
+    for _name, _obj in globals().items():
+        if _name.startswith("_") or _name in _known_internals:
+            continue
+        if callable(_obj) and not isinstance(_obj, type):
+            return _obj
+    raise RuntimeError(
+        f"No solver function found. "
+        f"Expected one of: {candidates}. "
+        f"Make sure your function or Solution class method matches the problem."
+    )
 
 def __code2day_serialize(value):
     if value is None: return "null"
@@ -1208,30 +1228,39 @@ def __code2day_serialize(value):
     return __code2day_json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
 if __name__ == "__main__":
-    raw = __code2day_sys.stdin.read().strip()
-    args = __code2day_json.loads(raw) if raw else []
-    if not isinstance(args, list):
-        args = [args]
-
-    solver = __code2day_find_solver()
-
     try:
-        sig = __code2day_inspect.signature(solver)
-        param_count = len([
-            p for p in sig.parameters.values()
-            if p.default is __code2day_inspect.Parameter.empty
-            and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-        ])
-        if param_count == 1 and len(args) > 1:
-            result = solver(args)
-        elif param_count > 1 and len(args) == 1 and isinstance(args[0], list):
-            result = solver(*args[0])
-        else:
-            result = solver(*args)
-    except (TypeError, ValueError):
-        result = solver(args)
+        raw = __code2day_sys.stdin.read().strip()
+        args = __code2day_json.loads(raw) if raw else []
+        if not isinstance(args, list):
+            args = [args]
 
-    __code2day_sys.stdout.write(__code2day_serialize(result))
+        solver = __code2day_find_solver()
+
+        try:
+            sig = __code2day_inspect.signature(solver)
+            param_count = len([
+                p for p in sig.parameters.values()
+                if p.default is __code2day_inspect.Parameter.empty
+                and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+            ])
+            if param_count == 1 and len(args) > 1:
+                result = solver(args)
+            elif param_count > 1 and len(args) == 1 and isinstance(args[0], list):
+                result = solver(*args[0])
+            else:
+                result = solver(*args)
+        except TypeError:
+            # Arg count mismatch — try passing the whole list or unpacking
+            try:
+                result = solver(*args)
+            except TypeError:
+                result = solver(args)
+
+        __code2day_sys.stdout.write(__code2day_serialize(result) + "\\n")
+    except Exception as __c2d_err:
+        import traceback as __c2d_tb
+        __code2day_sys.stderr.write(__c2d_tb.format_exc())
+        __code2day_sys.exit(1)
 """
 
 
