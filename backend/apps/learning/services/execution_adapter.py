@@ -20,7 +20,6 @@ _ENTRYPOINT_PATTERNS: dict[str, list[str]] = {
     "Java":       [r'public\s+static\s+void\s+main\s*\(\s*String'],
     "C":          [r'\bint\s+main\s*\('],
     "C++":        [r'\bint\s+main\s*\('],
-    "JavaScript": [r'\brequire\s*\(\s*[\'"]readline[\'"]', r'process\.stdin\.on'],
     "Go":         [r'\bfunc\s+main\s*\(\s*\)'],
     "Rust":       [r'\bfn\s+main\s*\(\s*\)'],
     "Kotlin":     [r'\bfun\s+main\s*\('],
@@ -2140,10 +2139,6 @@ def _resolve_execution_type(problem, source_code: str, language: str) -> str:
         if re.search(r'\b(?:int|long|float|double|char|void|bool|vector|string)\s+\w+\s*\(', source_code):
             return EXEC_FUNCTION
 
-    elif language in ("JavaScript", "TypeScript", "Node.js"):
-        if re.search(r'\bfunction\s+\w+\s*\(|const\s+\w+\s*=\s*(?:function|\()', source_code):
-            return EXEC_FUNCTION
-
     else:
         # For other languages, if has function-like pattern, treat as function
         if re.search(r'\bfunc\s+\w+|def\s+\w+|fn\s+\w+|fun\s+\w+', source_code):
@@ -2179,9 +2174,6 @@ def _init_adapters():
         "C":          (_looks_like_c_solution,               _build_c_wrapper),
         "C++":        (_looks_like_cpp_solution,             _build_cpp_wrapper),
         "CPP":        (_looks_like_cpp_solution,             _build_cpp_wrapper),
-        "JavaScript": (_looks_like_javascript_solution,      _build_javascript_wrapper),
-        "TypeScript": (_looks_like_javascript_solution,      _build_javascript_wrapper),
-        "Node.js":    (_looks_like_javascript_solution,      _build_javascript_wrapper),
         "Go":         (_looks_like_go_solution,              _build_go_wrapper),
         "Rust":       (_looks_like_rust_solution,            _build_rust_wrapper),
         "Kotlin":     (_looks_like_kotlin_solution,          _build_kotlin_wrapper),

@@ -105,19 +105,6 @@ public class Main {
         }
     }
 }`,
-  JavaScript: `const fs = require("fs");
-
-const input = fs.readFileSync(0, "utf8").trimEnd();
-
-function solve(rawInput) {
-  // Parse rawInput for this problem and return the final answer.
-  return rawInput;
-}
-
-const result = solve(input);
-if (result !== undefined) {
-  process.stdout.write(String(result));
-}`,
   Python: `import sys
 
 
@@ -137,7 +124,6 @@ export const editorLanguageByChoice = {
   "C": "c",
   "C++": "cpp",
   Java: "java",
-  JavaScript: "javascript",
   Python: "python",
 };
 
@@ -204,7 +190,7 @@ function generateMoreProblems(count = 150) {
       tags: [tag, "Practice"],
       is_daily: i % 10 === 0,
       progress_state: state,
-      available_languages: ["JavaScript", "Python", "Java", "C++", "C"],
+      available_languages: ["Python", "Java", "C++", "C"],
       examples: [
         { input: "example input", output: "example output", explanation: "Explanation for example" }
       ],

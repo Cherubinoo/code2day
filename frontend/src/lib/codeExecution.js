@@ -5,7 +5,6 @@ export const executionLanguageMap = {
   "C": 50,
   "C++": 54,
   "Java": 62,
-  "JavaScript": 63,
   "Python": 71,
   "SQL": 82,
 };
@@ -15,7 +14,6 @@ export const editorLanguageMap = {
   "C": "c",
   "C++": "cpp",
   "Java": "java",
-  "JavaScript": "javascript",
   "Python": "python",
   "SQL": "sql",
 };

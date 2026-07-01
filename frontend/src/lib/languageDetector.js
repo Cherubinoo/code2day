@@ -109,14 +109,6 @@ export function detectLanguageFromCode(code) {
     return 'Python';
   }
 
-  // JavaScript/Node.js
-  if (codeContent.includes('function ') || codeContent.includes('const ') ||
-      codeContent.includes('let ') || codeContent.includes('var ') ||
-      codeContent.includes('console.log') || codeContent.includes('require(') ||
-      codeContent.includes('import ') && codeContent.includes('from ')) {
-    return 'JavaScript';
-  }
-
   // Java
   if (codeContent.includes('public class ') || codeContent.includes('public static void main') ||
       codeContent.includes('system.out.print') || codeContent.includes('package ')) {

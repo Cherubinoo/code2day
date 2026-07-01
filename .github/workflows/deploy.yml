@@ -121,7 +121,6 @@ jobs:
           }
 
           install_if_missing python
-          install_if_missing javascript
           install_if_missing java
           install_if_missing c
           install_if_missing "c++"

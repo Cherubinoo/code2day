@@ -35,11 +35,10 @@ class ExecutorRateLimitError(ExecutorError):
 # Judge0-style numeric IDs → (Piston language name, version selector)
 # version "*" picks the latest installed version
 _LANG_ID_TO_PISTON: dict = {
-    71: ("python",     "*"),
-    63: ("javascript", "*"),
-    62: ("java",       "*"),
-    50: ("c",          "*"),
-    54: ("c++",        "*"),
+    71: ("python", "*"),
+    62: ("java",   "*"),
+    50: ("c",      "*"),
+    54: ("c++",    "*"),
 }
 
 
@@ -247,7 +246,6 @@ def get_language_id(language_name: str) -> int:
     """Get numeric language ID from a language name string."""
     lang_map = {
         "python": 71, "python3": 71,
-        "javascript": 63, "js": 63,
         "java": 62,
         "c": 50,
         "cpp": 54, "c++": 54,

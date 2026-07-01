@@ -13,7 +13,7 @@ import DoubleConfirmModal from "../../common/DoubleConfirmModal";
 
 loader.config({ monaco });
 
-const POPULAR_LANGUAGES = ["C", "C++", "Java", "JavaScript", "Python"];
+const POPULAR_LANGUAGES = ["C", "C++", "Java", "Python"];
 const MAX_VIOLATIONS = 3;
 
 // ── Toast notification component ──────────────────────────────────────────────
@@ -178,7 +178,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
 
   // Editor state — restore language from cache
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
-    try { return localStorage.getItem(`${sessionKey}-lang`) || 'JavaScript'; } catch { return 'JavaScript'; }
+    try { return localStorage.getItem(`${sessionKey}-lang`) || 'Python'; } catch { return 'Python'; }
   });
   const [code, setCode] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
