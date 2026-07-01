@@ -147,19 +147,16 @@ def execute_submission(
         )
 
     piston_lang, piston_ver = _LANG_ID_TO_PISTON[language_id]
-    timeout_s   = timeout or getattr(settings, "EXECUTOR_TIMEOUT_SECONDS", 30)
-    run_ms      = int(timeout_s * 1000)
-    compile_ms  = max(run_ms, 10_000)
+    timeout_s = timeout or getattr(settings, "EXECUTOR_TIMEOUT_SECONDS", 30)
 
+    # Do not send run_timeout / compile_timeout — let Piston use its configured
+    # PISTON_RUN_TIMEOUT / PISTON_COMPILE_TIMEOUT defaults (set in docker-compose).
+    # Sending values that exceed those limits causes a 400 rejection.
     payload = {
         "language": piston_lang,
         "version":  piston_ver,
         "files":    [{"content": source_code}],
         "stdin":    stdin or "",
-        "run_timeout":      run_ms,
-        "compile_timeout":  compile_ms,
-        "run_memory_limit":     256 * 1024 * 1024,
-        "compile_memory_limit": 512 * 1024 * 1024,
     }
 
     url      = _piston_url("execute")

@@ -32,8 +32,8 @@ services:
     <<: *default-logging
     environment:
       - PISTON_BIND_ADDRESS=0.0.0.0:2358
-      - PISTON_RUN_TIMEOUT=10000
-      - PISTON_COMPILE_TIMEOUT=10000
+      - PISTON_RUN_TIMEOUT=30000
+      - PISTON_COMPILE_TIMEOUT=15000
       - PISTON_OUTPUT_MAX_SIZE=1048576
       - PISTON_MAX_CONCURRENT_JOBS=40
       - PISTON_MAX_PROCESS_COUNT=64
@@ -85,3 +85,4 @@ volumes:
 networks:
   code2day-network:
     driver: bridge
+
