@@ -2,15 +2,11 @@ import { useState } from "react";
 import { buildJsonPostOptions, extractApiError } from "../../lib/appUtils";
 import './PasswordResetModal.css';
 
-/**
- * PasswordResetModal
- * ==================
- * Modal component for password reset functionality.
- * Supports both students and staff password reset.
- */
 function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
-  const [step, setStep] = useState("request"); // "request" | "complete"
-  const [identifier, setIdentifier] = useState("");
+  const [step, setStep] = useState("request");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [facultyId, setFacultyId] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -20,7 +16,9 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
 
   const handleReset = () => {
     setStep("request");
-    setIdentifier("");
+    setEmail("");
+    setPhone("");
+    setFacultyId("");
     setResetToken("");
     setNewPassword("");
     setConfirmPassword("");
@@ -36,10 +34,17 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
 
   const handleRequestReset = async (e) => {
     e.preventDefault();
-    
-    if (!identifier.trim()) {
-      setError(`Please enter your ${userType === "staff" ? "Faculty ID" : "Register Number"}`);
-      return;
+
+    if (userType === "student") {
+      if (!email.trim() || !phone.trim()) {
+        setError("Please enter both your email address and phone number");
+        return;
+      }
+    } else {
+      if (!facultyId.trim() || !email.trim()) {
+        setError("Please enter both your Faculty ID and email address");
+        return;
+      }
     }
 
     setLoading(true);
@@ -47,11 +52,13 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
     setMessage("");
 
     try {
+      const body =
+        userType === "student"
+          ? { user_type: "student", email: email.trim(), phone: phone.trim() }
+          : { user_type: "staff", faculty_id: facultyId.trim(), email: email.trim() };
+
       const response = await fetch("/api/auth/password-reset/", {
-        ...buildJsonPostOptions({
-          identifier: identifier.trim(),
-          user_type: userType
-        })
+        ...buildJsonPostOptions(body),
       });
 
       const data = await response.json();
@@ -61,7 +68,7 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
       }
 
       setResetToken(data.reset_token);
-      setMessage(data.message);
+      setMessage(data.message || "Identity verified. Set your new password below.");
       setStep("complete");
     } catch (err) {
       setError(err.message);
@@ -72,17 +79,15 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
 
   const handleCompleteReset = async (e) => {
     e.preventDefault();
-    
+
     if (!newPassword.trim()) {
       setError("Please enter a new password");
       return;
     }
-
     if (newPassword.length < 8) {
-      setError("Password must be at least 8 characters long");
+      setError("Password must be at least 8 characters");
       return;
     }
-
     if (newPassword !== confirmPassword) {
       setError("Passwords do not match");
       return;
@@ -93,10 +98,7 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
 
     try {
       const response = await fetch("/api/auth/password-reset/", {
-        ...buildJsonPostOptions({
-          reset_token: resetToken,
-          new_password: newPassword
-        }),
+        ...buildJsonPostOptions({ reset_token: resetToken, new_password: newPassword }),
         method: "PUT",
       });
 
@@ -106,10 +108,10 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
         throw new Error(extractApiError(data, "Password reset failed"));
       }
 
-      setMessage("Password reset successfully! You can now login with your new password.");
+      setMessage("Password reset successfully! You can now log in with your new password.");
       setTimeout(() => {
         handleClose();
-      }, 2000);
+      }, 2500);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -131,47 +133,70 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
           {step === "request" ? (
             <form onSubmit={handleRequestReset}>
               <div className="form-section">
-                <h3>Request Password Reset</h3>
-                <p>Enter your {userType === "staff" ? "Faculty ID" : "Register Number"} to request a password reset.</p>
+                <h3>Verify Your Identity</h3>
+                {userType === "student" ? (
+                  <p>Enter the email address and phone number linked to your account.</p>
+                ) : (
+                  <p>Enter your Faculty ID and the email address linked to your account.</p>
+                )}
               </div>
 
+              {userType === "staff" && (
+                <div className="form-field">
+                  <label htmlFor="faculty-id">Faculty ID</label>
+                  <input
+                    id="faculty-id"
+                    type="text"
+                    value={facultyId}
+                    onChange={(e) => setFacultyId(e.target.value)}
+                    placeholder="Enter your Faculty ID"
+                    disabled={loading}
+                    autoFocus
+                  />
+                </div>
+              )}
+
               <div className="form-field">
-                <label htmlFor="identifier">
-                  {userType === "staff" ? "Faculty ID" : "Register Number"}
-                </label>
+                <label htmlFor="reset-email">Email Address</label>
                 <input
-                  id="identifier"
-                  type="text"
-                  value={identifier}
-                  onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder={userType === "staff" ? "Enter your Faculty ID" : "Enter your Register Number"}
+                  id="reset-email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Enter your email address"
                   disabled={loading}
-                  autoFocus
+                  autoFocus={userType === "student"}
                 />
               </div>
+
+              {userType === "student" && (
+                <div className="form-field">
+                  <label htmlFor="reset-phone">Phone Number</label>
+                  <input
+                    id="reset-phone"
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="Enter your 10-digit phone number"
+                    disabled={loading}
+                  />
+                </div>
+              )}
 
               <div className="form-actions">
                 <button type="button" className="secondary-button" onClick={handleClose}>
                   Cancel
                 </button>
                 <button type="submit" className="primary-button" disabled={loading}>
-                  {loading ? "Requesting..." : "Request Reset"}
+                  {loading ? "Verifying..." : "Verify & Continue"}
                 </button>
               </div>
             </form>
           ) : (
             <form onSubmit={handleCompleteReset}>
               <div className="form-section">
-                <h3>Complete Password Reset</h3>
-                <p>Enter your new password to complete the reset process.</p>
-                {resetToken && (
-                  <div className="reset-token-info">
-                    <p><strong>Reset Token:</strong> {resetToken}</p>
-                    <p className="token-note">
-                      💡 Save this token and contact your administrator if needed.
-                    </p>
-                  </div>
-                )}
+                <h3>Set New Password</h3>
+                <p>Enter and confirm your new password.</p>
               </div>
 
               <div className="form-field">
@@ -181,7 +206,7 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
                   type="password"
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Enter new password (min 8 characters)"
+                  placeholder="At least 8 characters"
                   disabled={loading}
                   autoFocus
                 />
@@ -194,16 +219,16 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
                   type="password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Confirm new password"
+                  placeholder="Re-enter new password"
                   disabled={loading}
                 />
               </div>
 
               <div className="form-actions">
-                <button 
-                  type="button" 
-                  className="secondary-button" 
-                  onClick={() => setStep("request")}
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => { setStep("request"); setError(""); setMessage(""); }}
                   disabled={loading}
                 >
                   ← Back
@@ -227,8 +252,6 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
             </div>
           )}
         </div>
-
-
       </div>
     </div>
   );
