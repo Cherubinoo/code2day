@@ -1,180 +1,181 @@
 import { useState, useEffect, useRef } from "react";
-import { ChevronDown, LayoutGrid, Bell, X, MessageSquare, ExternalLink, Mail } from "lucide-react";
+import { LayoutGrid, Bell, X, MessageSquare, ExternalLink, Mail, Menu } from "lucide-react";
 import { buildJsonPostOptions } from "../../lib/appUtils";
 
 function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, userType, hideNav }) {
-  const [manageOpen, setManageOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const drawerRef = useRef(null);
 
-  // Admin navigation items
-  const adminNavItems = [
-    { id: "admin", label: "Dashboard", icon: LayoutGrid },
-  ];
+  useEffect(() => { setMenuOpen(false); }, [activePage]);
 
-  // HOD navigation items
-  const hodNavItems = [
-    { id: "hod", label: "Dashboard", icon: LayoutGrid },
-  ];
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e) => {
+      if (drawerRef.current && !drawerRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [menuOpen]);
 
-  // Staff navigation items
-  const staffNavItems = [
-    { id: "staff", label: "Dashboard", icon: LayoutGrid },
-  ];
+  const adminNavItems = [{ id: "admin", label: "Dashboard", icon: LayoutGrid }];
+  const hodNavItems = [{ id: "hod", label: "Dashboard", icon: LayoutGrid }];
+  const staffNavItems = [{ id: "staff", label: "Dashboard", icon: LayoutGrid }];
 
-  // Select navigation based on user type
   const getNavItems = () => {
     if (userType === "admin") return adminNavItems;
     if (userType === "hod") return hodNavItems;
     if (userType === "staff" || userType === "director" || userType === "tpu" || userType === "ja") return staffNavItems;
     return navItems;
   };
-  
+
   const items = getNavItems();
 
-  const getDashboardTitle = () => {
-    if (userType === "admin") return "Admin Console";
-    if (userType === "director") return "Director Dashboard";
-    if (userType === "tpu") return "TPU Dashboard";
-    if (userType === "ja") return "Admin Console";
-    if (userType === "hod") return "HOD Dashboard";
-    if (userType === "staff") return "Staff Dashboard";
-    return "Meaningful practice, not random scrolling.";
-  };
-
   return (
-    <header className="topbar">
-      <div className="brand-block">
-        {(dashboard.institution?.name?.toLowerCase().includes("ramco") || dashboard.institution?.display_name?.toLowerCase().includes("ramco")) ? (
-          <img 
-            src="/logo/logo.jpeg" 
-            alt="Ramco Logo" 
-            style={{ height: 75, width: 'auto', marginRight: 16, objectFit: 'contain' }}
-          />
-        ) : (dashboard.institution?.logo_url || dashboard.institution?.logo_display_url) ? (
-          <img 
-            src={dashboard.institution.logo_url || dashboard.institution.logo_display_url} 
-            alt="Logo" 
-            style={{ height: 60, width: 'auto', marginRight: 16, objectFit: 'contain' }}
-          />
-        ) : (
-          <div className="brand-badge" style={{ background: 'var(--olive-900)', width: 48, height: 48, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, marginRight: 16 }}>
-            🏛️
-          </div>
-        )}
-        <div style={{ textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-          {(dashboard.institution?.name?.toLowerCase().includes("ramco") || dashboard.institution?.display_name?.toLowerCase().includes("ramco")) ? (
-            <>
-              <h1 style={{ 
-                color: "#dc2626", margin: 0, fontSize: "1.35rem", fontWeight: 800,
-                letterSpacing: "0.5px", textTransform: "uppercase", lineHeight: 1.2
-              }}>
-                RAMCO INSTITUTE OF TECHNOLOGY
-              </h1>
-              <h2 style={{ 
-                color: "#eab308", margin: "2px 0", fontSize: "0.85rem",
-                fontWeight: 700, textTransform: "uppercase", lineHeight: 1.2
-              }}>
-                (AN AUTONOMOUS INSTITUTION)
-              </h2>
-              <div style={{ fontSize: "0.65rem", color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
-                <p style={{ margin: 0 }}>Approved By AICTE, New Delhi & Affiliated to Anna University</p>
-                <p style={{ margin: 0 }}>NAAC Accredited with 'A+' Grade & An ISO 9001:2015 Certified Institution</p>
-                <p style={{ margin: 0 }}>Rajapalayam, Tamil Nadu, India - 626 117.</p>
-              </div>
-            </>
-          ) : (
-            <>
-              <h1 style={{ 
-                color: "#dc2626", margin: 0, fontSize: "1.25rem", fontWeight: 800,
-                letterSpacing: "0.5px", textTransform: "uppercase", lineHeight: 1.2
-              }}>
-                {dashboard.institution?.display_name || dashboard.institution?.name || "code-2day"}
-              </h1>
-              {dashboard.institution?.subheading && (
-                <h2 style={{ 
-                  color: "#eab308", margin: "2px 0", fontSize: "0.8rem",
-                  fontWeight: 700, textTransform: "uppercase", lineHeight: 1.2
-                }}>
-                  {dashboard.institution.subheading}
-                </h2>
-              )}
-              {dashboard.institution?.address && (
-                <div style={{ fontSize: "0.65rem", color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
-                  {dashboard.institution.address.split('\n').map((line, i) => (
-                    <p key={i} style={{ margin: 0 }}>{line.trim ? line.trim() : line}</p>
-                  ))}
-                </div>
-              )}
-            </>
+    <>
+      <header className="topbar">
+        {/* Left: Hamburger */}
+        <div className="topbar-left">
+          {!hideNav && (
+            <button
+              type="button"
+              className={`hamburger-btn${menuOpen ? " open" : ""}`}
+              onClick={() => setMenuOpen((o) => !o)}
+              aria-label="Toggle navigation"
+            >
+              {menuOpen ? <X size={22} /> : <Menu size={22} />}
+            </button>
           )}
         </div>
-      </div>
 
+        {/* Center: Brand */}
+        <div className="brand-block">
+          {(dashboard.institution?.name?.toLowerCase().includes("ramco") || dashboard.institution?.display_name?.toLowerCase().includes("ramco")) ? (
+            <img
+              src="/logo/logo.jpeg"
+              alt="Ramco Logo"
+              style={{ height: 75, width: "auto", objectFit: "contain" }}
+            />
+          ) : (dashboard.institution?.logo_url || dashboard.institution?.logo_display_url) ? (
+            <img
+              src={dashboard.institution.logo_url || dashboard.institution.logo_display_url}
+              alt="Logo"
+              style={{ height: 60, width: "auto", objectFit: "contain" }}
+            />
+          ) : (
+            <div className="brand-badge" style={{ background: "var(--olive-900)", width: 48, height: 48, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>
+              🏛️
+            </div>
+          )}
+          <div style={{ textAlign: "center", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+            {(dashboard.institution?.name?.toLowerCase().includes("ramco") || dashboard.institution?.display_name?.toLowerCase().includes("ramco")) ? (
+              <>
+                <h1 style={{ color: "#dc2626", margin: 0, fontSize: "1.35rem", fontWeight: 800, letterSpacing: "0.5px", textTransform: "uppercase", lineHeight: 1.2 }}>
+                  RAMCO INSTITUTE OF TECHNOLOGY
+                </h1>
+                <h2 style={{ color: "#eab308", margin: "2px 0", fontSize: "0.85rem", fontWeight: 700, textTransform: "uppercase", lineHeight: 1.2 }}>
+                  (AN AUTONOMOUS INSTITUTION)
+                </h2>
+                <div style={{ fontSize: "0.65rem", color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
+                  <p style={{ margin: 0 }}>Approved By AICTE, New Delhi &amp; Affiliated to Anna University</p>
+                  <p style={{ margin: 0 }}>NAAC Accredited with &apos;A+&apos; Grade &amp; An ISO 9001:2015 Certified Institution</p>
+                  <p style={{ margin: 0 }}>Rajapalayam, Tamil Nadu, India - 626 117.</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <h1 style={{ color: "#dc2626", margin: 0, fontSize: "1.25rem", fontWeight: 800, letterSpacing: "0.5px", textTransform: "uppercase", lineHeight: 1.2 }}>
+                  {dashboard.institution?.display_name || dashboard.institution?.name || "code-2day"}
+                </h1>
+                {dashboard.institution?.subheading && (
+                  <h2 style={{ color: "#eab308", margin: "2px 0", fontSize: "0.8rem", fontWeight: 700, textTransform: "uppercase", lineHeight: 1.2 }}>
+                    {dashboard.institution.subheading}
+                  </h2>
+                )}
+                {dashboard.institution?.address && (
+                  <div style={{ fontSize: "0.65rem", color: "#4b5563", lineHeight: 1.3, fontWeight: 500 }}>
+                    {dashboard.institution.address.split("\n").map((line, i) => (
+                      <p key={i} style={{ margin: 0 }}>{line.trim ? line.trim() : line}</p>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Right: Account */}
+        <div className="account-block">
+          <NotificationInbox />
+          <div className="account-info">
+            <strong>{dashboard.user?.name || "User"}</strong>
+            <p>
+              {dashboard.user?.facultyId || dashboard.user?.registerNumber || "N/A"}
+              {" | "}
+              {userType?.toUpperCase()} Access
+            </p>
+          </div>
+          <button type="button" className="ghost-button" onClick={handleLogout}>
+            Logout
+          </button>
+        </div>
+      </header>
+
+      {/* Backdrop */}
+      {!hideNav && menuOpen && (
+        <div className="hamburger-overlay" onClick={() => setMenuOpen(false)} />
+      )}
+
+      {/* Slide-out nav drawer */}
       {!hideNav && (
-        <nav className="topnav">
-          {items.map((item) => (
-            <div key={item.id} className="nav-item-wrapper">
-              {item.dropdown ? (
-                <div className="nav-dropdown">
-                  <button
-                    type="button"
-                    className={`nav-link ${item.dropdown.some(d => d.id === activePage) ? "active" : ""}`}
-                    onClick={() => setManageOpen(!manageOpen)}
-                  >
-                    <item.icon className="nav-icon" size={16} />
+        <nav className={`hamburger-drawer${menuOpen ? " open" : ""}`} ref={drawerRef} aria-hidden={!menuOpen}>
+          <div className="hamburger-drawer-header">
+            <div className="hamburger-drawer-brand">
+              <span>🏛️</span>
+              <span>code-2day</span>
+            </div>
+            <button type="button" className="hamburger-close" onClick={() => setMenuOpen(false)} aria-label="Close menu">
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="hamburger-nav">
+            {items.map((item) =>
+              item.dropdown ? (
+                <div key={item.id} className="hamburger-nav-group">
+                  <div className="hamburger-nav-group-label">
+                    <item.icon size={15} />
                     {item.label}
-                    <ChevronDown size={14} className={`dropdown-chevron ${manageOpen ? "open" : ""}`} />
-                  </button>
-                  {manageOpen && (
-                    <div className="dropdown-menu">
-                      {item.dropdown.map((subItem) => (
-                        <button
-                          key={subItem.id}
-                          type="button"
-                          className={subItem.id === activePage ? "dropdown-item active" : "dropdown-item"}
-                          onClick={() => {
-                            setActivePage(subItem.id);
-                            setManageOpen(false);
-                          }}
-                        >
-                          <subItem.icon size={14} />
-                          {subItem.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  </div>
+                  {item.dropdown.map((sub) => (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      className={`hamburger-nav-link hamburger-nav-sub${sub.id === activePage ? " active" : ""}`}
+                      onClick={() => { setActivePage(sub.id); setMenuOpen(false); }}
+                    >
+                      <sub.icon size={15} />
+                      <span>{sub.label}</span>
+                    </button>
+                  ))}
                 </div>
               ) : (
                 <button
+                  key={item.id}
                   type="button"
-                  className={item.id === activePage ? "nav-link active" : "nav-link"}
-                  onClick={() => setActivePage(item.id)}
+                  className={`hamburger-nav-link${item.id === activePage ? " active" : ""}`}
+                  onClick={() => { setActivePage(item.id); setMenuOpen(false); }}
                 >
-                  {item.icon && <item.icon className="nav-icon" size={16} />}
-                  {item.label}
+                  {item.icon && <item.icon size={18} />}
+                  <span>{item.label}</span>
                 </button>
-              )}
-            </div>
-          ))}
+              )
+            )}
+          </div>
         </nav>
       )}
-
-      <div className="account-block">
-        <NotificationInbox />
-
-
-        <div className="account-info">
-          <strong>{dashboard.user?.name || "User"}</strong>
-          <p>
-            {dashboard.user?.facultyId || dashboard.user?.registerNumber || "N/A"}
-            {" | "}
-            {userType?.toUpperCase()} Access
-          </p>
-        </div>
-        <button type="button" className="ghost-button" onClick={handleLogout}>
-          Logout
-        </button>
-      </div>
-    </header>
+    </>
   );
 }
 
@@ -182,12 +183,11 @@ function NotificationInbox() {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
   const dropdownRef = useRef(null);
 
   useEffect(() => {
     fetchNotifications();
-    const poller = setInterval(fetchNotifications, 60000); // Poll every minute
+    const poller = setInterval(fetchNotifications, 60000);
     return () => clearInterval(poller);
   }, []);
 
@@ -218,8 +218,8 @@ function NotificationInbox() {
     try {
       const res = await fetch(`/api/notifications/${id}/read/`, buildJsonPostOptions({}));
       if (res.ok) {
-        setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: true } : n));
-        setUnreadCount(prev => Math.max(0, prev - 1));
+        setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
+        setUnreadCount((prev) => Math.max(0, prev - 1));
       }
     } catch (err) {
       console.error("Failed to mark as read", err);
@@ -228,8 +228,8 @@ function NotificationInbox() {
 
   return (
     <div className="notification-wrapper" ref={dropdownRef}>
-      <button 
-        className={`inbox-trigger ${unreadCount > 0 ? 'has-unread' : ''}`}
+      <button
+        className={`inbox-trigger${unreadCount > 0 ? " has-unread" : ""}`}
         onClick={() => setIsOpen(!isOpen)}
       >
         <Bell size={20} />
@@ -242,11 +242,11 @@ function NotificationInbox() {
             <h3>Notifications</h3>
             {unreadCount > 0 && <span className="unread-label">{unreadCount} new</span>}
           </div>
-          
+
           <div className="inbox-list scroll-column">
             {notifications.length > 0 ? (
               notifications.map((n) => (
-                <div key={n.id} className={`inbox-item ${n.is_read ? '' : 'unread'}`} onClick={() => markAsRead(n.id)}>
+                <div key={n.id} className={`inbox-item${n.is_read ? "" : " unread"}`} onClick={() => markAsRead(n.id)}>
                   <div className="inbox-item-icon">
                     {n.is_read ? <Mail size={16} /> : <MessageSquare size={16} />}
                   </div>

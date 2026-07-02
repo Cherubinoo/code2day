@@ -15,7 +15,6 @@ const POPULAR_LANGUAGES = [
   "C",
   "C++",
   "Java",
-  "JavaScript",
   "Python",
 ];
 
@@ -273,7 +272,7 @@ function ProblemListView({
                     type="button"
                     className="problem-table-row"
                     onClick={() => {
-                      setSelectedLanguage("JavaScript");
+                      setSelectedLanguage("Python");
                       openProblem(problem.slug);
                     }}
                   >

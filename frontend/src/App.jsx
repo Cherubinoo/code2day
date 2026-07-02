@@ -10,6 +10,7 @@ import AuthScreen from "./components/common/AuthScreen";
 import MaintenanceScreen from "./components/common/MaintenanceScreen";
 import TopBar from "./components/common/TopBar";
 import ContestContainer from "./components/student/pages/ContestContainer";
+import LabsPage from "./components/student/pages/LabsPage";
 import AptitudePage from "./components/student/pages/AptitudePage";
 import DiscussPage from "./components/student/pages/DiscussPage";
 import ExplorePage from "./components/student/pages/ExplorePage";
@@ -60,7 +61,7 @@ function App() {
   const [selectedDifficulty, setSelectedDifficulty] = useState("All Levels");
   const [selectedConcept, setSelectedConcept] = useState("All Concepts");
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
-    return window.localStorage.getItem("code2day-language") || "JavaScript";
+    return window.localStorage.getItem("code2day-language") || "Python";
   });
   const [selectedProblemSlug, setSelectedProblemSlug] = useState(() => {
     return window.localStorage.getItem("code2day-problem-slug") || "";
@@ -68,9 +69,9 @@ function App() {
   const [problemDetailTab, setProblemDetailTab] = useState("current");
   const [code, setCode] = useState(() => {
     const savedCode = window.localStorage.getItem("code2day-code");
-    const savedLang = window.localStorage.getItem("code2day-language") || "JavaScript";
+    const savedLang = window.localStorage.getItem("code2day-language") || "Python";
     // Return saved code if exists, otherwise use starter code for saved language
-    return savedCode || starterCodeByLanguage[savedLang] || starterCodeByLanguage.JavaScript;
+    return savedCode || starterCodeByLanguage[savedLang] || starterCodeByLanguage.Python;
   });
   const [problemStartTime, setProblemStartTime] = useState(() => {
     const saved = window.localStorage.getItem("code2day-problem-start");
@@ -172,10 +173,10 @@ function App() {
     setProblemSet(normalizeProblems(fallbackProblems));
     setSelectedDifficulty("All Levels");
     setSelectedConcept("All Concepts");
-    setSelectedLanguage("JavaScript");
+    setSelectedLanguage("Python");
     setSelectedProblemSlug("");
     setProblemDetailTab("current");
-    setCode(starterCodeByLanguage.JavaScript);
+    setCode(starterCodeByLanguage.Python);
     setOutputLog("Output panel ready. Run the code to see sample execution results here.");
     setExecutionInput("");
     setExecutionMeta({ status: "Idle", time: "", memory: "" });
@@ -515,7 +516,7 @@ function App() {
     
     // User changed language - switch to new language's starter code
     const currentStarter = starterCodeByLanguage[selectedLanguage];
-    setCode(currentStarter ?? starterCodeByLanguage.JavaScript);
+    setCode(currentStarter ?? starterCodeByLanguage.Python);
   }, [selectedLanguage, selectedProblemSlug]);
 
   useEffect(() => {
@@ -1004,7 +1005,7 @@ function App() {
 
   function handleJoinContest(contest) {
     const firstContestProblem = problemSet.find((problem) => problem.slug === contest.problems[0]);
-    const contestLanguage = firstContestProblem?.available_languages?.[0] ?? "JavaScript";
+    const contestLanguage = firstContestProblem?.available_languages?.[0] ?? "Python";
 
     setSessionMode("contest");
     setActiveContestId(contest.id);
@@ -1203,6 +1204,9 @@ function App() {
           setSelectedRoadmapId={setSelectedRoadmapId}
         />
       );
+      break;
+    case "labs":
+      activeView = <LabsPage />;
       break;
     case "aptitude":
       activeView = <AptitudePage onToggleWorkspace={setIsInsideWorkspace} />;

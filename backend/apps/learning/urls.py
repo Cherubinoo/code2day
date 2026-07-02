@@ -111,6 +111,29 @@ from .views import (
     StaffMentorDashboardView,
     StaffClassAdvisorDashboardView,
     StudentMentorAdvisorView,
+    LabTopicListView,
+    LabProblemListView,
+    LabProblemDetailView,
+    LabSubmitView,
+    HODDeptStaffView,
+    HODDeptInfoView,
+    HODLabAssignmentView,
+    HODLabAssignmentDeleteView,
+    StaffLabAssignmentView,
+    StaffLabSubmissionsView,
+    StudentLabAssignmentsView,
+    LabAssignmentSubmitView,
+    HODLabListView,
+    HODLabDetailView,
+    StaffLabListView,
+    StaffLabExercisesView,
+    StaffExerciseDetailView,
+    StaffLabStudentsView,
+    StudentLabListView,
+    StudentLabExercisesView,
+    StudentExerciseSubmitView,
+    HODManageStaffView,
+    HODManageStaffDetailView,
 )
 
 # Import file management views
@@ -288,4 +311,35 @@ urlpatterns = [
     path("executor/submit/", ExecutorSubmitView.as_view(), name="executor-submit"),
     path("discussions/staff-dept-list/", StaffDeptListView.as_view(), name="staff-dept-list"),
     path("discussions/threads/", DiscussionThreadListView.as_view(), name="discussion-threads"),
+
+    # ── Labs (self-paced) ─────────────────────────────────────────────────────
+    path("lab/topics/",                             LabTopicListView.as_view(),    name="lab-topic-list"),
+    path("lab/topics/<slug:topic_slug>/problems/",  LabProblemListView.as_view(),  name="lab-problem-list"),
+    path("lab/problems/<slug:slug>/",               LabProblemDetailView.as_view(),name="lab-problem-detail"),
+    path("lab/problems/<slug:slug>/submit/",        LabSubmitView.as_view(),       name="lab-submit"),
+
+    # ── Lab Assignments (Practical Labs) ──────────────────────────────────────
+    path("lab/assignments/hod/staff/",                                   HODDeptStaffView.as_view(),         name="hod-dept-staff"),
+    path("lab/assignments/hod/dept-info/",                               HODDeptInfoView.as_view(),          name="hod-dept-info"),
+    path("lab/assignments/hod/",                                         HODLabAssignmentView.as_view(),     name="hod-lab-assignments"),
+    path("lab/assignments/hod/<int:assignment_id>/delete/",              HODLabAssignmentDeleteView.as_view(), name="hod-lab-assignment-delete"),
+    path("lab/assignments/staff/",                                       StaffLabAssignmentView.as_view(),   name="staff-lab-assignments"),
+    path("lab/assignments/staff/<int:assignment_id>/submissions/",       StaffLabSubmissionsView.as_view(),  name="staff-lab-submissions"),
+    path("lab/assignments/student/",                                     StudentLabAssignmentsView.as_view(),name="student-lab-assignments"),
+    path("lab/assignments/<int:assignment_id>/problems/<slug:slug>/submit/", LabAssignmentSubmitView.as_view(), name="lab-assignment-submit"),
+
+    # ── Lab V2 (HOD → Staff → Student) ───────────────────────────────────────
+    path("lab/v2/",                                                          HODLabListView.as_view(),          name="hod-lab-v2-list"),
+    path("lab/v2/staff/",                                                    StaffLabListView.as_view(),         name="staff-lab-v2-list"),
+    path("lab/v2/student/",                                                  StudentLabListView.as_view(),       name="student-lab-v2-list"),
+    path("lab/v2/<int:lab_id>/",                                             HODLabDetailView.as_view(),         name="hod-lab-v2-detail"),
+    path("lab/v2/<int:lab_id>/exercises/",                                   StaffLabExercisesView.as_view(),    name="staff-lab-exercises"),
+    path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/",                 StaffExerciseDetailView.as_view(),  name="staff-exercise-detail"),
+    path("lab/v2/<int:lab_id>/students/",                                    StaffLabStudentsView.as_view(),     name="staff-lab-students"),
+    path("lab/v2/<int:lab_id>/exercises/list/",                              StudentLabExercisesView.as_view(),  name="student-lab-exercises"),
+    path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/submit/",          StudentExerciseSubmitView.as_view(),name="student-exercise-submit"),
+
+    # ── HOD Staff Management ─────────────────────────────────────────────────
+    path("hod/staff/",                  HODManageStaffView.as_view(),       name="hod-manage-staff"),
+    path("hod/staff/<str:faculty_id>/", HODManageStaffDetailView.as_view(), name="hod-manage-staff-detail"),
 ]

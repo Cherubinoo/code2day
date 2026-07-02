@@ -1240,3 +1240,267 @@ class ContestParticipation(models.Model):
             self.auto_submitted = auto_submitted
             self.save(update_fields=['completed_at', 'time_spent_seconds', 'is_active', 'auto_submitted'])
         return self.time_spent_seconds
+
+
+# ─── Labs ─────────────────────────────────────────────────────────────────────
+
+class LabTopic(models.Model):
+    """A data-structure / algorithm course bucket (e.g. "Arrays", "Trees")."""
+
+    ICON_CHOICES = [
+        ("array",     "Array"),
+        ("linkedlist","Linked List"),
+        ("stack",     "Stack"),
+        ("queue",     "Queue"),
+        ("tree",      "Tree"),
+        ("graph",     "Graph"),
+        ("hash",      "Hash / Map"),
+        ("sort",      "Sorting"),
+        ("search",    "Searching"),
+        ("dp",        "Dynamic Programming"),
+        ("string",    "Strings"),
+        ("recursion", "Recursion"),
+        ("math",      "Math"),
+        ("other",     "Other"),
+    ]
+
+    name        = models.CharField(max_length=80, unique=True)
+    slug        = models.SlugField(unique=True)
+    description = models.TextField(blank=True, default="")
+    icon        = models.CharField(max_length=20, choices=ICON_CHOICES, default="other")
+    order       = models.PositiveIntegerField(default=0, help_text="Display order in the grid")
+    is_active   = models.BooleanField(default=True)
+
+    class Meta:
+        db_table  = "lab_topics"
+        ordering  = ("order", "name")
+
+    def __str__(self):
+        return self.name
+
+
+class LabProblem(models.Model):
+    """A coding problem that belongs to a LabTopic (separate table from Problem)."""
+
+    DIFFICULTY_CHOICES = [
+        ("Easy",   "Easy"),
+        ("Medium", "Medium"),
+        ("Hard",   "Hard"),
+    ]
+
+    EXEC_TYPE_CHOICES = [
+        ("auto",        "Auto-detect from code"),
+        ("stdin",       "Standard Input / Output"),
+        ("function",    "Function-Based"),
+        ("class",       "Class / Object-Based"),
+        ("interactive", "Interactive"),
+    ]
+
+    topic         = models.ForeignKey(LabTopic, on_delete=models.CASCADE, related_name="problems")
+    title         = models.CharField(max_length=160)
+    slug          = models.SlugField(unique=True)
+    description   = models.TextField()
+    difficulty    = models.CharField(max_length=10, choices=DIFFICULTY_CHOICES, default="Easy")
+    tags          = models.JSONField(default=list, blank=True)
+    examples      = models.JSONField(default=list, blank=True)
+    hints         = models.JSONField(default=list, blank=True)
+    editorial     = models.TextField(blank=True, default="")
+    execution_type = models.CharField(max_length=20, choices=EXEC_TYPE_CHOICES, default="auto")
+    function_name  = models.CharField(max_length=100, blank=True, default="")
+    order          = models.PositiveIntegerField(default=0, help_text="Order within the topic")
+    is_active      = models.BooleanField(default=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
+    updated_at     = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "lab_problems"
+        ordering = ("topic", "order", "difficulty", "title")
+
+    def __str__(self):
+        return f"[{self.topic.name}] {self.title}"
+
+
+class LabTestCase(models.Model):
+    """Test case for a LabProblem."""
+
+    problem         = models.ForeignKey(LabProblem, on_delete=models.CASCADE, related_name="test_cases")
+    stdin           = models.TextField(blank=True, default="")
+    expected_output = models.TextField()
+    is_sample       = models.BooleanField(default=False)
+    order           = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "lab_test_cases"
+        ordering = ("order",)
+
+    def __str__(self):
+        return f"TestCase #{self.order} for {self.problem.slug}"
+
+
+class LabSubmission(models.Model):
+    """Records a student's submission attempt on a LabProblem."""
+
+    student        = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name="lab_submissions")
+    problem        = models.ForeignKey(LabProblem, on_delete=models.CASCADE, related_name="submissions")
+    language       = models.CharField(max_length=40)
+    language_id    = models.PositiveIntegerField()
+    source_code    = models.TextField()
+    status         = models.CharField(max_length=40, default="Attempted")
+    passed_cases   = models.PositiveIntegerField(default=0)
+    total_cases    = models.PositiveIntegerField(default=0)
+    all_passed     = models.BooleanField(default=False)
+    execution_time = models.CharField(max_length=40, blank=True, default="")
+    memory         = models.CharField(max_length=40, blank=True, default="")
+    submitted_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "lab_submissions"
+        ordering = ("-submitted_at",)
+
+    def __str__(self):
+        return f"{self.student} – {self.problem.slug} – {self.status}"
+
+
+class LabAssignment(models.Model):
+    """A practical lab assignment created by HOD for a specific batch."""
+
+    lab_topic    = models.ForeignKey(LabTopic, on_delete=models.CASCADE, related_name="assignments")
+    name         = models.CharField(max_length=200, help_text="e.g. 'Array Lab – Semester 1'")
+    subject      = models.CharField(max_length=200, blank=True, default="")
+    assigned_staff = models.ForeignKey(
+        StaffProfile, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="lab_assignments", help_text="Staff who monitors this lab"
+    )
+    created_by   = models.ForeignKey(
+        StaffProfile, on_delete=models.CASCADE, related_name="created_lab_assignments"
+    )
+    department   = models.ForeignKey(
+        Department, on_delete=models.CASCADE, related_name="lab_assignments"
+    )
+    batch        = models.CharField(max_length=20, blank=True, default="")
+    year         = models.CharField(max_length=5, blank=True, default="")
+    section      = models.CharField(max_length=10, blank=True, default="")
+    start_date   = models.DateTimeField(null=True, blank=True, help_text="When the lab opens for students")
+    deadline     = models.DateTimeField(help_text="When the lab closes (end date)")
+    is_active    = models.BooleanField(default=True)
+    created_at   = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "lab_assignments"
+        ordering = ("-created_at",)
+
+    @property
+    def is_expired(self):
+        from django.utils import timezone
+        return timezone.now() > self.deadline
+
+    def __str__(self):
+        return self.name
+
+
+class LabAssignmentSubmission(models.Model):
+    """One student's solved submission for a specific problem inside a LabAssignment."""
+
+    assignment  = models.ForeignKey(LabAssignment, on_delete=models.CASCADE, related_name="submissions")
+    student     = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name="lab_assignment_submissions")
+    problem     = models.ForeignKey(LabProblem, on_delete=models.CASCADE, related_name="assignment_submissions")
+    language    = models.CharField(max_length=40)
+    language_id = models.PositiveIntegerField(default=71)
+    source_code = models.TextField()
+    output      = models.TextField(blank=True, default="")
+    status      = models.CharField(max_length=40, default="Attempted")
+    passed_cases = models.PositiveIntegerField(default=0)
+    total_cases  = models.PositiveIntegerField(default=0)
+    all_passed   = models.BooleanField(default=False)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    updated_at   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "lab_assignment_submissions"
+        ordering = ("-updated_at",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=["assignment", "student", "problem"],
+                name="unique_lab_assignment_student_problem",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.student} – {self.assignment.name} – {self.problem.slug} – {self.status}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lab V2  (simple practical lab management — no test-case execution)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Lab(models.Model):
+    """Lab container created by HOD — groups exercises for a batch/section."""
+
+    name            = models.CharField(max_length=200)
+    department      = models.ForeignKey(
+        Department, on_delete=models.CASCADE, related_name="labs"
+    )
+    batch           = models.CharField(max_length=20)
+    section         = models.CharField(max_length=10, blank=True, default="")
+    start_date      = models.DateTimeField()
+    end_date        = models.DateTimeField()
+    staff_in_charge = models.ForeignKey(
+        StaffProfile, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="managed_labs"
+    )
+    created_by      = models.ForeignKey(
+        StaffProfile, on_delete=models.SET_NULL, null=True,
+        related_name="created_labs"
+    )
+    is_active       = models.BooleanField(default=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "labs"
+        ordering = ("-created_at",)
+
+    @property
+    def is_expired(self):
+        return timezone.now() > self.end_date
+
+    def __str__(self):
+        return self.name
+
+
+class LabExercise(models.Model):
+    """An exercise (problem statement) added by staff to a Lab."""
+
+    lab         = models.ForeignKey(Lab, on_delete=models.CASCADE, related_name="exercises")
+    title       = models.CharField(max_length=200)
+    description = models.TextField(blank=True, default="")
+    order       = models.PositiveIntegerField(default=0)
+    added_by    = models.ForeignKey(
+        StaffProfile, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="added_exercises"
+    )
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "lab_exercises"
+        ordering = ("order", "created_at")
+
+    def __str__(self):
+        return f"{self.lab.name} – {self.title}"
+
+
+class LabExerciseSubmission(models.Model):
+    """Student code submission for one LabExercise."""
+
+    exercise     = models.ForeignKey(LabExercise, on_delete=models.CASCADE, related_name="submissions")
+    student      = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name="exercise_submissions")
+    code         = models.TextField(blank=True, default="")
+    language     = models.CharField(max_length=50, blank=True, default="")
+    submitted_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "lab_exercise_submissions"
+        unique_together = [["exercise", "student"]]
+        ordering = ("-submitted_at",)
+
+    def __str__(self):
+        return f"{self.student} → {self.exercise}"

@@ -47,6 +47,15 @@ from .models import (
     Department,
     SolvedAptitude,
     AptitudeContestSubmission,
+    LabTopic,
+    LabProblem,
+    LabTestCase,
+    LabSubmission,
+    LabAssignment,
+    LabAssignmentSubmission,
+    Lab,
+    LabExercise,
+    LabExerciseSubmission,
 )
 from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
@@ -9580,4 +9589,1050 @@ class StudentMentorAdvisorView(APIView):
             "batch": student.batch,
             "section": student.section,
             "department": student.department.name if student.department else "",
+        })
+
+
+# ─── Labs ─────────────────────────────────────────────────────────────────────
+
+class LabTopicListView(APIView):
+    """GET /api/lab/topics/ — list all active topics with problem counts."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        topics = LabTopic.objects.filter(is_active=True).prefetch_related("problems")
+        data = []
+        for t in topics:
+            active = t.problems.filter(is_active=True)
+            counts = {"Easy": 0, "Medium": 0, "Hard": 0}
+            for p in active:
+                counts[p.difficulty] = counts.get(p.difficulty, 0) + 1
+            data.append({
+                "id":          t.id,
+                "name":        t.name,
+                "slug":        t.slug,
+                "description": t.description,
+                "icon":        t.icon,
+                "order":       t.order,
+                "total":       active.count(),
+                "easy":        counts["Easy"],
+                "medium":      counts["Medium"],
+                "hard":        counts["Hard"],
+            })
+        return Response(data)
+
+
+class LabProblemListView(APIView):
+    """GET /api/lab/topics/<slug>/problems/ — problems in a topic."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, topic_slug):
+        try:
+            topic = LabTopic.objects.get(slug=topic_slug, is_active=True)
+        except LabTopic.DoesNotExist:
+            return Response({"error": "Topic not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        problems = LabProblem.objects.filter(topic=topic, is_active=True)
+
+        # Attach solved status if authenticated
+        student = None
+        if hasattr(request.user, "student_profile"):
+            try:
+                student = request.user.student_profile
+            except Exception:
+                pass
+
+        solved_slugs = set()
+        if student:
+            solved_slugs = set(
+                LabSubmission.objects.filter(
+                    student=student, problem__topic=topic, all_passed=True
+                ).values_list("problem__slug", flat=True)
+            )
+
+        data = []
+        for p in problems:
+            data.append({
+                "slug":        p.slug,
+                "title":       p.title,
+                "difficulty":  p.difficulty,
+                "tags":        p.tags,
+                "order":       p.order,
+                "solved":      p.slug in solved_slugs,
+            })
+        return Response({"topic": {"name": topic.name, "slug": topic.slug, "icon": topic.icon}, "problems": data})
+
+
+class LabProblemDetailView(APIView):
+    """GET /api/lab/problems/<slug>/ — full problem with sample test cases."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, slug):
+        try:
+            problem = LabProblem.objects.select_related("topic").prefetch_related("test_cases").get(
+                slug=slug, is_active=True
+            )
+        except LabProblem.DoesNotExist:
+            return Response({"error": "Problem not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        sample_cases = [
+            {"stdin": tc.stdin, "expected_output": tc.expected_output, "order": tc.order}
+            for tc in problem.test_cases.filter(is_sample=True)
+        ]
+
+        return Response({
+            "slug":           problem.slug,
+            "title":          problem.title,
+            "description":    problem.description,
+            "difficulty":     problem.difficulty,
+            "tags":           problem.tags,
+            "examples":       problem.examples,
+            "hints":          problem.hints,
+            "editorial":      problem.editorial,
+            "execution_type": problem.execution_type,
+            "function_name":  problem.function_name,
+            "sample_cases":   sample_cases,
+            "topic": {
+                "name": problem.topic.name,
+                "slug": problem.topic.slug,
+            },
+        })
+
+
+class LabSubmitView(APIView):
+    """POST /api/lab/problems/<slug>/submit/ — run all test cases and record result."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, slug):
+        from .services.executor import ExecutorError
+
+        try:
+            problem = LabProblem.objects.prefetch_related("test_cases").get(slug=slug, is_active=True)
+        except LabProblem.DoesNotExist:
+            return Response({"error": "Problem not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        source_code = request.data.get("source_code", "").strip()
+        language_id = request.data.get("language_id")
+        language    = request.data.get("language", "")
+
+        if not source_code:
+            return Response({"error": "Source code is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not language_id:
+            return Response({"error": "language_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            language_id = int(language_id)
+        except (TypeError, ValueError):
+            return Response({"error": "Invalid language_id"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Get student
+        try:
+            student = request.user.student_profile
+        except Exception:
+            return Response({"error": "Student profile not found"}, status=status.HTTP_403_FORBIDDEN)
+
+        test_cases = list(problem.test_cases.all())
+        if not test_cases:
+            return Response({"error": "No test cases configured for this problem"}, status=status.HTTP_400_BAD_REQUEST)
+
+        results = []
+        passed  = 0
+
+        for tc in test_cases:
+            try:
+                payload = prepare_execution_payload(
+                    source_code=source_code,
+                    language_id=language_id,
+                    stdin=tc.stdin,
+                    problem_slug=problem.slug,
+                    execution_type=problem.execution_type,
+                    function_name=problem.function_name,
+                )
+                exec_result = execute_submission(
+                    source_code=payload["source_code"],
+                    language_id=language_id,
+                    stdin=payload.get("stdin", tc.stdin),
+                )
+                actual   = (exec_result.get("stdout") or "").strip()
+                expected = tc.expected_output.strip()
+                ok = actual == expected
+                if ok:
+                    passed += 1
+                results.append({
+                    "stdin":           tc.stdin,
+                    "expected_output": expected,
+                    "actual_output":   actual,
+                    "passed":          ok,
+                    "stderr":          exec_result.get("stderr", ""),
+                    "status":          exec_result.get("status", ""),
+                    "is_sample":       tc.is_sample,
+                })
+            except ExecutorError as exc:
+                results.append({
+                    "stdin":           tc.stdin,
+                    "expected_output": tc.expected_output.strip(),
+                    "actual_output":   "",
+                    "passed":          False,
+                    "stderr":          str(exc),
+                    "status":          "Error",
+                    "is_sample":       tc.is_sample,
+                })
+
+        all_passed = passed == len(test_cases)
+        sub_status = "Accepted" if all_passed else "Wrong Answer"
+
+        LabSubmission.objects.create(
+            student=student,
+            problem=problem,
+            language=language,
+            language_id=language_id,
+            source_code=source_code,
+            status=sub_status,
+            passed_cases=passed,
+            total_cases=len(test_cases),
+            all_passed=all_passed,
+        )
+
+        return Response({
+            "status":       sub_status,
+            "passed":       passed,
+            "total":        len(test_cases),
+            "all_passed":   all_passed,
+            "results":      results,
+        })
+
+
+# ─── Lab Assignments (Practical Labs) ────────────────────────────────────────
+
+def _staff_from_request(request):
+    try:
+        return request.user.staff_profile
+    except Exception:
+        return None
+
+
+def _student_from_request(request):
+    try:
+        return request.user.student_profile
+    except Exception:
+        return None
+
+
+def _serialize_assignment(a, student=None):
+    """Compact assignment dict shared across HOD / staff / student views."""
+    problems = list(a.lab_topic.problems.filter(is_active=True).values(
+        "id", "slug", "title", "difficulty", "order"
+    ))
+    solved_slugs = set()
+    if student:
+        solved_slugs = set(
+            LabAssignmentSubmission.objects.filter(
+                assignment=a, student=student, all_passed=True
+            ).values_list("problem__slug", flat=True)
+        )
+    for p in problems:
+        p["solved"] = p["slug"] in solved_slugs
+
+    return {
+        "id":             a.id,
+        "name":           a.name,
+        "subject":        a.subject,
+        "batch":          a.batch,
+        "year":           a.year,
+        "section":        a.section,
+        "start_date":     a.start_date.isoformat() if a.start_date else None,
+        "deadline":       a.deadline.isoformat(),
+        "is_expired":     a.is_expired,
+        "is_active":      a.is_active,
+        "created_at":     a.created_at.isoformat(),
+        "topic": {
+            "id":   a.lab_topic.id,
+            "name": a.lab_topic.name,
+            "slug": a.lab_topic.slug,
+            "icon": a.lab_topic.icon,
+        },
+        "assigned_staff": {
+            "id":   a.assigned_staff.id,
+            "name": a.assigned_staff.name,
+        } if a.assigned_staff else None,
+        "problems":       problems,
+        "total_problems": len(problems),
+        "solved_count":   len(solved_slugs),
+        "all_complete":   len(problems) > 0 and len(solved_slugs) == len(problems),
+    }
+
+
+class HODDeptStaffView(APIView):
+    """HOD: list staff in own department (for assignment staff picker)."""
+
+    def get(self, request):
+        staff = _staff_from_request(request)
+        if not staff or staff.role not in ("hod", "admin"):
+            return Response({"error": "HOD access required"}, status=403)
+        dept_staff = StaffProfile.objects.filter(department=staff.department).values(
+            "id", "name", "faculty_id", "role"
+        )
+        return Response(list(dept_staff))
+
+
+class HODDeptInfoView(APIView):
+    """HOD: return real batches and sections from department students."""
+
+    def get(self, request):
+        staff = _staff_from_request(request)
+        if not staff or staff.role not in ("hod", "admin"):
+            return Response({"error": "HOD access required"}, status=403)
+
+        stu_qs = StudentProfile.objects.filter(department=staff.department)
+        batches = sorted(set(
+            v for v in stu_qs.values_list("batch", flat=True).distinct() if v
+        ))
+        sections = sorted(set(
+            v for v in stu_qs.values_list("section", flat=True).distinct() if v
+        ))
+        # Build per-batch section map
+        sections_by_batch = {}
+        for batch in batches:
+            secs = sorted(set(
+                v for v in stu_qs.filter(batch=batch).values_list("section", flat=True).distinct() if v
+            ))
+            sections_by_batch[batch] = secs
+        return Response({"batches": batches, "sections": sections, "sections_by_batch": sections_by_batch})
+
+
+class HODLabAssignmentView(APIView):
+    """HOD: list assignments for own department / create new assignment."""
+
+    def _get_hod(self, request):
+        staff = _staff_from_request(request)
+        if not staff or staff.role not in ("hod", "admin"):
+            return None
+        return staff
+
+    def get(self, request):
+        staff = self._get_hod(request)
+        if not staff:
+            return Response({"error": "HOD access required"}, status=status.HTTP_403_FORBIDDEN)
+
+        assignments = LabAssignment.objects.filter(
+            department=staff.department
+        ).select_related("lab_topic", "assigned_staff", "created_by").order_by("-created_at")
+
+        data = []
+        for a in assignments:
+            d = _serialize_assignment(a)
+            d["submission_count"] = a.submissions.values("student").distinct().count()
+            data.append(d)
+        return Response(data)
+
+    def post(self, request):
+        staff = self._get_hod(request)
+        if not staff:
+            return Response({"error": "HOD access required"}, status=status.HTTP_403_FORBIDDEN)
+
+        topic_id       = request.data.get("topic_id")
+        name           = (request.data.get("name") or "").strip()
+        subject        = (request.data.get("subject") or "").strip()
+        assigned_staff_id = request.data.get("assigned_staff_id")
+        batch          = (request.data.get("batch") or "").strip()
+        year           = (request.data.get("year") or "").strip()
+        section        = (request.data.get("section") or "").strip()
+        deadline_str   = (request.data.get("deadline") or "").strip()
+        start_date_str = (request.data.get("start_date") or "").strip()
+
+        if not all([topic_id, name, deadline_str]):
+            return Response({"error": "topic_id, name and deadline are required"}, status=400)
+
+        try:
+            topic = LabTopic.objects.get(id=topic_id, is_active=True)
+        except LabTopic.DoesNotExist:
+            return Response({"error": "Topic not found"}, status=400)
+
+        try:
+            from django.utils.dateparse import parse_datetime
+            deadline = parse_datetime(deadline_str)
+            if not deadline:
+                raise ValueError
+        except (ValueError, TypeError):
+            return Response({"error": "Invalid deadline format. Use ISO 8601."}, status=400)
+
+        start_date = None
+        if start_date_str:
+            try:
+                from django.utils.dateparse import parse_datetime as _pd
+                start_date = _pd(start_date_str)
+            except Exception:
+                start_date = None
+
+        assigned_staff = None
+        if assigned_staff_id:
+            try:
+                assigned_staff = StaffProfile.objects.get(id=assigned_staff_id, department=staff.department)
+            except StaffProfile.DoesNotExist:
+                return Response({"error": "Staff not found in your department"}, status=400)
+
+        assignment = LabAssignment.objects.create(
+            lab_topic=topic,
+            name=name,
+            subject=subject,
+            assigned_staff=assigned_staff,
+            created_by=staff,
+            department=staff.department,
+            batch=batch,
+            year=year,
+            section=section,
+            start_date=start_date,
+            deadline=deadline,
+        )
+        return Response(_serialize_assignment(assignment), status=status.HTTP_201_CREATED)
+
+
+class HODLabAssignmentDeleteView(APIView):
+    """HOD: delete a lab assignment."""
+
+    def delete(self, request, assignment_id):
+        staff = _staff_from_request(request)
+        if not staff or staff.role not in ("hod", "admin"):
+            return Response({"error": "HOD access required"}, status=403)
+        try:
+            a = LabAssignment.objects.get(id=assignment_id, department=staff.department)
+        except LabAssignment.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+        a.delete()
+        return Response({"ok": True})
+
+
+class StaffLabAssignmentView(APIView):
+    """Staff: list lab assignments assigned to this staff member."""
+
+    def get(self, request):
+        staff = _staff_from_request(request)
+        if not staff:
+            return Response({"error": "Staff access required"}, status=403)
+
+        assignments = LabAssignment.objects.filter(
+            assigned_staff=staff, is_active=True
+        ).select_related("lab_topic", "created_by").order_by("-created_at")
+
+        return Response([_serialize_assignment(a) for a in assignments])
+
+
+class StaffLabSubmissionsView(APIView):
+    """Staff: class-wise submission status for a specific lab assignment."""
+
+    def get(self, request, assignment_id):
+        staff = _staff_from_request(request)
+        if not staff:
+            return Response({"error": "Staff access required"}, status=403)
+
+        try:
+            assignment = LabAssignment.objects.select_related("lab_topic", "department").get(
+                id=assignment_id, assigned_staff=staff
+            )
+        except LabAssignment.DoesNotExist:
+            return Response({"error": "Assignment not found or not assigned to you"}, status=404)
+
+        problems = list(assignment.lab_topic.problems.filter(is_active=True).order_by("order"))
+
+        # Students in this assignment's batch/section
+        stu_qs = StudentProfile.objects.filter(department=assignment.department)
+        if assignment.batch:
+            stu_qs = stu_qs.filter(batch=assignment.batch)
+        if assignment.section:
+            stu_qs = stu_qs.filter(section__iexact=assignment.section)
+
+        students = stu_qs.select_related("account").order_by("name")
+
+        # All submissions for this assignment
+        subs = {
+            (s.student_id, s.problem_id): s
+            for s in LabAssignmentSubmission.objects.filter(assignment=assignment)
+        }
+
+        rows = []
+        for stu in students:
+            solved = []
+            for prob in problems:
+                sub = subs.get((stu.id, prob.id))
+                solved.append({
+                    "slug":       prob.slug,
+                    "title":      prob.title,
+                    "passed":     sub.all_passed if sub else False,
+                    "language":   sub.language if sub else None,
+                    "submitted_at": sub.submitted_at.isoformat() if sub else None,
+                })
+            total   = len(problems)
+            done    = sum(1 for s in solved if s["passed"])
+            rows.append({
+                "student_name":     stu.name,
+                "register_number":  stu.register_number,
+                "email":            stu.account.email if stu.account else "",
+                "section":          stu.section,
+                "problems":         solved,
+                "completed":        done,
+                "total":            total,
+                "all_complete":     done == total,
+            })
+
+        return Response({
+            "assignment": _serialize_assignment(assignment),
+            "problems":   [{"slug": p.slug, "title": p.title} for p in problems],
+            "students":   rows,
+        })
+
+
+class StudentLabAssignmentsView(APIView):
+    """Student: list practical lab assignments for their batch/year/section."""
+
+    def get(self, request):
+        student = _student_from_request(request)
+        if not student:
+            return Response({"error": "Student access required"}, status=403)
+
+        qs = LabAssignment.objects.filter(
+            department=student.department, is_active=True
+        ).select_related("lab_topic", "assigned_staff")
+
+        if student.batch:
+            qs = qs.filter(Q(batch="") | Q(batch=student.batch))
+        if student.section:
+            qs = qs.filter(Q(section="") | Q(section__iexact=student.section))
+
+        return Response([_serialize_assignment(a, student) for a in qs.order_by("deadline")])
+
+
+class LabAssignmentSubmitView(APIView):
+    """Student: submit solution for a problem inside a LabAssignment."""
+
+    def post(self, request, assignment_id, slug):
+        student = _student_from_request(request)
+        if not student:
+            return Response({"error": "Student access required"}, status=403)
+
+        try:
+            assignment = LabAssignment.objects.get(id=assignment_id, is_active=True)
+        except LabAssignment.DoesNotExist:
+            return Response({"error": "Assignment not found"}, status=404)
+
+        if assignment.is_expired:
+            return Response({"error": "This lab assignment has expired"}, status=400)
+
+        try:
+            problem = LabProblem.objects.prefetch_related("test_cases").get(
+                slug=slug, topic=assignment.lab_topic, is_active=True
+            )
+        except LabProblem.DoesNotExist:
+            return Response({"error": "Problem not found in this assignment"}, status=404)
+
+        source_code = request.data.get("source_code", "").strip()
+        language_id = request.data.get("language_id")
+        language    = request.data.get("language", "")
+
+        if not source_code or not language_id:
+            return Response({"error": "source_code and language_id are required"}, status=400)
+
+        try:
+            language_id = int(language_id)
+        except (TypeError, ValueError):
+            return Response({"error": "Invalid language_id"}, status=400)
+
+        from .services.executor import ExecutorError
+
+        test_cases = list(problem.test_cases.all())
+        if not test_cases:
+            return Response({"error": "No test cases configured"}, status=400)
+
+        results   = []
+        passed    = 0
+        final_out = ""
+
+        for tc in test_cases:
+            try:
+                payload = prepare_execution_payload(
+                    source_code=source_code,
+                    language_id=language_id,
+                    stdin=tc.stdin,
+                    problem_slug=problem.slug,
+                    execution_type=problem.execution_type,
+                    function_name=problem.function_name,
+                )
+                exec_result = execute_judge0_submission(
+                    source_code=payload["source_code"],
+                    language_id=language_id,
+                    stdin=payload.get("stdin", tc.stdin),
+                )
+                actual   = (exec_result.get("stdout") or "").strip()
+                expected = tc.expected_output.strip()
+                ok = actual == expected
+                if ok:
+                    passed += 1
+                if tc.is_sample:
+                    final_out = actual
+                results.append({
+                    "stdin":           tc.stdin,
+                    "expected_output": expected,
+                    "actual_output":   actual,
+                    "passed":          ok,
+                    "stderr":          exec_result.get("stderr", ""),
+                    "status":          exec_result.get("status", ""),
+                    "is_sample":       tc.is_sample,
+                })
+            except ExecutorError as exc:
+                results.append({
+                    "stdin": tc.stdin, "expected_output": tc.expected_output.strip(),
+                    "actual_output": "", "passed": False,
+                    "stderr": str(exc), "status": "Error", "is_sample": tc.is_sample,
+                })
+
+        all_passed  = passed == len(test_cases)
+        sub_status  = "Accepted" if all_passed else "Wrong Answer"
+        full_output = "\n".join(r["actual_output"] for r in results if r["actual_output"])
+
+        LabAssignmentSubmission.objects.update_or_create(
+            assignment=assignment,
+            student=student,
+            problem=problem,
+            defaults={
+                "language":    language,
+                "language_id": language_id,
+                "source_code": source_code,
+                "output":      full_output or final_out,
+                "status":      sub_status,
+                "passed_cases": passed,
+                "total_cases":  len(test_cases),
+                "all_passed":   all_passed,
+            },
+        )
+
+        return Response({
+            "status":     sub_status,
+            "passed":     passed,
+            "total":      len(test_cases),
+            "all_passed": all_passed,
+            "results":    results,
+            "output":     full_output or final_out,
+        })
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Lab V2  (HOD creates Lab -> Staff adds Exercises -> Students submit)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _parse_dt(value):
+    """Parse an ISO datetime string into a timezone-aware datetime. Returns None on failure."""
+    if not value:
+        return None
+    if hasattr(value, "isoformat"):
+        return value if value.tzinfo else timezone.make_aware(value)
+    try:
+        from datetime import datetime as _dt
+        parsed = _dt.fromisoformat(str(value))
+        return parsed if parsed.tzinfo else timezone.make_aware(parsed)
+    except (ValueError, TypeError):
+        return None
+
+
+def _serialize_lab_v2(lab, student=None):
+    try:
+        ex_count = lab.exercises.count()
+    except Exception:
+        ex_count = 0
+    result = {
+        "id": lab.id,
+        "name": lab.name,
+        "batch": lab.batch,
+        "section": lab.section,
+        "start_date": lab.start_date.isoformat() if lab.start_date else None,
+        "end_date": lab.end_date.isoformat() if lab.end_date else None,
+        "is_active": lab.is_active,
+        "is_expired": lab.is_expired,
+        "exercise_count": ex_count,
+        "created_at": lab.created_at.isoformat(),
+        "staff_in_charge": {
+            "id": lab.staff_in_charge.id,
+            "name": lab.staff_in_charge.name,
+            "faculty_id": lab.staff_in_charge.faculty_id,
+        } if lab.staff_in_charge else None,
+        "created_by": {
+            "id": lab.created_by.id,
+            "name": lab.created_by.name,
+        } if lab.created_by else None,
+    }
+    if student is not None:
+        completed = LabExerciseSubmission.objects.filter(
+            exercise__lab=lab, student=student
+        ).count()
+        result["student_progress"] = {"completed": completed, "total": ex_count}
+    return result
+
+
+def _serialize_exercise(ex):
+    return {
+        "id": ex.id,
+        "title": ex.title,
+        "description": ex.description,
+        "order": ex.order,
+        "created_at": ex.created_at.isoformat(),
+        "added_by": {"id": ex.added_by.id, "name": ex.added_by.name} if ex.added_by else None,
+        "submission_count": getattr(ex, "submission_count", None),
+    }
+
+
+class HODLabListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        staff = _staff_from_request(request)
+        labs = Lab.objects.filter(department=staff.department).select_related(
+            "staff_in_charge", "created_by"
+        ).prefetch_related("exercises")
+        return Response([_serialize_lab_v2(lab) for lab in labs])
+
+    def post(self, request):
+        staff = _staff_from_request(request)
+        data = request.data
+        staff_in_charge = None
+        sic_id = data.get("staff_in_charge_id")
+        if sic_id:
+            try:
+                staff_in_charge = StaffProfile.objects.get(id=sic_id, department=staff.department)
+            except StaffProfile.DoesNotExist:
+                return Response({"error": "Staff not found"}, status=400)
+        start = _parse_dt(data.get("start_date"))
+        end = _parse_dt(data.get("end_date"))
+        if not start or not end:
+            return Response({"error": "Valid start_date and end_date are required"}, status=400)
+        lab = Lab.objects.create(
+            name=data["name"],
+            department=staff.department,
+            batch=data.get("batch", ""),
+            section=data.get("section", ""),
+            start_date=start,
+            end_date=end,
+            staff_in_charge=staff_in_charge,
+            created_by=staff,
+        )
+        lab.refresh_from_db()
+        return Response(_serialize_lab_v2(lab), status=201)
+
+
+class HODLabDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get(self, lab_id, staff):
+        try:
+            return Lab.objects.get(id=lab_id, department=staff.department)
+        except Lab.DoesNotExist:
+            return None
+
+    def put(self, request, lab_id):
+        staff = _staff_from_request(request)
+        lab = self._get(lab_id, staff)
+        if not lab:
+            return Response({"error": "Not found"}, status=404)
+        data = request.data
+        for field in ("name", "batch", "section", "is_active"):
+            if field in data:
+                setattr(lab, field, data[field])
+        if "start_date" in data:
+            lab.start_date = _parse_dt(data["start_date"]) or lab.start_date
+        if "end_date" in data:
+            lab.end_date = _parse_dt(data["end_date"]) or lab.end_date
+        if "staff_in_charge_id" in data:
+            sic_id = data["staff_in_charge_id"]
+            if sic_id:
+                try:
+                    lab.staff_in_charge = StaffProfile.objects.get(id=sic_id, department=staff.department)
+                except StaffProfile.DoesNotExist:
+                    return Response({"error": "Staff not found"}, status=400)
+            else:
+                lab.staff_in_charge = None
+        lab.save()
+        return Response(_serialize_lab_v2(lab))
+
+    def delete(self, request, lab_id):
+        staff = _staff_from_request(request)
+        lab = self._get(lab_id, staff)
+        if not lab:
+            return Response({"error": "Not found"}, status=404)
+        lab.delete()
+        return Response(status=204)
+
+
+class StaffLabListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        staff = _staff_from_request(request)
+        labs = Lab.objects.filter(staff_in_charge=staff).select_related(
+            "created_by"
+        ).prefetch_related("exercises")
+        return Response([_serialize_lab_v2(lab) for lab in labs])
+
+
+class StaffLabExercisesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_lab(self, lab_id, staff):
+        try:
+            return Lab.objects.get(id=lab_id, staff_in_charge=staff)
+        except Lab.DoesNotExist:
+            return None
+
+    def get(self, request, lab_id):
+        staff = _staff_from_request(request)
+        lab = self._get_lab(lab_id, staff)
+        if not lab:
+            return Response({"error": "Not found"}, status=404)
+        exercises = lab.exercises.select_related("added_by").annotate(
+            submission_count=Count("submissions")
+        )
+        return Response({
+            "lab": _serialize_lab_v2(lab),
+            "exercises": [_serialize_exercise(e) for e in exercises],
+        })
+
+    def post(self, request, lab_id):
+        staff = _staff_from_request(request)
+        lab = self._get_lab(lab_id, staff)
+        if not lab:
+            return Response({"error": "Not found"}, status=404)
+        data = request.data
+        exercise = LabExercise.objects.create(
+            lab=lab,
+            title=data["title"],
+            description=data.get("description", ""),
+            order=data.get("order", lab.exercises.count()),
+            added_by=staff,
+        )
+        return Response(_serialize_exercise(exercise), status=201)
+
+
+class StaffExerciseDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_ex(self, lab_id, exercise_id, staff):
+        try:
+            return LabExercise.objects.get(
+                id=exercise_id, lab_id=lab_id, lab__staff_in_charge=staff
+            )
+        except LabExercise.DoesNotExist:
+            return None
+
+    def put(self, request, lab_id, exercise_id):
+        staff = _staff_from_request(request)
+        ex = self._get_ex(lab_id, exercise_id, staff)
+        if not ex:
+            return Response({"error": "Not found"}, status=404)
+        for field in ("title", "description", "order"):
+            if field in request.data:
+                setattr(ex, field, request.data[field])
+        ex.save()
+        return Response(_serialize_exercise(ex))
+
+    def delete(self, request, lab_id, exercise_id):
+        staff = _staff_from_request(request)
+        ex = self._get_ex(lab_id, exercise_id, staff)
+        if not ex:
+            return Response({"error": "Not found"}, status=404)
+        ex.delete()
+        return Response(status=204)
+
+
+class StaffLabStudentsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, lab_id):
+        staff = _staff_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id, staff_in_charge=staff)
+        except Lab.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        exercises = list(lab.exercises.order_by("order", "created_at"))
+        student_qs = StudentProfile.objects.filter(
+            department=lab.department, batch=lab.batch
+        )
+        if lab.section:
+            student_qs = student_qs.filter(section=lab.section)
+        students = list(student_qs.order_by("name"))
+
+        subs = LabExerciseSubmission.objects.filter(exercise__lab=lab).select_related("student", "exercise")
+        sub_map = {(s.student_id, s.exercise_id): s for s in subs}
+
+        student_rows = []
+        for student in students:
+            ex_status = []
+            for ex in exercises:
+                sub = sub_map.get((student.id, ex.id))
+                ex_status.append({
+                    "exercise_id": ex.id,
+                    "completed": sub is not None,
+                    "submitted_at": sub.submitted_at.isoformat() if sub else None,
+                    "language": sub.language if sub else None,
+                })
+            done = sum(1 for s in ex_status if s["completed"])
+            student_rows.append({
+                "student_id": student.id,
+                "student_name": student.name,
+                "register_number": student.register_number or "",
+                "section": student.section or "",
+                "exercises": ex_status,
+                "completed": done,
+                "total": len(exercises),
+            })
+
+        return Response({
+            "lab": _serialize_lab_v2(lab),
+            "exercises": [{"id": e.id, "title": e.title} for e in exercises],
+            "students": student_rows,
+        })
+
+
+class StudentLabListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        student = _student_from_request(request)
+        labs = Lab.objects.filter(
+            department=student.department, batch=student.batch, is_active=True
+        )
+        if student.section:
+            labs = labs.filter(Q(section="") | Q(section=student.section))
+        labs = labs.select_related("staff_in_charge").prefetch_related("exercises")
+        return Response([_serialize_lab_v2(lab, student=student) for lab in labs])
+
+
+class StudentLabExercisesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, lab_id):
+        student = _student_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id, department=student.department, batch=student.batch, is_active=True)
+        except Lab.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+        exercises = lab.exercises.all()
+        sub_map = {
+            s.exercise_id: s
+            for s in LabExerciseSubmission.objects.filter(exercise__lab=lab, student=student)
+        }
+        ex_data = []
+        for ex in exercises:
+            sub = sub_map.get(ex.id)
+            ex_data.append({
+                "id": ex.id,
+                "title": ex.title,
+                "description": ex.description,
+                "order": ex.order,
+                "submitted": sub is not None,
+                "submitted_at": sub.submitted_at.isoformat() if sub else None,
+                "code": sub.code if sub else "",
+                "language": sub.language if sub else "",
+            })
+        return Response({"lab": _serialize_lab_v2(lab, student=student), "exercises": ex_data})
+
+
+class StudentExerciseSubmitView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id, exercise_id):
+        student = _student_from_request(request)
+        try:
+            exercise = LabExercise.objects.get(
+                id=exercise_id, lab_id=lab_id,
+                lab__department=student.department, lab__batch=student.batch
+            )
+        except LabExercise.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+        data = request.data
+        sub, created = LabExerciseSubmission.objects.update_or_create(
+            exercise=exercise, student=student,
+            defaults={"code": data.get("code", ""), "language": data.get("language", "")},
+        )
+        return Response({
+            "submitted": True,
+            "submitted_at": sub.submitted_at.isoformat(),
+        }, status=201 if created else 200)
+
+
+# ── HOD Staff Management ──────────────────────────────────────────────────────
+
+class HODManageStaffView(APIView):
+    """HOD: add new staff member to own department."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        hod = _staff_from_request(request)
+        if not hod or hod.role not in ("hod", "admin"):
+            return Response({"error": "HOD access required"}, status=403)
+        if not hod.department or not hod.institution:
+            return Response({"error": "HOD has no department assigned"}, status=400)
+
+        data = request.data
+        faculty_id = (data.get("faculty_id") or "").strip()
+        name = (data.get("name") or "").strip()
+        role = data.get("role", "staff")
+        password = (data.get("password") or "").strip()
+
+        if not faculty_id:
+            return Response({"error": "Faculty ID is required"}, status=400)
+        if not name:
+            return Response({"error": "Name is required"}, status=400)
+        if role not in ("staff", "hod", "tpu", "ja"):
+            role = "staff"
+
+        if StaffProfile.objects.filter(faculty_id=faculty_id).exists():
+            return Response({"error": "A staff member with this Faculty ID already exists."}, status=400)
+
+        staff = StaffProfile.objects.create(
+            faculty_id=faculty_id,
+            name=name,
+            role=role,
+            department=hod.department,
+            institution=hod.institution,
+            is_active=True,
+            password=password,
+        )
+        return Response({
+            "faculty_id": staff.faculty_id,
+            "name": staff.name,
+            "role": staff.role,
+            "role_display": staff.get_role_display(),
+            "is_active": staff.is_active,
+        }, status=201)
+
+
+class HODManageStaffDetailView(APIView):
+    """HOD: edit a staff member in own department."""
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, faculty_id):
+        hod = _staff_from_request(request)
+        if not hod or hod.role not in ("hod", "admin"):
+            return Response({"error": "HOD access required"}, status=403)
+
+        try:
+            target = StaffProfile.objects.get(faculty_id=faculty_id, department=hod.department)
+        except StaffProfile.DoesNotExist:
+            return Response({"error": "Staff not found in your department"}, status=404)
+
+        data = request.data
+        name = (data.get("name") or "").strip()
+        if name:
+            target.name = name
+        if "role" in data and data["role"] in ("staff", "hod", "tpu", "ja"):
+            target.role = data["role"]
+        if "is_active" in data:
+            target.is_active = bool(data["is_active"])
+        pw = (data.get("password") or "").strip()
+        if pw:
+            target.password = pw
+
+        target.save()
+        return Response({
+            "faculty_id": target.faculty_id,
+            "name": target.name,
+            "role": target.role,
+            "role_display": target.get_role_display(),
+            "is_active": target.is_active,
         })

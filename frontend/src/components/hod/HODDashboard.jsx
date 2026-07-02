@@ -2,17 +2,20 @@
 // Features: Manage staff, view department analytics, approve requests
 
 import { useState, useEffect } from 'react';
-import { 
-  Users, Trophy, BookOpen, BarChart3, Search, Filter, ChevronRight, 
+import {
+  Users, Trophy, BookOpen, BarChart3, Search, Filter, ChevronRight,
   Settings, Bell, MoreVertical, ExternalLink, Shield, ShieldOff,
   UserPlus, Check, X, FileText, Briefcase, Layout, UserCheck, Building2,
-  Calendar, Lock, Unlock, CheckCircle, BarChart, XCircle, Activity, Brain, MessageSquare
+  Calendar, Lock, Unlock, CheckCircle, BarChart, XCircle, Activity, Brain, MessageSquare,
+  Pencil, Plus, Eye, EyeOff
 } from 'lucide-react';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import { getCsrfToken } from '../../lib/appUtils';
 import ContestApprovalPanel from './ContestApprovalPanel';
 import ContestDetailModal from '../common/ContestDetailModal';
 import DiscussPage from '../student/pages/DiscussPage';
+import HODLabCenter from './HODLabCenter';
+import { FlaskConical } from 'lucide-react';
 
 
 
@@ -24,6 +27,7 @@ const HODDashboard = ({ institutionId }) => {
     { id: 'students', label: 'Student Directory', icon: UserCheck },
     { id: 'batches', label: 'Batch Analytics', icon: Building2 },
     { id: 'contests', label: 'Contest Center', icon: Layout },
+    { id: 'labs', label: 'Lab Center', icon: FlaskConical },
     { id: 'discuss', label: 'Discuss', icon: MessageSquare },
   ];
 
@@ -63,6 +67,13 @@ const HODDashboard = ({ institutionId }) => {
   const [unreadDiscussCount, setUnreadDiscussCount] = useState(0);
   const [departments, setDepartments] = useState([]);
   const [selectedDeptId, setSelectedDeptId] = useState(null);
+
+  // Staff add/edit form state
+  const [staffForm, setStaffForm] = useState(null); // null=closed, "add"=new, {faculty_id,...}=editing
+  const [staffFormData, setStaffFormData] = useState({ faculty_id: '', name: '', role: 'staff', password: '' });
+  const [staffFormBusy, setStaffFormBusy] = useState(false);
+  const [staffFormErr, setStaffFormErr] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   const [confirmState, setConfirmState] = useState({ show: false, m1: '', m2: '', onConfirm: null, firstOk: false });
 
@@ -341,6 +352,69 @@ const HODDashboard = ({ institutionId }) => {
   function closeStudentDetail() {
     setSelectedStudent(null);
     setStudentDetail(null);
+  }
+
+  function openAddStaff() {
+    setStaffFormData({ faculty_id: '', name: '', role: 'staff', password: '' });
+    setStaffFormErr('');
+    setShowPassword(false);
+    setStaffForm('add');
+  }
+
+  function openEditStaff(staff) {
+    setStaffFormData({ faculty_id: staff.faculty_id, name: staff.name, role: staff.role || 'staff', password: '' });
+    setStaffFormErr('');
+    setShowPassword(false);
+    setStaffForm(staff);
+  }
+
+  function closeStaffForm() {
+    setStaffForm(null);
+    setStaffFormErr('');
+    setStaffFormBusy(false);
+  }
+
+  async function submitStaffForm() {
+    const isAdding = staffForm === 'add';
+    const { faculty_id, name, role, password } = staffFormData;
+    if (!faculty_id.trim()) { setStaffFormErr('Faculty ID is required'); return; }
+    if (!name.trim()) { setStaffFormErr('Name is required'); return; }
+    setStaffFormBusy(true);
+    setStaffFormErr('');
+    try {
+      const csrfToken = getCsrfToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+      const body = isAdding
+        ? { faculty_id: faculty_id.trim(), name: name.trim(), role, password: password.trim() }
+        : { name: name.trim(), role, ...(password.trim() ? { password: password.trim() } : {}) };
+      const url = isAdding ? '/api/hod/staff/' : `/api/hod/staff/${staffForm.faculty_id}/`;
+      const res = await fetch(url, {
+        method: isAdding ? 'POST' : 'PUT',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStaffFormErr(data.error || 'Failed to save');
+        setStaffFormBusy(false);
+        return;
+      }
+      // Update local staffList
+      if (isAdding) {
+        setStaffList(prev => [...prev, { ...data, department_id: prev[0]?.department_id }]);
+      } else {
+        setStaffList(prev => prev.map(s => s.faculty_id === data.faculty_id ? { ...s, ...data } : s));
+        if (staffDetail && staffDetail.staff?.faculty_id === data.faculty_id) {
+          setStaffDetail(prev => ({ ...prev, staff: { ...prev.staff, ...data } }));
+        }
+      }
+      closeStaffForm();
+    } catch {
+      setStaffFormErr('Network error. Please try again.');
+      setStaffFormBusy(false);
+    }
   }
 
   if (!institutionId) {
@@ -803,8 +877,21 @@ const HODDashboard = ({ institutionId }) => {
                       Oversee and manage faculty access for {department?.name || 'your department'}.
                     </p>
                   </div>
-                  <div style={{ padding: '8px 16px', background: 'var(--bg-2)', borderRadius: '12px', fontSize: '13px', fontWeight: '600', color: 'var(--olive-700)' }}>
-                    {staffList.length} Total Members
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    <div style={{ padding: '8px 16px', background: 'var(--bg-2)', borderRadius: '12px', fontSize: '13px', fontWeight: '600', color: 'var(--olive-700)' }}>
+                      {staffList.length} Total Members
+                    </div>
+                    <button
+                      onClick={openAddStaff}
+                      style={{
+                        padding: '8px 18px', borderRadius: '12px', border: 'none',
+                        background: 'var(--olive-900)', color: 'white',
+                        fontSize: '13px', fontWeight: '700', cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 6,
+                      }}
+                    >
+                      <Plus size={15} /> Add Staff
+                    </button>
                   </div>
                 </div>
 
@@ -862,7 +949,7 @@ const HODDashboard = ({ institutionId }) => {
                           </div>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           {staff.role !== 'hod' && staff.role !== 'admin' && (
                             <button
                               onClick={(e) => {
@@ -870,7 +957,7 @@ const HODDashboard = ({ institutionId }) => {
                                 handleStaffLockToggle(staff.faculty_id, staff.is_active);
                               }}
                               style={{
-                                padding: '8px 16px',
+                                padding: '8px 14px',
                                 borderRadius: '10px',
                                 border: 'none',
                                 background: staff.is_active === false ? '#10b981' : '#ef4444',
@@ -885,15 +972,28 @@ const HODDashboard = ({ institutionId }) => {
                               }}
                             >
                               {staff.is_active === false ? <Unlock size={14} /> : <Lock size={14} />}
-                              {staff.is_active === false ? 'Unlock Access' : 'Lock Access'}
+                              {staff.is_active === false ? 'Unlock' : 'Lock'}
                             </button>
                           )}
-                          
-                          <button 
+
+                          <button
+                            onClick={(e) => { e.stopPropagation(); openEditStaff(staff); }}
+                            title="Edit staff details"
+                            style={{
+                              padding: '8px 14px', borderRadius: '10px', border: '1px solid var(--border-soft)',
+                              background: 'white', color: 'var(--olive-700)', fontSize: '12px',
+                              fontWeight: '600', cursor: 'pointer',
+                              display: 'flex', alignItems: 'center', gap: 6,
+                            }}
+                          >
+                            <Pencil size={13} /> Edit
+                          </button>
+
+                          <button
                             onClick={() => handleStaffClick(staff.faculty_id)}
-                            style={{ 
-                              padding: '8px', borderRadius: '10px', 
-                              background: 'var(--bg-2)', border: 'none', 
+                            style={{
+                              padding: '8px', borderRadius: '10px',
+                              background: 'var(--bg-2)', border: 'none',
                               color: 'var(--olive-700)', cursor: 'pointer',
                               display: 'flex', alignItems: 'center', justifyContent: 'center'
                             }}
@@ -905,6 +1005,184 @@ const HODDashboard = ({ institutionId }) => {
                     ))}
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Staff Add / Edit Drawer */}
+          {staffForm !== null && (
+            <div
+              style={{
+                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                zIndex: 1100, padding: 20,
+              }}
+              onClick={closeStaffForm}
+            >
+              <div
+                style={{
+                  background: 'white', borderRadius: 20, width: '100%', maxWidth: 480,
+                  boxShadow: '0 24px 64px rgba(0,0,0,0.18)',
+                  padding: 32, position: 'relative',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Header */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-hard)' }}>
+                      {staffForm === 'add' ? 'Add New Staff' : 'Edit Staff Details'}
+                    </h3>
+                    <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--text-soft)' }}>
+                      {staffForm === 'add' ? 'Add a faculty member to your department' : `Editing: ${staffForm.faculty_id}`}
+                    </p>
+                  </div>
+                  <button
+                    onClick={closeStaffForm}
+                    style={{ width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'var(--bg-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <X size={16} color="var(--text-hard)" />
+                  </button>
+                </div>
+
+                {/* Form fields */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  {/* Faculty ID — only when adding */}
+                  {staffForm === 'add' && (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: 'var(--text-soft)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Faculty ID *
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. F001 or EMP123"
+                        value={staffFormData.faculty_id}
+                        onChange={(e) => setStaffFormData(d => ({ ...d, faculty_id: e.target.value }))}
+                        style={{
+                          width: '100%', padding: '10px 14px', borderRadius: 10,
+                          border: '1.5px solid var(--border-soft)', fontSize: '14px',
+                          fontWeight: '500', outline: 'none', boxSizing: 'border-box',
+                          background: 'var(--bg-1)', color: 'var(--text-hard)',
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Full Name */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: 'var(--text-soft)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Full Name *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Dr. John Smith"
+                      value={staffFormData.name}
+                      onChange={(e) => setStaffFormData(d => ({ ...d, name: e.target.value }))}
+                      style={{
+                        width: '100%', padding: '10px 14px', borderRadius: 10,
+                        border: '1.5px solid var(--border-soft)', fontSize: '14px',
+                        fontWeight: '500', outline: 'none', boxSizing: 'border-box',
+                        background: 'var(--bg-1)', color: 'var(--text-hard)',
+                      }}
+                    />
+                  </div>
+
+                  {/* Role */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: 'var(--text-soft)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Role
+                    </label>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      {[{ value: 'staff', label: 'Staff' }, { value: 'hod', label: 'Head of Department' }].map(({ value, label }) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => setStaffFormData(d => ({ ...d, role: value }))}
+                          style={{
+                            padding: '7px 16px', borderRadius: 10, fontSize: '13px', fontWeight: '600',
+                            cursor: 'pointer', border: '1.5px solid',
+                            borderColor: staffFormData.role === value ? 'var(--olive-700)' : 'var(--border-soft)',
+                            background: staffFormData.role === value ? 'var(--olive-900)' : 'white',
+                            color: staffFormData.role === value ? 'white' : 'var(--text-soft)',
+                            transition: 'all 0.15s',
+                          }}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Password */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: 'var(--text-soft)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      {staffForm === 'add' ? 'Initial Password' : 'Reset Password'}{staffForm === 'add' ? ' (optional)' : ' (leave blank to keep current)'}
+                    </label>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder={staffForm === 'add' ? 'Leave blank for no password set' : 'Enter new password to change'}
+                        value={staffFormData.password}
+                        onChange={(e) => setStaffFormData(d => ({ ...d, password: e.target.value }))}
+                        style={{
+                          width: '100%', padding: '10px 40px 10px 14px', borderRadius: 10,
+                          border: '1.5px solid var(--border-soft)', fontSize: '14px',
+                          fontWeight: '500', outline: 'none', boxSizing: 'border-box',
+                          background: 'var(--bg-1)', color: 'var(--text-hard)',
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(v => !v)}
+                        style={{
+                          position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+                          background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)',
+                          display: 'flex', alignItems: 'center',
+                        }}
+                      >
+                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Error */}
+                  {staffFormErr && (
+                    <div style={{ padding: '10px 14px', background: '#fee2e2', borderRadius: 10, color: '#dc2626', fontSize: '13px', fontWeight: '600', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <XCircle size={15} /> {staffFormErr}
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                    <button
+                      type="button"
+                      onClick={closeStaffForm}
+                      style={{
+                        flex: 1, padding: '11px', borderRadius: 12, border: '1.5px solid var(--border-soft)',
+                        background: 'white', color: 'var(--text-hard)', fontSize: '14px', fontWeight: '700', cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={submitStaffForm}
+                      disabled={staffFormBusy}
+                      style={{
+                        flex: 2, padding: '11px', borderRadius: 12, border: 'none',
+                        background: staffFormBusy ? 'var(--bg-2)' : 'var(--olive-900)',
+                        color: staffFormBusy ? 'var(--text-soft)' : 'white',
+                        fontSize: '14px', fontWeight: '700', cursor: staffFormBusy ? 'not-allowed' : 'pointer',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      }}
+                    >
+                      {staffFormBusy
+                        ? (staffForm === 'add' ? 'Adding…' : 'Saving…')
+                        : (staffForm === 'add' ? <><Plus size={15} /> Add Staff</> : <><Check size={15} /> Save Changes</>)
+                      }
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1890,6 +2168,10 @@ const HODDashboard = ({ institutionId }) => {
 
         </div>
         
+        {activeTab === 'labs' && (
+          <HODLabCenter />
+        )}
+
         {activeTab === 'discuss' && (
           <div className="discuss-tab" style={{ height: 'calc(100vh - 64px)', width: '100%' }}>
             <DiscussPage

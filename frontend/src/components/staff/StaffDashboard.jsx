@@ -1,10 +1,11 @@
 // Staff Dashboard - Staff view with contests and batch-wise analytics
 import { useState, useEffect } from 'react';
-import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare, GraduationCap, UserCheck } from 'lucide-react';
+import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare, GraduationCap, UserCheck, FlaskConical } from 'lucide-react';
 import EnhancedContestCreator from './EnhancedContestCreator';
 import StudentAnalyticsModal from './StudentAnalyticsModal';
 import ContestDetailModal from '../common/ContestDetailModal';
 import DiscussPage from '../student/pages/DiscussPage';
+import StaffLabPanel from './StaffLabPanel';
 
 const StaffDashboard = ({ institutionId }) => {
   const [activeTab, setActiveTab] = useState('overview');
@@ -170,6 +171,7 @@ const StaffDashboard = ({ institutionId }) => {
     { id: 'mentor', label: 'My Mentees', icon: UserCheck },
     { id: 'advisor', label: 'Class Advisor', icon: GraduationCap },
     { id: 'reports', label: 'Reports', icon: FileText },
+    { id: 'labs', label: 'Lab', icon: FlaskConical },
     { id: 'chat', label: 'Discuss', icon: MessageSquare },
   ];
 
@@ -1246,6 +1248,13 @@ const StaffDashboard = ({ institutionId }) => {
         {activeTab === 'advisor' && (
           <div className="tab-container">
             <StaffAdvisorTab />
+          </div>
+        )}
+
+        {/* Lab Submissions Tab */}
+        {activeTab === 'labs' && (
+          <div className="tab-container">
+            <StaffLabPanel />
           </div>
         )}
       </main>

@@ -14,9 +14,8 @@ loader.config({ monaco });
 // Popular programming languages only
 const POPULAR_LANGUAGES = [
   "C",
-  "C++", 
+  "C++",
   "Java",
-  "JavaScript",
   "Python",
 ];
 
@@ -24,7 +23,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
   const [problem, setProblem] = useState(null);
   const [contest, setContest] = useState(null);
   const [code, setCode] = useState('');
-  const [language, setLanguage] = useState('JavaScript');
+  const [language, setLanguage] = useState('Python');
   const [output, setOutput] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
