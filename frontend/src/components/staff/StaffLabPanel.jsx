@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
+import * as XLSX from "xlsx";
 import { getCsrfToken } from "../../lib/appUtils";
 import {
   FlaskConical, ChevronLeft, Plus, Users, Calendar, BookOpen,
   CheckCircle2, Circle, Pencil, Trash2, X, Save, Clock, UserCheck,
-  Search, TrendingUp, Upload, Download, AlertTriangle,
+  Search, TrendingUp, Upload, Download, AlertTriangle, Loader2,
 } from "lucide-react";
 
 function apiFetch(url, method, body) {
@@ -218,23 +219,59 @@ function downloadBulkTemplate() {
 
 // Converts parsed CSV rows into {title, description} payloads, reusing the
 // same compileDescription() format the manual Add-Exercise form produces.
+// Spreadsheet cells can come back as numbers, booleans, undefined, etc.
+// (especially from XLSX) — always coerce to a trimmed string before use.
+function cellStr(row, idx) {
+  if (idx === -1 || !row) return "";
+  const v = row[idx];
+  return v === undefined || v === null ? "" : String(v).trim();
+}
+
+// Header cells are matched loosely so a staff member's own spreadsheet (not
+// necessarily downloaded from the template) still works: underscores/hyphens
+// are treated as spaces, and each logical column accepts common synonyms.
+function normalizeHeader(h) {
+  return String(h ?? "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+}
+
+const COLUMN_ALIASES = {
+  title: ["title", "exercise title", "name", "problem title"],
+  problem_statement: ["problem statement", "description", "statement", "question", "problem"],
+  example_input: ["example input", "sample input", "input"],
+  example_output: ["example output", "sample output", "output"],
+  example_explanation: ["example explanation", "explanation"],
+  constraints: ["constraints", "constraint"],
+  difficulty: ["difficulty", "level"],
+  hint: ["hint", "hints"],
+};
+
+function findColumn(header, key) {
+  for (const alias of COLUMN_ALIASES[key]) {
+    const idx = header.indexOf(alias);
+    if (idx !== -1) return idx;
+  }
+  return -1;
+}
+
 function rowsToExercises(rows) {
-  if (!rows.length) return { exercises: [], errors: [] };
-  const header = rows[0].map((h) => h.trim().toLowerCase());
-  const col = (name) => header.indexOf(name);
-  const iTitle = col("title");
-  const iProblem = col("problem_statement");
-  const iExIn = col("example_input");
-  const iExOut = col("example_output");
-  const iExExp = col("example_explanation");
-  const iConstraints = col("constraints");
-  const iDifficulty = col("difficulty");
-  const iHint = col("hint");
+  if (!rows.length) {
+    return { exercises: [], errors: [], headerError: "This file has no rows." };
+  }
+  const header = rows[0].map(normalizeHeader);
+  const iTitle = findColumn(header, "title");
+  const iProblem = findColumn(header, "problem_statement");
+  const iExIn = findColumn(header, "example_input");
+  const iExOut = findColumn(header, "example_output");
+  const iExExp = findColumn(header, "example_explanation");
+  const iConstraints = findColumn(header, "constraints");
+  const iDifficulty = findColumn(header, "difficulty");
+  const iHint = findColumn(header, "hint");
 
   if (iTitle === -1 || iProblem === -1) {
     return {
       exercises: [],
-      errors: [{ row: 1, error: "Header row must include 'title' and 'problem_statement' columns" }],
+      errors: [],
+      headerError: "Couldn't find a title/problem-statement column in the header row. Download the template to see the expected format.",
     };
   }
 
@@ -242,32 +279,56 @@ function rowsToExercises(rows) {
   const errors = [];
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
-    const title = (row[iTitle] || "").trim();
-    const problem = (row[iProblem] || "").trim();
+    const title = cellStr(row, iTitle);
+    const problem = cellStr(row, iProblem);
     if (!title && !problem) continue; // blank row
     if (!title) { errors.push({ row: r + 1, error: "Missing title" }); continue; }
     if (!problem) { errors.push({ row: r + 1, error: "Missing problem statement" }); continue; }
 
-    const constraints = (iConstraints !== -1 ? row[iConstraints] || "" : "")
-      .split(";").map((c) => c.trim()).filter(Boolean);
-    const difficultyRaw = (iDifficulty !== -1 ? row[iDifficulty] || "" : "").trim();
+    const constraints = cellStr(row, iConstraints).split(";").map((c) => c.trim()).filter(Boolean);
+    const difficultyRaw = cellStr(row, iDifficulty);
     const difficulty = ["Easy", "Medium", "Hard"].includes(difficultyRaw) ? difficultyRaw : "Medium";
 
     const fields = {
       problem,
       examples: [{
-        input: iExIn !== -1 ? row[iExIn] || "" : "",
-        output: iExOut !== -1 ? row[iExOut] || "" : "",
-        explanation: iExExp !== -1 ? row[iExExp] || "" : "",
+        input: cellStr(row, iExIn),
+        output: cellStr(row, iExOut),
+        explanation: cellStr(row, iExExp),
       }],
       constraints: constraints.length ? constraints : [""],
       difficulty,
-      hint: (iHint !== -1 ? row[iHint] || "" : "").trim(),
+      hint: cellStr(row, iHint),
     };
 
     exercises.push({ title, description: compileDescription(fields) });
   }
-  return { exercises, errors };
+  return { exercises, errors, headerError: null };
+}
+
+// Parses a File (.csv or .xlsx/.xls) into a 2D array of cell strings.
+function parseSpreadsheetFile(file) {
+  const isExcel = /\.xlsx?$/i.test(file.name);
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Could not read the file."));
+    if (isExcel) {
+      reader.onload = () => {
+        try {
+          const workbook = XLSX.read(reader.result, { type: "array" });
+          const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, blankrows: false, defval: "" });
+          resolve(rows);
+        } catch {
+          reject(new Error("Could not parse this Excel file. Make sure it's a valid .xlsx/.xls workbook."));
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.onload = () => resolve(parseCsv(String(reader.result ?? "")));
+      reader.readAsText(file);
+    }
+  });
 }
 
 // ─── Add / Edit exercise form ─────────────────────────────────────────────────
@@ -421,28 +482,34 @@ function BulkImportModal({ labId, onImported, onClose }) {
   const [fileName, setFileName] = useState("");
   const [parsed, setParsed] = useState([]);
   const [parseErrors, setParseErrors] = useState([]);
+  const [headerError, setHeaderError] = useState("");
+  const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [resultMsg, setResultMsg] = useState("");
 
-  function handleFile(e) {
+  async function handleFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
-    setErr(""); setResultMsg(""); setParsed([]); setParseErrors([]);
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const rows = parseCsv(String(reader.result ?? ""));
-      const { exercises, errors } = rowsToExercises(rows);
-      setParsed(exercises);
-      setParseErrors(errors);
-      if (!exercises.length && !errors.length) {
-        setErr("No exercise rows found in this file.");
+    setErr(""); setResultMsg(""); setParsed([]); setParseErrors([]); setHeaderError("");
+    setReading(true);
+    try {
+      const rows = await parseSpreadsheetFile(file);
+      const { exercises, errors, headerError: hdrErr } = rowsToExercises(rows);
+      if (hdrErr) {
+        setHeaderError(hdrErr);
+      } else if (!exercises.length) {
+        setErr("No exercise rows found in this file — check that rows below the header aren't all blank.");
+      } else {
+        setParsed(exercises);
+        setParseErrors(errors);
       }
-    };
-    reader.onerror = () => setErr("Could not read the file.");
-    reader.readAsText(file);
+    } catch (parseErr) {
+      setErr(parseErr.message || "Could not read this file.");
+    } finally {
+      setReading(false);
+    }
   }
 
   async function doImport() {
@@ -451,14 +518,15 @@ function BulkImportModal({ labId, onImported, onClose }) {
     try {
       const res = await apiFetch(`/api/lab/v2/${labId}/exercises/bulk/`, "POST", { exercises: parsed });
       const data = await res.json();
-      if (!res.ok) { setErr(data.error || "Import failed"); return; }
+      if (!res.ok) { setErr(data.error || "Import failed — please try again."); return; }
       setResultMsg(
-        `Imported ${data.created_count} exercise${data.created_count !== 1 ? "s" : ""}` +
+        `Success — imported ${data.created_count} exercise${data.created_count !== 1 ? "s" : ""}` +
         (data.skipped_count ? `, skipped ${data.skipped_count} invalid row${data.skipped_count !== 1 ? "s" : ""}.` : ".")
       );
       onImported(data.created);
       setParsed([]);
-    } catch { setErr("Network error"); }
+      setFileName("");
+    } catch { setErr("Network error — check your connection and try again."); }
     finally { setBusy(false); }
   }
 
@@ -472,7 +540,8 @@ function BulkImportModal({ labId, onImported, onClose }) {
         </div>
 
         <p className="slp2-bulk-desc">
-          Download the CSV template, fill in one row per exercise, then upload it here.
+          Download the template, fill in one row per exercise, then upload it here.
+          CSV and Excel (.xlsx / .xls) files are both accepted.
           Separate multiple constraints in a cell with a semicolon ( ; ).
         </p>
 
@@ -481,10 +550,18 @@ function BulkImportModal({ labId, onImported, onClose }) {
         </button>
 
         <label className="slp2-bulk-upload-label">
-          <Upload size={14} />
-          {fileName || "Choose CSV file…"}
-          <input type="file" accept=".csv,text/csv" onChange={handleFile} hidden />
+          {reading ? <Loader2 size={14} className="slp2-spin" /> : <Upload size={14} />}
+          {reading ? "Reading file…" : fileName || "Choose a CSV or Excel file…"}
+          <input type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            onChange={handleFile} disabled={reading} hidden />
         </label>
+
+        {headerError && (
+          <div className="slp2-bulk-warnings error">
+            <AlertTriangle size={13} />
+            <span>{headerError}</span>
+          </div>
+        )}
 
         {parseErrors.length > 0 && (
           <div className="slp2-bulk-warnings">
@@ -499,7 +576,9 @@ function BulkImportModal({ labId, onImported, onClose }) {
 
         {parsed.length > 0 && (
           <div className="slp2-bulk-preview">
-            <div className="slp2-bulk-preview-hdr">{parsed.length} exercise{parsed.length !== 1 ? "s" : ""} ready to import</div>
+            <div className="slp2-bulk-preview-hdr">
+              <CheckCircle2 size={13} /> {parsed.length} exercise{parsed.length !== 1 ? "s" : ""} parsed and ready to import
+            </div>
             <div className="slp2-bulk-preview-list">
               {parsed.slice(0, 8).map((ex, i) => (
                 <div key={i} className="slp2-bulk-preview-row">{i + 1}. {ex.title}</div>
@@ -514,7 +593,7 @@ function BulkImportModal({ labId, onImported, onClose }) {
 
         <div className="slp2-form-actions">
           <button type="button" className="slp2-btn-ghost" onClick={onClose}>Close</button>
-          <button type="button" className="slp2-btn-primary" onClick={doImport} disabled={busy || !parsed.length}>
+          <button type="button" className="slp2-btn-primary" onClick={doImport} disabled={busy || reading || !parsed.length}>
             <Save size={14} /> {busy ? "Importing…" : `Import ${parsed.length || ""} Exercise${parsed.length === 1 ? "" : "s"}`}
           </button>
         </div>
