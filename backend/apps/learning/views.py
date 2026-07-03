@@ -1123,6 +1123,29 @@ class HealthCheckView(APIView):
                 payload["test_exec"] = {"language": test_lang, "elapsed_s": round(time.time() - start, 2), "result": result}
             except Exception as exc:
                 payload["test_exec"] = {"language": test_lang, "elapsed_s": round(time.time() - start, 2), "error": f"{type(exc).__name__}: {exc}"}
+        # Exercises the FUNCTION-style driver-injection path (prepare_execution_payload)
+        # that a typical Problems-page submission goes through — the plain test_exec
+        # above only covers raw stdin-style code and skips this entirely.
+        if request.query_params.get("test_driver") == "c":
+            import time
+            from types import SimpleNamespace
+            from .services.executor import execute_submission
+            from .services.execution_adapter import prepare_execution_payload
+            fake_problem = SimpleNamespace(execution_type="auto", slug="add-two-numbers", function_name="addTwoNumbers")
+            source = "int addTwoNumbers(int a, int b) {\n    return a + b;\n}"
+            start = time.time()
+            try:
+                prepared = prepare_execution_payload(problem=fake_problem, source_code=source, language="C", stdin="2\n3")
+                result = execute_submission(source_code=prepared["source_code"], language_id=50, stdin=prepared["stdin"])
+                payload["test_driver"] = {
+                    "elapsed_s": round(time.time() - start, 2),
+                    "prepared_stdin": prepared["stdin"],
+                    "adapted": prepared["adapted"],
+                    "generated_source": prepared["source_code"][:3000],
+                    "result": result,
+                }
+            except Exception as exc:
+                payload["test_driver"] = {"elapsed_s": round(time.time() - start, 2), "error": f"{type(exc).__name__}: {exc}"}
         return Response(payload)
 
 
