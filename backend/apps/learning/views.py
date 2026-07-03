@@ -6,7 +6,7 @@ from io import BytesIO
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum, Avg, Max, Max
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
@@ -10405,6 +10405,59 @@ class StaffLabExercisesView(APIView):
             added_by=staff,
         )
         return Response(_serialize_exercise(exercise), status=201)
+
+
+class StaffLabExercisesBulkView(APIView):
+    """Bulk-create exercises for a Lab from a staff-uploaded CSV template."""
+    permission_classes = [IsAuthenticated]
+
+    def _get_lab(self, lab_id, staff):
+        try:
+            return Lab.objects.get(id=lab_id, staff_in_charge=staff)
+        except Lab.DoesNotExist:
+            return None
+
+    def post(self, request, lab_id):
+        staff = _staff_from_request(request)
+        lab = self._get_lab(lab_id, staff)
+        if not lab:
+            return Response({"error": "Not found"}, status=404)
+
+        rows = request.data.get("exercises")
+        if not isinstance(rows, list) or not rows:
+            return Response({"error": "No exercises provided"}, status=400)
+        if len(rows) > 500:
+            return Response({"error": "Cannot import more than 500 exercises at once"}, status=400)
+
+        errors = []
+        to_create = []
+        next_order = lab.exercises.count()
+        for idx, row in enumerate(rows):
+            title = (row.get("title") or "").strip()
+            if not title:
+                errors.append({"row": idx + 1, "error": "Title is required"})
+                continue
+            to_create.append(LabExercise(
+                lab=lab,
+                title=title[:200],
+                description=row.get("description") or "",
+                order=row.get("order") if isinstance(row.get("order"), int) else next_order,
+                added_by=staff,
+            ))
+            next_order += 1
+
+        if not to_create:
+            return Response({"error": "No valid exercises to import", "errors": errors}, status=400)
+
+        with transaction.atomic():
+            created = LabExercise.objects.bulk_create(to_create)
+
+        return Response({
+            "created": [_serialize_exercise(e) for e in created],
+            "created_count": len(created),
+            "skipped_count": len(errors),
+            "errors": errors,
+        }, status=201)
 
 
 class StaffExerciseDetailView(APIView):

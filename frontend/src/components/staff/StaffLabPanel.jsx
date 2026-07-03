@@ -3,7 +3,7 @@ import { getCsrfToken } from "../../lib/appUtils";
 import {
   FlaskConical, ChevronLeft, Plus, Users, Calendar, BookOpen,
   CheckCircle2, Circle, Pencil, Trash2, X, Save, Clock, UserCheck,
-  Search, TrendingUp,
+  Search, TrendingUp, Upload, Download, AlertTriangle,
 } from "lucide-react";
 
 function apiFetch(url, method, body) {
@@ -149,6 +149,125 @@ function parseDescription(text) {
   if (!result.examples.length) result.examples = [{ input: "", output: "", explanation: "" }];
   if (!result.constraints.length) result.constraints = [""];
   return result;
+}
+
+// ─── Bulk import (CSV) helpers ────────────────────────────────────────────────
+const BULK_HEADERS = [
+  "title", "problem_statement", "example_input", "example_output",
+  "example_explanation", "constraints", "difficulty", "hint",
+];
+
+function csvEscape(field) {
+  const s = String(field ?? "");
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function toCsv(rows) {
+  return rows.map((row) => row.map(csvEscape).join(",")).join("\r\n");
+}
+
+// Minimal RFC-4180 parser: handles quoted fields, escaped quotes, and
+// commas/newlines inside quotes (so multi-line problem statements survive).
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+      } else {
+        field += char;
+      }
+      continue;
+    }
+    if (char === '"') { inQuotes = true; continue; }
+    if (char === ',') { row.push(field); field = ""; continue; }
+    if (char === '\r') { continue; }
+    if (char === '\n') { row.push(field); rows.push(row); row = []; field = ""; continue; }
+    field += char;
+  }
+  if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+  return rows.filter((r) => !(r.length === 1 && r[0].trim() === ""));
+}
+
+function downloadBulkTemplate() {
+  const sample = [
+    "Reverse a Linked List",
+    "Write a program to reverse a singly linked list in place.",
+    "1 -> 2 -> 3 -> NULL",
+    "3 -> 2 -> 1 -> NULL",
+    "The list is reversed by relinking each node's next pointer.",
+    "1 <= n <= 1000; node values fit in a 32-bit int",
+    "Medium",
+    "Track previous, current, and next pointers as you walk the list.",
+  ];
+  const csv = toCsv([BULK_HEADERS, sample]);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "lab_exercises_template.csv";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// Converts parsed CSV rows into {title, description} payloads, reusing the
+// same compileDescription() format the manual Add-Exercise form produces.
+function rowsToExercises(rows) {
+  if (!rows.length) return { exercises: [], errors: [] };
+  const header = rows[0].map((h) => h.trim().toLowerCase());
+  const col = (name) => header.indexOf(name);
+  const iTitle = col("title");
+  const iProblem = col("problem_statement");
+  const iExIn = col("example_input");
+  const iExOut = col("example_output");
+  const iExExp = col("example_explanation");
+  const iConstraints = col("constraints");
+  const iDifficulty = col("difficulty");
+  const iHint = col("hint");
+
+  if (iTitle === -1 || iProblem === -1) {
+    return {
+      exercises: [],
+      errors: [{ row: 1, error: "Header row must include 'title' and 'problem_statement' columns" }],
+    };
+  }
+
+  const exercises = [];
+  const errors = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const title = (row[iTitle] || "").trim();
+    const problem = (row[iProblem] || "").trim();
+    if (!title && !problem) continue; // blank row
+    if (!title) { errors.push({ row: r + 1, error: "Missing title" }); continue; }
+    if (!problem) { errors.push({ row: r + 1, error: "Missing problem statement" }); continue; }
+
+    const constraints = (iConstraints !== -1 ? row[iConstraints] || "" : "")
+      .split(";").map((c) => c.trim()).filter(Boolean);
+    const difficultyRaw = (iDifficulty !== -1 ? row[iDifficulty] || "" : "").trim();
+    const difficulty = ["Easy", "Medium", "Hard"].includes(difficultyRaw) ? difficultyRaw : "Medium";
+
+    const fields = {
+      problem,
+      examples: [{
+        input: iExIn !== -1 ? row[iExIn] || "" : "",
+        output: iExOut !== -1 ? row[iExOut] || "" : "",
+        explanation: iExExp !== -1 ? row[iExExp] || "" : "",
+      }],
+      constraints: constraints.length ? constraints : [""],
+      difficulty,
+      hint: (iHint !== -1 ? row[iHint] || "" : "").trim(),
+    };
+
+    exercises.push({ title, description: compileDescription(fields) });
+  }
+  return { exercises, errors };
 }
 
 // ─── Add / Edit exercise form ─────────────────────────────────────────────────
@@ -297,6 +416,113 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
   );
 }
 
+// ─── Bulk import modal (CSV) ──────────────────────────────────────────────────
+function BulkImportModal({ labId, onImported, onClose }) {
+  const [fileName, setFileName] = useState("");
+  const [parsed, setParsed] = useState([]);
+  const [parseErrors, setParseErrors] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [resultMsg, setResultMsg] = useState("");
+
+  function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setErr(""); setResultMsg(""); setParsed([]); setParseErrors([]);
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const rows = parseCsv(String(reader.result ?? ""));
+      const { exercises, errors } = rowsToExercises(rows);
+      setParsed(exercises);
+      setParseErrors(errors);
+      if (!exercises.length && !errors.length) {
+        setErr("No exercise rows found in this file.");
+      }
+    };
+    reader.onerror = () => setErr("Could not read the file.");
+    reader.readAsText(file);
+  }
+
+  async function doImport() {
+    if (!parsed.length) return;
+    setBusy(true); setErr(""); setResultMsg("");
+    try {
+      const res = await apiFetch(`/api/lab/v2/${labId}/exercises/bulk/`, "POST", { exercises: parsed });
+      const data = await res.json();
+      if (!res.ok) { setErr(data.error || "Import failed"); return; }
+      setResultMsg(
+        `Imported ${data.created_count} exercise${data.created_count !== 1 ? "s" : ""}` +
+        (data.skipped_count ? `, skipped ${data.skipped_count} invalid row${data.skipped_count !== 1 ? "s" : ""}.` : ".")
+      );
+      onImported(data.created);
+      setParsed([]);
+    } catch { setErr("Network error"); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <>
+      <div className="hlc2-overlay" onClick={onClose} />
+      <div className="slp2-bulk-modal">
+        <div className="slp2-bulk-hdr">
+          <h3><Upload size={16} /> Bulk Import Exercises</h3>
+          <button type="button" className="slp2-icon-btn" onClick={onClose}><X size={15} /></button>
+        </div>
+
+        <p className="slp2-bulk-desc">
+          Download the CSV template, fill in one row per exercise, then upload it here.
+          Separate multiple constraints in a cell with a semicolon ( ; ).
+        </p>
+
+        <button type="button" className="slp2-btn-ghost" onClick={downloadBulkTemplate}>
+          <Download size={14} /> Download CSV Template
+        </button>
+
+        <label className="slp2-bulk-upload-label">
+          <Upload size={14} />
+          {fileName || "Choose CSV file…"}
+          <input type="file" accept=".csv,text/csv" onChange={handleFile} hidden />
+        </label>
+
+        {parseErrors.length > 0 && (
+          <div className="slp2-bulk-warnings">
+            <AlertTriangle size={13} />
+            <span>
+              {parseErrors.length} row{parseErrors.length !== 1 ? "s" : ""} will be skipped:{" "}
+              {parseErrors.slice(0, 3).map((e) => `Row ${e.row} (${e.error})`).join(", ")}
+              {parseErrors.length > 3 ? "…" : ""}
+            </span>
+          </div>
+        )}
+
+        {parsed.length > 0 && (
+          <div className="slp2-bulk-preview">
+            <div className="slp2-bulk-preview-hdr">{parsed.length} exercise{parsed.length !== 1 ? "s" : ""} ready to import</div>
+            <div className="slp2-bulk-preview-list">
+              {parsed.slice(0, 8).map((ex, i) => (
+                <div key={i} className="slp2-bulk-preview-row">{i + 1}. {ex.title}</div>
+              ))}
+              {parsed.length > 8 && <div className="slp2-bulk-preview-row">…and {parsed.length - 8} more</div>}
+            </div>
+          </div>
+        )}
+
+        {err && <p className="slp2-error">{err}</p>}
+        {resultMsg && <p className="slp2-bulk-success"><CheckCircle2 size={13} /> {resultMsg}</p>}
+
+        <div className="slp2-form-actions">
+          <button type="button" className="slp2-btn-ghost" onClick={onClose}>Close</button>
+          <button type="button" className="slp2-btn-primary" onClick={doImport} disabled={busy || !parsed.length}>
+            <Save size={14} /> {busy ? "Importing…" : `Import ${parsed.length || ""} Exercise${parsed.length === 1 ? "" : "s"}`}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Student completion table ─────────────────────────────────────────────────
 function StudentTable({ students, exercises, activeExIdx }) {
   const [search, setSearch] = useState("");
@@ -411,6 +637,7 @@ function LabDetail({ lab: initLab, onBack }) {
   const [loadingSt, setLoadingSt] = useState(true);
   const [activeEx, setActiveEx] = useState(0);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
   const [editExercise, setEditExercise] = useState(null);
   const [delEx, setDelEx] = useState(null);
   const [tab, setTab] = useState("exercises"); // "exercises" | "students"
@@ -443,6 +670,11 @@ function LabDetail({ lab: initLab, onBack }) {
     }
     setShowAddForm(false);
     setEditExercise(null);
+    fetchStudents();
+  }
+
+  function onBulkImported(created) {
+    setExercises((prev) => [...prev, ...created]);
     fetchStudents();
   }
 
@@ -490,11 +722,24 @@ function LabDetail({ lab: initLab, onBack }) {
         <div className="slp2-ex-panel">
           <div className="slp2-ex-toolbar">
             <span className="slp2-ex-count">{exercises.length} exercise{exercises.length !== 1 ? "s" : ""}</span>
-            <button type="button" className="slp2-btn-primary"
-              onClick={() => { setShowAddForm(true); setEditExercise(null); }}>
-              <Plus size={14} /> Add Exercise
-            </button>
+            <div className="slp2-ex-toolbar-actions">
+              <button type="button" className="slp2-btn-ghost" onClick={() => setShowBulkImport(true)}>
+                <Upload size={14} /> Bulk Import
+              </button>
+              <button type="button" className="slp2-btn-primary"
+                onClick={() => { setShowAddForm(true); setEditExercise(null); }}>
+                <Plus size={14} /> Add Exercise
+              </button>
+            </div>
           </div>
+
+          {showBulkImport && (
+            <BulkImportModal
+              labId={lab.id}
+              onImported={onBulkImported}
+              onClose={() => setShowBulkImport(false)}
+            />
+          )}
 
           {(showAddForm || editExercise) && (
             <ExerciseForm
