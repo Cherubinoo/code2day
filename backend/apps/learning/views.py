@@ -921,7 +921,7 @@ class DashboardView(UnifiedAuthMixin, APIView):
             lang_stats = user_submissions.values('language').annotate(count=Count('language')).order_by('-count')
             preferred_language = lang_stats[0]['language']
         else:
-            preferred_language = "JavaScript"
+            preferred_language = "Python"
 
         # Announcements Logic (Fetch active announcements from last 7 days)
         seven_days_ago = timezone.now() - timedelta(days=7)
@@ -1152,7 +1152,7 @@ class ProblemProgressUpdateView(StudentAuthMixin, APIView):
         progress_state = serializer.validated_data["progress_state"]
         language = (
             serializer.validated_data.get("language")
-            or "JavaScript"
+            or "Python"
         )
         status_label = "Accepted" if progress_state == "completed" else "Started"
 
