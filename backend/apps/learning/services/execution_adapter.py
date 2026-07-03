@@ -682,12 +682,173 @@ class Main {{
 '''.strip()
 
 
+
+# Scalar C types the typed wrapper below knows how to parse from a JSON token
+# and pass into the user's function. Array/pointer parameters aren't handled —
+# a signature with any other type falls back to the naive single-string call.
+_C_SCALAR_TYPES = {
+    "int":            ('(int)strtol(_c_tok(_c_i++), NULL, 10)', "int",       '"%d\\n"'),
+    "unsigned int":   ('(unsigned int)strtoul(_c_tok(_c_i++), NULL, 10)', "unsigned int", '"%u\\n"'),
+    "long":           ('strtol(_c_tok(_c_i++), NULL, 10)', "long",      '"%ld\\n"'),
+    "long long":      ('strtoll(_c_tok(_c_i++), NULL, 10)', "long long", '"%lld\\n"'),
+    "unsigned long":  ('strtoul(_c_tok(_c_i++), NULL, 10)', "unsigned long", '"%lu\\n"'),
+    "short":          ('(short)strtol(_c_tok(_c_i++), NULL, 10)', "short",   '"%d\\n"'),
+    "double":         ('strtod(_c_tok(_c_i++), NULL)', "double",       '"%g\\n"'),
+    "float":          ('(float)strtod(_c_tok(_c_i++), NULL)', "float", '"%g\\n"'),
+    "char":           ('_c_strip_quotes(_c_tok(_c_i++))[0]', "char",   '"%c\\n"'),
+    "bool":           ('(strcmp(_c_tok(_c_i++), "true") == 0)', "int", '"%d\\n"'),
+    "char*":          ('_c_strip_quotes(_c_tok(_c_i++))', "char*",     '"%s\\n"'),
+    "const char*":    ('_c_strip_quotes(_c_tok(_c_i++))', "const char*", '"%s\\n"'),
+}
+
+# Helpers injected into every generated wrapper — tokenizes a top-level JSON
+# array of scalars (numbers / quoted strings / true|false) and strips quotes.
+_C_WRAPPER_HELPERS = r'''
+#define _C_MAX_ARGS 16
+static char* _c_tokens[_C_MAX_ARGS];
+static int _c_ntok = 0;
+static int _c_i = 0;
+
+static char* _c_tok(int i) {
+    return (i >= 0 && i < _c_ntok) ? _c_tokens[i] : "";
+}
+
+static char* _c_strip_quotes(char* s) {
+    int len = (int)strlen(s);
+    if (len >= 2 && s[0] == '"' && s[len - 1] == '"') {
+        s[len - 1] = '\0';
+        return s + 1;
+    }
+    return s;
+}
+
+static void _c_split_args(char* s) {
+    while (*s == ' ') s++;
+    if (*s == '[') s++;
+    int len = (int)strlen(s);
+    while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\n' || s[len - 1] == '\r')) s[--len] = '\0';
+    if (len > 0 && s[len - 1] == ']') s[--len] = '\0';
+
+    int depth = 0, in_str = 0;
+    char* start = s;
+    char* c = s;
+    while (1) {
+        char ch = *c;
+        if (ch == '"') in_str = !in_str;
+        else if (!in_str && ch == '[') depth++;
+        else if (!in_str && ch == ']') depth--;
+
+        if ((ch == ',' && depth == 0 && !in_str) || ch == '\0') {
+            *c = '\0';
+            char* tok = start;
+            while (*tok == ' ') tok++;
+            int tl = (int)strlen(tok);
+            while (tl > 0 && tok[tl - 1] == ' ') tok[--tl] = '\0';
+            if (_c_ntok < _C_MAX_ARGS) _c_tokens[_c_ntok++] = tok;
+            if (ch == '\0') break;
+            start = c + 1;
+        }
+        c++;
+    }
+}
+'''
+
+
+def _parse_c_signature(func_name: str, source_code: str):
+    """Extract (return_type, [param_types]) for a C function, or None if it
+    can't be parsed as a plain-scalar signature the typed wrapper supports."""
+    sig_pattern = re.compile(
+        rf'([\w][\w\s\*]*?)\s+{re.escape(func_name)}\s*\(([^)]*)\)\s*\{{',
+        re.MULTILINE,
+    )
+    match = sig_pattern.search(source_code)
+    if not match:
+        return None
+
+    def normalize(t):
+        return re.sub(r'\s+', ' ', t.strip())
+
+    ret_type = normalize(match.group(1))
+    params_str = match.group(2).strip()
+    if not params_str or params_str == "void":
+        return ret_type, []
+
+    param_types = []
+    for param in params_str.split(','):
+        param = param.strip()
+        if param.endswith('*'):
+            # e.g. "char* s" or "char *s" with no space before the name
+            base, _, _name = param.rpartition('*')
+            param_types.append(normalize(base) + "*")
+            continue
+        parts = param.rsplit(None, 1)
+        ptype = normalize(parts[0]) if len(parts) == 2 else normalize(parts[0])
+        param_types.append(ptype)
+
+    return ret_type, param_types
+
+
 def _build_c_wrapper(source_code: str, candidates: list[str]) -> str:
-    """Build C wrapper that reads from stdin and calls the solution function."""
-    # Simple approach: try calling each candidate directly
-    # Assume function signature: char* func(char*)
+    """
+    Build a C wrapper that reads one line of JSON-array args from stdin,
+    parses them into the function's declared scalar types, calls it, and
+    prints the typed return value — mirroring the C++ wrapper's approach
+    but without STL (scalars + C strings only; no array/pointer params).
+
+    Falls back to a best-effort single-raw-string call when the signature
+    can't be determined or uses an unsupported (e.g. array) parameter type.
+    """
+    func_name = None
+    for name in candidates:
+        if re.search(rf'\b{re.escape(name)}\s*\(', source_code):
+            func_name = name
+            break
+    if not func_name and candidates:
+        func_name = candidates[0]
+    if not func_name:
+        func_name = "solution"
+
+    sig = _parse_c_signature(func_name, source_code)
+    supported = sig is not None and all(t in _C_SCALAR_TYPES or t == "void" for t in ([sig[0]] + sig[1]))
+
+    if supported:
+        ret_type, param_types = sig
+        arg_lines = []
+        call_args = []
+        for idx, ptype in enumerate(param_types):
+            expr, decl_type, _ = _C_SCALAR_TYPES[ptype]
+            var = f"_c_a{idx}"
+            arg_lines.append(f"    {decl_type} {var} = {expr};")
+            call_args.append(var)
+        call_expr = f'{func_name}({", ".join(call_args)})'
+
+        if ret_type == "void":
+            call_lines = f"    {call_expr};\n    printf(\"void\\n\");"
+        else:
+            _, _, fmt = _C_SCALAR_TYPES[ret_type]
+            call_lines = f"    printf({fmt}, {call_expr});"
+
+        return (
+            "#include <stdio.h>\n"
+            "#include <stdlib.h>\n"
+            "#include <string.h>\n\n"
+            "// User code\n"
+            f"{source_code}\n\n"
+            f"{_C_WRAPPER_HELPERS}\n"
+            "int main() {\n"
+            "    char line[65536];\n"
+            "    if (!fgets(line, sizeof(line), stdin)) line[0] = '\\0';\n"
+            "    int len = (int)strlen(line);\n"
+            "    while (len > 0 && (line[len - 1] == '\\n' || line[len - 1] == '\\r')) line[--len] = '\\0';\n"
+            "    if (len > 0) _c_split_args(line);\n\n"
+            f"{chr(10).join(arg_lines)}\n\n"
+            f"{call_lines}\n"
+            "    return 0;\n"
+            "}\n"
+        )
+
+    # ── Fallback: unknown/unsupported signature — best-effort single string arg ──
     try_calls = '\n    '.join([f'result = {name}(arg); if (result) goto done;' for name in candidates])
-    
     return f'''
 #include <stdio.h>
 #include <stdlib.h>
@@ -701,7 +862,7 @@ int main() {{
     char line[4096];
     char* arg = NULL;
     char* result = NULL;
-    
+
     // Read input
     if (fgets(line, sizeof(line), stdin)) {{
         // Parse simple string from JSON-like format ["string"]
@@ -715,19 +876,19 @@ int main() {{
             }}
         }}
     }}
-    
+
     if (!arg) arg = "";
-    
+
     // Try each candidate function
     {try_calls}
-    
+
 done:
     if (result) {{
         printf("%s\\n", result);
     }} else {{
         printf("null\\n");
     }}
-    
+
     return 0;
 }}
 '''.strip()
