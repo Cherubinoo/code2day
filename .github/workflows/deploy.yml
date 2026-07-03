@@ -106,25 +106,24 @@ jobs:
             sleep 2
           done
 
+          # NOTE: Piston has no package literally named "c" or "c++" — both are
+          # provided by the single "gcc" package (see its metadata.json "provides"
+          # array: language "c" aliased to "gcc", language "c++" aliased to "cpp"/
+          # "g++"). Installing "gcc" registers BOTH "c" and "c++" as runtimes.
           install_if_missing() {
             PLANG="$1"
-            if curl -sf "${PISTON_URL}/runtimes" | grep -q "\"language\":\"${PLANG}\""; then
+            PACKAGES_JSON=$(curl -sf "${PISTON_URL}/packages")
+
+            if echo "$PACKAGES_JSON" | grep -qE "\"language\":\"${PLANG//+/\\+}\",\"language_version\":\"[^\"]*\",\"installed\":true"; then
               echo "  ✓ ${PLANG} already installed"
               return
             fi
 
             # The /packages install endpoint needs an EXACT version — "*" is only
             # valid on /execute. Resolve the version Piston's own index advertises.
-            PACKAGES_JSON=$(curl -sf "${PISTON_URL}/packages")
             VERSION=$(echo "$PACKAGES_JSON" \
               | grep -oE "\"language\":\"${PLANG//+/\\+}\",\"language_version\":\"[^\"]*\"" \
               | head -1 | grep -oE '[^"]*"$' | tr -d '"')
-            if [ -z "$VERSION" ]; then
-              # Fallback in case this Piston build uses "version" instead of "language_version"
-              VERSION=$(echo "$PACKAGES_JSON" \
-                | grep -oE "\"language\":\"${PLANG//+/\\+}\",\"version\":\"[^\"]*\"" \
-                | head -1 | grep -oE '[^"]*"$' | tr -d '"')
-            fi
 
             if [ -z "$VERSION" ]; then
               echo "  ⚠ ${PLANG}: not found in Piston's package index — skipping"
@@ -146,8 +145,7 @@ jobs:
 
           install_if_missing python
           install_if_missing java
-          install_if_missing c
-          install_if_missing "c++"
+          install_if_missing gcc
           echo "✓ Piston packages ready"
           echo "  Installed runtimes: $(curl -sf "${PISTON_URL}/runtimes" | grep -oE '"language":"[^"]*","version":"[^"]*"' | tr '\n' ' ')"
 
