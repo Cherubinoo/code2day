@@ -1146,6 +1146,32 @@ class HealthCheckView(APIView):
                 }
             except Exception as exc:
                 payload["test_driver"] = {"elapsed_s": round(time.time() - start, 2), "error": f"{type(exc).__name__}: {exc}"}
+        # Simulates the actual "Run against sample test cases" flow — N
+        # sequential Piston calls in one request — to check for cumulative
+        # slowdown/failure that a single call wouldn't reveal.
+        if request.query_params.get("test_batch") == "c":
+            import time
+            from .services.executor import execute_submission
+            source = '#include <stdio.h>\nint main(){int n;scanf("%d",&n);printf("%d",n*2);return 0;}'
+            start = time.time()
+            calls = []
+            try:
+                for i in range(5):
+                    call_start = time.time()
+                    result = execute_submission(source_code=source, language_id=50, stdin=str(i))
+                    calls.append({
+                        "i": i,
+                        "elapsed_s": round(time.time() - call_start, 2),
+                        "status": result.get("status"),
+                        "stdout": result.get("stdout"),
+                    })
+                payload["test_batch"] = {"total_elapsed_s": round(time.time() - start, 2), "calls": calls}
+            except Exception as exc:
+                payload["test_batch"] = {
+                    "total_elapsed_s": round(time.time() - start, 2),
+                    "calls": calls,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
         return Response(payload)
 
 
