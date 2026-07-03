@@ -1105,6 +1105,24 @@ class HealthCheckView(APIView):
         if request.query_params.get("packages") == "1":
             from .services.executor import list_executor_packages
             payload["packages"] = list_executor_packages()
+        # Runs a trivial program straight through executor.execute_submission,
+        # bypassing test-case batching/validation, to isolate whether a raw
+        # Piston call for this language is itself slow/broken.
+        test_lang = request.query_params.get("test_exec")
+        if test_lang in ("c", "c++"):
+            import time
+            from .services.executor import execute_submission
+            source = (
+                '#include <stdio.h>\nint main(){printf("hello");return 0;}'
+                if test_lang == "c" else
+                '#include <iostream>\nint main(){std::cout<<"hello";return 0;}'
+            )
+            start = time.time()
+            try:
+                result = execute_submission(source_code=source, language_id=50 if test_lang == "c" else 54)
+                payload["test_exec"] = {"language": test_lang, "elapsed_s": round(time.time() - start, 2), "result": result}
+            except Exception as exc:
+                payload["test_exec"] = {"language": test_lang, "elapsed_s": round(time.time() - start, 2), "error": f"{type(exc).__name__}: {exc}"}
         return Response(payload)
 
 
