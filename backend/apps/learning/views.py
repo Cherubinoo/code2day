@@ -1105,27 +1105,9 @@ class HealthCheckView(APIView):
         if request.query_params.get("packages") == "1":
             from .services.executor import list_executor_packages
             payload["packages"] = list_executor_packages()
-        # Runs a trivial program straight through executor.execute_submission,
-        # bypassing test-case batching/validation, to isolate whether a raw
-        # Piston call for this language is itself slow/broken.
-        test_lang = request.query_params.get("test_exec")
-        if test_lang in ("c", "c++"):
-            import time
-            from .services.executor import execute_submission
-            source = (
-                '#include <stdio.h>\nint main(){printf("hello");return 0;}'
-                if test_lang == "c" else
-                '#include <iostream>\nint main(){std::cout<<"hello";return 0;}'
-            )
-            start = time.time()
-            try:
-                result = execute_submission(source_code=source, language_id=50 if test_lang == "c" else 54)
-                payload["test_exec"] = {"language": test_lang, "elapsed_s": round(time.time() - start, 2), "result": result}
-            except Exception as exc:
-                payload["test_exec"] = {"language": test_lang, "elapsed_s": round(time.time() - start, 2), "error": f"{type(exc).__name__}: {exc}"}
         # Exercises the FUNCTION-style driver-injection path (prepare_execution_payload)
-        # that a typical Problems-page submission goes through — the plain test_exec
-        # above only covers raw stdin-style code and skips this entirely.
+        # that a typical Problems-page submission goes through, to verify the
+        # typed-argument C wrapper. Temporary — remove once confirmed fixed.
         if request.query_params.get("test_driver") == "c":
             import time
             from types import SimpleNamespace
@@ -1146,32 +1128,6 @@ class HealthCheckView(APIView):
                 }
             except Exception as exc:
                 payload["test_driver"] = {"elapsed_s": round(time.time() - start, 2), "error": f"{type(exc).__name__}: {exc}"}
-        # Simulates the actual "Run against sample test cases" flow — N
-        # sequential Piston calls in one request — to check for cumulative
-        # slowdown/failure that a single call wouldn't reveal.
-        if request.query_params.get("test_batch") == "c":
-            import time
-            from .services.executor import execute_submission
-            source = '#include <stdio.h>\nint main(){int n;scanf("%d",&n);printf("%d",n*2);return 0;}'
-            start = time.time()
-            calls = []
-            try:
-                for i in range(5):
-                    call_start = time.time()
-                    result = execute_submission(source_code=source, language_id=50, stdin=str(i))
-                    calls.append({
-                        "i": i,
-                        "elapsed_s": round(time.time() - call_start, 2),
-                        "status": result.get("status"),
-                        "stdout": result.get("stdout"),
-                    })
-                payload["test_batch"] = {"total_elapsed_s": round(time.time() - start, 2), "calls": calls}
-            except Exception as exc:
-                payload["test_batch"] = {
-                    "total_elapsed_s": round(time.time() - start, 2),
-                    "calls": calls,
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
         return Response(payload)
 
 
