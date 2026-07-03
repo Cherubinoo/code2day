@@ -1093,12 +1093,19 @@ class EditorBootstrapView(StudentAuthMixin, APIView):
 
 class HealthCheckView(APIView):
     def get(self, request):
-        return Response(
-            {
-                "status": "ok",
-                "executor_configured": bool(getattr(settings, "EXECUTOR_BASE_URL", "").strip()),
-            }
-        )
+        payload = {
+            "status": "ok",
+            "executor_configured": bool(getattr(settings, "EXECUTOR_BASE_URL", "").strip()),
+        }
+        # Opt-in diagnostics — kept off the default fast path so this endpoint
+        # stays cheap for routine uptime checks.
+        if request.query_params.get("executor") == "1":
+            from .services.executor import check_executor_health
+            payload["executor"] = check_executor_health()
+        if request.query_params.get("packages") == "1":
+            from .services.executor import list_executor_packages
+            payload["packages"] = list_executor_packages()
+        return Response(payload)
 
 
 class ProblemProgressUpdateView(StudentAuthMixin, APIView):

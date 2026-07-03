@@ -1,0 +1,2 @@
+title,problem_statement,example_input,example_output,example_explanation,constraints,difficulty,hint
+Reverse a Linked List,Write a program to reverse a singly linked list in place.,1 -> 2 -> 3 -> NULL,3 -> 2 -> 1 -> NULL,The list is reversed by relinking each node's next pointer.,1 <= n <= 1000; node values fit in a 32-bit int,Medium,"Track previous, current, and next pointers as you walk the list."

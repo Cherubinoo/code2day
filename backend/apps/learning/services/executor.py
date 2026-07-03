@@ -242,6 +242,18 @@ def check_executor_health():
         }
 
 
+def list_executor_packages():
+    """List every package Piston can install, for debugging the exact
+    language/version strings its /packages index actually uses."""
+    url = _piston_url("packages")
+    try:
+        req = urllib_request.Request(url, headers={"Accept": "application/json"}, method="GET")
+        with urllib_request.urlopen(req, timeout=10) as resp:
+            return {"ok": True, "packages": json.loads(resp.read().decode("utf-8"))}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def get_language_id(language_name: str) -> int:
     """Get numeric language ID from a language name string."""
     lang_map = {
