@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
 import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { getCsrfToken } from "../../../lib/appUtils";
 import { runCodeExecution, editorLanguageMap } from "../../../lib/codeExecution";
+import { starterCodeByLanguage } from "../../../lib/appData";
 import {
   FlaskConical, ChevronLeft, BookOpen, CheckCircle2,
   Circle, Clock, Calendar, UserCheck,
@@ -189,8 +190,9 @@ function ProblemStatement({ text }) {
 
 // ─── Exercise editor (mirrors the Problems page workspace + console) ─────────
 function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
-  const [code, setCode] = useState(exercise.code || "");
-  const [lang, setLang] = useState(exercise.language || "Python");
+  const initialLang = exercise.language || "Python";
+  const [code, setCode] = useState(exercise.code || starterCodeByLanguage[initialLang] || "");
+  const [lang, setLang] = useState(initialLang);
   const [busy, setBusy] = useState(false);
   const [running, setRunning] = useState(false);
   const [submitted, setSubmitted] = useState(exercise.submitted);
@@ -198,12 +200,38 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
   const [submitErr, setSubmitErr] = useState("");
   const [customInput, setCustomInput] = useState("");
   const [outputLog, setOutputLog] = useState("Run your code to see output here.");
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const timerRef = useRef(null);
+
+  useEffect(() => () => clearInterval(timerRef.current), []);
 
   const monacoLang = editorLanguageMap[lang] || "plaintext";
+
+  function handleLangChange(newLang) {
+    const isUntouched = !code.trim() || code === starterCodeByLanguage[lang];
+    setLang(newLang);
+    if (isUntouched) {
+      setCode(starterCodeByLanguage[newLang] || "");
+    }
+  }
+
+  function startTimer() {
+    setElapsedTime(0);
+    clearInterval(timerRef.current);
+    const start = Date.now();
+    timerRef.current = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - start) / 1000));
+    }, 500);
+  }
+
+  function stopTimer() {
+    clearInterval(timerRef.current);
+  }
 
   async function runCode() {
     if (!code.trim()) return;
     setRunning(true);
+    startTimer();
     setOutputLog("Running…");
     try {
       const result = await runCodeExecution({ sourceCode: code, language: lang, stdin: customInput });
@@ -216,6 +244,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
     } catch (e) {
       setOutputLog(e.message || "Execution error");
     } finally {
+      stopTimer();
       setRunning(false);
     }
   }
@@ -223,6 +252,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
   async function submit() {
     if (!code.trim()) { setSubmitErr("Write your solution before submitting"); return; }
     setBusy(true); setSubmitErr("");
+    startTimer();
     try {
       const token = getCsrfToken();
       const res = await fetch(`/api/lab/v2/${lab.id}/exercises/${exercise.id}/submit/`, {
@@ -240,7 +270,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
         setSubmitErr("Submission failed. Please try again.");
       }
     } catch { setSubmitErr("Network error"); }
-    finally { setBusy(false); }
+    finally { stopTimer(); setBusy(false); }
   }
 
   return (
@@ -294,7 +324,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
                 <select
                   className="difficulty-select language-select editor-language-select"
                   value={lang}
-                  onChange={(e) => setLang(e.target.value)}
+                  onChange={(e) => handleLangChange(e.target.value)}
                 >
                   {LAB_LANGUAGES.map((l) => (
                     <option key={l} value={l}>{l}</option>
@@ -344,7 +374,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
                     onClick={runCode}
                     disabled={running || busy}
                   >
-                    {running ? "Running…" : "Run"}
+                    {running ? `Running… ${elapsedTime}s` : "Run"}
                   </button>
                   <button
                     type="button"
@@ -352,7 +382,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
                     onClick={submit}
                     disabled={busy || running}
                   >
-                    {busy ? "Submitting…" : submitted ? "Resubmit" : "Submit"}
+                    {busy ? `Submitting… ${elapsedTime}s` : submitted ? "Resubmit" : "Submit"}
                   </button>
                 </div>
               </div>
@@ -379,7 +409,17 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
                 placeholder="Optional stdin for a custom run."
               />
               <div className="output-panel-shell">
-                <pre className="output-panel compact-output">{outputLog}</pre>
+                {running || busy ? (
+                  <div className="output-panel compiling-overlay">
+                    <div className="compiling-spinner" />
+                    <div className="compiling-label">
+                      {busy ? "Submitting…" : "Running…"}
+                      <span className="compiling-elapsed">{elapsedTime}s</span>
+                    </div>
+                  </div>
+                ) : (
+                  <pre className="output-panel compact-output">{outputLog}</pre>
+                )}
               </div>
             </article>
           </section>

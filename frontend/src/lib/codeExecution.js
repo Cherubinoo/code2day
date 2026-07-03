@@ -54,6 +54,16 @@ export async function runCodeExecution({
       is_submit: isSubmit,
     }),
   );
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    // Server/proxy returned an HTML error page (502/504/etc.) instead of JSON.
+    if (response.status >= 500) {
+      throw new Error("The execution server is temporarily unavailable. Please try again in a moment.");
+    }
+    throw new Error(`Execution failed (HTTP ${response.status}). Please try again.`);
+  }
+
   const payload = await response.json();
 
   if (!response.ok) {

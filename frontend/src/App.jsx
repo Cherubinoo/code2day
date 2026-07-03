@@ -107,7 +107,24 @@ function App() {
     memory: "",
   });
   const [executionBusy, setExecutionBusy] = useState(false);
+  const [executionElapsed, setExecutionElapsed] = useState(0);
+  const executionTimerRef = useRef(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  useEffect(() => () => clearInterval(executionTimerRef.current), []);
+
+  function startExecutionTimer() {
+    setExecutionElapsed(0);
+    clearInterval(executionTimerRef.current);
+    const start = Date.now();
+    executionTimerRef.current = setInterval(() => {
+      setExecutionElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 500);
+  }
+
+  function stopExecutionTimer() {
+    clearInterval(executionTimerRef.current);
+  }
 
   useEffect(() => {
     if (selectedProblemSlug) {
@@ -947,6 +964,7 @@ function App() {
     }
 
     setExecutionBusy(true);
+    startExecutionTimer();
     try {
       const result = await executeCurrentCode(false);
       if (result.status !== "Unsupported Language") {
@@ -962,6 +980,7 @@ function App() {
       setExecutionMeta({ status: "Error", time: "", memory: "" });
       setOutputLog(error.message ?? "Execution failed.");
     } finally {
+      stopExecutionTimer();
       setExecutionBusy(false);
     }
   }
@@ -973,6 +992,7 @@ function App() {
     }
 
     setExecutionBusy(true);
+    startExecutionTimer();
     try {
       const result = await executeCurrentCode(true);
       if (result.status === "Accepted") {
@@ -999,6 +1019,7 @@ function App() {
       setExecutionMeta({ status: "Error", time: "", memory: "" });
       setOutputLog(error.message ?? "Execution failed.");
     } finally {
+      stopExecutionTimer();
       setExecutionBusy(false);
     }
   }
@@ -1131,6 +1152,7 @@ function App() {
           difficultyOrder={difficultyOrder}
           editorLanguage={editorLanguageMap[selectedLanguage] ?? "javascript"}
           executionBusy={executionBusy}
+          executionElapsed={executionElapsed}
           executionInput={executionInput}
           executionMeta={executionMeta}
           expandedSections={expandedSections}
@@ -1246,6 +1268,7 @@ function App() {
           difficultyOrder={difficultyOrder}
           editorLanguage={editorLanguageMap[selectedLanguage] ?? "javascript"}
           executionBusy={executionBusy}
+          executionElapsed={executionElapsed}
           executionInput={executionInput}
           executionMeta={executionMeta}
           expandedSections={expandedSections}

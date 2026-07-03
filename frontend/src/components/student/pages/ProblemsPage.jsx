@@ -356,6 +356,7 @@ function WorkspaceView({
   difficultyOrder,
   editorLanguage,
   executionBusy,
+  executionElapsed,
   executionInput,
   executionMeta,
   expandedSections,
@@ -790,7 +791,7 @@ function WorkspaceView({
                       onClick={handleRunCode}
                       disabled={executionBusy}
                     >
-                      {executionBusy ? "Running…" : "Run"}
+                      {executionBusy ? `Running… ${executionElapsed}s` : "Run"}
                     </button>
                     <button
                       type="button"
@@ -798,7 +799,7 @@ function WorkspaceView({
                       onClick={handleSubmitCode}
                       disabled={executionBusy}
                     >
-                      {executionBusy ? "Submitting…" : "Submit"}
+                      {executionBusy ? `Submitting… ${executionElapsed}s` : "Submit"}
                     </button>
                   </div>
                 </div>
@@ -825,7 +826,17 @@ function WorkspaceView({
                 placeholder="Optional stdin for a custom run. Leave blank to run the problem's sample cases."
               />
                 <div className="output-panel-shell">
-                  <pre className="output-panel compact-output">{outputLog}</pre>
+                  {executionBusy ? (
+                    <div className="output-panel compiling-overlay">
+                      <div className="compiling-spinner" />
+                      <div className="compiling-label">
+                        Running…
+                        <span className="compiling-elapsed">{executionElapsed}s</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <pre className="output-panel compact-output">{outputLog}</pre>
+                  )}
                 </div>
             </article>
           </section>

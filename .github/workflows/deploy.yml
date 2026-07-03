@@ -107,16 +107,40 @@ jobs:
           done
 
           install_if_missing() {
-            LANG="$1"
-            if curl -sf "${PISTON_URL}/runtimes" | grep -q "\"${LANG}\""; then
-              echo "  ✓ ${LANG} already installed"
+            PLANG="$1"
+            if curl -sf "${PISTON_URL}/runtimes" | grep -q "\"language\":\"${PLANG}\""; then
+              echo "  ✓ ${PLANG} already installed"
+              return
+            fi
+
+            # The /packages install endpoint needs an EXACT version — "*" is only
+            # valid on /execute. Resolve the version Piston's own index advertises.
+            PACKAGES_JSON=$(curl -sf "${PISTON_URL}/packages")
+            VERSION=$(echo "$PACKAGES_JSON" \
+              | grep -oE "\"language\":\"${PLANG//+/\\+}\",\"language_version\":\"[^\"]*\"" \
+              | head -1 | grep -oE '[^"]*"$' | tr -d '"')
+            if [ -z "$VERSION" ]; then
+              # Fallback in case this Piston build uses "version" instead of "language_version"
+              VERSION=$(echo "$PACKAGES_JSON" \
+                | grep -oE "\"language\":\"${PLANG//+/\\+}\",\"version\":\"[^\"]*\"" \
+                | head -1 | grep -oE '[^"]*"$' | tr -d '"')
+            fi
+
+            if [ -z "$VERSION" ]; then
+              echo "  ⚠ ${PLANG}: not found in Piston's package index — skipping"
+              return
+            fi
+
+            echo "  Installing ${PLANG}@${VERSION}..."
+            RESP=$(curl -s --max-time 300 -w "\n%{http_code}" -X POST "${PISTON_URL}/packages" \
+              -H "Content-Type: application/json" \
+              -d "{\"language\":\"${PLANG}\",\"version\":\"${VERSION}\"}")
+            CODE=$(echo "$RESP" | tail -1)
+            BODY=$(echo "$RESP" | sed '$d')
+            if [ "$CODE" = "200" ] || [ "$CODE" = "204" ]; then
+              echo "  ✓ ${PLANG}@${VERSION} done"
             else
-              echo "  Installing ${LANG}..."
-              curl -sf --max-time 300 -X POST "${PISTON_URL}/packages" \
-                -H "Content-Type: application/json" \
-                -d "{\"language\":\"${LANG}\",\"version\":\"*\"}" \
-                && echo "  ✓ ${LANG} done" \
-                || echo "  ⚠ ${LANG} failed — retry next deploy"
+              echo "  ⚠ ${PLANG}@${VERSION} failed (HTTP ${CODE}): ${BODY} — retry next deploy"
             fi
           }
 
@@ -125,6 +149,7 @@ jobs:
           install_if_missing c
           install_if_missing "c++"
           echo "✓ Piston packages ready"
+          echo "  Installed runtimes: $(curl -sf "${PISTON_URL}/runtimes" | grep -oE '"language":"[^"]*","version":"[^"]*"' | tr '\n' ' ')"
 
           # ── 5. Patch executor URL in .env → must point to Piston on port 2358 ──
           sed -i 's|JUDGE0_BASE_URL=.*|JUDGE0_BASE_URL=http://code2day-executor:2358|' .env 2>/dev/null || true

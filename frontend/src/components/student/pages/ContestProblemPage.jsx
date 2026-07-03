@@ -33,8 +33,25 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
   const [timeRemaining, setTimeRemaining] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [execElapsed, setExecElapsed] = useState(0);
 
   const timerRef = useRef(null);
+  const execTimerRef = useRef(null);
+
+  useEffect(() => () => clearInterval(execTimerRef.current), []);
+
+  function startExecTimer() {
+    setExecElapsed(0);
+    clearInterval(execTimerRef.current);
+    const start = Date.now();
+    execTimerRef.current = setInterval(() => {
+      setExecElapsed(Math.floor((Date.now() - start) / 1000));
+    }, 500);
+  }
+
+  function stopExecTimer() {
+    clearInterval(execTimerRef.current);
+  }
 
   useEffect(() => {
     loadProblemAndContest();
@@ -167,6 +184,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
     }
 
     setIsRunning(true);
+    startExecTimer();
     setOutput('Running code...');
     setTestResults(null); // clear previous submission results
 
@@ -191,6 +209,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
     } catch (err) {
       setOutput(`Error: ${err.message}`);
     } finally {
+      stopExecTimer();
       setIsRunning(false);
     }
   }
@@ -207,6 +226,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
     }
 
     setIsSubmitting(true);
+    startExecTimer();
     setOutput('Submitting and testing your code...');
 
     try {
@@ -278,6 +298,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
     } catch (err) {
       setOutput(`Error: ${err.message}`);
     } finally {
+      stopExecTimer();
       setIsSubmitting(false);
     }
   }
@@ -616,7 +637,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
               onClick={handleRunCode}
               disabled={isRunning || isTimeUp}
             >
-              {isRunning ? "Running…" : "Run"}
+              {isRunning ? `Running… ${execElapsed}s` : "Run"}
             </button>
             <button
               type="button"
@@ -624,7 +645,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
               onClick={handleSubmit}
               disabled={isSubmitting || isTimeUp}
             >
-              {isSubmitting ? "Submitting…" : "Submit"}
+              {isSubmitting ? `Submitting… ${execElapsed}s` : "Submit"}
             </button>
           </div>
         </div>
@@ -796,9 +817,19 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
         ) : (
           /* Plain run output */
           <div className="output-panel-shell">
-            <pre className="output-panel compact-output">
-              {isRunning ? 'Running…' : (output || 'Run your code to see output here...')}
-            </pre>
+            {isRunning || isSubmitting ? (
+              <div className="output-panel compiling-overlay">
+                <div className="compiling-spinner" />
+                <div className="compiling-label">
+                  {isSubmitting ? 'Submitting…' : 'Running…'}
+                  <span className="compiling-elapsed">{execElapsed}s</span>
+                </div>
+              </div>
+            ) : (
+              <pre className="output-panel compact-output">
+                {output || 'Run your code to see output here...'}
+              </pre>
+            )}
           </div>
         )}
       </section>
