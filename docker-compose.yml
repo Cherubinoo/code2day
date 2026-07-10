@@ -1,88 +1,23 @@
-x-logging:
-  &default-logging
-  logging:
-    driver: json-file
-    options:
-      max-size: 100M
-
 services:
-
-  # ── Redis ─────────────────────────────────────────────────────────────────────
-  code2day-redis:
-    image: redis:7-alpine
-    container_name: code2day-redis
-    command: redis-server --appendonly no
-    volumes:
-      - code2day-redis-data:/data
-    restart: unless-stopped
-    <<: *default-logging
-    networks:
-      - code2day-network
-
-  # ── Code Executor — Piston (https://github.com/engineer-man/piston) ────────
-  code2day-executor:
-    image: ghcr.io/engineer-man/piston
-    container_name: code2day-executor
-    privileged: true
-    ports:
-      - "2358:2358"
-    volumes:
-      - piston-data:/piston
-    restart: unless-stopped
-    <<: *default-logging
-    environment:
-      - PISTON_BIND_ADDRESS=0.0.0.0:2358
-      - PISTON_RUN_TIMEOUT=30000
-      - PISTON_COMPILE_TIMEOUT=15000
-      - PISTON_OUTPUT_MAX_SIZE=1048576
-      - PISTON_MAX_CONCURRENT_JOBS=40
-      - PISTON_MAX_PROCESS_COUNT=64
-      - PISTON_DISABLE_NETWORKING=true
-    networks:
-      - code2day-network
-
-  # ── Django Backend (port 8000) ────────────────────────────────────────────────
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile.backend
-    image: code2day-backend:latest
-    container_name: code2day-backend
-    env_file:
-      - .env
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-      - ./dataset:/app/dataset
-    restart: unless-stopped
-    <<: *default-logging
-    depends_on:
-      - code2day-redis
-      - code2day-executor
-    networks:
-      - code2day-network
-    command: gunicorn code2day.wsgi:application --bind 0.0.0.0:8000 --workers 12 --timeout 120 --max-requests 1000 --max-requests-jitter 100
-
-  # ── React Frontend (port 8001) ────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile.frontend
     image: code2day-frontend:latest
     container_name: code2day-frontend
+    restart: unless-stopped
     ports:
       - "8001:80"
-    restart: unless-stopped
-    <<: *default-logging
+    logging:
+      driver: json-file
+      options:
+        max-size: 100M
     networks:
-      - code2day-network
-
-volumes:
-  code2day-redis-data:
-  piston-data:
+      - code2day-shared
 
 networks:
-  code2day-network:
-    driver: bridge
+  code2day-shared:
+    external: true
+  dokploy-network:
+    external: true
 
