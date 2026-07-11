@@ -591,6 +591,11 @@ export const discussionThreads = [
   },
 ];
 
+// Master list of languages a Lab (regular or company-based) can restrict itself
+// to. Shared between the HOD lab-creation language picker and the student
+// exercise editor's language dropdown so the two never drift apart.
+export const LAB_LANGUAGES = ["Python", "C", "C++", "Java"];
+
 export const navItems = [
   { id: "explore",  label: "Explore",   icon: LayoutGrid },
   { id: "roadmaps", label: "Roadmaps",  icon: Map },

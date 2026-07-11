@@ -4,7 +4,7 @@ import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { getCsrfToken } from "../../../lib/appUtils";
 import { runCodeExecution, editorLanguageMap } from "../../../lib/codeExecution";
-import { starterCodeByLanguage } from "../../../lib/appData";
+import { starterCodeByLanguage, LAB_LANGUAGES } from "../../../lib/appData";
 import {
   FlaskConical, ChevronLeft, BookOpen, CheckCircle2,
   Circle, Clock, Calendar, UserCheck,
@@ -88,9 +88,22 @@ function LabCard({ lab, onClick }) {
   );
 }
 
-const LAB_LANGUAGES = ["Python", "C", "C++", "Java"];
-
 // ─── Problem statement renderer ───────────────────────────────────────────────
+function parseExampleLines(lines) {
+  const exLines = lines.filter(l => l.trim());
+  const examples = [];
+  let ex = null;
+  for (const l of exLines) {
+    const im = l.match(/^\s*Input:\s*(.*)/);
+    const om = l.match(/^\s*Output:\s*(.*)/);
+    const em = l.match(/^\s*Explanation:\s*(.*)/);
+    if (im) { ex = { input: im[1], output: "", explanation: "" }; examples.push(ex); }
+    else if (om && ex) ex.output = om[1];
+    else if (em && ex) ex.explanation = em[1];
+  }
+  return examples;
+}
+
 function ProblemStatement({ text }) {
   const [collapsed, setCollapsed] = useState(false);
   if (!text) return null;
@@ -140,46 +153,50 @@ function ProblemStatement({ text }) {
               return <span key={i} className="slab-diff-chip" style={{ background: c }}>{s.value}</span>;
             }
             if (s.type === "hint") {
+              const exSection = sections.find(sec => sec.type === "examples");
+              const examples = exSection ? parseExampleLines(exSection.lines) : [];
               return (
                 <div key={i} className="slab-hint-box">
                   <strong>Hint:</strong> {s.value}
-                </div>
-              );
-            }
-            if (s.type === "examples") {
-              const exLines = s.lines.filter(l => l.trim());
-              const examples = [];
-              let ex = null;
-              for (const l of exLines) {
-                const im = l.match(/^\s*Input:\s*(.*)/);
-                const om = l.match(/^\s*Output:\s*(.*)/);
-                const em = l.match(/^\s*Explanation:\s*(.*)/);
-                if (im) { ex = { input: im[1], output: "", explanation: "" }; examples.push(ex); }
-                else if (om && ex) ex.output = om[1];
-                else if (em && ex) ex.explanation = em[1];
-              }
-              return (
-                <div key={i} className="slab-examples">
-                  <div className="slab-section-title">Examples</div>
-                  {examples.map((ex, j) => (
-                    <div key={j} className="slab-example">
-                      <div className="slab-io"><span>Input</span><code>{ex.input}</code></div>
-                      <div className="slab-io"><span>Output</span><code>{ex.output}</code></div>
-                      {ex.explanation && <div className="slab-io explanation"><span>Explanation</span><span>{ex.explanation}</span></div>}
+                  {examples.length > 0 && (
+                    <div className="slab-examples">
+                      {examples.map((ex, j) => (
+                        <div key={j} className="slab-example">
+                          <div className="slab-io"><span>Input</span><code>{ex.input}</code></div>
+                          <div className="slab-io"><span>Output</span><code>{ex.output}</code></div>
+                          {ex.explanation && <div className="slab-io explanation"><span>Explanation</span><span>{ex.explanation}</span></div>}
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
               );
             }
-            if (s.type === "constraints") {
-              const items = s.lines.map(l => l.trim().replace(/^-\s*/, "")).filter(Boolean);
-              return items.length ? (
-                <div key={i} className="slab-constraints">
-                  <div className="slab-section-title">Constraints</div>
-                  <ul>{items.map((c, j) => <li key={j}>{c}</li>)}</ul>
+            // Examples render inside the Hint box above. If this exercise has no
+            // hint text (so no "hint" section exists at all), fall back to showing
+            // the examples in the same box style on their own, so the data isn't lost.
+            if (s.type === "examples") {
+              const hasHintSection = sections.some(sec => sec.type === "hint");
+              if (hasHintSection) return null;
+              const examples = parseExampleLines(s.lines);
+              if (!examples.length) return null;
+              return (
+                <div key={i} className="slab-hint-box">
+                  <div className="slab-examples">
+                    {examples.map((ex, j) => (
+                      <div key={j} className="slab-example">
+                        <div className="slab-io"><span>Input</span><code>{ex.input}</code></div>
+                        <div className="slab-io"><span>Output</span><code>{ex.output}</code></div>
+                        {ex.explanation && <div className="slab-io explanation"><span>Explanation</span><span>{ex.explanation}</span></div>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ) : null;
+              );
             }
+            // Legacy exercises may still have a Constraints section in their stored
+            // description — intentionally not rendered anywhere anymore.
+            if (s.type === "constraints") return null;
             return null;
           })}
         </div>
@@ -190,7 +207,8 @@ function ProblemStatement({ text }) {
 
 // ─── Exercise editor (mirrors the Problems page workspace + console) ─────────
 function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
-  const initialLang = exercise.language || "Python";
+  const allowedLanguages = lab.allowed_languages?.length ? lab.allowed_languages : LAB_LANGUAGES;
+  const initialLang = exercise.language || allowedLanguages[0];
   const [code, setCode] = useState(exercise.code || starterCodeByLanguage[initialLang] || "");
   const [lang, setLang] = useState(initialLang);
   const [busy, setBusy] = useState(false);
@@ -326,7 +344,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
                   value={lang}
                   onChange={(e) => handleLangChange(e.target.value)}
                 >
-                  {LAB_LANGUAGES.map((l) => (
+                  {allowedLanguages.map((l) => (
                     <option key={l} value={l}>{l}</option>
                   ))}
                 </select>
@@ -531,10 +549,16 @@ function LabDetail({ lab, onBack }) {
 }
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
+const LAB_TYPE_TABS = [
+  { id: "practical", label: "Lab Practical" },
+  { id: "company", label: "Company Based Lab Practical" },
+];
+
 export default function LabsPage() {
   const [labs, setLabs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedLab, setSelectedLab] = useState(null);
+  const [typeFilter, setTypeFilter] = useState("practical");
 
   useEffect(() => {
     fetch("/api/lab/v2/student/", { credentials: "include" })
@@ -547,25 +571,40 @@ export default function LabsPage() {
     return <LabDetail lab={selectedLab} onBack={() => setSelectedLab(null)} />;
   }
 
-  const active = labs.filter((l) => !l.is_expired);
-  const expired = labs.filter((l) => l.is_expired);
+  const labsOfType = labs.filter((l) => (l.lab_type || "practical") === typeFilter);
+  const active = labsOfType.filter((l) => !l.is_expired);
+  const expired = labsOfType.filter((l) => l.is_expired);
 
   return (
     <div className="slab-root">
       <div className="slab-page-head">
         <div className="slab-page-title"><FlaskConical size={20} /> Lab</div>
         {!loading && (
-          <span className="slab-head-stat">{active.length} active · {labs.length} total</span>
+          <span className="slab-head-stat">{active.length} active · {labsOfType.length} total</span>
         )}
+      </div>
+
+      <div className="slab-type-tabs">
+        {LAB_TYPE_TABS.map((t) => (
+          <button key={t.id} type="button"
+            className={`slab-type-tab${typeFilter === t.id ? " active" : ""}`}
+            onClick={() => setTypeFilter(t.id)}>
+            {t.label}
+          </button>
+        ))}
       </div>
 
       {loading ? (
         <div className="slab-loading">Loading your labs…</div>
-      ) : labs.length === 0 ? (
+      ) : labsOfType.length === 0 ? (
         <div className="slab-empty">
           <FlaskConical size={48} />
           <h3>No labs assigned</h3>
-          <p>Labs assigned to your batch will appear here.</p>
+          <p>
+            {typeFilter === "company"
+              ? "No company-based labs assigned yet. Check back later."
+              : "Labs assigned to your batch will appear here."}
+          </p>
         </div>
       ) : (
         <>

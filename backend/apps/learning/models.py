@@ -1236,9 +1236,10 @@ class ContestParticipation(models.Model):
             self.completed_at = timezone.now()
             duration = self.completed_at - self.started_at
             self.time_spent_seconds = int(duration.total_seconds())
+            self.total_time_taken = self.time_spent_seconds
             self.is_active = False
             self.auto_submitted = auto_submitted
-            self.save(update_fields=['completed_at', 'time_spent_seconds', 'is_active', 'auto_submitted'])
+            self.save(update_fields=['completed_at', 'time_spent_seconds', 'total_time_taken', 'is_active', 'auto_submitted'])
         return self.time_spent_seconds
 
 
@@ -1433,8 +1434,44 @@ class LabAssignmentSubmission(models.Model):
 # Lab V2  (simple practical lab management — no test-case execution)
 # ─────────────────────────────────────────────────────────────────────────────
 
+LAB_LANGUAGE_CHOICES = ["Python", "C", "C++", "Java"]
+
+
+def default_lab_languages():
+    return list(LAB_LANGUAGE_CHOICES)
+
+
+class Company(models.Model):
+    """A company a HOD sets up for company-specific ("Company Based") lab practicals."""
+
+    name        = models.CharField(max_length=200)
+    department  = models.ForeignKey(
+        Department, on_delete=models.CASCADE, related_name="companies"
+    )
+    created_by  = models.ForeignKey(
+        StaffProfile, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="created_companies"
+    )
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "companies"
+        ordering = ("name",)
+        constraints = [
+            models.UniqueConstraint(fields=["department", "name"], name="unique_company_per_department")
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class Lab(models.Model):
     """Lab container created by HOD — groups exercises for a batch/section."""
+
+    LAB_TYPE_CHOICES = (
+        ("practical", "Lab Practical"),
+        ("company", "Company Based Lab Practical"),
+    )
 
     name            = models.CharField(max_length=200)
     department      = models.ForeignKey(
@@ -1454,6 +1491,11 @@ class Lab(models.Model):
     )
     is_active       = models.BooleanField(default=True)
     created_at      = models.DateTimeField(auto_now_add=True)
+    lab_type        = models.CharField(max_length=20, choices=LAB_TYPE_CHOICES, default="practical")
+    company         = models.OneToOneField(
+        Company, on_delete=models.CASCADE, null=True, blank=True, related_name="lab"
+    )
+    allowed_languages = models.JSONField(default=default_lab_languages)
 
     class Meta:
         db_table = "labs"
@@ -1486,6 +1528,23 @@ class LabExercise(models.Model):
 
     def __str__(self):
         return f"{self.lab.name} – {self.title}"
+
+
+class LabExerciseTestCase(models.Model):
+    """Reference test case for a LabExercise — stored data only, not auto-graded."""
+
+    exercise        = models.ForeignKey(LabExercise, on_delete=models.CASCADE, related_name="test_cases")
+    stdin           = models.TextField(blank=True, default="")
+    expected_output = models.TextField()
+    is_sample       = models.BooleanField(default=False)
+    order           = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "lab_exercise_test_cases"
+        ordering = ("order",)
+
+    def __str__(self):
+        return f"TestCase #{self.order} for {self.exercise_id}"
 
 
 class LabExerciseSubmission(models.Model):

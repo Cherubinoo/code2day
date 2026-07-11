@@ -62,6 +62,9 @@ function LabCard({ lab, onClick }) {
           <span className="slp2-chip"><Users size={10} /> {lab.batch}</span>
           {lab.section && <span className="slp2-chip">§ {lab.section}</span>}
           <span className="slp2-chip"><BookOpen size={10} /> {lab.exercise_count} exercises</span>
+          {lab.lab_type === "company" && lab.company && (
+            <span className="slp2-chip company">🏢 {lab.company.name}</span>
+          )}
         </div>
         <div className="slp2-card-dates">
           <Calendar size={11} />
@@ -79,7 +82,6 @@ function LabCard({ lab, onClick }) {
 const BLANK_TEMPLATE = {
   problem: "",
   examples: [{ input: "", output: "", explanation: "" }],
-  constraints: [""],
   difficulty: "Medium",
   hint: "",
 };
@@ -96,20 +98,15 @@ function compileDescription(f) {
       if (e.explanation.trim()) parts.push(`  Explanation: ${e.explanation.trim()}`);
     });
   }
-  const cs = f.constraints.filter((c) => c.trim());
-  if (cs.length) {
-    parts.push("\nConstraints:");
-    cs.forEach((c) => parts.push(`  - ${c.trim()}`));
-  }
   if (f.difficulty) parts.push(`\nDifficulty: ${f.difficulty}`);
   if (f.hint.trim()) parts.push(`\nHint: ${f.hint.trim()}`);
   return parts.join("\n");
 }
 
 function parseDescription(text) {
-  if (!text) return { ...BLANK_TEMPLATE, examples: [{ input: "", output: "", explanation: "" }], constraints: [""] };
+  if (!text) return { ...BLANK_TEMPLATE, examples: [{ input: "", output: "", explanation: "" }] };
   const lines = text.split("\n");
-  const result = { problem: "", examples: [], constraints: [], difficulty: "Medium", hint: "" };
+  const result = { problem: "", examples: [], difficulty: "Medium", hint: "" };
   let section = "problem";
   const problemLines = [];
   let curEx = null;
@@ -118,6 +115,8 @@ function parseDescription(text) {
     const t = line.trim();
     if (t === "Examples:") { section = "examples"; curEx = { input: "", output: "", explanation: "" }; continue; }
     if (t === "Constraints:") {
+      // Legacy exercises may still have a Constraints section in their stored
+      // description — skip over it so it doesn't get parsed into the problem text.
       if (curEx) { result.examples.push(curEx); curEx = null; }
       section = "constraints"; continue;
     }
@@ -140,22 +139,19 @@ function parseDescription(text) {
       } else if (em && curEx) {
         curEx.explanation = em[1];
       }
-    } else if (section === "constraints") {
-      const c = t.replace(/^-\s*/, "").trim();
-      if (c) result.constraints.push(c);
     }
+    // section === "constraints": intentionally dropped, not shown anywhere anymore.
   }
   if (curEx) result.examples.push(curEx);
   result.problem = problemLines.join("\n").trim();
   if (!result.examples.length) result.examples = [{ input: "", output: "", explanation: "" }];
-  if (!result.constraints.length) result.constraints = [""];
   return result;
 }
 
 // ─── Bulk import (CSV) helpers ────────────────────────────────────────────────
 const BULK_HEADERS = [
   "title", "problem_statement", "example_input", "example_output",
-  "example_explanation", "constraints", "difficulty", "hint",
+  "example_explanation", "difficulty", "hint",
 ];
 
 function csvEscape(field) {
@@ -194,6 +190,19 @@ function parseCsv(text) {
   return rows.filter((r) => !(r.length === 1 && r[0].trim() === ""));
 }
 
+function downloadCsv(rows, filename) {
+  const csv = toCsv(rows);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function downloadBulkTemplate() {
   const sample = [
     "Reverse a Linked List",
@@ -201,20 +210,25 @@ function downloadBulkTemplate() {
     "1 -> 2 -> 3 -> NULL",
     "3 -> 2 -> 1 -> NULL",
     "The list is reversed by relinking each node's next pointer.",
-    "1 <= n <= 1000; node values fit in a 32-bit int",
     "Medium",
     "Track previous, current, and next pointers as you walk the list.",
   ];
-  const csv = toCsv([BULK_HEADERS, sample]);
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "lab_exercises_template.csv";
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  downloadCsv([BULK_HEADERS, sample], "lab_exercises_template.csv");
+}
+
+// ─── Bulk import (CSV) helpers: test cases ────────────────────────────────────
+// A separate file from the questions template — rows are matched to an
+// exercise by its exact title (case-insensitive), so one exercise can have
+// several test-case rows.
+const TESTCASE_BULK_HEADERS = ["title", "stdin", "expected_output", "is_sample"];
+
+function downloadTestCaseTemplate() {
+  const rows = [
+    TESTCASE_BULK_HEADERS,
+    ["Reverse a Linked List", "1 -> 2 -> 3 -> NULL", "3 -> 2 -> 1 -> NULL", "yes"],
+    ["Reverse a Linked List", "5 -> NULL", "5 -> NULL", "no"],
+  ];
+  downloadCsv(rows, "lab_test_cases_template.csv");
 }
 
 // Converts parsed CSV rows into {title, description} payloads, reusing the
@@ -240,17 +254,68 @@ const COLUMN_ALIASES = {
   example_input: ["example input", "sample input", "input"],
   example_output: ["example output", "sample output", "output"],
   example_explanation: ["example explanation", "explanation"],
-  constraints: ["constraints", "constraint"],
   difficulty: ["difficulty", "level"],
   hint: ["hint", "hints"],
 };
 
-function findColumn(header, key) {
-  for (const alias of COLUMN_ALIASES[key]) {
+function findColumn(header, key, aliasMap = COLUMN_ALIASES) {
+  for (const alias of aliasMap[key]) {
     const idx = header.indexOf(alias);
     if (idx !== -1) return idx;
   }
   return -1;
+}
+
+const TESTCASE_COLUMN_ALIASES = {
+  title: ["title", "exercise title", "name", "problem title"],
+  stdin: ["stdin", "input", "test input"],
+  expected_output: ["expected output", "output", "expected"],
+  is_sample: ["is sample", "sample", "visible"],
+};
+
+// Loosely-truthy parse for the "is_sample" cell — spreadsheets return all
+// kinds of representations (string, boolean, number) depending on format.
+function parseBoolCell(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  return ["yes", "y", "true", "1"].includes(s);
+}
+
+function rowsToTestCases(rows) {
+  if (!rows.length) {
+    return { test_cases: [], errors: [], headerError: "This file has no rows." };
+  }
+  const header = rows[0].map(normalizeHeader);
+  const iTitle = findColumn(header, "title", TESTCASE_COLUMN_ALIASES);
+  const iStdin = findColumn(header, "stdin", TESTCASE_COLUMN_ALIASES);
+  const iExpected = findColumn(header, "expected_output", TESTCASE_COLUMN_ALIASES);
+  const iSample = findColumn(header, "is_sample", TESTCASE_COLUMN_ALIASES);
+
+  if (iTitle === -1 || iExpected === -1) {
+    return {
+      test_cases: [],
+      errors: [],
+      headerError: "Couldn't find a title/expected-output column in the header row. Download the template to see the expected format.",
+    };
+  }
+
+  const test_cases = [];
+  const errors = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const title = cellStr(row, iTitle);
+    const expected_output = cellStr(row, iExpected);
+    if (!title && !expected_output) continue; // blank row
+    if (!title) { errors.push({ row: r + 1, error: "Missing exercise title" }); continue; }
+    if (!expected_output) { errors.push({ row: r + 1, error: "Missing expected output" }); continue; }
+
+    test_cases.push({
+      title,
+      stdin: cellStr(row, iStdin),
+      expected_output,
+      is_sample: iSample !== -1 ? parseBoolCell(row[iSample]) : false,
+    });
+  }
+  return { test_cases, errors, headerError: null };
 }
 
 function rowsToExercises(rows) {
@@ -263,7 +328,6 @@ function rowsToExercises(rows) {
   const iExIn = findColumn(header, "example_input");
   const iExOut = findColumn(header, "example_output");
   const iExExp = findColumn(header, "example_explanation");
-  const iConstraints = findColumn(header, "constraints");
   const iDifficulty = findColumn(header, "difficulty");
   const iHint = findColumn(header, "hint");
 
@@ -285,7 +349,6 @@ function rowsToExercises(rows) {
     if (!title) { errors.push({ row: r + 1, error: "Missing title" }); continue; }
     if (!problem) { errors.push({ row: r + 1, error: "Missing problem statement" }); continue; }
 
-    const constraints = cellStr(row, iConstraints).split(";").map((c) => c.trim()).filter(Boolean);
     const difficultyRaw = cellStr(row, iDifficulty);
     const difficulty = ["Easy", "Medium", "Hard"].includes(difficultyRaw) ? difficultyRaw : "Medium";
 
@@ -296,7 +359,6 @@ function rowsToExercises(rows) {
         output: cellStr(row, iExOut),
         explanation: cellStr(row, iExExp),
       }],
-      constraints: constraints.length ? constraints : [""],
       difficulty,
       hint: cellStr(row, iHint),
     };
@@ -315,9 +377,13 @@ function parseSpreadsheetFile(file) {
     if (isExcel) {
       reader.onload = () => {
         try {
-          const workbook = XLSX.read(reader.result, { type: "array" });
+          const workbook = XLSX.read(reader.result, { type: "array", cellDates: true });
           const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-          const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, blankrows: false, defval: "" });
+          // raw: false returns each cell's displayed text (respecting its number/date
+          // format) instead of the underlying value — Excel silently coerces things like
+          // "5-10" or "1/2" typed into example/constraint cells into date serial numbers,
+          // and raw values would surface those meaningless numbers instead of the text.
+          const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, blankrows: false, defval: "", raw: false });
           resolve(rows);
         } catch {
           reject(new Error("Could not parse this Excel file. Make sure it's a valid .xlsx/.xls workbook."));
@@ -347,9 +413,6 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
   }
   function addEx() { setFields((f) => ({ ...f, examples: [...f.examples, { input: "", output: "", explanation: "" }] })); }
   function removeEx(idx) { setFields((f) => ({ ...f, examples: f.examples.filter((_, i) => i !== idx) || [{ input: "", output: "", explanation: "" }] })); }
-  function setConstraint(idx, val) { setFields((f) => { const cs = f.constraints.map((c, i) => i === idx ? val : c); return { ...f, constraints: cs }; }); }
-  function addConstraint() { setFields((f) => ({ ...f, constraints: [...f.constraints, ""] })); }
-  function removeConstraint(idx) { setFields((f) => ({ ...f, constraints: f.constraints.filter((_, i) => i !== idx).length ? f.constraints.filter((_, i) => i !== idx) : [""] })); }
 
   async function submit(e) {
     e.preventDefault();
@@ -425,26 +488,6 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
         </div>
       </div>
 
-      {/* Constraints */}
-      <div className="slp2-form-field">
-        <label className="slp2-form-label">Constraints</label>
-        <div className="slp2-constraints">
-          {fields.constraints.map((c, idx) => (
-            <div key={idx} className="slp2-constraint-row">
-              <span className="slp2-constraint-bullet">—</span>
-              <input className="slp2-input" placeholder="e.g. 1 ≤ n ≤ 1000"
-                value={c} onChange={(e) => setConstraint(idx, e.target.value)} />
-              {fields.constraints.length > 1 && (
-                <button type="button" className="slp2-icon-btn danger" onClick={() => removeConstraint(idx)}><X size={12} /></button>
-              )}
-            </div>
-          ))}
-          <button type="button" className="slp2-add-row-btn" onClick={addConstraint}>
-            <Plus size={12} /> Add Constraint
-          </button>
-        </div>
-      </div>
-
       {/* Difficulty */}
       <div className="slp2-form-field">
         <label className="slp2-form-label">Difficulty</label>
@@ -484,6 +527,13 @@ function BulkImportModal({ labId, onImported, onClose }) {
   const [parseErrors, setParseErrors] = useState([]);
   const [headerError, setHeaderError] = useState("");
   const [reading, setReading] = useState(false);
+
+  const [tcFileName, setTcFileName] = useState("");
+  const [tcParsed, setTcParsed] = useState([]);
+  const [tcParseErrors, setTcParseErrors] = useState([]);
+  const [tcHeaderError, setTcHeaderError] = useState("");
+  const [tcReading, setTcReading] = useState(false);
+
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [resultMsg, setResultMsg] = useState("");
@@ -512,89 +562,178 @@ function BulkImportModal({ labId, onImported, onClose }) {
     }
   }
 
+  async function handleTcFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setTcFileName(file.name);
+    setErr(""); setResultMsg(""); setTcParsed([]); setTcParseErrors([]); setTcHeaderError("");
+    setTcReading(true);
+    try {
+      const rows = await parseSpreadsheetFile(file);
+      const { test_cases, errors, headerError: hdrErr } = rowsToTestCases(rows);
+      if (hdrErr) {
+        setTcHeaderError(hdrErr);
+      } else if (!test_cases.length) {
+        setErr("No test-case rows found in this file — check that rows below the header aren't all blank.");
+      } else {
+        setTcParsed(test_cases);
+        setTcParseErrors(errors);
+      }
+    } catch (parseErr) {
+      setErr(parseErr.message || "Could not read this file.");
+    } finally {
+      setTcReading(false);
+    }
+  }
+
   async function doImport() {
-    if (!parsed.length) return;
+    if (!parsed.length && !tcParsed.length) return;
     setBusy(true); setErr(""); setResultMsg("");
     try {
-      const res = await apiFetch(`/api/lab/v2/${labId}/exercises/bulk/`, "POST", { exercises: parsed });
+      const res = await apiFetch(`/api/lab/v2/${labId}/exercises/bulk/`, "POST", {
+        exercises: parsed, test_cases: tcParsed,
+      });
       const data = await res.json();
       if (!res.ok) { setErr(data.error || "Import failed — please try again."); return; }
-      setResultMsg(
-        `Success — imported ${data.created_count} exercise${data.created_count !== 1 ? "s" : ""}` +
-        (data.skipped_count ? `, skipped ${data.skipped_count} invalid row${data.skipped_count !== 1 ? "s" : ""}.` : ".")
-      );
+
+      const parts = [];
+      if (parsed.length) {
+        parts.push(
+          `${data.created_count} exercise${data.created_count !== 1 ? "s" : ""}` +
+          (data.skipped_count ? ` (${data.skipped_count} skipped)` : "")
+        );
+      }
+      if (tcParsed.length) {
+        parts.push(
+          `${data.test_cases_created_count} test case${data.test_cases_created_count !== 1 ? "s" : ""}` +
+          (data.test_cases_skipped_count ? ` (${data.test_cases_skipped_count} skipped)` : "")
+        );
+      }
+      setResultMsg(`Success — imported ${parts.join(" and ")}.`);
+      if (data.test_case_errors?.length) {
+        setErr(
+          `${data.test_case_errors.length} test-case row${data.test_case_errors.length !== 1 ? "s" : ""} skipped: ` +
+          data.test_case_errors.slice(0, 3).map((e) => `Row ${e.row} (${e.error})`).join(", ") +
+          (data.test_case_errors.length > 3 ? "…" : "")
+        );
+      }
       onImported(data.created);
-      setParsed([]);
-      setFileName("");
+      setParsed([]); setFileName("");
+      setTcParsed([]); setTcFileName("");
     } catch { setErr("Network error — check your connection and try again."); }
     finally { setBusy(false); }
   }
+
+  const totalToImport = parsed.length + tcParsed.length;
 
   return (
     <>
       <div className="hlc2-overlay" onClick={onClose} />
       <div className="slp2-bulk-modal">
         <div className="slp2-bulk-hdr">
-          <h3><Upload size={16} /> Bulk Import Exercises</h3>
+          <h3><Upload size={16} /> Bulk Import Exercises &amp; Test Cases</h3>
           <button type="button" className="slp2-icon-btn" onClick={onClose}><X size={15} /></button>
         </div>
 
         <p className="slp2-bulk-desc">
-          Download the template, fill in one row per exercise, then upload it here.
+          Import uses two separate files: one for the questions, one for their test cases.
+          Each test-case row is matched to a question by its exact title.
           CSV and Excel (.xlsx / .xls) files are both accepted.
-          Separate multiple constraints in a cell with a semicolon ( ; ).
         </p>
 
-        <button type="button" className="slp2-btn-ghost" onClick={downloadBulkTemplate}>
-          <Download size={14} /> Download CSV Template
-        </button>
+        <div className="slp2-bulk-file-block">
+          <div className="slp2-bulk-file-hdr">1. Questions</div>
+          <button type="button" className="slp2-btn-ghost" onClick={downloadBulkTemplate}>
+            <Download size={14} /> Download Questions Template
+          </button>
+          <label className="slp2-bulk-upload-label">
+            {reading ? <Loader2 size={14} className="slp2-spin" /> : <Upload size={14} />}
+            {reading ? "Reading file…" : fileName || "Choose a CSV or Excel file…"}
+            <input type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              onChange={handleFile} disabled={reading} hidden />
+          </label>
 
-        <label className="slp2-bulk-upload-label">
-          {reading ? <Loader2 size={14} className="slp2-spin" /> : <Upload size={14} />}
-          {reading ? "Reading file…" : fileName || "Choose a CSV or Excel file…"}
-          <input type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            onChange={handleFile} disabled={reading} hidden />
-        </label>
-
-        {headerError && (
-          <div className="slp2-bulk-warnings error">
-            <AlertTriangle size={13} />
-            <span>{headerError}</span>
-          </div>
-        )}
-
-        {parseErrors.length > 0 && (
-          <div className="slp2-bulk-warnings">
-            <AlertTriangle size={13} />
-            <span>
-              {parseErrors.length} row{parseErrors.length !== 1 ? "s" : ""} will be skipped:{" "}
-              {parseErrors.slice(0, 3).map((e) => `Row ${e.row} (${e.error})`).join(", ")}
-              {parseErrors.length > 3 ? "…" : ""}
-            </span>
-          </div>
-        )}
-
-        {parsed.length > 0 && (
-          <div className="slp2-bulk-preview">
-            <div className="slp2-bulk-preview-hdr">
-              <CheckCircle2 size={13} /> {parsed.length} exercise{parsed.length !== 1 ? "s" : ""} parsed and ready to import
+          {headerError && (
+            <div className="slp2-bulk-warnings error">
+              <AlertTriangle size={13} />
+              <span>{headerError}</span>
             </div>
-            <div className="slp2-bulk-preview-list">
-              {parsed.slice(0, 8).map((ex, i) => (
-                <div key={i} className="slp2-bulk-preview-row">{i + 1}. {ex.title}</div>
-              ))}
-              {parsed.length > 8 && <div className="slp2-bulk-preview-row">…and {parsed.length - 8} more</div>}
+          )}
+          {parseErrors.length > 0 && (
+            <div className="slp2-bulk-warnings">
+              <AlertTriangle size={13} />
+              <span>
+                {parseErrors.length} row{parseErrors.length !== 1 ? "s" : ""} will be skipped:{" "}
+                {parseErrors.slice(0, 3).map((e) => `Row ${e.row} (${e.error})`).join(", ")}
+                {parseErrors.length > 3 ? "…" : ""}
+              </span>
             </div>
-          </div>
-        )}
+          )}
+          {parsed.length > 0 && (
+            <div className="slp2-bulk-preview">
+              <div className="slp2-bulk-preview-hdr">
+                <CheckCircle2 size={13} /> {parsed.length} exercise{parsed.length !== 1 ? "s" : ""} parsed and ready to import
+              </div>
+              <div className="slp2-bulk-preview-list">
+                {parsed.slice(0, 8).map((ex, i) => (
+                  <div key={i} className="slp2-bulk-preview-row">{i + 1}. {ex.title}</div>
+                ))}
+                {parsed.length > 8 && <div className="slp2-bulk-preview-row">…and {parsed.length - 8} more</div>}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="slp2-bulk-file-block">
+          <div className="slp2-bulk-file-hdr">2. Test Cases <span className="hlc2-optional">(optional)</span></div>
+          <button type="button" className="slp2-btn-ghost" onClick={downloadTestCaseTemplate}>
+            <Download size={14} /> Download Test Case Template
+          </button>
+          <label className="slp2-bulk-upload-label">
+            {tcReading ? <Loader2 size={14} className="slp2-spin" /> : <Upload size={14} />}
+            {tcReading ? "Reading file…" : tcFileName || "Choose a CSV or Excel file…"}
+            <input type="file" accept=".csv,text/csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              onChange={handleTcFile} disabled={tcReading} hidden />
+          </label>
+
+          {tcHeaderError && (
+            <div className="slp2-bulk-warnings error">
+              <AlertTriangle size={13} />
+              <span>{tcHeaderError}</span>
+            </div>
+          )}
+          {tcParseErrors.length > 0 && (
+            <div className="slp2-bulk-warnings">
+              <AlertTriangle size={13} />
+              <span>
+                {tcParseErrors.length} row{tcParseErrors.length !== 1 ? "s" : ""} will be skipped:{" "}
+                {tcParseErrors.slice(0, 3).map((e) => `Row ${e.row} (${e.error})`).join(", ")}
+                {tcParseErrors.length > 3 ? "…" : ""}
+              </span>
+            </div>
+          )}
+          {tcParsed.length > 0 && (
+            <div className="slp2-bulk-preview">
+              <div className="slp2-bulk-preview-hdr">
+                <CheckCircle2 size={13} /> {tcParsed.length} test case{tcParsed.length !== 1 ? "s" : ""} parsed and ready to import
+              </div>
+              <div className="slp2-bulk-preview-list">
+                {tcParsed.slice(0, 8).map((tc, i) => (
+                  <div key={i} className="slp2-bulk-preview-row">{i + 1}. {tc.title}</div>
+                ))}
+                {tcParsed.length > 8 && <div className="slp2-bulk-preview-row">…and {tcParsed.length - 8} more</div>}
+              </div>
+            </div>
+          )}
+        </div>
 
         {err && <p className="slp2-error">{err}</p>}
         {resultMsg && <p className="slp2-bulk-success"><CheckCircle2 size={13} /> {resultMsg}</p>}
 
         <div className="slp2-form-actions">
           <button type="button" className="slp2-btn-ghost" onClick={onClose}>Close</button>
-          <button type="button" className="slp2-btn-primary" onClick={doImport} disabled={busy || reading || !parsed.length}>
-            <Save size={14} /> {busy ? "Importing…" : `Import ${parsed.length || ""} Exercise${parsed.length === 1 ? "" : "s"}`}
+          <button type="button" className="slp2-btn-primary" onClick={doImport} disabled={busy || reading || tcReading || !totalToImport}>
+            <Save size={14} /> {busy ? "Importing…" : "Import"}
           </button>
         </div>
       </div>
@@ -849,6 +988,9 @@ function LabDetail({ lab: initLab, onBack }) {
                     <div className="slp2-ex-meta">
                       {ex.submission_count !== null && (
                         <span className="slp2-chip"><CheckCircle2 size={9} /> {ex.submission_count} submitted</span>
+                      )}
+                      {!!ex.test_case_count && (
+                        <span className="slp2-chip">{ex.test_case_count} test case{ex.test_case_count !== 1 ? "s" : ""}</span>
                       )}
                     </div>
                   </div>

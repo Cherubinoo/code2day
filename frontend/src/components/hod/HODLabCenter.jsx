@@ -4,6 +4,7 @@ import {
   UserCheck, Pencil, Trash2, BookOpen, AlertCircle, X, Save,
 } from "lucide-react";
 import { getCsrfToken } from "../../lib/appUtils";
+import { LAB_LANGUAGES } from "../../lib/appData";
 
 function apiFetch(url, method, body) {
   const token = getCsrfToken();
@@ -37,9 +38,29 @@ function PillSelect({ options, value, onChange, placeholder }) {
   );
 }
 
+function LangMultiSelect({ options, values, onChange }) {
+  function toggle(v) {
+    onChange(values.includes(v) ? values.filter((x) => x !== v) : [...values, v]);
+  }
+  return (
+    <div className="hlc2-pills">
+      {options.map((o) => (
+        <button key={o} type="button"
+          className={`hlc2-pill${values.includes(o) ? " active" : ""}`}
+          onClick={() => toggle(o)}>
+          {o}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
   const editing = !!editLab;
-  const blank = { name: "", batch: "", section: "", start_date: "", end_date: "", staff_in_charge_id: "" };
+  const blank = {
+    name: "", batch: "", section: "", start_date: "", end_date: "", staff_in_charge_id: "",
+    allowed_languages: [...LAB_LANGUAGES],
+  };
   const [form, setForm] = useState(blank);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -54,6 +75,7 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
         start_date: editLab.start_date ? editLab.start_date.slice(0, 16) : "",
         end_date: editLab.end_date ? editLab.end_date.slice(0, 16) : "",
         staff_in_charge_id: editLab.staff_in_charge?.id ?? "",
+        allowed_languages: editLab.allowed_languages?.length ? editLab.allowed_languages : [...LAB_LANGUAGES],
       });
     } else {
       setForm(blank);
@@ -70,10 +92,14 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
     if (!form.batch) { setErr("Select a batch"); return; }
     if (!form.start_date || !form.end_date) { setErr("Both start and end dates are required"); return; }
     if (new Date(form.start_date) >= new Date(form.end_date)) { setErr("End date must be after start date"); return; }
+    if (form.allowed_languages.length === 0) { setErr("Select at least one allowed language"); return; }
     setBusy(true); setErr("");
     try {
       const url = editing ? `/api/lab/v2/${editLab.id}/` : "/api/lab/v2/";
-      const res = await apiFetch(url, editing ? "PUT" : "POST", { ...form, staff_in_charge_id: form.staff_in_charge_id || null });
+      const res = await apiFetch(url, editing ? "PUT" : "POST", {
+        ...form,
+        staff_in_charge_id: form.staff_in_charge_id || null,
+      });
       if (!res.ok) { const d = await res.json(); setErr(d.error || "Save failed"); return; }
       onSave(await res.json(), editing);
       onClose();
@@ -131,6 +157,11 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
               onChange={(v) => setForm((f) => ({ ...f, staff_in_charge_id: v }))}
               placeholder="Loading staff…" />
           </div>
+          <div className="hlc2-field">
+            <label className="hlc2-label">Allowed Languages *</label>
+            <LangMultiSelect options={LAB_LANGUAGES} values={form.allowed_languages}
+              onChange={(v) => setForm((f) => ({ ...f, allowed_languages: v }))} />
+          </div>
           {err && <p className="hlc2-error">{err}</p>}
           <div className="hlc2-form-actions">
             <button type="button" className="hlc2-btn-ghost" onClick={onClose}>Cancel</button>
@@ -158,6 +189,11 @@ function LabCard({ lab, onManage, onDelete }) {
           <span className="hlc2-chip"><Users size={10} /> {lab.batch}</span>
           {lab.section && <span className="hlc2-chip">§ {lab.section}</span>}
           <span className="hlc2-chip"><BookOpen size={10} /> {lab.exercise_count} exercises</span>
+        </div>
+        <div className="hlc2-card-chips">
+          {(lab.allowed_languages || []).map((l) => (
+            <span key={l} className="hlc2-chip lang">{l}</span>
+          ))}
         </div>
         <div className="hlc2-card-dates">
           <Calendar size={11} />
@@ -189,6 +225,12 @@ function ManagePage({ lab: init, staffList, onBack, onLabUpdated }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
+  const [editSettings, setEditSettings] = useState(false);
+  const [settingsLanguages, setSettingsLanguages] = useState(
+    init.allowed_languages?.length ? init.allowed_languages : [...LAB_LANGUAGES]
+  );
+  const [settingsErr, setSettingsErr] = useState("");
+
   async function saveStaff() {
     setBusy(true);
     const res = await apiFetch(`/api/lab/v2/${lab.id}/`, "PUT", { staff_in_charge_id: newStaffId || null });
@@ -197,6 +239,24 @@ function ManagePage({ lab: init, staffList, onBack, onLabUpdated }) {
       setLab(updated); onLabUpdated(updated); setEditStaff(false);
       setMsg("Staff updated successfully");
       setTimeout(() => setMsg(""), 3000);
+    }
+    setBusy(false);
+  }
+
+  async function saveSettings() {
+    if (settingsLanguages.length === 0) {
+      setSettingsErr("Select at least one language"); return;
+    }
+    setBusy(true); setSettingsErr("");
+    const res = await apiFetch(`/api/lab/v2/${lab.id}/`, "PUT", { allowed_languages: settingsLanguages });
+    if (res.ok) {
+      const updated = await res.json();
+      setLab(updated); onLabUpdated(updated); setEditSettings(false);
+      setMsg("Lab settings updated successfully");
+      setTimeout(() => setMsg(""), 3000);
+    } else {
+      const d = await res.json();
+      setSettingsErr(d.error || "Save failed");
     }
     setBusy(false);
   }
@@ -262,6 +322,39 @@ function ManagePage({ lab: init, staffList, onBack, onLabUpdated }) {
           </div>
         )}
         {msg && <p className="hlc2-ok">{msg}</p>}
+      </div>
+
+      <div className="hlc2-section-card">
+        <div className="hlc2-section-hdr">
+          <span className="hlc2-section-ttl"><BookOpen size={14} /> Allowed Languages</span>
+          {!editSettings && (
+            <button type="button" className="hlc2-btn-sm"
+              onClick={() => {
+                setEditSettings(true);
+                setSettingsErr("");
+                setSettingsLanguages(lab.allowed_languages?.length ? lab.allowed_languages : [...LAB_LANGUAGES]);
+              }}>
+              <Pencil size={12} /> Edit
+            </button>
+          )}
+        </div>
+
+        {editSettings ? (
+          <div className="hlc2-staff-edit">
+            <LangMultiSelect options={LAB_LANGUAGES} values={settingsLanguages} onChange={setSettingsLanguages} />
+            {settingsErr && <p className="hlc2-error">{settingsErr}</p>}
+            <div className="hlc2-staff-btns">
+              <button type="button" className="hlc2-btn-ghost" onClick={() => setEditSettings(false)}>Cancel</button>
+              <button type="button" className="hlc2-btn-primary" onClick={saveSettings} disabled={busy}>
+                <Save size={13} /> {busy ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="hlc2-card-chips">
+            {(lab.allowed_languages || []).map((l) => <span key={l} className="hlc2-chip lang">{l}</span>)}
+          </div>
+        )}
       </div>
 
       <div className="hlc2-info-note">

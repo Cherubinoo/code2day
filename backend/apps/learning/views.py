@@ -56,6 +56,9 @@ from .models import (
     Lab,
     LabExercise,
     LabExerciseSubmission,
+    LabExerciseTestCase,
+    Company,
+    LAB_LANGUAGE_CHOICES,
 )
 from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
@@ -5803,6 +5806,7 @@ class StudentContestStopView(APIView):
         if participation.started_at:
             time_spent = timezone.now() - participation.started_at
             participation.time_spent_seconds = int(time_spent.total_seconds())
+            participation.total_time_taken = participation.time_spent_seconds
         
         # Recalculate final score and problems solved one last time
         if contest.contest_type == 'programming':
@@ -10277,6 +10281,12 @@ def _serialize_lab_v2(lab, student=None):
         "is_expired": lab.is_expired,
         "exercise_count": ex_count,
         "created_at": lab.created_at.isoformat(),
+        "lab_type": lab.lab_type,
+        "company": {
+            "id": lab.company.id,
+            "name": lab.company.name,
+        } if lab.company_id else None,
+        "allowed_languages": lab.allowed_languages or list(LAB_LANGUAGE_CHOICES),
         "staff_in_charge": {
             "id": lab.staff_in_charge.id,
             "name": lab.staff_in_charge.name,
@@ -10304,15 +10314,216 @@ def _serialize_exercise(ex):
         "created_at": ex.created_at.isoformat(),
         "added_by": {"id": ex.added_by.id, "name": ex.added_by.name} if ex.added_by else None,
         "submission_count": getattr(ex, "submission_count", None),
+        "test_case_count": getattr(ex, "test_case_count", None),
     }
 
 
-class HODLabListView(APIView):
+def _serialize_test_case(tc):
+    return {
+        "id": tc.id,
+        "exercise_id": tc.exercise_id,
+        "stdin": tc.stdin,
+        "expected_output": tc.expected_output,
+        "is_sample": tc.is_sample,
+        "order": tc.order,
+    }
+
+
+def _serialize_company_practical(company):
+    """A Company IS its one practical — this serializes the Company together
+    with the single Lab (lab_type="company") that belongs to it."""
+    lab = getattr(company, "lab", None)
+    return {
+        "id": company.id,
+        "name": company.name,
+        "created_at": company.created_at.isoformat(),
+        "lab_id": lab.id if lab else None,
+        "batch": lab.batch if lab else "",
+        "section": lab.section if lab else "",
+        "start_date": lab.start_date.isoformat() if lab and lab.start_date else None,
+        "end_date": lab.end_date.isoformat() if lab and lab.end_date else None,
+        "is_expired": lab.is_expired if lab else None,
+        "exercise_count": lab.exercises.count() if lab else 0,
+        "allowed_languages": (lab.allowed_languages if lab and lab.allowed_languages else list(LAB_LANGUAGE_CHOICES)),
+        "staff_in_charge": {
+            "id": lab.staff_in_charge.id,
+            "name": lab.staff_in_charge.name,
+            "faculty_id": lab.staff_in_charge.faculty_id,
+        } if lab and lab.staff_in_charge else None,
+    }
+
+
+class HODCompanyListView(APIView):
+    """HOD: list/create Companies for company-based lab practicals, scoped to their
+    department. A Company and its practical (Lab) are created together — one company
+    is exactly one practical (batch, staff, dates, languages)."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         staff = _staff_from_request(request)
-        labs = Lab.objects.filter(department=staff.department).select_related(
+        companies = Company.objects.filter(department=staff.department).select_related("lab", "lab__staff_in_charge")
+        return Response([_serialize_company_practical(c) for c in companies])
+
+    def post(self, request):
+        staff = _staff_from_request(request)
+        data = request.data
+
+        name = (data.get("name") or "").strip()
+        if not name:
+            return Response({"error": "Company name is required"}, status=400)
+        if Company.objects.filter(department=staff.department, name__iexact=name).exists():
+            return Response({"error": "A company with this name already exists"}, status=400)
+
+        if not data.get("batch"):
+            return Response({"error": "Select a batch"}, status=400)
+        start = _parse_dt(data.get("start_date"))
+        end = _parse_dt(data.get("end_date"))
+        if not start or not end:
+            return Response({"error": "Valid start_date and end_date are required"}, status=400)
+
+        staff_in_charge = None
+        sic_id = data.get("staff_in_charge_id")
+        if sic_id:
+            try:
+                staff_in_charge = StaffProfile.objects.get(id=sic_id, department=staff.department)
+            except StaffProfile.DoesNotExist:
+                return Response({"error": "Staff not found"}, status=400)
+
+        allowed_languages = data.get("allowed_languages", list(LAB_LANGUAGE_CHOICES))
+        if (not isinstance(allowed_languages, list) or not allowed_languages
+                or any(lang not in LAB_LANGUAGE_CHOICES for lang in allowed_languages)):
+            return Response(
+                {"error": f"allowed_languages must be a non-empty list from {LAB_LANGUAGE_CHOICES}"}, status=400
+            )
+
+        with transaction.atomic():
+            company = Company.objects.create(name=name, department=staff.department, created_by=staff)
+            Lab.objects.create(
+                name=f"{name} — Company Practical",
+                department=staff.department,
+                batch=data.get("batch", ""),
+                section=data.get("section", ""),
+                start_date=start,
+                end_date=end,
+                staff_in_charge=staff_in_charge,
+                created_by=staff,
+                lab_type="company",
+                company=company,
+                allowed_languages=allowed_languages,
+            )
+        company.refresh_from_db()
+        return Response(_serialize_company_practical(company), status=201)
+
+
+class HODCompanyDetailView(APIView):
+    """HOD: edit (name + practical settings) or delete a Company, scoped to their department."""
+    permission_classes = [IsAuthenticated]
+
+    def _get(self, company_id, staff):
+        try:
+            return Company.objects.select_related("lab").get(id=company_id, department=staff.department)
+        except Company.DoesNotExist:
+            return None
+
+    def put(self, request, company_id):
+        staff = _staff_from_request(request)
+        company = self._get(company_id, staff)
+        if not company:
+            return Response({"error": "Not found"}, status=404)
+        data = request.data
+
+        if "name" in data:
+            name = (data.get("name") or "").strip()
+            if not name:
+                return Response({"error": "Company name is required"}, status=400)
+            if Company.objects.filter(department=staff.department, name__iexact=name).exclude(id=company.id).exists():
+                return Response({"error": "A company with this name already exists"}, status=400)
+            company.name = name
+            company.save(update_fields=["name"])
+
+        lab = getattr(company, "lab", None)
+        practical_fields = {"batch", "section", "start_date", "end_date", "staff_in_charge_id", "allowed_languages"}
+        if lab:
+            for field in ("batch", "section"):
+                if field in data:
+                    setattr(lab, field, data[field])
+            if "start_date" in data:
+                lab.start_date = _parse_dt(data["start_date"]) or lab.start_date
+            if "end_date" in data:
+                lab.end_date = _parse_dt(data["end_date"]) or lab.end_date
+            if "staff_in_charge_id" in data:
+                sic_id = data["staff_in_charge_id"]
+                if sic_id:
+                    try:
+                        lab.staff_in_charge = StaffProfile.objects.get(id=sic_id, department=staff.department)
+                    except StaffProfile.DoesNotExist:
+                        return Response({"error": "Staff not found"}, status=400)
+                else:
+                    lab.staff_in_charge = None
+            if "allowed_languages" in data:
+                allowed_languages = data["allowed_languages"]
+                if (not isinstance(allowed_languages, list) or not allowed_languages
+                        or any(lang not in LAB_LANGUAGE_CHOICES for lang in allowed_languages)):
+                    return Response(
+                        {"error": f"allowed_languages must be a non-empty list from {LAB_LANGUAGE_CHOICES}"}, status=400
+                    )
+                lab.allowed_languages = allowed_languages
+            lab.save()
+        elif practical_fields & set(data.keys()):
+            # Legacy company created before a practical was required — create it now.
+            if not data.get("batch"):
+                return Response({"error": "Select a batch"}, status=400)
+            start = _parse_dt(data.get("start_date"))
+            end = _parse_dt(data.get("end_date"))
+            if not start or not end:
+                return Response({"error": "Valid start_date and end_date are required"}, status=400)
+            staff_in_charge = None
+            sic_id = data.get("staff_in_charge_id")
+            if sic_id:
+                try:
+                    staff_in_charge = StaffProfile.objects.get(id=sic_id, department=staff.department)
+                except StaffProfile.DoesNotExist:
+                    return Response({"error": "Staff not found"}, status=400)
+            allowed_languages = data.get("allowed_languages", list(LAB_LANGUAGE_CHOICES))
+            if (not isinstance(allowed_languages, list) or not allowed_languages
+                    or any(lang not in LAB_LANGUAGE_CHOICES for lang in allowed_languages)):
+                return Response(
+                    {"error": f"allowed_languages must be a non-empty list from {LAB_LANGUAGE_CHOICES}"}, status=400
+                )
+            Lab.objects.create(
+                name=f"{company.name} — Company Practical",
+                department=staff.department,
+                batch=data.get("batch", ""),
+                section=data.get("section", ""),
+                start_date=start,
+                end_date=end,
+                staff_in_charge=staff_in_charge,
+                created_by=staff,
+                lab_type="company",
+                company=company,
+                allowed_languages=allowed_languages,
+            )
+
+        return Response(_serialize_company_practical(company))
+
+    def delete(self, request, company_id):
+        staff = _staff_from_request(request)
+        company = self._get(company_id, staff)
+        if not company:
+            return Response({"error": "Not found"}, status=404)
+        company.delete()
+        return Response(status=204)
+
+
+class HODLabListView(APIView):
+    """HOD: list/create plain "Lab Practical" entries. Company Based Lab Practicals
+    are owned exclusively by HODCompanyListView/HODCompanyDetailView (one company =
+    one practical), so this view only ever deals with lab_type="practical"."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        staff = _staff_from_request(request)
+        labs = Lab.objects.filter(department=staff.department, lab_type="practical").select_related(
             "staff_in_charge", "created_by"
         ).prefetch_related("exercises")
         return Response([_serialize_lab_v2(lab) for lab in labs])
@@ -10331,6 +10542,14 @@ class HODLabListView(APIView):
         end = _parse_dt(data.get("end_date"))
         if not start or not end:
             return Response({"error": "Valid start_date and end_date are required"}, status=400)
+
+        allowed_languages = data.get("allowed_languages", list(LAB_LANGUAGE_CHOICES))
+        if (not isinstance(allowed_languages, list) or not allowed_languages
+                or any(lang not in LAB_LANGUAGE_CHOICES for lang in allowed_languages)):
+            return Response(
+                {"error": f"allowed_languages must be a non-empty list from {LAB_LANGUAGE_CHOICES}"}, status=400
+            )
+
         lab = Lab.objects.create(
             name=data["name"],
             department=staff.department,
@@ -10340,17 +10559,21 @@ class HODLabListView(APIView):
             end_date=end,
             staff_in_charge=staff_in_charge,
             created_by=staff,
+            lab_type="practical",
+            allowed_languages=allowed_languages,
         )
         lab.refresh_from_db()
         return Response(_serialize_lab_v2(lab), status=201)
 
 
 class HODLabDetailView(APIView):
+    """HOD: edit/delete a plain "Lab Practical". See HODLabListView docstring —
+    Company Based Lab Practicals are managed exclusively via the Company endpoints."""
     permission_classes = [IsAuthenticated]
 
     def _get(self, lab_id, staff):
         try:
-            return Lab.objects.get(id=lab_id, department=staff.department)
+            return Lab.objects.get(id=lab_id, department=staff.department, lab_type="practical")
         except Lab.DoesNotExist:
             return None
 
@@ -10376,6 +10599,16 @@ class HODLabDetailView(APIView):
                     return Response({"error": "Staff not found"}, status=400)
             else:
                 lab.staff_in_charge = None
+
+        if "allowed_languages" in data:
+            allowed_languages = data["allowed_languages"]
+            if (not isinstance(allowed_languages, list) or not allowed_languages
+                    or any(lang not in LAB_LANGUAGE_CHOICES for lang in allowed_languages)):
+                return Response(
+                    {"error": f"allowed_languages must be a non-empty list from {LAB_LANGUAGE_CHOICES}"}, status=400
+                )
+            lab.allowed_languages = allowed_languages
+
         lab.save()
         return Response(_serialize_lab_v2(lab))
 
@@ -10414,7 +10647,8 @@ class StaffLabExercisesView(APIView):
         if not lab:
             return Response({"error": "Not found"}, status=404)
         exercises = lab.exercises.select_related("added_by").annotate(
-            submission_count=Count("submissions")
+            submission_count=Count("submissions", distinct=True),
+            test_case_count=Count("test_cases", distinct=True),
         )
         return Response({
             "lab": _serialize_lab_v2(lab),
@@ -10453,11 +10687,16 @@ class StaffLabExercisesBulkView(APIView):
         if not lab:
             return Response({"error": "Not found"}, status=404)
 
-        rows = request.data.get("exercises")
-        if not isinstance(rows, list) or not rows:
-            return Response({"error": "No exercises provided"}, status=400)
+        rows = request.data.get("exercises") or []
+        tc_rows = request.data.get("test_cases") or []
+        if not isinstance(rows, list) or not isinstance(tc_rows, list):
+            return Response({"error": "exercises and test_cases must be lists"}, status=400)
+        if not rows and not tc_rows:
+            return Response({"error": "No exercises or test cases provided"}, status=400)
         if len(rows) > 500:
             return Response({"error": "Cannot import more than 500 exercises at once"}, status=400)
+        if len(tc_rows) > 2000:
+            return Response({"error": "Cannot import more than 2000 test cases at once"}, status=400)
 
         errors = []
         to_create = []
@@ -10476,17 +10715,60 @@ class StaffLabExercisesBulkView(APIView):
             ))
             next_order += 1
 
-        if not to_create:
+        if rows and not to_create:
             return Response({"error": "No valid exercises to import", "errors": errors}, status=400)
 
         with transaction.atomic():
-            created = LabExercise.objects.bulk_create(to_create)
+            created = LabExercise.objects.bulk_create(to_create) if to_create else []
+
+        # Match test-case rows to exercises by title — against both the exercises
+        # just created above and any pre-existing exercises in this lab, so staff
+        # can also import test cases for questions that were added earlier.
+        tc_errors = []
+        tc_created_count = 0
+        if tc_rows:
+            title_map = {}
+            for ex in lab.exercises.all():
+                title_map.setdefault(ex.title.strip().lower(), ex)
+
+            tc_to_create = []
+            next_order_by_exercise = {}
+            for idx, row in enumerate(tc_rows):
+                title = (row.get("title") or "").strip()
+                if not title:
+                    tc_errors.append({"row": idx + 1, "error": "Exercise title is required"})
+                    continue
+                ex = title_map.get(title.lower())
+                if not ex:
+                    tc_errors.append({"row": idx + 1, "error": f'No exercise titled "{title}" found in this lab'})
+                    continue
+                expected_output = row.get("expected_output")
+                if expected_output is None or not str(expected_output).strip():
+                    tc_errors.append({"row": idx + 1, "error": "Expected output is required"})
+                    continue
+                order = next_order_by_exercise.get(ex.id, 0)
+                tc_to_create.append(LabExerciseTestCase(
+                    exercise=ex,
+                    stdin=row.get("stdin") or "",
+                    expected_output=expected_output,
+                    is_sample=bool(row.get("is_sample")),
+                    order=order,
+                ))
+                next_order_by_exercise[ex.id] = order + 1
+
+            if tc_to_create:
+                with transaction.atomic():
+                    LabExerciseTestCase.objects.bulk_create(tc_to_create)
+                tc_created_count = len(tc_to_create)
 
         return Response({
             "created": [_serialize_exercise(e) for e in created],
             "created_count": len(created),
             "skipped_count": len(errors),
             "errors": errors,
+            "test_cases_created_count": tc_created_count,
+            "test_cases_skipped_count": len(tc_errors),
+            "test_case_errors": tc_errors,
         }, status=201)
 
 
@@ -10628,9 +10910,15 @@ class StudentExerciseSubmitView(APIView):
         except LabExercise.DoesNotExist:
             return Response({"error": "Not found"}, status=404)
         data = request.data
+        language = data.get("language", "")
+        allowed_languages = exercise.lab.allowed_languages or list(LAB_LANGUAGE_CHOICES)
+        if language and language not in allowed_languages:
+            return Response(
+                {"error": f"This lab only accepts submissions in: {', '.join(allowed_languages)}"}, status=400
+            )
         sub, created = LabExerciseSubmission.objects.update_or_create(
             exercise=exercise, student=student,
-            defaults={"code": data.get("code", ""), "language": data.get("language", "")},
+            defaults={"code": data.get("code", ""), "language": language},
         )
         return Response({
             "submitted": True,

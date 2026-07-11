@@ -15,6 +15,8 @@ import ContestApprovalPanel from './ContestApprovalPanel';
 import ContestDetailModal from '../common/ContestDetailModal';
 import DiscussPage from '../student/pages/DiscussPage';
 import HODLabCenter from './HODLabCenter';
+import HODCompanyCenter from './HODCompanyCenter';
+import StaffLabPanel from '../staff/StaffLabPanel';
 import { FlaskConical } from 'lucide-react';
 
 
@@ -28,6 +30,8 @@ const HODDashboard = ({ institutionId }) => {
     { id: 'batches', label: 'Batch Analytics', icon: Building2 },
     { id: 'contests', label: 'Contest Center', icon: Layout },
     { id: 'labs', label: 'Lab Center', icon: FlaskConical },
+    { id: 'companies', label: 'Companies', icon: Briefcase },
+    { id: 'my-practicals', label: 'My Practicals', icon: Pencil },
     { id: 'discuss', label: 'Discuss', icon: MessageSquare },
   ];
 
@@ -2170,6 +2174,16 @@ const HODDashboard = ({ institutionId }) => {
         
         {activeTab === 'labs' && (
           <HODLabCenter />
+        )}
+
+        {activeTab === 'companies' && (
+          <HODCompanyCenter />
+        )}
+
+        {activeTab === 'my-practicals' && (
+          <div className="tab-container">
+            <StaffLabPanel />
+          </div>
         )}
 
         {activeTab === 'discuss' && (

@@ -135,6 +135,8 @@ from .views import (
     StudentExerciseSubmitView,
     HODManageStaffView,
     HODManageStaffDetailView,
+    HODCompanyListView,
+    HODCompanyDetailView,
 )
 
 # Import file management views
@@ -344,4 +346,8 @@ urlpatterns = [
     # ── HOD Staff Management ─────────────────────────────────────────────────
     path("hod/staff/",                  HODManageStaffView.as_view(),       name="hod-manage-staff"),
     path("hod/staff/<str:faculty_id>/", HODManageStaffDetailView.as_view(), name="hod-manage-staff-detail"),
+
+    # ── HOD Company Management (Company Based Lab Practical) ─────────────────
+    path("hod/companies/",                     HODCompanyListView.as_view(),   name="hod-companies-list"),
+    path("hod/companies/<int:company_id>/",    HODCompanyDetailView.as_view(), name="hod-companies-detail"),
 ]

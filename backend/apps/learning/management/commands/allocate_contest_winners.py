@@ -25,19 +25,23 @@ class Command(BaseCommand):
         dry_run = options['dry_run']
         force = options['force']
         
-        # Get contests that ended 24 hours ago
+        # Get contests that ended 24 hours ago.
+        # `is_ended`/`is_published` aren't real model fields (is_ended is a Python
+        # property, and there's no is_published field at all — status="published"
+        # is the actual flag), so filter in Python instead of the ORM to avoid a
+        # FieldError on every run.
         cutoff_time = timezone.now() - timedelta(hours=24)
-        
-        contests = Contest.objects.filter(
-            end_time__lte=cutoff_time,
-            is_ended=True,
-            is_published=True
-        )
-        
+
+        candidates = Contest.objects.filter(status__in=["published", "completed"])
+        contests = [
+            contest for contest in candidates
+            if contest.is_ended and (contest.access_end_time or contest.end_time) <= cutoff_time
+        ]
+
         if dry_run:
-            self.stdout.write(f"DRY RUN: Found {contests.count()} contests to process")
+            self.stdout.write(f"DRY RUN: Found {len(contests)} contests to process")
         else:
-            self.stdout.write(f"Processing {contests.count()} contests for winner allocation")
+            self.stdout.write(f"Processing {len(contests)} contests for winner allocation")
         
         processed_count = 0
         

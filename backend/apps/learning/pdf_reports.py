@@ -467,8 +467,12 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         if profile_type == "student":
             return contest.participations.filter(student=profile).exists()
         elif profile_type in ("staff", "hod"):
-            return (profile.institution == contest.institution and
-                    profile.department == contest.department)
+            if profile.institution != contest.institution:
+                return False
+            # Contests without a department (e.g. institution-wide contests) are
+            # accessible to any staff/HOD in that institution; otherwise the
+            # departments must match.
+            return contest.department is None or profile.department == contest.department
         elif profile_type in ("director", "tpu", "ja"):
             return profile.institution == contest.institution
         elif profile_type == "admin":
