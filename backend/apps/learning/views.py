@@ -1230,7 +1230,7 @@ class CodeRunView(StudentAuthMixin, APIView):
         # ─────────────────────────────────────────────────────────────────
         is_valid, validation_error = validate_submission(language, source_code, stdin)
         if not is_valid:
-            logger.warning("Code validation failed for %s: %s", profile.student_id, validation_error)
+            logger.warning("Code validation failed for %s: %s", profile.register_number, validation_error)
             return Response(
                 {"detail": f"Code validation failed: {validation_error}"},
                 status=status.HTTP_400_BAD_REQUEST,
