@@ -538,7 +538,16 @@ function App() {
 
   useEffect(() => {
     setExecutionMeta({ status: "Idle", time: "", memory: "" });
+    setOutputLog("Output panel ready. Run the code to see sample execution results here.");
   }, [selectedProblemSlug, selectedLanguage]);
+
+  // Tracks the problem actually on screen, read inside async run/submit
+  // continuations so a slow response for a problem the user has since
+  // navigated away from can't overwrite the next problem's console.
+  const selectedProblemSlugRef = useRef(selectedProblemSlug);
+  useEffect(() => {
+    selectedProblemSlugRef.current = selectedProblemSlug;
+  }, [selectedProblemSlug]);
 
   // Session Timer - Tracks total time in the problems section
   useEffect(() => {
@@ -914,7 +923,11 @@ function App() {
     }
   }
 
-  function applyExecutionResult(result) {
+  function applyExecutionResult(result, requestSlug) {
+    // Ignore results for a problem the user has already navigated away from.
+    if (requestSlug && requestSlug !== selectedProblemSlugRef.current) {
+      return;
+    }
     setExecutionMeta({
       status: result.status || "Unknown",
       time: result.time ? `${result.time}s` : "",
@@ -946,14 +959,15 @@ function App() {
       throw new Error("Select a problem first to start coding.");
     }
 
+    const requestSlug = selectedProblem.slug;
     const result = await runCodeExecution({
       sourceCode: code,
       language: selectedLanguage,
       stdin: executionInput,
-      problemSlug: selectedProblem.slug,
+      problemSlug: requestSlug,
       isSubmit,
     });
-    applyExecutionResult(result);
+    applyExecutionResult(result, requestSlug);
     return result;
   }
 
@@ -963,6 +977,9 @@ function App() {
       return;
     }
 
+    const requestSlug = selectedProblem.slug;
+    const stillCurrent = () => requestSlug === selectedProblemSlugRef.current;
+
     setExecutionBusy(true);
     startExecutionTimer();
     try {
@@ -971,14 +988,16 @@ function App() {
         // Skip global progress update for daily problems and contests
         if (!selectedProblem?.is_daily && sessionMode !== "contest") {
           const isSaved = await persistProblemProgress("open");
-          if (!isSaved) {
+          if (!isSaved && stillCurrent()) {
             setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
           }
         }
       }
     } catch (error) {
-      setExecutionMeta({ status: "Error", time: "", memory: "" });
-      setOutputLog(error.message ?? "Execution failed.");
+      if (stillCurrent()) {
+        setExecutionMeta({ status: "Error", time: "", memory: "" });
+        setOutputLog(error.message ?? "Execution failed.");
+      }
     } finally {
       stopExecutionTimer();
       setExecutionBusy(false);
@@ -991,6 +1010,9 @@ function App() {
       return;
     }
 
+    const requestSlug = selectedProblem.slug;
+    const stillCurrent = () => requestSlug === selectedProblemSlugRef.current;
+
     setExecutionBusy(true);
     startExecutionTimer();
     try {
@@ -999,10 +1021,10 @@ function App() {
         // Skip global progress update for daily problems and contests
         if (!selectedProblem?.is_daily && sessionMode !== "contest") {
           const isSaved = await persistProblemProgress("completed");
-          if (!isSaved) {
+          if (!isSaved && stillCurrent()) {
             setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
           }
-        } else {
+        } else if (stillCurrent()) {
           const context = selectedProblem?.is_daily ? "Daily Problem" : "Contest";
           setOutputLog((current) => `${current}\n\n[${context}] Solution accepted! Progress for ${context.toLowerCase()}s is tracked separately.`);
         }
@@ -1010,14 +1032,16 @@ function App() {
         // Skip global progress update for daily problems and contests
         if (!selectedProblem?.is_daily && sessionMode !== "contest") {
           const isSaved = await persistProblemProgress("open");
-          if (!isSaved) {
+          if (!isSaved && stillCurrent()) {
             setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
           }
         }
       }
     } catch (error) {
-      setExecutionMeta({ status: "Error", time: "", memory: "" });
-      setOutputLog(error.message ?? "Execution failed.");
+      if (stillCurrent()) {
+        setExecutionMeta({ status: "Error", time: "", memory: "" });
+        setOutputLog(error.message ?? "Execution failed.");
+      }
     } finally {
       stopExecutionTimer();
       setExecutionBusy(false);
