@@ -11007,3 +11007,86 @@ class HODManageStaffDetailView(APIView):
             "role_display": target.get_role_display(),
             "is_active": target.is_active,
         })
+
+
+# ── TEMPORARY: production data-loss diagnostic — remove after investigation ──
+class TempDataDiagnosticsView(APIView):
+    """Read-only snapshot of the live DB connection + row counts, and every
+    database visible on the same Postgres server. Gated by a one-off shared
+    token (not real auth) so it can be checked from a browser with no login.
+    Delete this view + its URL once the data-loss investigation is closed.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        import os
+
+        if token != "EiTSaBPnqIByYUEBYLsS1Eqlw4D_7flj":
+            return Response({"detail": "Not found."}, status=404)
+
+        from django.db import connection
+
+        report = {}
+
+        db = connection.settings_dict
+        report["connected_to"] = {
+            "name": db.get("NAME"),
+            "host": db.get("HOST"),
+            "user": db.get("USER"),
+            "port": db.get("PORT"),
+        }
+
+        counts = {}
+        for label, model in [
+            ("students", StudentProfile),
+            ("staff", StaffProfile),
+            ("institutions", Institution),
+            ("problems", Problem),
+            ("solved_problems", SolvedProblem),
+            ("problem_solutions", ProblemSolution),
+            ("submissions", Submission),
+        ]:
+            try:
+                counts[label] = model.objects.count()
+            except Exception as exc:
+                counts[label] = f"error: {exc}"
+        report["row_counts_in_connected_db"] = counts
+
+        try:
+            from .models import LabExercise, LabExerciseSubmission
+            counts["lab_exercises"] = LabExercise.objects.count()
+            counts["lab_exercise_submissions"] = LabExerciseSubmission.objects.count()
+        except Exception as exc:
+            counts["lab_models_error"] = str(exc)
+
+        try:
+            import psycopg2
+            other_conn = psycopg2.connect(
+                host=db.get("HOST"),
+                port=db.get("PORT"),
+                user=db.get("USER"),
+                password=db.get("PASSWORD"),
+                dbname="postgres",
+                connect_timeout=5,
+            )
+            cur = other_conn.cursor()
+            cur.execute(
+                "SELECT datname, pg_size_pretty(pg_database_size(datname)) "
+                "FROM pg_database WHERE datistemplate = false ORDER BY datname;"
+            )
+            report["all_databases_on_this_postgres_server"] = [
+                {"name": row[0], "size": row[1]} for row in cur.fetchall()
+            ]
+            other_conn.close()
+        except Exception as exc:
+            report["all_databases_on_this_postgres_server"] = f"error: {exc}"
+
+        report["env_db_vars_seen_by_backend"] = {
+            "DB_HOST": os.getenv("DB_HOST"),
+            "DB_NAME": os.getenv("DB_NAME"),
+            "DB_USER": os.getenv("DB_USER"),
+            "DB_PORT": os.getenv("DB_PORT"),
+        }
+
+        return Response(report)

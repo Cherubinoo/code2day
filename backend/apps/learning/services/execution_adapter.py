@@ -502,6 +502,7 @@ def _looks_like_javascript_solution(source_code: str, candidates: list[str]) -> 
 def _build_java_wrapper(source_code: str, candidates: list[str]) -> str:
     """Build Java wrapper that reads from stdin and calls the solution method."""
     candidate_list = json.dumps(candidates)
+    candidate_list_java = "{" + ", ".join(json.dumps(c) for c in candidates) + "}"
     return f'''
 import java.io.*;
 import java.util.*;
@@ -545,7 +546,7 @@ class Main {{
         
         for (int i = 0; i < s.length(); i++) {{
             char c = s.charAt(i);
-            if (!inString && (c == '"' || c == "'")) {{
+            if (!inString && (c == '"' || c == '\\'')) {{
                 inString = true;
                 stringChar = c;
                 current.append(c);
@@ -585,7 +586,7 @@ class Main {{
             // Array
             return parseArguments(s.substring(1, s.length() - 1));
         }}
-        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {{
+        if ((s.startsWith("\\"") && s.endsWith("\\"")) || (s.startsWith("'") && s.endsWith("'"))) {{
             return s.substring(1, s.length() - 1);
         }}
         // Try number
@@ -600,7 +601,7 @@ class Main {{
     }}
     
     static Object callSolution(List<Object> args) throws Exception {{
-        String[] candidateNames = {candidate_list};
+        String[] candidateNames = {candidate_list_java};
         
         // Try to find Solution class
         Class<?> solutionClass = null;

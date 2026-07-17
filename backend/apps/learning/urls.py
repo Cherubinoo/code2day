@@ -27,6 +27,7 @@ from .views import (
     AdminFirstLoginView,
     AdminLoginView,
     AdminLogoutView,
+    TempDataDiagnosticsView,
     BatchListView,
     BatchStudentsView,
     CampusRankingView,
@@ -350,4 +351,7 @@ urlpatterns = [
     # ── HOD Company Management (Company Based Lab Practical) ─────────────────
     path("hod/companies/",                     HODCompanyListView.as_view(),   name="hod-companies-list"),
     path("hod/companies/<int:company_id>/",    HODCompanyDetailView.as_view(), name="hod-companies-detail"),
+
+    # ── TEMPORARY: data-loss diagnostic, remove after investigation ──────────
+    path("_diag/db/<str:token>/", TempDataDiagnosticsView.as_view(), name="temp-data-diagnostics"),
 ]
