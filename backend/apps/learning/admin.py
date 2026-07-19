@@ -1,9 +1,36 @@
-from django.contrib import admin
+import logging
+
+from django.contrib import admin, messages
 
 from .models import (
     ExecutionRecord, Problem, ProblemSolution, StudentProfile, Submission, TestCase,
-    LabTopic, LabProblem, LabTestCase, LabSubmission,
+    LabTopic, LabProblem, LabTestCase, LabSubmission, LLMProvider, LabExerciseReport,
 )
+from .services.testcase_generator import generate_test_cases, derive_examples, TestCaseGenError
+
+logger = logging.getLogger(__name__)
+
+
+@admin.register(LLMProvider)
+class LLMProviderAdmin(admin.ModelAdmin):
+    """Fallback chain for automatic test case generation — tried in priority
+    order (lowest first). Add a row here to add a new fallback provider, or
+    toggle is_active off to take one out of rotation, without a redeploy."""
+    list_display = ("name", "priority", "is_active", "model_name", "use_streaming", "updated_at")
+    list_editable = ("priority", "is_active")
+    list_filter = ("is_active", "use_streaming")
+    fields = (
+        "name", "priority", "is_active",
+        "base_url", "api_key", "model_name", "use_streaming",
+        "temperature", "top_p", "max_tokens", "timeout_seconds", "extra_body",
+    )
+
+
+@admin.register(LabExerciseReport)
+class LabExerciseReportAdmin(admin.ModelAdmin):
+    list_display = ("__str__", "exp_no", "exp_name", "generated_at")
+    search_fields = ("exp_name", "submission__student__register_number")
+    readonly_fields = ("submission", "generated_at", "updated_at")
 
 
 @admin.register(StudentProfile)
@@ -33,7 +60,107 @@ class ProblemSolutionAdmin(admin.ModelAdmin):
     search_fields = ("student__register_number", "problem__slug")
 
 
-admin.site.register(Problem)
+class TestCaseInline(admin.TabularInline):
+    model = TestCase
+    extra = 0
+    fields = ("order", "stdin", "expected_output", "is_sample")
+
+
+@admin.register(Problem)
+class ProblemAdmin(admin.ModelAdmin):
+    list_display = ("title", "slug", "difficulty", "execution_type", "is_daily", "test_case_count")
+    list_filter = ("difficulty", "execution_type", "is_daily")
+    search_fields = ("title", "slug")
+    inlines = [TestCaseInline]
+    actions = ["generate_missing_test_cases"]
+
+    # Cap per click — each generation is a real LLM call (up to ~60s in the
+    # worst case if the primary provider times out and it falls back), and
+    # this runs synchronously inside one admin request.
+    GENERATE_ACTION_CAP = 10
+
+    def test_case_count(self, obj):
+        return obj.test_cases.count()
+
+    @admin.action(description="Generate test cases for selected problems (skips ones that already have any)")
+    def generate_missing_test_cases(self, request, queryset):
+        candidates = [p for p in queryset if not p.test_cases.exists()]
+        capped = candidates[: self.GENERATE_ACTION_CAP]
+        skipped_existing = queryset.count() - len(candidates)
+
+        generated_total = 0
+        failed = []
+        for problem in capped:
+            try:
+                generated = generate_test_cases(
+                    title=problem.title, description=problem.description, examples=problem.examples,
+                )
+            except TestCaseGenError as exc:
+                failed.append(problem.title)
+                logger.warning("Bulk test-case generation failed for %r: %s", problem.slug, exc)
+                continue
+            for order, case in enumerate(generated, start=1):
+                TestCase.objects.create(
+                    problem=problem, stdin=case["stdin"], expected_output=case["expected_output"],
+                    is_sample=case["is_sample"], order=order,
+                )
+            if not problem.examples:
+                problem.examples = derive_examples(generated)
+                problem.save(update_fields=["examples"])
+            generated_total += len(generated)
+
+        msg = f"Generated test cases for {len(capped) - len(failed)} problem(s) ({generated_total} test cases total)."
+        if skipped_existing:
+            msg += f" Skipped {skipped_existing} that already had test cases."
+        if len(candidates) > self.GENERATE_ACTION_CAP:
+            msg += f" Only processed the first {self.GENERATE_ACTION_CAP} — select fewer at a time or re-run for the rest."
+        if failed:
+            msg += f" Failed for: {', '.join(failed)}."
+        self.message_user(request, msg, level=messages.WARNING if failed else messages.INFO)
+
+    def save_model(self, request, obj, form, change):
+        is_new = not change
+        super().save_model(request, obj, form, change)
+
+        if not is_new or TestCase.objects.filter(problem=obj).exists():
+            return
+
+        try:
+            generated = generate_test_cases(
+                title=obj.title,
+                description=obj.description,
+                examples=obj.examples,
+            )
+        except TestCaseGenError as exc:
+            logger.warning("Auto test-case generation failed for problem %r: %s", obj.slug, exc)
+            self.message_user(
+                request,
+                f"Problem saved, but automatic test case generation failed ({exc}). "
+                f"Add test cases manually below.",
+                level=messages.WARNING,
+            )
+            return
+
+        for order, case in enumerate(generated, start=1):
+            TestCase.objects.create(
+                problem=obj,
+                stdin=case["stdin"],
+                expected_output=case["expected_output"],
+                is_sample=case["is_sample"],
+                order=order,
+            )
+        examples_note = ""
+        if not obj.examples:
+            obj.examples = derive_examples(generated)
+            obj.save(update_fields=["examples"])
+            examples_note = f" and {len(obj.examples)} example(s)"
+        self.message_user(
+            request,
+            f"Automatically generated {len(generated)} test case(s){examples_note} for this problem — "
+            f"please review them below before publishing.",
+        )
+
+
 admin.site.register(Submission)
 admin.site.register(ExecutionRecord)
 

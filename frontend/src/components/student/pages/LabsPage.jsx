@@ -8,7 +8,7 @@ import { starterCodeByLanguage, LAB_LANGUAGES } from "../../../lib/appData";
 import {
   FlaskConical, ChevronLeft, BookOpen, CheckCircle2,
   Circle, Clock, Calendar, UserCheck,
-  ChevronDown, ChevronUp,
+  ChevronDown, ChevronUp, Download, Loader2,
 } from "lucide-react";
 
 // Use the bundled ESM Monaco build instead of the AMD loader path.
@@ -216,6 +216,8 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
   const [submitted, setSubmitted] = useState(exercise.submitted);
   const [submittedAt, setSubmittedAt] = useState(exercise.submitted_at);
   const [submitErr, setSubmitErr] = useState("");
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportErr, setReportErr] = useState("");
   const [customInput, setCustomInput] = useState("");
   const [outputLog, setOutputLog] = useState("Run your code to see output here.");
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -291,6 +293,35 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
     finally { stopTimer(); setBusy(false); }
   }
 
+  async function generateReport() {
+    setReportBusy(true); setReportErr("");
+    try {
+      const token = getCsrfToken();
+      const res = await fetch(`/api/lab/v2/${lab.id}/exercises/${exercise.id}/report/`, {
+        method: "POST",
+        headers: token ? { "X-CSRFToken": token } : {},
+        credentials: "include",
+      });
+      if (!res.ok) {
+        let msg = "Report generation failed.";
+        try { msg = (await res.json()).error || msg; } catch { /* body wasn't JSON */ }
+        setReportErr(msg);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `lab_record_${exercise.title.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setReportErr("Network error.");
+    } finally {
+      setReportBusy(false);
+    }
+  }
+
   return (
     <div className="page-stack problem-page">
       {/* ── Workspace Header ── */}
@@ -304,13 +335,27 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
             <h1>{exercise.title}</h1>
           </div>
         </div>
-        <div className="problem-header-meta">
+        <div className="problem-header-meta" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           {submitted && (
             <span className="difficulty-chip easy">
               <CheckCircle2 size={13} style={{ marginRight: 4, verticalAlign: "-2px" }} />
               Submitted {fmtDT(submittedAt)}
             </span>
           )}
+          {submitted && (
+            <button
+              type="button"
+              className="ghost-button dense-action"
+              disabled={reportBusy}
+              onClick={generateReport}
+              title="Generate a printable lab record (Aim, Algorithm, Program, Output, Result)"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              {reportBusy ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
+              {reportBusy ? "Generating…" : "Generate Lab Record"}
+            </button>
+          )}
+          {reportErr && <span style={{ color: "#dc2626", fontSize: 12 }}>{reportErr}</span>}
         </div>
       </section>
 

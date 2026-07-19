@@ -3,6 +3,7 @@ from collections import defaultdict
 from datetime import timedelta
 
 from io import BytesIO
+from django.core.files.base import ContentFile
 from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
@@ -32,6 +33,7 @@ from .models import (
     ProblemSession,
     ProblemSolution,
     SolvedProblem,
+    TestCase,
     StaffProfile,
     StudentActivity,
     StudentProfile,
@@ -57,6 +59,7 @@ from .models import (
     LabExercise,
     LabExerciseSubmission,
     LabExerciseTestCase,
+    LabExerciseReport,
     Company,
     LAB_LANGUAGE_CHOICES,
 )
@@ -7813,6 +7816,155 @@ class GlobalMaintenanceControlView(APIView):
         return Response({"message": "Global maintenance updated"})
 
 
+class AdminProblemBankView(APIView):
+    """System Admin: list every Problem with its test case count, so admins
+    can see at a glance which problems are missing test cases."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problems = Problem.objects.annotate(
+            test_case_count=Count("test_cases", distinct=True)
+        ).order_by("title")
+
+        data = [{
+            "id": p.id,
+            "title": p.title,
+            "slug": p.slug,
+            "difficulty": p.difficulty,
+            "tags": p.tags,
+            "execution_type": p.execution_type,
+            "test_case_count": p.test_case_count,
+        } for p in problems]
+
+        return Response({"problems": data, "total": len(data)})
+
+
+class AdminProblemTestCasesView(APIView):
+    """System Admin: view every test case for one Problem, and manually add
+    one (for staff who want to hand-author instead of / alongside
+    generating)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        test_cases = [{
+            "id": tc.id,
+            "stdin": tc.stdin,
+            "expected_output": tc.expected_output,
+            "is_sample": tc.is_sample,
+            "order": tc.order,
+        } for tc in problem.test_cases.all().order_by("order", "id")]
+
+        return Response({
+            "problem": {"id": problem.id, "title": problem.title, "slug": problem.slug, "examples": problem.examples},
+            "test_cases": test_cases,
+        })
+
+    def post(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        expected_output = (request.data.get("expected_output") or "").strip()
+        if not expected_output:
+            return Response({"error": "expected_output is required"}, status=400)
+
+        next_order = (problem.test_cases.aggregate(Max("order"))["order__max"] or 0) + 1
+        tc = TestCase.objects.create(
+            problem=problem,
+            stdin=request.data.get("stdin") or "",
+            expected_output=expected_output,
+            is_sample=bool(request.data.get("is_sample")),
+            order=next_order,
+        )
+        return Response({
+            "id": tc.id, "stdin": tc.stdin, "expected_output": tc.expected_output,
+            "is_sample": tc.is_sample, "order": tc.order,
+        }, status=201)
+
+
+class AdminProblemTestCaseDetailView(APIView):
+    """System Admin: delete one manually- or LLM-added test case."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, problem_id, test_case_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        tc = TestCase.objects.filter(id=test_case_id, problem_id=problem_id).first()
+        if not tc:
+            return Response({"error": "Not found"}, status=404)
+        tc.delete()
+        return Response(status=204)
+
+
+class AdminProblemGenerateTestCasesView(APIView):
+    """System Admin: on-demand (re)generate test cases for one Problem via
+    the LLM fallback chain."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        force = bool(request.data.get("force"))
+        if force:
+            problem.test_cases.all().delete()
+        elif problem.test_cases.exists():
+            return Response(
+                {"error": "This problem already has test cases. Pass force=true to replace them."},
+                status=400,
+            )
+
+        from .services.testcase_generator import generate_test_cases, derive_examples, TestCaseGenError
+        try:
+            generated = generate_test_cases(
+                title=problem.title,
+                description=problem.description,
+                examples=problem.examples,
+            )
+        except TestCaseGenError as exc:
+            return Response({"error": f"Generation failed: {exc}"}, status=502)
+
+        for order, case in enumerate(generated, start=1):
+            TestCase.objects.create(
+                problem=problem,
+                stdin=case["stdin"],
+                expected_output=case["expected_output"],
+                is_sample=case["is_sample"],
+                order=order,
+            )
+
+        generated_examples = 0
+        if not problem.examples:
+            problem.examples = derive_examples(generated)
+            problem.save(update_fields=["examples"])
+            generated_examples = len(problem.examples)
+
+        return Response({
+            "generated_count": len(generated),
+            "generated_examples_count": generated_examples,
+            "test_case_count": problem.test_cases.count(),
+            "examples_count": len(problem.examples),
+        })
+
+
 class InstitutionBrandingPreviewView(APIView):
     """Generate PDF template preview for institution branding"""
     permission_classes = [AllowAny]
@@ -10772,6 +10924,41 @@ class StaffLabListView(APIView):
         return Response([_serialize_lab_v2(lab) for lab in labs])
 
 
+def _auto_generate_lab_test_cases(exercise, num_cases=6, raise_on_error=False):
+    """LLM test case generation for a LabExercise. By default best-effort —
+    a generation failure shouldn't block exercise creation. Pass
+    raise_on_error=True for manual/on-demand triggers where the caller
+    wants to surface the failure to the user instead of silently no-op'ing."""
+    if exercise.test_cases.exists():
+        return 0
+
+    from .services.testcase_generator import generate_test_cases, TestCaseGenError
+
+    try:
+        generated = generate_test_cases(
+            title=exercise.title,
+            description=exercise.description,
+            num_cases=num_cases,
+        )
+    except TestCaseGenError as exc:
+        logger.warning("Auto test-case generation failed for lab exercise %r: %s", exercise.title, exc)
+        if raise_on_error:
+            raise
+        return 0
+
+    LabExerciseTestCase.objects.bulk_create([
+        LabExerciseTestCase(
+            exercise=exercise,
+            stdin=case["stdin"],
+            expected_output=case["expected_output"],
+            is_sample=case["is_sample"],
+            order=order,
+        )
+        for order, case in enumerate(generated, start=1)
+    ])
+    return len(generated)
+
+
 class StaffLabExercisesView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -10808,6 +10995,7 @@ class StaffLabExercisesView(APIView):
             order=data.get("order", lab.exercises.count()),
             added_by=staff,
         )
+        _auto_generate_lab_test_cases(exercise)
         return Response(_serialize_exercise(exercise), status=201)
 
 
@@ -10901,9 +11089,24 @@ class StaffLabExercisesBulkView(APIView):
                     LabExerciseTestCase.objects.bulk_create(tc_to_create)
                 tc_created_count = len(tc_to_create)
 
+        # Auto-generate test cases for newly-created exercises the CSV didn't
+        # supply any for — capped, since each generation is a ~10-15s LLM call
+        # made synchronously in this request and a large bulk import (up to
+        # 500 rows) would otherwise blow the request timeout.
+        auto_generated_count = 0
+        AUTO_GEN_CAP = 5
+        for exercise in created:
+            if auto_generated_count >= AUTO_GEN_CAP:
+                break
+            if exercise.test_cases.exists():
+                continue
+            if _auto_generate_lab_test_cases(exercise):
+                auto_generated_count += 1
+
         return Response({
             "created": [_serialize_exercise(e) for e in created],
             "created_count": len(created),
+            "auto_generated_test_cases_for": auto_generated_count,
             "skipped_count": len(errors),
             "errors": errors,
             "test_cases_created_count": tc_created_count,
@@ -10941,6 +11144,37 @@ class StaffExerciseDetailView(APIView):
             return Response({"error": "Not found"}, status=404)
         ex.delete()
         return Response(status=204)
+
+
+class StaffExerciseGenerateTestCasesView(APIView):
+    """Manual 'Generate' trigger — staff clicks this when adding/editing an
+    exercise to (re)generate its test cases via the LLM fallback chain."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id, exercise_id):
+        staff = _staff_from_request(request)
+        try:
+            ex = LabExercise.objects.get(id=exercise_id, lab_id=lab_id, lab__staff_in_charge=staff)
+        except LabExercise.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        force = bool(request.data.get("force"))
+        if force:
+            ex.test_cases.all().delete()
+        elif ex.test_cases.exists():
+            return Response({"error": "This exercise already has test cases. Pass force=true to replace them."}, status=400)
+
+        from .services.testcase_generator import TestCaseGenError
+
+        try:
+            count = _auto_generate_lab_test_cases(ex, raise_on_error=True)
+        except TestCaseGenError as exc:
+            return Response({"error": f"Generation failed: {exc}"}, status=502)
+
+        return Response({
+            "generated_count": count,
+            "test_cases": [_serialize_test_case(tc) for tc in ex.test_cases.all().order_by("order")],
+        })
 
 
 class StaffLabStudentsView(APIView):
@@ -11064,6 +11298,114 @@ class StudentExerciseSubmitView(APIView):
             "submitted": True,
             "submitted_at": sub.submitted_at.isoformat(),
         }, status=201 if created else 200)
+
+
+_LAB_LANGUAGE_TO_EXECUTOR_ID = {"c": 50, "c++": 54, "cpp": 54, "java": 62, "python": 71}
+
+
+class StudentExerciseReportView(APIView):
+    """Student: generate (or re-download) their lab record PDF — Exp No /
+    Aim / Algorithm / Program / Output / Result, watermarked with their own
+    register number — for a submitted LabExercise."""
+    permission_classes = [IsAuthenticated]
+
+    def _get_submission(self, lab_id, exercise_id, student):
+        try:
+            exercise = LabExercise.objects.select_related("lab").get(
+                id=exercise_id, lab_id=lab_id,
+                lab__department=student.department, lab__batch=student.batch,
+            )
+        except LabExercise.DoesNotExist:
+            return None, None
+        submission = LabExerciseSubmission.objects.filter(exercise=exercise, student=student).first()
+        return exercise, submission
+
+    def get(self, request, lab_id, exercise_id):
+        """Re-download the already-generated report without regenerating it."""
+        student = _student_from_request(request)
+        exercise, submission = self._get_submission(lab_id, exercise_id, student)
+        if not exercise:
+            return Response({"error": "Not found"}, status=404)
+        report = getattr(submission, "report", None) if submission else None
+        if not report or not report.pdf_file:
+            return Response({"error": "No report has been generated yet."}, status=404)
+
+        response = HttpResponse(report.pdf_file.read(), content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
+        return response
+
+    def post(self, request, lab_id, exercise_id):
+        """Generate (or regenerate) the report from the student's current submission."""
+        student = _student_from_request(request)
+        exercise, submission = self._get_submission(lab_id, exercise_id, student)
+        if not exercise:
+            return Response({"error": "Not found"}, status=404)
+        if not submission or not (submission.code or "").strip():
+            return Response({"error": "Submit your code for this exercise before generating a report."}, status=400)
+
+        from .services.lab_report import extract_problem_statement, build_aim, generate_algorithm, build_result
+        from .services.testcase_generator import TestCaseGenError
+        from .services.lab_report_pdf import build_lab_report_pdf
+
+        problem_statement = extract_problem_statement(exercise.description)
+        aim = build_aim(exercise.title, problem_statement)
+
+        try:
+            algorithm = generate_algorithm(
+                problem_statement=problem_statement, code=submission.code, language=submission.language,
+            )
+        except TestCaseGenError as exc:
+            logger.warning("Lab report algorithm generation failed for exercise %s: %s", exercise.id, exc)
+            algorithm = "(Algorithm generation is temporarily unavailable — add this section manually.)"
+
+        # Best-effort real execution to capture Output — never let an
+        # execution failure block report generation, just note it.
+        output_text = ""
+        try:
+            from .services.executor import execute_submission
+            lang_id = _LAB_LANGUAGE_TO_EXECUTOR_ID.get((submission.language or "").strip().lower())
+            if lang_id:
+                sample_tc = exercise.test_cases.filter(is_sample=True).order_by("order").first()
+                stdin = sample_tc.stdin if sample_tc else ""
+                exec_result = execute_submission(source_code=submission.code, language_id=lang_id, stdin=stdin)
+                output_text = (exec_result.get("stdout") or "").strip()
+                if not output_text and exec_result.get("stderr"):
+                    output_text = f"(no stdout)\n{exec_result['stderr'].strip()}"
+            else:
+                output_text = "(Output capture is not available for this language — add this section manually.)"
+        except Exception as exc:
+            logger.warning("Lab report execution failed for exercise %s: %s", exercise.id, exc)
+            output_text = "(Could not execute the program to capture output — add this section manually.)"
+
+        result_text = build_result(exercise.title)
+
+        report, _created = LabExerciseReport.objects.update_or_create(
+            submission=submission,
+            defaults=dict(
+                exp_no=exercise.order + 1,
+                exp_name=exercise.title,
+                aim=aim,
+                algorithm=algorithm,
+                program=submission.code,
+                output=output_text,
+                result=result_text,
+            ),
+        )
+
+        buffer = BytesIO()
+        try:
+            build_lab_report_pdf(buffer, report=report)
+        except Exception as exc:
+            logger.exception("Lab report PDF rendering failed for exercise %s", exercise.id)
+            return Response({"error": f"PDF rendering failed: {exc}"}, status=500)
+
+        buffer.seek(0)
+        pdf_bytes = buffer.getvalue()
+        report.pdf_file.save(f"lab_report_{report.id}.pdf", ContentFile(pdf_bytes), save=True)
+
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
+        return response
 
 
 # ── HOD Staff Management ──────────────────────────────────────────────────────

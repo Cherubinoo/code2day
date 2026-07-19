@@ -227,6 +227,29 @@ JUDGE0_BASE_URL = EXECUTOR_BASE_URL
 JUDGE0_TIMEOUT_SECONDS = EXECUTOR_TIMEOUT_SECONDS
 
 # ---------------------------------------------------------------------------
+# LLM Test Case Generation
+#
+# Runtime provider config lives in the DB (LLMProvider model, editable in
+# Django admin) so providers can be added/reordered/disabled without a
+# redeploy. The env vars below are only used once, by migration
+# 00XX_seed_llm_providers, to create the initial provider rows — they are
+# NOT read anywhere else at runtime. Kept as LLM_PROVIDER_SEED_* so it's
+# obvious they're seed-only, not live config.
+# ---------------------------------------------------------------------------
+LLM_PROVIDER_SEED_1 = {
+    "api_key": os.getenv("LLM_API_KEY", ""),
+    "base_url": os.getenv("LLM_API_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+    "model_name": os.getenv("LLM_MODEL_NAME", "deepseek-ai/deepseek-v4-pro"),
+    "timeout_seconds": int(os.getenv("LLM_TIMEOUT_SECONDS", "30")),
+}
+LLM_PROVIDER_SEED_2 = {
+    "api_key": os.getenv("LLM_API_KEY_2", ""),
+    "base_url": os.getenv("LLM_API_BASE_URL_2", "https://integrate.api.nvidia.com/v1"),
+    "model_name": os.getenv("LLM_MODEL_NAME_2", "nvidia/nemotron-3-ultra-550b-a55b"),
+    "timeout_seconds": int(os.getenv("LLM_TIMEOUT_SECONDS_2", "45")),
+}
+
+# ---------------------------------------------------------------------------
 # Auth rate limiting (InMemoryRateLimiter in auth_utils.py)
 # ---------------------------------------------------------------------------
 

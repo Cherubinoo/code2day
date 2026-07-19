@@ -1572,3 +1572,69 @@ class LabExerciseSubmission(models.Model):
 
     def __str__(self):
         return f"{self.student} → {self.exercise}"
+
+
+class LLMProvider(models.Model):
+    """
+    A configured LLM API endpoint used for automatic test case generation.
+    Tried in ascending `priority` order; if a provider errors or times out,
+    the next active one is tried. Add a new row here (no redeploy needed)
+    to add a fallback provider, or to swap the primary one.
+    """
+
+    name = models.CharField(max_length=80, unique=True, help_text="Short label, e.g. 'DeepSeek V4 Pro (NVIDIA)'")
+    base_url = models.CharField(max_length=255, help_text="OpenAI-compatible base URL, e.g. https://integrate.api.nvidia.com/v1")
+    api_key = models.CharField(max_length=255)
+    model_name = models.CharField(max_length=120)
+    priority = models.PositiveIntegerField(default=0, help_text="Lower tries first")
+    is_active = models.BooleanField(default=True)
+    use_streaming = models.BooleanField(default=False, help_text="Whether this endpoint requires stream=True (SSE) responses")
+    temperature = models.FloatField(default=0.4)
+    top_p = models.FloatField(default=0.95)
+    max_tokens = models.PositiveIntegerField(default=16384)
+    timeout_seconds = models.PositiveIntegerField(default=45)
+    extra_body = models.JSONField(
+        default=dict, blank=True,
+        help_text='Provider-specific request extras, e.g. {"chat_template_kwargs": {"thinking": false}}',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "llm_providers"
+        ordering = ("priority", "id")
+
+    def __str__(self):
+        return f"{self.name} ({'active' if self.is_active else 'disabled'}, priority={self.priority})"
+
+
+class LabExerciseReport(models.Model):
+    """
+    A generated "lab record" PDF for one student's LabExercise submission —
+    Exp No / Aim / Algorithm / Program / Output / Result, watermarked with
+    the student's register number. Deliberately snapshots aim/algorithm/
+    program/output/result at generation time (rather than re-reading the
+    live submission) so the record stays a stable, immutable copy even if
+    the student later edits and resubmits different code.
+    """
+
+    submission = models.OneToOneField(
+        LabExerciseSubmission, on_delete=models.CASCADE, related_name="report"
+    )
+    exp_no = models.PositiveIntegerField(default=0)
+    exp_name = models.CharField(max_length=200, blank=True, default="")
+    aim = models.TextField(blank=True, default="")
+    algorithm = models.TextField(blank=True, default="")
+    program = models.TextField(blank=True, default="")
+    output = models.TextField(blank=True, default="")
+    result = models.TextField(blank=True, default="")
+    pdf_file = models.FileField(upload_to="lab_reports/", blank=True, null=True)
+    generated_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "lab_exercise_reports"
+        ordering = ("-generated_at",)
+
+    def __str__(self):
+        return f"Report for {self.submission}"

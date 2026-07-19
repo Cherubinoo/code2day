@@ -11,10 +11,12 @@ import {
 } from 'lucide-react';
 import api from '../../lib/api';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
+import ProblemBankView from './ProblemBankView';
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [selectedInstitution, setSelectedInstitution] = useState(null);
+  const [showProblemBank, setShowProblemBank] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
@@ -335,7 +337,9 @@ const AdminDashboard = () => {
           )}
         </header>
 
-        {!selectedInstitution ? (
+        {showProblemBank ? (
+          <ProblemBankView onBack={() => setShowProblemBank(false)} />
+        ) : !selectedInstitution ? (
           /* GLOBAL LANDING VIEW - INSTITUTIONS LIST */
           <div className="global-view animate-fade-in">
             {/* SYSTEM METRICS */}
@@ -344,14 +348,19 @@ const AdminDashboard = () => {
                 { label: 'Total Institutions', value: institutions.length, icon: Building2, color: '#6366f1' },
                 { label: 'Active Users', value: metrics.total_users, icon: Users, color: '#10b981' },
                 { label: 'Faculty Members', value: metrics.total_staff, icon: Briefcase, color: '#f59e0b' },
-                { label: 'Problem Bank', value: metrics.total_problems + metrics.total_aptitude, icon: Database, color: '#ef4444' }
+                { label: 'Problem Bank', value: metrics.total_problems + metrics.total_aptitude, icon: Database, color: '#ef4444', onClick: () => setShowProblemBank(true) }
               ].map((m, i) => (
-                <div key={i} style={{ padding: 32, borderRadius: 24, background: 'white', border: '1px solid var(--border-soft)', boxShadow: 'var(--shadow-soft)' }}>
+                <div
+                  key={i}
+                  onClick={m.onClick}
+                  style={{ padding: 32, borderRadius: 24, background: 'white', border: '1px solid var(--border-soft)', boxShadow: 'var(--shadow-soft)', cursor: m.onClick ? 'pointer' : 'default' }}
+                  title={m.onClick ? 'Click to manage the problem bank and generate test cases' : undefined}
+                >
                   <div style={{ width: 48, height: 48, borderRadius: 12, background: `${m.color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: m.color, marginBottom: 20 }}>
                     <m.icon size={24} />
                   </div>
                   <div style={{ fontSize: '2.2rem', fontWeight: 950, color: 'var(--olive-950)', marginBottom: 8 }}>{m.value}</div>
-                  <div style={{ fontSize: '0.9rem', color: 'var(--text-soft)', fontWeight: 600 }}>{m.label}</div>
+                  <div style={{ fontSize: '0.9rem', color: 'var(--text-soft)', fontWeight: 600 }}>{m.label}{m.onClick ? ' →' : ''}</div>
                 </div>
               ))}
             </div>

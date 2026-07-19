@@ -404,6 +404,31 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
   const [fields, setFields] = useState(() => parseDescription(exercise?.description ?? ""));
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [genBusy, setGenBusy] = useState(false);
+  const [genMsg, setGenMsg] = useState("");
+  const [genCount, setGenCount] = useState(exercise?.test_case_count ?? null);
+
+  async function generateTestCases(force) {
+    setGenBusy(true); setGenMsg("");
+    try {
+      const res = await apiFetch(
+        `/api/lab/v2/${labId}/exercises/${exercise.id}/generate-test-cases/`,
+        "POST",
+        force ? { force: true } : {},
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setGenMsg(data.error || "Generation failed.");
+        return;
+      }
+      setGenCount(data.test_cases?.length ?? data.generated_count ?? 0);
+      setGenMsg(`Generated ${data.generated_count} test case(s).`);
+    } catch {
+      setGenMsg("Network error.");
+    } finally {
+      setGenBusy(false);
+    }
+  }
 
   function setEx(idx, key, val) {
     setFields((f) => {
@@ -508,6 +533,26 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
         <input className="slp2-input" placeholder="A clue or approach hint for students…"
           value={fields.hint} onChange={(e) => setFields((f) => ({ ...f, hint: e.target.value }))} />
       </div>
+
+      {/* Test case generation (only available once the exercise exists) */}
+      {editing && (
+        <div className="slp2-form-field">
+          <label className="slp2-form-label">Test Cases</label>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="slp2-btn-ghost"
+              disabled={genBusy}
+              onClick={() => generateTestCases(genCount > 0)}
+            >
+              {genBusy ? <Loader2 size={14} className="spin" /> : <FlaskConical size={14} />}
+              {genBusy ? "Generating…" : genCount > 0 ? "Regenerate Test Cases" : "Generate Test Cases"}
+            </button>
+            {genCount > 0 && <span style={{ fontSize: 12, color: "var(--text-soft)" }}>{genCount} test case(s) on file</span>}
+            {genMsg && <span style={{ fontSize: 12, color: genMsg.startsWith("Generated") ? "var(--easy, #4f8b62)" : "#dc2626" }}>{genMsg}</span>}
+          </div>
+        </div>
+      )}
 
       {err && <p className="slp2-error">{err}</p>}
       <div className="slp2-form-actions">
@@ -859,11 +904,34 @@ function LabDetail({ lab: initLab, onBack }) {
   const [editExercise, setEditExercise] = useState(null);
   const [delEx, setDelEx] = useState(null);
   const [tab, setTab] = useState("exercises"); // "exercises" | "students"
+  const [genState, setGenState] = useState({}); // { [exerciseId]: { busy, msg } }
 
   useEffect(() => {
     fetchExercises();
     fetchStudents();
   }, [lab.id]);
+
+  async function generateTestCases(ex, force) {
+    setGenState((s) => ({ ...s, [ex.id]: { busy: true, msg: "" } }));
+    try {
+      const res = await apiFetch(
+        `/api/lab/v2/${lab.id}/exercises/${ex.id}/generate-test-cases/`,
+        "POST",
+        force ? { force: true } : {},
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setGenState((s) => ({ ...s, [ex.id]: { busy: false, msg: data.error || "Generation failed." } }));
+        return;
+      }
+      setExercises((prev) => prev.map((e) => (
+        e.id === ex.id ? { ...e, test_case_count: data.test_cases?.length ?? data.generated_count } : e
+      )));
+      setGenState((s) => ({ ...s, [ex.id]: { busy: false, msg: `Generated ${data.generated_count} test case(s).` } }));
+    } catch {
+      setGenState((s) => ({ ...s, [ex.id]: { busy: false, msg: "Network error." } }));
+    }
+  }
 
   async function fetchExercises() {
     setLoadingEx(true);
@@ -977,7 +1045,10 @@ function LabDetail({ lab: initLab, onBack }) {
             </div>
           ) : (
             <div className="slp2-ex-list">
-              {exercises.map((ex, i) => (
+              {exercises.map((ex, i) => {
+                const gen = genState[ex.id] || {};
+                const hasCases = !!ex.test_case_count;
+                return (
                 <div key={ex.id} className="slp2-ex-item">
                   <div className="slp2-ex-num">{i + 1}</div>
                   <div className="slp2-ex-content">
@@ -989,12 +1060,22 @@ function LabDetail({ lab: initLab, onBack }) {
                       {ex.submission_count !== null && (
                         <span className="slp2-chip"><CheckCircle2 size={9} /> {ex.submission_count} submitted</span>
                       )}
-                      {!!ex.test_case_count && (
-                        <span className="slp2-chip">{ex.test_case_count} test case{ex.test_case_count !== 1 ? "s" : ""}</span>
+                      <span className="slp2-chip" style={!hasCases ? { background: "#fee2e2", color: "#991b1b" } : undefined}>
+                        {hasCases ? `${ex.test_case_count} test case${ex.test_case_count !== 1 ? "s" : ""}` : "⚠ No test cases"}
+                      </span>
+                      {gen.msg && (
+                        <span className="slp2-chip" style={{ color: gen.msg.startsWith("Generated") ? "#166534" : "#dc2626" }}>
+                          {gen.msg}
+                        </span>
                       )}
                     </div>
                   </div>
                   <div className="slp2-ex-actions">
+                    <button type="button" className="slp2-icon-btn" title={hasCases ? "Regenerate test cases" : "Generate test cases"}
+                      disabled={gen.busy}
+                      onClick={() => generateTestCases(ex, hasCases)}>
+                      {gen.busy ? <Loader2 size={13} className="spin" /> : <FlaskConical size={13} />}
+                    </button>
                     <button type="button" className="slp2-icon-btn"
                       onClick={() => { setEditExercise(ex); setShowAddForm(false); }}>
                       <Pencil size={13} />
@@ -1004,7 +1085,8 @@ function LabDetail({ lab: initLab, onBack }) {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
