@@ -515,9 +515,18 @@ function App() {
     }
   }, []);
 
-  // Handle language change - switch to starter code ONLY when user manually changes language
+  // Tracks the (problem, language) pair the editor's code has already been
+  // resolved for, so a problemSet update for an unrelated reason doesn't
+  // clobber the student's in-progress edits.
+  const codeResolvedForRef = useRef("");
+
+  // On opening a problem or switching language: restore the student's own
+  // last-submitted code for that exact (problem, language) if the backend
+  // has one, otherwise fall back to starter code. Problem detail (which
+  // carries last_solutions) loads asynchronously, so this re-runs as
+  // problemSet updates until detail has actually arrived.
   useEffect(() => {
-    // Skip on initial mount and on code restore
+    // Skip on initial mount and on localStorage-based code restore
     if (isInitialLoad.current) {
       isInitialLoad.current = false;
       return;
@@ -527,14 +536,29 @@ function App() {
       return;
     }
     if (!selectedProblemSlug) return;
-    
+
+    const key = `${selectedProblemSlug}::${selectedLanguage}`;
+    if (codeResolvedForRef.current === key) return;
+
+    const currentProblemData = problemSet.find((p) => p.slug === selectedProblemSlug);
+    const lastSolution = currentProblemData?.last_solutions?.[selectedLanguage];
+
     // Mark that user changed language to prevent auto-reset
     userChangedLanguage.current = true;
-    
-    // User changed language - switch to new language's starter code
-    const currentStarter = starterCodeByLanguage[selectedLanguage];
-    setCode(currentStarter ?? starterCodeByLanguage.Python);
-  }, [selectedLanguage, selectedProblemSlug]);
+
+    if (lastSolution?.source_code) {
+      setCode(lastSolution.source_code);
+      codeResolvedForRef.current = key;
+    } else {
+      const currentStarter = starterCodeByLanguage[selectedLanguage];
+      setCode(currentStarter ?? starterCodeByLanguage.Python);
+      // Detail (last_solutions) hasn't loaded yet for this problem — leave
+      // unresolved so this effect re-checks once problemSet updates.
+      if (currentProblemData?.last_solutions) {
+        codeResolvedForRef.current = key;
+      }
+    }
+  }, [selectedLanguage, selectedProblemSlug, problemSet]);
 
   useEffect(() => {
     setExecutionMeta({ status: "Idle", time: "", memory: "" });
@@ -968,6 +992,35 @@ function App() {
       isSubmit,
     });
     applyExecutionResult(result, requestSlug);
+
+    // Reflect this submission locally so reopening/switching back to this
+    // problem+language shows it immediately, without waiting on a re-fetch.
+    if (isSubmit) {
+      const passed = result.status === "Accepted";
+      setProblemSet((current) =>
+        current.map((problem) => {
+          if (problem.slug !== requestSlug) return problem;
+          const nextSolvedLanguages = passed
+            ? [...new Set([...(problem.solved_languages || []), selectedLanguage])]
+            : problem.solved_languages || [];
+          return {
+            ...problem,
+            progress_state: passed ? "completed" : (problem.progress_state === "completed" ? "completed" : "open"),
+            solved_languages: nextSolvedLanguages,
+            current_language: passed ? problem.current_language : selectedLanguage,
+            last_solutions: {
+              ...(problem.last_solutions || {}),
+              [selectedLanguage]: {
+                source_code: code,
+                status: result.status,
+                all_tests_passed: passed,
+                submitted_at: new Date().toISOString(),
+              },
+            },
+          };
+        }),
+      );
+    }
     return result;
   }
 

@@ -288,14 +288,48 @@ def build_student_stats(profile):
 
 
 def build_problem_progress_map(profile):
+    """
+    Returns {problem_id: {"state": "completed"|"open", "solved_languages": [...], "current_language": str|None}}.
+
+    "completed" is sourced from SolvedProblem (the platform-wide source of
+    truth for solved counts elsewhere), while per-language detail comes
+    from ProblemSolution — a student can solve the same problem in more
+    than one language, and SolvedProblem only records the first.
+    """
+    solved_ids = set(
+        SolvedProblem.objects.filter(student=profile).values_list("problem_id", flat=True)
+    )
+
+    # Most-recent-first so the first row seen per problem is the latest attempt.
+    solutions = (
+        ProblemSolution.objects
+        .filter(student=profile)
+        .order_by("-submitted_at")
+        .values("problem_id", "language", "all_tests_passed")
+    )
+
+    languages_by_problem = {}
+    latest_language_by_problem = {}
+    for row in solutions:
+        pid = row["problem_id"]
+        latest_language_by_problem.setdefault(pid, row["language"])
+        if row["all_tests_passed"]:
+            languages_by_problem.setdefault(pid, set()).add(row["language"])
+
     progress_map = {}
-    # Get all problems solved by this student
-    solved_ids = SolvedProblem.objects.filter(
-        student=profile
-    ).values_list("problem_id", flat=True)
-    
-    for problem_id in solved_ids:
-        progress_map[problem_id] = "completed"
+    for pid in solved_ids | set(latest_language_by_problem.keys()):
+        if pid in solved_ids:
+            progress_map[pid] = {
+                "state": "completed",
+                "solved_languages": sorted(languages_by_problem.get(pid, set())),
+                "current_language": None,
+            }
+        else:
+            progress_map[pid] = {
+                "state": "open",
+                "solved_languages": [],
+                "current_language": latest_language_by_problem.get(pid),
+            }
 
     return progress_map
 
@@ -1074,14 +1108,34 @@ class ProblemDetailView(UnifiedAuthMixin, APIView):
             )
 
         # Staff/Admin don't have progress, students do
+        last_solutions_by_language = {}
         if profile_type == "student" and profile:
             progress_map = build_problem_progress_map(profile)
+            # Most-recent-first so the first row seen per language is the
+            # student's latest submission — lets the editor restore exactly
+            # what they last had, per language, when they reopen a problem.
+            solutions = (
+                ProblemSolution.objects
+                .filter(student=profile, problem=problem)
+                .order_by("language", "-submitted_at")
+            )
+            for sol in solutions:
+                if sol.language not in last_solutions_by_language:
+                    last_solutions_by_language[sol.language] = {
+                        "source_code": sol.source_code,
+                        "status": sol.status,
+                        "all_tests_passed": sol.all_tests_passed,
+                        "submitted_at": sol.submitted_at,
+                    }
         else:
             progress_map = {}
         return Response(
             ProblemDetailSerializer(
                 problem,
-                context={"progress_map": progress_map},
+                context={
+                    "progress_map": progress_map,
+                    "last_solutions": last_solutions_by_language,
+                },
             ).data
         )
 
@@ -4318,7 +4372,7 @@ class ExecutorSubmitView(APIView):
             })
 
         try:
-            result = execute_judge0_submission(
+            result = execute_submission(
                 source_code=source_code,
                 language_id=language_id,
                 stdin=stdin,
@@ -4327,12 +4381,12 @@ class ExecutorSubmitView(APIView):
                 "status": "success",
                 "execution": result,
             })
-        except Judge0TimeoutError as exc:
+        except ExecutorTimeoutError as exc:
             return Response(
                 {"status": "timeout", "detail": str(exc)},
                 status=status.HTTP_504_GATEWAY_TIMEOUT,
             )
-        except Judge0ServiceError as exc:
+        except ExecutorServiceError as exc:
             return Response(
                 {"status": "error", "detail": str(exc)},
                 status=status.HTTP_502_BAD_GATEWAY,
@@ -9825,7 +9879,7 @@ class LabSubmitView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, slug):
-        from .services.executor import ExecutorError
+        from .services.executor import ExecutorError, execute_submission
 
         try:
             problem = LabProblem.objects.prefetch_related("test_cases").get(slug=slug, is_active=True)
@@ -9862,12 +9916,10 @@ class LabSubmitView(APIView):
         for tc in test_cases:
             try:
                 payload = prepare_execution_payload(
+                    problem=problem,
                     source_code=source_code,
-                    language_id=language_id,
+                    language=language,
                     stdin=tc.stdin,
-                    problem_slug=problem.slug,
-                    execution_type=problem.execution_type,
-                    function_name=problem.function_name,
                 )
                 exec_result = execute_submission(
                     source_code=payload["source_code"],

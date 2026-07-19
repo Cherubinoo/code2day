@@ -281,6 +281,9 @@ function ProblemListView({
                     <span className="col-title">
                       <strong>{problem.title}</strong>
                       {problem.is_daily && <span className="daily-badge">Daily</span>}
+                      {problem.progress_state === "completed" && (
+                        <span className="completed-stamp" title="Solved">✓ Completed</span>
+                      )}
                     </span>
 
                     <span className="col-tags">
@@ -299,6 +302,13 @@ function ProblemListView({
                       <span className={`status-badge ${statusCfg.className}`}>
                         {statusCfg.label}
                       </span>
+                      {/* Language chip only ever shown for achieved (solved) problems —
+                          in-progress/attempted problems show no extra badges. */}
+                      {problem.progress_state === "completed" && problem.solved_languages?.length > 0 && (
+                        <span className="status-languages">
+                          {problem.solved_languages.join(", ")}
+                        </span>
+                      )}
                     </span>
 
                     <span className="col-action">

@@ -56,6 +56,8 @@ class StudentProfileSerializer(serializers.ModelSerializer):
 class ProblemSerializer(serializers.ModelSerializer):
     progress_state = serializers.SerializerMethodField()
     available_languages = serializers.SerializerMethodField()
+    solved_languages = serializers.SerializerMethodField()
+    current_language = serializers.SerializerMethodField()
 
     class Meta:
         model = Problem
@@ -69,27 +71,43 @@ class ProblemSerializer(serializers.ModelSerializer):
             "is_daily",
             "progress_state",
             "available_languages",
+            "solved_languages",
+            "current_language",
             "companies",
         )
 
-    def get_progress_state(self, obj):
+    def _progress_entry(self, obj):
         progress_map = self.context.get("progress_map", {})
-        return progress_map.get(obj.id, "not_completed")
+        return progress_map.get(obj.id)
+
+    def get_progress_state(self, obj):
+        entry = self._progress_entry(obj)
+        return entry["state"] if entry else "not_completed"
 
     def get_available_languages(self, obj):
         if "SQL" in (obj.tags or []):
             return ["SQL"]
         return DEFAULT_PRACTICE_LANGUAGES
 
+    def get_solved_languages(self, obj):
+        entry = self._progress_entry(obj)
+        return entry["solved_languages"] if entry else []
+
+    def get_current_language(self, obj):
+        entry = self._progress_entry(obj)
+        return entry["current_language"] if entry else None
+
 
 class ProblemDetailSerializer(ProblemSerializer):
     examples = serializers.SerializerMethodField()
+    last_solutions = serializers.SerializerMethodField()
 
     class Meta(ProblemSerializer.Meta):
         fields = ProblemSerializer.Meta.fields + (
             "examples",
             "hints",
             "editorial",
+            "last_solutions",
         )
 
     def get_examples(self, obj):
@@ -102,6 +120,12 @@ class ProblemDetailSerializer(ProblemSerializer):
                 }
             )
         return cleaned_examples
+
+    def get_last_solutions(self, obj):
+        """{language: {source_code, status, all_tests_passed, submitted_at}}
+        for the requesting student's most recent submission per language on
+        this problem, so the editor can restore exactly what they last had."""
+        return self.context.get("last_solutions", {})
 
 
 class SubmissionSerializer(serializers.ModelSerializer):
