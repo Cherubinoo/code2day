@@ -940,6 +940,11 @@ class Contest(models.Model):
         blank=True,
         help_text="List of batch codes assigned to this contest"
     )
+    assigned_sections = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of 'batch::section' strings scoping this contest to specific sections within a batch"
+    )
     assigned_students = models.ManyToManyField(
         StudentProfile,
         related_name="assigned_contests",
@@ -1021,12 +1026,16 @@ class Contest(models.Model):
 
     @property
     def assigned_student_count(self):
-        """Total unique students assigned via individual assignment or batch assignment"""
+        """Total unique students assigned via individual, batch, or section assignment"""
         q = models.Q(id__in=self.assigned_students.values_list('id', flat=True))
         if self.assigned_batches:
             # We filter by department too to be safe, as batches might not be globally unique
             q |= models.Q(batch__in=self.assigned_batches, department=self.department)
-        
+        for entry in self.assigned_sections:
+            batch, _, section = str(entry).partition("::")
+            if batch and section:
+                q |= models.Q(batch=batch, section=section, department=self.department)
+
         return StudentProfile.objects.filter(q).distinct().count()
     
     def submit_for_approval(self):

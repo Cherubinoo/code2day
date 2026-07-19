@@ -59,6 +59,7 @@ const HODDashboard = ({ institutionId }) => {
   const [contestAnalytics, setContestAnalytics] = useState(null);
   const [contestLoading, setContestLoading] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState(null);
+  const [selectedSection, setSelectedSection] = useState('');
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentDetail, setStudentDetail] = useState(null);
@@ -1917,13 +1918,14 @@ const HODDashboard = ({ institutionId }) => {
                   <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
                     {sortedBatches.map((batch) => {
                       const allStudents = batchGroups[batch];
-                      // Filter students by search query
-                      const students = studentSearchQuery
-                        ? allStudents.filter(s =>
-                            (s.name && s.name.toLowerCase().includes(studentSearchQuery.toLowerCase())) ||
-                            (s.register_number && s.register_number.toLowerCase().includes(studentSearchQuery.toLowerCase()))
-                          )
-                        : allStudents;
+                      const batchSections = [...new Set(allStudents.map(s => s.section).filter(Boolean))].sort();
+                      // Filter students by search query and section
+                      const students = allStudents
+                        .filter(s => !studentSearchQuery || (
+                          (s.name && s.name.toLowerCase().includes(studentSearchQuery.toLowerCase())) ||
+                          (s.register_number && s.register_number.toLowerCase().includes(studentSearchQuery.toLowerCase()))
+                        ))
+                        .filter(s => selectedBatch !== batch || !selectedSection || s.section === selectedSection);
                       const isSelected = selectedBatch === batch || studentSearchQuery;
                       const topPerformers = [...allStudents]
                         .sort((a, b) => (b.solved_count || 0) - (a.solved_count || 0))
@@ -1941,8 +1943,11 @@ const HODDashboard = ({ institutionId }) => {
                           overflow: 'hidden',
                         }}>
                           {/* Batch Header - Clickable */}
-                          <div 
-                            onClick={() => setSelectedBatch(isSelected ? null : batch)}
+                          <div
+                            onClick={() => {
+                              setSelectedBatch(isSelected ? null : batch);
+                              setSelectedSection('');
+                            }}
                             style={{
                               padding: 16,
                               cursor: 'pointer',
@@ -1986,6 +1991,21 @@ const HODDashboard = ({ institutionId }) => {
                           {/* Expanded Content - All Students */}
                           {isSelected && (
                             <div style={{ padding: 16 }}>
+                              {batchSections.length > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
+                                  <select
+                                    value={selectedSection}
+                                    onChange={(e) => setSelectedSection(e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #e5e7eb', background: 'white', color: '#333', fontSize: 13, fontWeight: 600 }}
+                                  >
+                                    <option value="">All Sections</option>
+                                    {batchSections.map(sec => (
+                                      <option key={sec} value={sec}>Section {sec}</option>
+                                    ))}
+                                  </select>
+                                </div>
+                              )}
                               {/* High-Fidelity Batch Podium */}
                               <div style={{ 
                                 marginBottom: 32, padding: '24px', background: '#f8fafc', 
@@ -2105,6 +2125,7 @@ const HODDashboard = ({ institutionId }) => {
                                       <th style={{ textAlign: 'left', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>#</th>
                                       <th style={{ textAlign: 'left', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Register Number</th>
                                       <th style={{ textAlign: 'left', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Name</th>
+                                      <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Section</th>
                                       <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Solved</th>
                                       <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Streak</th>
                                       <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Last Active</th>
@@ -2132,6 +2153,7 @@ const HODDashboard = ({ institutionId }) => {
                                             <span style={{ marginLeft: 6, padding: '1px 5px', background: '#fee2e2', color: '#dc2626', borderRadius: 3, fontSize: 10, fontWeight: 600 }}>BLOCKED</span>
                                           )}
                                         </td>
+                                        <td style={{ padding: '8px', textAlign: 'center', color: '#666' }}>{student.section || '—'}</td>
                                         <td style={{ padding: '8px', textAlign: 'center', color: '#059669', fontWeight: 600 }}>{student.solved_count || 0}</td>
                                         <td style={{ padding: '8px', textAlign: 'center' }}>
                                           <span style={{

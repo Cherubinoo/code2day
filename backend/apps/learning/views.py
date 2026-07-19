@@ -2735,6 +2735,7 @@ class StaffInstitutionDetailView(APIView):
                 "register_number": student.register_number,
                 "name": student.name,
                 "batch": student.batch,
+                "section": student.section,
                 "department": student.department.code if student.department else "N/A",
                 "department_name": student.department.name if student.department else "N/A",
                 "solved_count": student.solved_problems.count(),
@@ -3032,6 +3033,7 @@ class StaffDetailView(APIView):
                 batch_top_performers.append({
                     "register_number": student.register_number,
                     "name": student.name,
+                    "section": student.section,
                     "solved_count": student.solved_count,
                     "current_streak": student.current_streak,
                 })
@@ -3042,14 +3044,18 @@ class StaffDetailView(APIView):
                 all_students.append({
                     "register_number": student.register_number,
                     "name": student.name,
+                    "section": student.section,
                     "solved_count": student.solved_count,
                     "current_streak": student.current_streak,
                     "last_active": student.last_login_on.isoformat() if student.last_login_on else None,
                 })
 
+            batch_sections = sorted(set(s for s in all_batch_students.values_list('section', flat=True) if s))
+
             batch_wise_data.append({
                 "batch": batch,
                 "student_count": batch_count,
+                "sections": batch_sections,
                 "top_performers": batch_top_performers,
                 "students": all_students,
             })
@@ -3237,6 +3243,7 @@ class DepartmentDetailView(APIView):
                 batch_top_performers.append({
                     "register_number": student.register_number,
                     "name": student.name,
+                    "section": student.section,
                     "solved_count": student.solved_count,
                     "current_streak": student.current_streak,
                 })
@@ -3246,14 +3253,18 @@ class DepartmentDetailView(APIView):
                 all_students.append({
                     "register_number": student.register_number,
                     "name": student.name,
+                    "section": student.section,
                     "solved_count": student.solved_count,
                     "current_streak": student.current_streak,
                     "last_active": student.last_login_on.isoformat() if student.last_login_on else None,
                 })
 
+            batch_sections = sorted(set(s for s in all_batch_students.values_list('section', flat=True) if s))
+
             batch_wise_data.append({
                 "batch": batch,
                 "student_count": batch_count,
+                "sections": batch_sections,
                 "top_performers": batch_top_performers,
                 "students": all_students,
             })
@@ -3485,7 +3496,7 @@ class ContestListCreateView(APIView):
         if assigned_batches:
             contest.assigned_batches = assigned_batches
             contest.save(update_fields=['assigned_batches'])
-            
+
             # Auto-assign students from batches
             batch_students = StudentProfile.objects.filter(
                 institution=profile.institution,
@@ -3493,6 +3504,25 @@ class ContestListCreateView(APIView):
                 batch__in=assigned_batches
             )
             contest.assigned_students.add(*batch_students)
+
+        # Assign specific sections (e.g. "23-27::A") within batches
+        assigned_sections = request.data.get('assigned_sections', [])
+        if assigned_sections:
+            contest.assigned_sections = assigned_sections
+            contest.save(update_fields=['assigned_sections'])
+
+            section_filter = Q(pk__in=[])
+            for entry in assigned_sections:
+                batch, _, section = str(entry).partition('::')
+                if batch and section:
+                    section_filter |= Q(batch=batch, section=section)
+            if section_filter != Q(pk__in=[]):
+                section_students = StudentProfile.objects.filter(
+                    section_filter,
+                    institution=profile.institution,
+                    department=profile.department,
+                )
+                contest.assigned_students.add(*section_students)
 
         # Assign individual students
         assigned_student_ids = request.data.get('assigned_student_ids', [])
@@ -3659,6 +3689,8 @@ class ContestAnalyticsView(APIView):
             participants_data.append({
                 "register_number": student.register_number,
                 "name": student.name,
+                "batch": student.batch,
+                "section": student.section,
                 "problems_solved": solved_count,
                 "score": total_score,
                 "total_submissions": student_submissions.count(),
@@ -4683,15 +4715,25 @@ class BatchListView(APIView):
             return Response({"batches": []})
 
         # Get distinct batches with student counts
-        batches = StudentProfile.objects.filter(
+        dept_students = StudentProfile.objects.filter(
             institution=staff_profile.institution,
             department=staff_profile.department,
             batch__isnull=False
-        ).exclude(batch='').values('batch').annotate(
+        ).exclude(batch='')
+
+        batches = dept_students.values('batch').annotate(
             student_count=Count('id')
         ).order_by('-batch')
 
-        return Response({"batches": list(batches)})
+        sections_by_batch = {}
+        for row in batches:
+            batch = row['batch']
+            secs = sorted(set(
+                s for s in dept_students.filter(batch=batch).values_list('section', flat=True) if s
+            ))
+            sections_by_batch[batch] = secs
+
+        return Response({"batches": list(batches), "sections_by_batch": sections_by_batch})
 
 
 class BatchStudentsView(APIView):
@@ -4722,6 +4764,7 @@ class BatchStudentsView(APIView):
                 "register_number": student.register_number,
                 "name": student.name,
                 "batch": student.batch,
+                "section": student.section,
                 "solved_count": student.solved_count,
                 "current_streak": student.current_streak,
                 "last_active": student.last_login_on.isoformat() if student.last_login_on else None,
@@ -4768,21 +4811,38 @@ class ContestBatchAssignView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        contest.assigned_batches = batches
-        contest.save(update_fields=['assigned_batches'])
+        sections = request.data.get('sections', [])
+        if not isinstance(sections, list):
+            return Response(
+                {"detail": "Sections must be a list."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        # Also assign students from these batches
+        contest.assigned_batches = batches
+        contest.assigned_sections = sections
+        contest.save(update_fields=['assigned_batches', 'assigned_sections'])
+
+        # Assign students from whole batches plus any specifically assigned sections
+        student_filter = Q(pk__in=[])
+        if batches:
+            student_filter |= Q(batch__in=batches)
+        for entry in sections:
+            batch, _, section = str(entry).partition('::')
+            if batch and section:
+                student_filter |= Q(batch=batch, section=section)
+
         students = StudentProfile.objects.filter(
+            student_filter,
             institution=staff_profile.institution,
             department=staff_profile.department,
-            batch__in=batches
-        )
+        ) if (batches or sections) else StudentProfile.objects.none()
         contest.assigned_students.set(students)
 
         return Response({
             "detail": "Batches assigned successfully.",
             "contest_id": contest.id,
             "assigned_batches": contest.assigned_batches,
+            "assigned_sections": contest.assigned_sections,
             "assigned_student_count": contest.assigned_students.count(),
         })
 
@@ -5291,11 +5351,15 @@ class DepartmentStudentsFilterView(APIView):
 
         # Apply filters
         batch = request.query_params.get('batch')
+        section = request.query_params.get('section')
         search = request.query_params.get('search')
-        
+
         if batch:
             students = students.filter(batch=batch)
-        
+
+        if section:
+            students = students.filter(section=section)
+
         if search:
             students = students.filter(
                 Q(name__icontains=search) | 
@@ -5318,6 +5382,7 @@ class DepartmentStudentsFilterView(APIView):
                 "register_number": student.register_number,
                 "name": student.name,
                 "batch": student.batch,
+                "section": student.section,
                 "solved_count": student.solved_count,
                 "current_streak": student.current_streak,
             })

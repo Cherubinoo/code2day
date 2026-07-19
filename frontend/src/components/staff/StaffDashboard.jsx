@@ -13,6 +13,7 @@ const StaffDashboard = ({ institutionId }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedBatch, setSelectedBatch] = useState(null);
+  const [selectedSection, setSelectedSection] = useState('');
   const [showContestCreator, setShowContestCreator] = useState(false);
   const [selectedStudentForAnalytics, setSelectedStudentForAnalytics] = useState(null);
   const [showContestDetail, setShowContestDetail] = useState(null);
@@ -1031,7 +1032,10 @@ const StaffDashboard = ({ institutionId }) => {
                    {analytics.batch_wise?.map(batch => (
                      <div 
                       key={batch.batch}
-                      onClick={() => setSelectedBatch(selectedBatch === batch.batch ? null : batch.batch)}
+                      onClick={() => {
+                        setSelectedBatch(selectedBatch === batch.batch ? null : batch.batch);
+                        setSelectedSection('');
+                      }}
                       style={{
                         padding: '24px',
                         background: selectedBatch === batch.batch ? 'var(--sage-100)' : 'white',
@@ -1067,9 +1071,23 @@ const StaffDashboard = ({ institutionId }) => {
 
               {selectedBatch && (
                 <div className="premium-card">
-                  <h3 style={{ margin: '0 0 20px', fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-hard)' }}>
-                    Batch {selectedBatch} Students
-                  </h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-hard)' }}>
+                      Batch {selectedBatch} Students
+                    </h3>
+                    {(analytics.batch_wise.find(b => b.batch === selectedBatch)?.sections?.length > 0) && (
+                      <select
+                        value={selectedSection}
+                        onChange={(e) => setSelectedSection(e.target.value)}
+                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-hard)', fontSize: '13px', fontWeight: '600' }}
+                      >
+                        <option value="">All Sections</option>
+                        {analytics.batch_wise.find(b => b.batch === selectedBatch)?.sections?.map(sec => (
+                          <option key={sec} value={sec}>Section {sec}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
 
                   {/* Batch Podium */}
                   {(() => {
@@ -1191,17 +1209,23 @@ const StaffDashboard = ({ institutionId }) => {
                       <thead>
                         <tr style={{ borderBottom: '2px solid var(--bg-2)', textAlign: 'left' }}>
                           <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600' }}>STUDENT</th>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>SECTION</th>
                           <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>SOLVED</th>
                           <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>STREAK</th>
                           <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'right' }}>ACTION</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {analytics.batch_wise.find(b => b.batch === selectedBatch)?.students?.map(student => (
+                        {analytics.batch_wise.find(b => b.batch === selectedBatch)?.students
+                          ?.filter(student => !selectedSection || student.section === selectedSection)
+                          ?.map(student => (
                           <tr key={student.register_number} style={{ borderBottom: '1px solid var(--bg-1)' }}>
                             <td style={{ padding: '16px 8px' }}>
                                <div style={{ fontWeight: '600', color: 'var(--text-hard)' }}>{student.name}</div>
                                <div style={{ fontSize: '11px', color: 'var(--text-soft)' }}>{student.register_number}</div>
+                            </td>
+                            <td style={{ textAlign: 'center', padding: '16px 8px', color: 'var(--text-soft)' }}>
+                              {student.section || '—'}
                             </td>
                             <td style={{ textAlign: 'center', padding: '16px 8px', fontWeight: '700', color: 'var(--olive-700)' }}>
                               {student.solved_count}

@@ -14,6 +14,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     problem_slugs: [],
     aptitude_question_ids: [],
     assigned_batches: [],
+    assigned_sections: [],
     assigned_student_ids: [],
     submit_for_approval: false,
     contest_type: initialType, // 'programming' or 'aptitude'
@@ -23,6 +24,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
   const [aptitudeTopics, setAptitudeTopics] = useState([]);
   const [aptitudeQuestions, setAptitudeQuestions] = useState([]);
   const [batches, setBatches] = useState([]);
+  const [sectionsByBatch, setSectionsByBatch] = useState({});
   const [students, setStudents] = useState([]);
   const [filteredStudents, setFilteredStudents] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -38,6 +40,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
   const [selectionMode, setSelectionMode] = useState('batch');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('');
+  const [selectedSectionFilter, setSelectedSectionFilter] = useState('');
 
   useEffect(() => {
     loadInitialData();
@@ -47,7 +50,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     if (selectionMode === 'individual') {
       loadStudents();
     }
-  }, [selectionMode, selectedBatchFilter, searchQuery]);
+  }, [selectionMode, selectedBatchFilter, selectedSectionFilter, searchQuery]);
 
   async function loadInitialData() {
     setLoadingData(true);
@@ -66,6 +69,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
       if (batchesRes.ok) {
         const data = await batchesRes.json();
         setBatches(data.batches || []);
+        setSectionsByBatch(data.sections_by_batch || {});
       }
 
       if (aptitudeTopicsRes.ok) {
@@ -84,6 +88,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     try {
       const params = new URLSearchParams();
       if (selectedBatchFilter) params.append('batch', selectedBatchFilter);
+      if (selectedBatchFilter && selectedSectionFilter) params.append('section', selectedSectionFilter);
       if (searchQuery) params.append('search', searchQuery);
       params.append('limit', '200');
 
@@ -539,6 +544,18 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
       assigned_batches: prev.assigned_batches.includes(batch)
         ? prev.assigned_batches.filter(b => b !== batch)
         : [...prev.assigned_batches, batch],
+      // Dropping a batch drops any section narrowing selected for it too
+      assigned_sections: prev.assigned_sections.filter(key => !key.startsWith(`${batch}::`)),
+    }));
+  }
+
+  function toggleSection(batch, section) {
+    const key = `${batch}::${section}`;
+    setFormData(prev => ({
+      ...prev,
+      assigned_sections: prev.assigned_sections.includes(key)
+        ? prev.assigned_sections.filter(k => k !== key)
+        : [...prev.assigned_sections, key],
     }));
   }
 
@@ -2090,6 +2107,40 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                       </button>
                     ))}
                   </div>
+
+                  {/* Section narrowing for each selected batch (optional — leave unselected for the whole batch) */}
+                  {formData.assigned_batches.filter(b => (sectionsByBatch[b] || []).length > 0).map((batch) => (
+                    <div key={batch} style={{ marginTop: 14 }}>
+                      <label style={{ display: 'block', marginBottom: 6, fontSize: 12, color: '#666' }}>
+                        Sections in Batch {batch} <span style={{ color: '#9ca3af' }}>(optional — leave blank for all sections)</span>
+                      </label>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                        {(sectionsByBatch[batch] || []).map((section) => {
+                          const key = `${batch}::${section}`;
+                          const active = formData.assigned_sections.includes(key);
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => toggleSection(batch, section)}
+                              style={{
+                                padding: '6px 12px',
+                                borderRadius: 8,
+                                border: active ? '2px solid #4f46e5' : '1px solid #d1d5db',
+                                background: active ? '#eef2ff' : 'white',
+                                color: active ? '#4f46e5' : '#666',
+                                cursor: 'pointer',
+                                fontSize: 12,
+                                fontWeight: active ? 600 : 400,
+                              }}
+                            >
+                              Section {section}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
 
@@ -2115,7 +2166,10 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                     </div>
                     <select
                       value={selectedBatchFilter}
-                      onChange={(e) => setSelectedBatchFilter(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedBatchFilter(e.target.value);
+                        setSelectedSectionFilter('');
+                      }}
                       style={{
                         padding: '10px 12px',
                         border: '1px solid #d1d5db',
@@ -2127,6 +2181,25 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                       {batches.map((batch) => (
                         <option key={batch.batch} value={batch.batch}>
                           Batch {batch.batch}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={selectedSectionFilter}
+                      onChange={(e) => setSelectedSectionFilter(e.target.value)}
+                      disabled={!selectedBatchFilter}
+                      style={{
+                        padding: '10px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: 8,
+                        fontSize: 14,
+                        opacity: selectedBatchFilter ? 1 : 0.5,
+                      }}
+                    >
+                      <option value="">All Sections</option>
+                      {(sectionsByBatch[selectedBatchFilter] || []).map((section) => (
+                        <option key={section} value={section}>
+                          Section {section}
                         </option>
                       ))}
                     </select>
@@ -2181,6 +2254,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                           <th style={{ padding: '8px', textAlign: 'left', fontWeight: 600 }}>Register No</th>
                           <th style={{ padding: '8px', textAlign: 'left', fontWeight: 600 }}>Name</th>
                           <th style={{ padding: '8px', textAlign: 'center', fontWeight: 600 }}>Batch</th>
+                          <th style={{ padding: '8px', textAlign: 'center', fontWeight: 600 }}>Section</th>
                           <th style={{ padding: '8px', textAlign: 'center', fontWeight: 600 }}>Solved</th>
                         </tr>
                       </thead>
@@ -2215,6 +2289,9 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                               }}>
                                 {student.batch}
                               </span>
+                            </td>
+                            <td style={{ padding: '8px', textAlign: 'center', color: '#666' }}>
+                              {student.section || '—'}
                             </td>
                             <td style={{ padding: '8px', textAlign: 'center', color: '#059669', fontWeight: 600 }}>
                               {student.solved_count}
