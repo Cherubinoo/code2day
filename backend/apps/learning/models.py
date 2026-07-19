@@ -1577,18 +1577,20 @@ class LabExerciseSubmission(models.Model):
 class LLMProvider(models.Model):
     """
     A configured LLM API endpoint used for automatic test case generation.
-    Tried in ascending `priority` order; if a provider errors or times out,
-    the next active one is tried. Add a new row here (no redeploy needed)
-    to add a fallback provider, or to swap the primary one.
+    With many providers configured, requests round-robin across them —
+    each generation call uses whichever active provider was used longest
+    ago (see last_used_at), falling through to the next-least-recently-used
+    one only if that call errors or times out. Add a new row here (no
+    redeploy needed) to add another provider to the rotation.
     """
 
     name = models.CharField(max_length=80, unique=True, help_text="Short label, e.g. 'DeepSeek V4 Pro (NVIDIA)'")
     base_url = models.CharField(max_length=255, help_text="OpenAI-compatible base URL, e.g. https://integrate.api.nvidia.com/v1")
     api_key = models.CharField(max_length=255)
     model_name = models.CharField(max_length=120)
-    priority = models.PositiveIntegerField(default=0, help_text="Lower tries first")
+    priority = models.PositiveIntegerField(default=0, help_text="Tie-breaker when last_used_at is equal (e.g. never used) — lower goes first")
     is_active = models.BooleanField(default=True)
-    use_streaming = models.BooleanField(default=False, help_text="Whether this endpoint requires stream=True (SSE) responses")
+    use_streaming = models.BooleanField(default=True, help_text="Whether this endpoint requires stream=True (SSE) responses")
     temperature = models.FloatField(default=0.4)
     top_p = models.FloatField(default=0.95)
     max_tokens = models.PositiveIntegerField(default=16384)
@@ -1596,6 +1598,10 @@ class LLMProvider(models.Model):
     extra_body = models.JSONField(
         default=dict, blank=True,
         help_text='Provider-specific request extras, e.g. {"chat_template_kwargs": {"thinking": false}}',
+    )
+    last_used_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Set automatically each time this provider is picked for a request — drives round-robin selection.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

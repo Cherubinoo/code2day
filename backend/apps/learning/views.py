@@ -7962,32 +7962,62 @@ def _extract_balanced_braces(text, open_brace_idx):
 
 
 def _parse_openai_snippet(snippet):
-    """Extract provider config fields from a pasted OpenAI-SDK-style code
-    snippet — the exact shape NVIDIA/OpenAI-compatible docs hand out
-    (client = OpenAI(base_url=..., api_key=...); .chat.completions.create(
-    model=..., stream=..., extra_body={...})) — so adding a new fallback
-    provider is paste-and-review instead of manually re-typing every field."""
+    """Extract provider config fields from a pasted code snippet. Handles
+    both common shapes these API docs hand out:
+      1. OpenAI SDK style:  OpenAI(base_url="...", api_key="...");
+         .chat.completions.create(model="...", stream=..., extra_body={...})
+      2. Raw `requests` style: a URL variable ending in /chat/completions,
+         an Authorization: Bearer <key> header, and a payload dict with
+         "model"/"stream"/"temperature"/etc as dict keys rather than
+         Python kwargs.
+    So adding a new fallback provider is paste-and-review instead of
+    manually re-typing every field, regardless of which shape the docs
+    for that particular API used."""
     import ast
 
-    def _find_str(pattern):
-        m = re.search(pattern, snippet)
+    def _find(pattern, text=snippet):
+        m = re.search(pattern, text)
         return m.group(1) if m else None
 
-    result = {
-        "base_url": _find_str(r'base_url\s*=\s*["\']([^"\']+)["\']'),
-        "api_key": _find_str(r'api_key\s*=\s*["\']([^"\']+)["\']'),
-        "model_name": _find_str(r'model\s*=\s*["\']([^"\']+)["\']'),
-    }
+    # base_url: prefer an explicit base_url=... kwarg (OpenAI style); else
+    # fall back to any http(s) URL literal in the snippet, stripping a
+    # trailing /chat/completions or /completions since _call_provider_once
+    # appends that itself.
+    base_url = _find(r'base_url\s*=\s*["\']([^"\']+)["\']')
+    if not base_url:
+        base_url = _find(r'["\'](\bhttps?://[^"\']+)["\']')
+        if base_url:
+            base_url = re.sub(r'/(chat/)?completions/?$', '', base_url)
 
-    stream_match = re.search(r'\bstream\s*=\s*(True|False)', snippet)
+    # api_key: an explicit api_key=... kwarg; else a Bearer token in a
+    # header string; else any bare nvapi-... token anywhere (NVIDIA's
+    # own key format, and every snippet seen so far has used it).
+    api_key = (
+        _find(r'api_key\s*=\s*["\']([^"\']+)["\']')
+        or _find(r'Bearer\s+([A-Za-z0-9\-_.]+)')
+        or _find(r'["\'](nvapi-[A-Za-z0-9\-_.]+)["\']')
+    )
+
+    # model: a model=... kwarg (SDK style) or a "model": "..." dict entry
+    # (raw requests-style payload dict).
+    model_name = (
+        _find(r'\bmodel\s*=\s*["\']([^"\']+)["\']')
+        or _find(r'["\']model["\']\s*:\s*["\']([^"\']+)["\']')
+    )
+
+    result = {"base_url": base_url, "api_key": api_key, "model_name": model_name}
+
+    # Everything below may appear either as a Python kwarg (key=value) or
+    # a dict literal entry ("key": value) — accept both.
+    stream_match = re.search(r'["\']?\bstream["\']?\s*[:=]\s*(True|False)', snippet)
     result["use_streaming"] = stream_match.group(1) == "True" if stream_match else False
 
-    for field, pattern, caster, default in (
-        ("temperature", r'\btemperature\s*=\s*([0-9.]+)', float, 0.4),
-        ("top_p", r'\btop_p\s*=\s*([0-9.]+)', float, 0.95),
-        ("max_tokens", r'\bmax_tokens\s*=\s*([0-9]+)', int, 6000),
+    for field, name, caster, default in (
+        ("temperature", "temperature", float, 0.4),
+        ("top_p", "top_p", float, 0.95),
+        ("max_tokens", "max_tokens", int, 6000),
     ):
-        m = re.search(pattern, snippet)
+        m = re.search(rf'["\']?\b{name}["\']?\s*[:=]\s*([0-9.]+)', snippet)
         result[field] = caster(m.group(1)) if m else default
 
     extra_body = {}
@@ -8153,6 +8183,7 @@ class AdminProblemGenerateTestCasesView(APIView):
                 title=problem.title,
                 description=problem.description,
                 examples=problem.examples,
+                difficulty=problem.difficulty,
             )
         except TestCaseGenError as exc:
             return Response({"error": f"Generation failed: {exc}"}, status=502)
@@ -11139,7 +11170,7 @@ class StaffLabListView(APIView):
         return Response([_serialize_lab_v2(lab) for lab in labs])
 
 
-def _auto_generate_lab_test_cases(exercise, num_cases=6, raise_on_error=False):
+def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False):
     """LLM test case generation for a LabExercise. By default best-effort —
     a generation failure shouldn't block exercise creation. Pass
     raise_on_error=True for manual/on-demand triggers where the caller
@@ -11147,13 +11178,14 @@ def _auto_generate_lab_test_cases(exercise, num_cases=6, raise_on_error=False):
     if exercise.test_cases.exists():
         return 0
 
-    from .services.testcase_generator import generate_test_cases, TestCaseGenError
+    from .services.testcase_generator import generate_test_cases, extract_difficulty, TestCaseGenError
 
     try:
         generated = generate_test_cases(
             title=exercise.title,
             description=exercise.description,
             num_cases=num_cases,
+            difficulty=extract_difficulty(exercise.description),
         )
     except TestCaseGenError as exc:
         logger.warning("Auto test-case generation failed for lab exercise %r: %s", exercise.title, exc)

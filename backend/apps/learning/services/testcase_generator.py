@@ -4,9 +4,14 @@ LLM-based test case generation for Problems and Lab exercises.
 Calls an OpenAI-compatible chat completion endpoint to generate
 stdin/expected_output test case pairs from a problem statement. Providers
 are configured in the DB (LLMProvider model, editable in Django admin) and
-tried in priority order — if one errors or times out, the next active
-provider is tried automatically, so a new fallback endpoint can be added
-without touching code or redeploying.
+selected round-robin: each request uses whichever active provider was used
+longest ago, falling through to the next-least-recently-used one only if
+that call errors or times out. With many providers configured, this
+spreads load across all of them over time instead of either (a) always
+hammering the same "priority 0" one, or (b) firing every single one in
+parallel for every single request, which would burn through each
+provider's own rate limit for one generation call and doesn't need to
+happen when there are 10-20 of them to rotate through instead.
 
 Best-effort by design: callers should catch TestCaseGenError and continue
 without test cases rather than let generation failures block problem/
@@ -24,6 +29,8 @@ import re
 
 import requests
 from django.conf import settings
+from django.db.models import F
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -187,10 +194,73 @@ def _consume_stream(url, payload, headers, timeout_seconds):
     return "".join(content_parts)
 
 
+def _providers_in_rotation_order():
+    """Active providers ordered least-recently-used first (never-used ones
+    first of all), with `priority` as a tie-breaker. Each call to this
+    naturally continues the rotation from wherever the last request left
+    off, since selection is driven by the persisted last_used_at column
+    rather than any in-process state (which wouldn't be shared across
+    gunicorn's worker processes anyway)."""
+    from apps.learning.models import LLMProvider
+
+    providers = list(
+        LLMProvider.objects.filter(is_active=True)
+        .order_by(F("last_used_at").asc(nulls_first=True), "priority", "id")
+    )
+    if not providers:
+        raise NoProvidersAvailableError("No active LLMProvider is configured.")
+    return providers
+
+
+def _mark_provider_used(provider):
+    from apps.learning.models import LLMProvider
+
+    LLMProvider.objects.filter(id=provider.id).update(last_used_at=timezone.now())
+
+
+def _try_providers_in_order(providers, prompt, *, transform=lambda content: content, log_label=""):
+    """
+    Try providers one at a time in the given (round-robin) order — NOT in
+    parallel. A provider is marked used the moment it's picked (before the
+    call, whether it ultimately succeeds or not), so it rotates to the back
+    of the queue for the next unrelated request regardless of outcome —
+    a slow/failing provider doesn't keep getting tried first forever, and a
+    single generation call only ever occupies one provider's rate limit at
+    a time (a few, if earlier ones in the rotation fail).
+
+    `transform` may raise to reject an otherwise-200 response (e.g.
+    unparseable/unusable JSON) — that's treated the same as a network
+    failure and we move on to the next provider in the rotation.
+
+    Raises a TestCaseGenError subclass if every provider in `providers`
+    fails.
+    """
+    label = log_label or "generation"
+    errors = {}
+    for provider in providers:
+        _mark_provider_used(provider)
+        logger.info("Trying provider %r for %s", provider.name, label)
+        try:
+            content = _call_provider_once(provider, prompt)
+            result = transform(content)
+        except Exception as exc:  # noqa: BLE001 — any failure just means "try the next one"
+            logger.warning("Provider %r failed for %s: %s — trying next", provider.name, label, exc)
+            errors[provider.name] = exc
+            continue
+        logger.info("Provider %r succeeded for %s", provider.name, label)
+        return result
+
+    if errors:
+        detail = "; ".join(f"{name}: {exc}" for name, exc in errors.items())
+        raise TestCaseGenServiceError(f"All {len(providers)} provider(s) failed — {detail}")
+    raise NoProvidersAvailableError("All configured providers failed.")
+
+
 def generate_text_with_fallback(prompt, *, log_label=""):
     """
-    Send `prompt` to the first working configured LLMProvider, tried in
-    priority order, and return the raw text content of its reply.
+    Send `prompt` to active configured LLMProviders one at a time, in
+    round-robin order, and return the raw text content of whichever
+    succeeds first.
 
     Shared by generate_test_cases() (which then parses JSON out of the
     result) and any other caller that just wants free-text back (e.g. an
@@ -199,81 +269,82 @@ def generate_text_with_fallback(prompt, *, log_label=""):
     Raises a TestCaseGenError subclass if every active provider fails (or
     none are configured).
     """
-    from apps.learning.models import LLMProvider
+    providers = _providers_in_rotation_order()
+    return _try_providers_in_order(providers, prompt, log_label=log_label)
 
-    providers = list(LLMProvider.objects.filter(is_active=True).order_by("priority", "id"))
-    if not providers:
-        raise NoProvidersAvailableError("No active LLMProvider is configured.")
 
-    last_error = None
-    for provider in providers:
-        logger.info("Requesting %s via provider %r", log_label or "generation", provider.name)
-        try:
-            return _call_provider_once(provider, prompt)
-        except TestCaseGenError as exc:
-            logger.warning("Provider %r failed for %s: %s — trying next provider", provider.name, log_label, exc)
-            last_error = exc
+def _parse_and_validate_cases(content):
+    """Turn one provider's raw reply into a validated list of
+    {"stdin", "expected_output", "is_sample", "explanation"} dicts, or
+    raise TestCaseGenServiceError if the response wasn't usable — used as
+    the `transform` in _try_providers_in_order() so a 200-but-garbled
+    response from one provider is treated as a failure and we move on to
+    the next provider in the rotation instead of returning garbage."""
+    parsed = _extract_json(content)
+
+    raw_cases = parsed.get("test_cases")
+    if not isinstance(raw_cases, list) or not raw_cases:
+        raise TestCaseGenServiceError(f"No usable test_cases in response: {content[:300]!r}")
+
+    cases = []
+    for item in raw_cases:
+        if not isinstance(item, dict):
             continue
+        expected_output = str(item.get("expected_output", "")).strip()
+        if not expected_output:
+            continue
+        cases.append({
+            "stdin": str(item.get("stdin", "")).strip(),
+            "expected_output": expected_output,
+            "is_sample": bool(item.get("is_sample", False)),
+            "explanation": str(item.get("explanation", "")).strip(),
+        })
 
-    raise last_error or NoProvidersAvailableError("All configured providers failed.")
+    if not cases:
+        raise TestCaseGenServiceError("Response had test_cases but none had a usable expected_output.")
+
+    return cases
 
 
-def generate_test_cases(*, title, description, examples=None, num_cases=6):
+def num_cases_for_difficulty(difficulty):
+    """Cap generated test cases at 4, scaled by difficulty so easy problems
+    don't get padded with redundant cases and hard ones still get enough
+    coverage to be meaningful."""
+    return {"Easy": 2, "Medium": 3, "Hard": 4}.get((difficulty or "").strip().title(), 3)
+
+
+def extract_difficulty(description):
+    """LabExercise has no dedicated difficulty field — its compiled
+    description blob has an optional "Difficulty: Easy/Medium/Hard" line
+    (see compileDescription() in frontend/StaffLabPanel.jsx). Pull it out
+    so lab exercises get the same difficulty-scaled test case cap as
+    Problems; defaults to Medium's cap (via num_cases_for_difficulty) when
+    absent."""
+    if not description:
+        return None
+    match = re.search(r"Difficulty:\s*(Easy|Medium|Hard)", description, re.IGNORECASE)
+    return match.group(1).title() if match else None
+
+
+def generate_test_cases(*, title, description, examples=None, num_cases=None, difficulty=None):
     """
     Returns a list of {"stdin": str, "expected_output": str, "is_sample": bool}
-    dicts generated by the first working configured LLM provider, tried in
-    priority order.
+    dicts generated by one active LLM provider, trying the next one in the
+    round-robin rotation if the first fails.
+
+    `num_cases` defaults to a difficulty-scaled cap (see
+    num_cases_for_difficulty) when not given explicitly.
 
     Raises a TestCaseGenError subclass if every active provider fails (or
     none are configured).
     """
-    from apps.learning.models import LLMProvider
-
-    providers = list(LLMProvider.objects.filter(is_active=True).order_by("priority", "id"))
-    if not providers:
-        raise NoProvidersAvailableError("No active LLMProvider is configured.")
-
+    if num_cases is None:
+        num_cases = num_cases_for_difficulty(difficulty)
+    providers = _providers_in_rotation_order()
     prompt = _build_prompt(title, description, examples, num_cases)
-
-    last_error = None
-    for provider in providers:
-        logger.info("Requesting test case generation for %r via provider %r", title, provider.name)
-        try:
-            content = _call_provider_once(provider, prompt)
-            parsed = _extract_json(content)
-        except (TestCaseGenError, json.JSONDecodeError) as exc:
-            logger.warning("Provider %r failed for %r: %s — trying next provider", provider.name, title, exc)
-            last_error = exc
-            continue
-
-        raw_cases = parsed.get("test_cases")
-        if not isinstance(raw_cases, list) or not raw_cases:
-            logger.warning("Provider %r returned no usable test_cases for %r — trying next provider", provider.name, title)
-            last_error = TestCaseGenServiceError(f"No usable test_cases in response: {content[:300]!r}")
-            continue
-
-        cases = []
-        for item in raw_cases:
-            if not isinstance(item, dict):
-                continue
-            expected_output = str(item.get("expected_output", "")).strip()
-            if not expected_output:
-                continue
-            cases.append({
-                "stdin": str(item.get("stdin", "")).strip(),
-                "expected_output": expected_output,
-                "is_sample": bool(item.get("is_sample", False)),
-                "explanation": str(item.get("explanation", "")).strip(),
-            })
-
-        if not cases:
-            last_error = TestCaseGenServiceError("Provider returned test_cases but none had a usable expected_output.")
-            continue
-
-        logger.info("Generated %d test cases for %r via provider %r", len(cases), title, provider.name)
-        return cases
-
-    raise last_error or NoProvidersAvailableError("All configured providers failed.")
+    cases = _try_providers_in_order(providers, prompt, transform=_parse_and_validate_cases, log_label=title)
+    logger.info("Generated %d test cases for %r", len(cases), title)
+    return cases
 
 
 def derive_examples(cases):

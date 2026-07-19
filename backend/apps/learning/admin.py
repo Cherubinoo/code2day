@@ -94,6 +94,7 @@ class ProblemAdmin(admin.ModelAdmin):
             try:
                 generated = generate_test_cases(
                     title=problem.title, description=problem.description, examples=problem.examples,
+                    difficulty=problem.difficulty,
                 )
             except TestCaseGenError as exc:
                 failed.append(problem.title)
@@ -130,6 +131,7 @@ class ProblemAdmin(admin.ModelAdmin):
                 title=obj.title,
                 description=obj.description,
                 examples=obj.examples,
+                difficulty=obj.difficulty,
             )
         except TestCaseGenError as exc:
             logger.warning("Auto test-case generation failed for problem %r: %s", obj.slug, exc)
