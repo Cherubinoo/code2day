@@ -54,7 +54,11 @@ const ProblemBankView = ({ onBack }) => {
     if (missingOnly && !isSearching) list = list.filter((p) => p.test_case_count === 0);
     if (isSearching) {
       const q = search.trim().toLowerCase();
-      list = list.filter((p) => p.title.toLowerCase().includes(q) || p.slug.toLowerCase().includes(q));
+      list = list.filter((p) =>
+        p.title.toLowerCase().includes(q) ||
+        p.slug.toLowerCase().includes(q) ||
+        (p.tags || []).some((tag) => tag.toLowerCase().includes(q))
+      );
     }
     return list;
   }, [problems, missingOnly, search, isSearching]);
@@ -188,7 +192,7 @@ const ProblemBankView = ({ onBack }) => {
           <Search size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
           <input
             type="text"
-            placeholder="Search by title or slug…"
+            placeholder="Search by title, slug, or topic (Graph, Backtracking, …)…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             style={{ width: '100%', padding: '12px 16px 12px 40px', borderRadius: 14, border: '1px solid var(--border-soft)', fontSize: '0.95rem' }}
@@ -223,6 +227,7 @@ const ProblemBankView = ({ onBack }) => {
               <thead>
                 <tr style={{ background: 'var(--bg-2)', borderBottom: '2px solid var(--border-soft)' }}>
                   <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 700 }}>Title</th>
+                  <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 700 }}>Topic</th>
                   <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 700 }}>Difficulty</th>
                   <th style={{ textAlign: 'center', padding: '12px 16px', fontWeight: 700 }}>Test Cases</th>
                   <th style={{ textAlign: 'right', padding: '12px 16px', fontWeight: 700 }}>Action</th>
@@ -239,6 +244,19 @@ const ProblemBankView = ({ onBack }) => {
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ fontWeight: 600 }}>{p.title}</div>
                         <div style={{ fontSize: 11, color: 'var(--text-soft)', fontFamily: 'monospace' }}>{p.slug}</div>
+                      </td>
+                      <td style={{ padding: '12px 16px' }}>
+                        {(p.tags || []).length === 0 ? (
+                          <span style={{ color: 'var(--text-soft)', fontSize: 12 }}>—</span>
+                        ) : (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 220 }}>
+                            {p.tags.map((tag) => (
+                              <span key={tag} style={{ padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600, background: '#eef2ff', color: '#4338ca', whiteSpace: 'nowrap' }}>
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td style={{ padding: '12px 16px' }}>{p.difficulty}</td>
                       <td style={{ padding: '12px 16px', textAlign: 'center' }}>
@@ -276,7 +294,7 @@ const ProblemBankView = ({ onBack }) => {
                     </tr>
                     {expanded && (
                       <tr style={{ borderBottom: '1px solid var(--bg-1)' }}>
-                        <td colSpan={4} style={{ padding: '0 16px 20px', background: 'var(--bg-2)' }}>
+                        <td colSpan={5} style={{ padding: '0 16px 20px', background: 'var(--bg-2)' }}>
                           {panel.loading ? (
                             <div style={{ padding: 16, color: 'var(--text-soft)' }}>Loading test cases…</div>
                           ) : (
