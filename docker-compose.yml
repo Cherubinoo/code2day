@@ -8,6 +8,15 @@ services:
     restart: unless-stopped
     ports:
       - "8001:80"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - VITE_API_TARGET=${VITE_API_TARGET}
     logging:
       driver: json-file
       options:
@@ -21,4 +30,4 @@ networks:
   dokploy-network:
     external: true
 
-# webhook auto-deploy verification test
+# webhook auto-deploy verification test 2
