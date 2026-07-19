@@ -1131,6 +1131,29 @@ class HealthCheckView(APIView):
                 }
             except Exception as exc:
                 payload["test_driver"] = {"elapsed_s": round(time.time() - start, 2), "error": f"{type(exc).__name__}: {exc}"}
+        # Same as above but for the Java driver wrapper — verifies the
+        # char/String literal fixes and array-initializer fix actually
+        # compile+run in production. Temporary — remove once confirmed fixed.
+        if request.query_params.get("test_driver") == "java":
+            import time
+            from types import SimpleNamespace
+            from .services.executor import execute_submission
+            from .services.execution_adapter import prepare_execution_payload
+            fake_problem = SimpleNamespace(execution_type="auto", slug="add-two-numbers", function_name="addTwoNumbers")
+            source = "class Solution {\n    public int addTwoNumbers(int a, int b) {\n        return a + b;\n    }\n}"
+            start = time.time()
+            try:
+                prepared = prepare_execution_payload(problem=fake_problem, source_code=source, language="Java", stdin="[2, 3]")
+                result = execute_submission(source_code=prepared["source_code"], language_id=62, stdin=prepared["stdin"])
+                payload["test_driver"] = {
+                    "elapsed_s": round(time.time() - start, 2),
+                    "prepared_stdin": prepared["stdin"],
+                    "adapted": prepared["adapted"],
+                    "generated_source": prepared["source_code"][:3000],
+                    "result": result,
+                }
+            except Exception as exc:
+                payload["test_driver"] = {"elapsed_s": round(time.time() - start, 2), "error": f"{type(exc).__name__}: {exc}"}
         return Response(payload)
 
 
