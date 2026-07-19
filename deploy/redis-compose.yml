@@ -1,0 +1,21 @@
+services:
+  code2day-redis:
+    image: redis:7-alpine
+    container_name: code2day-redis
+    command: redis-server --appendonly no
+    restart: unless-stopped
+    volumes:
+      - code2day-redis-data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "100M"
+    networks:
+      - code2day-shared
+
+volumes:
+  code2day-redis-data:
+
+networks:
+  code2day-shared:
+    external: true

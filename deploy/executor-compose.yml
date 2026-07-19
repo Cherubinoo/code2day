@@ -1,0 +1,31 @@
+services:
+  code2day-executor:
+    image: ghcr.io/engineer-man/piston
+    container_name: code2day-executor
+    privileged: true
+    restart: unless-stopped
+    ports:
+      - "2358:2358"
+    volumes:
+      - piston-data:/piston
+    environment:
+      - PISTON_BIND_ADDRESS=0.0.0.0:2358
+      - PISTON_RUN_TIMEOUT=30000
+      - PISTON_COMPILE_TIMEOUT=15000
+      - PISTON_OUTPUT_MAX_SIZE=1048576
+      - PISTON_MAX_CONCURRENT_JOBS=40
+      - PISTON_MAX_PROCESS_COUNT=64
+      - PISTON_DISABLE_NETWORKING=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "100M"
+    networks:
+      - code2day-shared
+
+volumes:
+  piston-data:
+
+networks:
+  code2day-shared:
+    external: true

@@ -84,17 +84,22 @@ jobs:
           git reset --hard origin/main
           echo "✓ $(git log --oneline -1)"
 
-          # ── 2. Build backend and frontend ──────────────────────────────────
-          echo "→ Building images..."
-          docker compose build backend frontend
-          echo "✓ Images built"
+          # Each service is deployed from its own compose file — frontend,
+          # backend, redis, and the executor are separately-scoped Dokploy
+          # apps on the shared external network (code2day-shared), so no
+          # single "docker compose up" should ever touch all of them at once.
+          FRONTEND_COMPOSE="docker-compose.yml"
+          BACKEND_COMPOSE="backend/docker-compose.yml"
+          REDIS_COMPOSE="deploy/redis-compose.yml"
+          EXECUTOR_COMPOSE="deploy/executor-compose.yml"
 
-          # ── 3. Restart backend, frontend, and executor ─────────────────────
-          echo "→ Restarting..."
-          docker compose up -d --no-deps backend frontend code2day-executor
-          echo "✓ Containers up"
+          # ── 2. Bring up redis + executor first (backend depends on both) ───
+          echo "→ Starting redis and executor..."
+          docker compose -f "$REDIS_COMPOSE" up -d
+          docker compose -f "$EXECUTOR_COMPOSE" up -d
+          echo "✓ Redis and executor up"
 
-          # ── 4. Ensure Piston language packages ─────────────────────────────
+          # ── 3. Ensure Piston language packages ──────────────────────────────
           # Packages persist in the piston-data volume; only downloads on first run.
           echo "→ Ensuring Piston language packages..."
           PISTON_URL="http://localhost:2358/api/v2"
@@ -149,20 +154,27 @@ jobs:
           echo "✓ Piston packages ready"
           echo "  Installed runtimes: $(curl -sf "${PISTON_URL}/runtimes" | grep -oE '"language":"[^"]*","version":"[^"]*"' | tr '\n' ' ')"
 
-          # ── 5. Patch executor URL in .env → must point to Piston on port 2358 ──
-          sed -i 's|JUDGE0_BASE_URL=.*|JUDGE0_BASE_URL=http://code2day-executor:2358|' .env 2>/dev/null || true
-          echo "✓ JUDGE0_BASE_URL set to http://code2day-executor:2358"
-
-          # Restart backend so it picks up the updated .env
-          docker compose up -d --no-deps backend
+          # ── 4. Build and start backend ───────────────────────────────────────
+          # JUDGE0_BASE_URL is set directly in backend/docker-compose.yml, so
+          # no .env patching is needed here.
+          echo "→ Building and starting backend..."
+          docker compose -f "$BACKEND_COMPOSE" build backend
+          docker compose -f "$BACKEND_COMPOSE" up -d
           sleep 5
+          echo "✓ Backend up"
+
+          # ── 5. Build and start frontend ──────────────────────────────────────
+          echo "→ Building and starting frontend..."
+          docker compose -f "$FRONTEND_COMPOSE" build frontend
+          docker compose -f "$FRONTEND_COMPOSE" up -d
+          echo "✓ Frontend up"
 
           # ── 6. Run migrations ──────────────────────────────────────────────
           echo "→ Migrations..."
           docker exec code2day-backend python manage.py migrate --noinput
           echo "✓ Migrations done"
 
-          # ── 6. Sync students from source DB (safe — skips if source unreachable) ──
+          # ── 7. Sync students from source DB (safe — skips if source unreachable) ──
           echo "→ Syncing students from source DB..."
           timeout 60 docker exec code2day-backend python manage.py import_students \
             && echo "✓ Student sync complete" \
@@ -175,12 +187,12 @@ jobs:
           docker exec code2day-backend python manage.py seed_lab_data
           echo "✓ Institution, department mappings, missing students and lab data done"
 
-          # ── 7. Collect static files ────────────────────────────────────────
+          # ── 8. Collect static files ────────────────────────────────────────
           echo "→ Static files..."
           docker exec code2day-backend python manage.py collectstatic --noinput
           echo "✓ Done"
 
-          # ── 8. Health check ────────────────────────────────────────────────
+          # ── 9. Health check ────────────────────────────────────────────────
           sleep 8
           BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/)
           FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8001/)
