@@ -52,6 +52,11 @@ def build_function_name_candidates(slug: str, source_code: str = "") -> list[str
             r'function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',        # JS, PHP
             r'(?:public|private|static|internal)\s+(?:[\w<>[\]]+\s+)+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', # Java, C#, C++
             r'fun\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',             # Kotlin
+            # C++ method inside a class body reached via a bare "public:"
+            # access specifier (no modifier keyword on the method's own line),
+            # e.g. "vector<int> twoSum(vector<int>& nums, int target) {"
+            r'(?:vector<[^;{}]*>&?|string&?|bool|char\*?|int|long(?:\s+long)?|float|double|void|auto|[A-Za-z_]\w*\*)\s+'
+            r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^;{}]*\)\s*(?:const\s*)?\{',
         ]
         for pattern in patterns:
             found_functions = re.findall(pattern, source_code)
@@ -217,6 +222,23 @@ def parse_argument_list(raw_input: str):
     return values
 
 
+def _canonicalize_numbers(obj):
+    """Recursively collapse whole-number floats to int (5.0 -> 5) so that
+    numerically-equal answers compare equal regardless of which language's
+    wrapper produced them (Python/Java emit "5.0" for a float, C++ emits
+    "5" for the same value via ostringstream) or whether the expected
+    output was authored as "5" vs "5.0"."""
+    if isinstance(obj, bool):
+        return obj
+    if isinstance(obj, float) and obj.is_integer():
+        return int(obj)
+    if isinstance(obj, list):
+        return [_canonicalize_numbers(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _canonicalize_numbers(v) for k, v in obj.items()}
+    return obj
+
+
 def normalize_comparable_output(value: str) -> str:
     """Normalize output for comparison without aggressive cleaning."""
     cleaned = str(value or "").strip()
@@ -231,7 +253,7 @@ def normalize_comparable_output(value: str) -> str:
        (cleaned.startswith("{") and cleaned.endswith("}")):
         try:
             parsed = json.loads(cleaned)
-            return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+            return json.dumps(_canonicalize_numbers(parsed), separators=(",", ":"), ensure_ascii=False)
         except json.JSONDecodeError:
             pass
 
@@ -241,7 +263,7 @@ def normalize_comparable_output(value: str) -> str:
     if isinstance(parsed, str):
         return " ".join(parsed.split())
     if isinstance(parsed, (list, dict, bool, int, float)) or parsed is None:
-        return json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+        return json.dumps(_canonicalize_numbers(parsed), separators=(",", ":"), ensure_ascii=False)
     return " ".join(cleaned.split())
 
 
@@ -475,10 +497,23 @@ def _looks_like_scala_solution(source_code: str, candidates: list[str]) -> bool:
 
 
 def _looks_like_cpp_solution(source_code: str, candidates: list[str]) -> bool:
-    # Check for function definitions
+    if "class Solution" in source_code:
+        return True
+    # Check for function definitions matching a known candidate name
     for name in candidates:
         if re.search(rf'\b{re.escape(name)}\s*\([^)]*\)\s*{{', source_code):
             return True
+    # Broad fallback: any C++-shaped function/method declaration at all
+    # (return type + name + parens + brace), so a LeetCode-style submission
+    # is still recognized even when the function name wasn't guessable from
+    # the problem slug and the class-body method sits after a bare
+    # "public:" access specifier the candidate-extraction regex can't see.
+    if re.search(
+        r'\b(?:void|bool|char|int|long|float|double|auto|string|vector<[^;{}]*>|[A-Za-z_]\w*\*)\s*&?\s+'
+        r'[a-zA-Z_]\w*\s*\([^;{}]*\)\s*\{',
+        source_code,
+    ):
+        return True
     return False
 
 
@@ -895,13 +930,15 @@ done:
 '''.strip()
 
 
-def _generate_cpp_call(func_name: str, sig_match, source_code: str) -> str:
+def _generate_cpp_call(func_name: str, sig_match, source_code: str, has_solution_class: bool = True) -> str:
     """
     Generate the typed call inside the C++ main lambda.
     Inspects the function signature to determine parameter types and builds
     the correct typed call with serialization of the return value.
     """
     import re as _re
+
+    call_prefix = "sol." if has_solution_class else ""
 
     # Map C++ type strings to J accessor methods and serialize calls
     TYPE_MAP = {
@@ -958,7 +995,7 @@ def _generate_cpp_call(func_name: str, sig_match, source_code: str) -> str:
                 accessor = f'args[{i}].asInt()'
             call_args.append(accessor)
 
-        call_str = f'sol.{func_name}({", ".join(call_args)})'
+        call_str = f'{call_prefix}{func_name}({", ".join(call_args)})'
 
         # Determine how to serialize return value
         ret_norm = normalize_type(ret_type)
@@ -982,11 +1019,11 @@ def _generate_cpp_call(func_name: str, sig_match, source_code: str) -> str:
     else:
         # No signature found — try common single-arg patterns as fallback
         lines.append(f'        if (args.size() >= 2) {{')
-        lines.append(f'            auto __r = sol.{func_name}(args[0].asInt(), args[1].asInt());')
+        lines.append(f'            auto __r = {call_prefix}{func_name}(args[0].asInt(), args[1].asInt());')
         lines.append(f'            return serialize(__r);')
         lines.append(f'        }}')
         lines.append(f'        if (args.size() == 1) {{')
-        lines.append(f'            auto __r = sol.{func_name}(args[0].asVecInt());')
+        lines.append(f'            auto __r = {call_prefix}{func_name}(args[0].asVecInt());')
         lines.append(f'            return serialize(__r);')
         lines.append(f'        }}')
 
@@ -1031,6 +1068,7 @@ def _build_cpp_wrapper(source_code: str, candidates: list[str]) -> str:
         _re.MULTILINE
     )
     match = sig_pattern.search(source_code)
+    has_solution_class = bool(_re.search(r'\bclass\s+Solution\b', source_code))
 
     # Build the wrapper
     # We use a robust JSON parser that handles nested arrays, strings, ints, bools
@@ -1179,9 +1217,9 @@ int main() {
 
     vector<J> args = parse_json_args(line);
 
-    Solution sol;
+    """ + ("Solution sol;" if has_solution_class else "") + """
     auto call = [&]() -> string {
-""" + _generate_cpp_call(func_name, match, source_code) + """
+""" + _generate_cpp_call(func_name, match, source_code, has_solution_class) + """
         return "null";
     };
 
