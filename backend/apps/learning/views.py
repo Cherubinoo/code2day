@@ -1,4 +1,5 @@
 import logging
+import re
 from collections import defaultdict
 from datetime import timedelta
 
@@ -60,6 +61,7 @@ from .models import (
     LabExerciseSubmission,
     LabExerciseTestCase,
     LabExerciseReport,
+    LLMProvider,
     Company,
     LAB_LANGUAGE_CHOICES,
 )
@@ -7814,6 +7816,219 @@ class GlobalMaintenanceControlView(APIView):
         
         config.save()
         return Response({"message": "Global maintenance updated"})
+
+
+def _mask_api_key(key):
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "*" * len(key)
+    return f"{key[:6]}...{key[-4:]}"
+
+
+class AdminLLMProvidersView(APIView):
+    """System Admin: list/add the LLM providers used for the test-case and
+    lab-report generation fallback chain — a React-page equivalent of the
+    Django admin LLMProvider CRUD, so providers can be managed without
+    leaving the admin dashboard."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        providers = LLMProvider.objects.all().order_by("priority", "id")
+        data = [{
+            "id": p.id,
+            "name": p.name,
+            "base_url": p.base_url,
+            "api_key_masked": _mask_api_key(p.api_key),
+            "model_name": p.model_name,
+            "priority": p.priority,
+            "is_active": p.is_active,
+            "use_streaming": p.use_streaming,
+            "temperature": p.temperature,
+            "top_p": p.top_p,
+            "max_tokens": p.max_tokens,
+            "timeout_seconds": p.timeout_seconds,
+            "extra_body": p.extra_body,
+            "updated_at": p.updated_at.isoformat(),
+        } for p in providers]
+        return Response({"providers": data})
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        data = request.data
+        name = (data.get("name") or "").strip()
+        base_url = (data.get("base_url") or "").strip()
+        api_key = (data.get("api_key") or "").strip()
+        model_name = (data.get("model_name") or "").strip()
+        if not (name and base_url and api_key and model_name):
+            return Response({"error": "name, base_url, api_key, and model_name are required."}, status=400)
+        if LLMProvider.objects.filter(name=name).exists():
+            return Response({"error": "A provider with this name already exists."}, status=400)
+
+        try:
+            provider = LLMProvider.objects.create(
+                name=name, base_url=base_url, api_key=api_key, model_name=model_name,
+                priority=int(data.get("priority", 0)),
+                is_active=bool(data.get("is_active", True)),
+                use_streaming=bool(data.get("use_streaming", False)),
+                temperature=float(data.get("temperature", 0.4)),
+                top_p=float(data.get("top_p", 0.95)),
+                max_tokens=int(data.get("max_tokens", 6000)),
+                timeout_seconds=int(data.get("timeout_seconds", 30)),
+                extra_body=data.get("extra_body") or {},
+            )
+        except (TypeError, ValueError) as exc:
+            return Response({"error": f"Invalid field value: {exc}"}, status=400)
+
+        return Response({"id": provider.id, "detail": "Provider created."}, status=201)
+
+
+class AdminLLMProviderDetailView(APIView):
+    """System Admin: update (including reordering priority / toggling
+    active) or delete one LLM provider."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, provider_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        provider = LLMProvider.objects.filter(id=provider_id).first()
+        if not provider:
+            return Response({"error": "Not found"}, status=404)
+
+        data = request.data
+        for field in ("name", "base_url", "model_name"):
+            if field in data and str(data[field]).strip():
+                setattr(provider, field, str(data[field]).strip())
+        # Only overwrite api_key if a real value was sent — the frontend
+        # only ever shows the masked form, so never let a masked string
+        # (or a blank field left untouched) accidentally wipe the real key.
+        incoming_key = (data.get("api_key") or "").strip()
+        if incoming_key and "..." not in incoming_key:
+            provider.api_key = incoming_key
+        if "priority" in data:
+            provider.priority = int(data["priority"])
+        if "is_active" in data:
+            provider.is_active = bool(data["is_active"])
+        if "use_streaming" in data:
+            provider.use_streaming = bool(data["use_streaming"])
+        if "temperature" in data:
+            provider.temperature = float(data["temperature"])
+        if "top_p" in data:
+            provider.top_p = float(data["top_p"])
+        if "max_tokens" in data:
+            provider.max_tokens = int(data["max_tokens"])
+        if "timeout_seconds" in data:
+            provider.timeout_seconds = int(data["timeout_seconds"])
+        if "extra_body" in data:
+            provider.extra_body = data["extra_body"] or {}
+
+        try:
+            provider.save()
+        except (TypeError, ValueError) as exc:
+            return Response({"error": f"Invalid field value: {exc}"}, status=400)
+
+        return Response({"detail": "Provider updated."})
+
+    def delete(self, request, provider_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        provider = LLMProvider.objects.filter(id=provider_id).first()
+        if not provider:
+            return Response({"error": "Not found"}, status=404)
+        provider.delete()
+        return Response(status=204)
+
+
+def _extract_balanced_braces(text, open_brace_idx):
+    """Given text and the index of an opening '{', return the substring
+    from there to its matching closing '}' — handles nested dicts, unlike
+    a naive non-greedy regex which would stop at the first '}'."""
+    depth = 0
+    for i in range(open_brace_idx, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace_idx:i + 1]
+    return None
+
+
+def _parse_openai_snippet(snippet):
+    """Extract provider config fields from a pasted OpenAI-SDK-style code
+    snippet — the exact shape NVIDIA/OpenAI-compatible docs hand out
+    (client = OpenAI(base_url=..., api_key=...); .chat.completions.create(
+    model=..., stream=..., extra_body={...})) — so adding a new fallback
+    provider is paste-and-review instead of manually re-typing every field."""
+    import ast
+
+    def _find_str(pattern):
+        m = re.search(pattern, snippet)
+        return m.group(1) if m else None
+
+    result = {
+        "base_url": _find_str(r'base_url\s*=\s*["\']([^"\']+)["\']'),
+        "api_key": _find_str(r'api_key\s*=\s*["\']([^"\']+)["\']'),
+        "model_name": _find_str(r'model\s*=\s*["\']([^"\']+)["\']'),
+    }
+
+    stream_match = re.search(r'\bstream\s*=\s*(True|False)', snippet)
+    result["use_streaming"] = stream_match.group(1) == "True" if stream_match else False
+
+    for field, pattern, caster, default in (
+        ("temperature", r'\btemperature\s*=\s*([0-9.]+)', float, 0.4),
+        ("top_p", r'\btop_p\s*=\s*([0-9.]+)', float, 0.95),
+        ("max_tokens", r'\bmax_tokens\s*=\s*([0-9]+)', int, 6000),
+    ):
+        m = re.search(pattern, snippet)
+        result[field] = caster(m.group(1)) if m else default
+
+    extra_body = {}
+    eb_match = re.search(r'extra_body\s*=\s*(\{)', snippet)
+    if eb_match:
+        brace_text = _extract_balanced_braces(snippet, eb_match.start(1))
+        if brace_text:
+            try:
+                extra_body = ast.literal_eval(brace_text)
+            except (ValueError, SyntaxError):
+                extra_body = {}
+    result["extra_body"] = extra_body
+
+    return result
+
+
+class AdminLLMProviderParseSnippetView(APIView):
+    """System Admin: parse a pasted OpenAI-SDK-style code snippet into
+    provider config fields, for review before creating the provider —
+    matches the exact snippet shape NVIDIA's API docs hand out."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        snippet = request.data.get("snippet") or ""
+        if not snippet.strip():
+            return Response({"error": "Paste a code snippet first."}, status=400)
+
+        parsed = _parse_openai_snippet(snippet)
+        missing = [f for f in ("base_url", "api_key", "model_name") if not parsed.get(f)]
+        if missing:
+            return Response({
+                "error": f"Could not find {', '.join(missing)} in the snippet — "
+                         f"check it includes OpenAI(base_url=..., api_key=...) and "
+                         f".chat.completions.create(model=..., ...).",
+                "parsed": parsed,
+            }, status=400)
+
+        return Response({"parsed": parsed})
 
 
 class AdminProblemBankView(APIView):

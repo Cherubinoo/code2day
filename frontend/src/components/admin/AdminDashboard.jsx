@@ -12,11 +12,13 @@ import {
 import api from '../../lib/api';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import ProblemBankView from './ProblemBankView';
+import LLMProviderView from './LLMProviderView';
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [selectedInstitution, setSelectedInstitution] = useState(null);
   const [showProblemBank, setShowProblemBank] = useState(false);
+  const [showLLMProviders, setShowLLMProviders] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
@@ -331,14 +333,21 @@ const AdminDashboard = () => {
           </div>
           
           {!selectedInstitution && (
-            <button onClick={() => setShowCreateModal(true)} className="primary-button" style={{ borderRadius: 12, padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', width: 'fit-content' }}>
-              <Plus size={18} /> Provision Institution
-            </button>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setShowLLMProviders(true)} style={{ borderRadius: 12, padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', width: 'fit-content', background: 'white', border: '1px solid var(--border-soft)', color: 'var(--olive-900)', fontWeight: 700, cursor: 'pointer' }}>
+                <Settings size={16} /> LLM Providers
+              </button>
+              <button onClick={() => setShowCreateModal(true)} className="primary-button" style={{ borderRadius: 12, padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', width: 'fit-content' }}>
+                <Plus size={18} /> Provision Institution
+              </button>
+            </div>
           )}
         </header>
 
         {showProblemBank ? (
           <ProblemBankView onBack={() => setShowProblemBank(false)} />
+        ) : showLLMProviders ? (
+          <LLMProviderView onBack={() => setShowLLMProviders(false)} />
         ) : !selectedInstitution ? (
           /* GLOBAL LANDING VIEW - INSTITUTIONS LIST */
           <div className="global-view animate-fade-in">
