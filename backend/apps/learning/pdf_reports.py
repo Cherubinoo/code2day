@@ -31,7 +31,7 @@ try:
     from reportlab.lib.pagesizes import letter, A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, PageBreak, Preformatted
     from reportlab.platypus.frames import Frame
     from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
@@ -49,9 +49,10 @@ except ImportError:
 
 from .auth_utils import UnifiedAuthMixin
 from .models import (
-    StudentProfile, StaffProfile, Contest, ContestParticipation, 
+    StudentProfile, StaffProfile, Contest, ContestParticipation,
     ContestSubmission, SolvedProblem, ProblemSolution, SolvedAptitude,
-    Problem, AptitudeQuestion, Department, Institution
+    Problem, AptitudeQuestion, Department, Institution, TestCase,
+    AptitudeContestSubmission,
 )
 
 
@@ -67,10 +68,15 @@ class WatermarkDocTemplate(BaseDocTemplate):
         self.institution = institution
         self.watermark_image = None
         
-        # Try to get watermark image
-        if institution and institution.logo_display_url:
+        # Try to get watermark image — prefer the local file's filesystem
+        # path (logo_display_url is a media *URL* like "/media/...", which
+        # isn't openable as a local path) and fall back to logo_url for HTTP.
+        if institution:
             try:
-                self.watermark_image = self._get_watermark_image(institution.logo_display_url)
+                if institution.logo_file:
+                    self.watermark_image = self._get_watermark_image(institution.logo_file.path)
+                elif institution.logo_url:
+                    self.watermark_image = self._get_watermark_image(institution.logo_url)
             except Exception as e:
                 print(f"Failed to load watermark image: {e}")
         
@@ -237,6 +243,19 @@ def _hx(h):
     return colors.HexColor(h)
 
 
+def _ordinal(n):
+    if 10 <= n % 100 <= 20:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    return f"{n}{suffix}"
+
+
+def _truncate(text, n):
+    text = (text or "").strip()
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
 # ---------------------------------------------------------------------------
 # Drawing helpers
 # ---------------------------------------------------------------------------
@@ -313,6 +332,60 @@ def _bar_chart(data, labels, bar_color=_INDIGO, w=300, h=120):
     bc.bars[0].fillColor = _hx(bar_color)
     bc.bars[0].strokeColor = None
     d.add(bc)
+    return d
+
+
+def _bell_curve_chart(percentile_pct, rank, w=440, h=170):
+    """A normal-distribution curve with Low/Mid/High performer bands and a
+    marker at this student's percentile — the comparative-analysis visual
+    from the sample report, redrawn as a filled Gaussian rather than a
+    photographed chart so it stays crisp at any zoom level."""
+    import math
+    from statistics import NormalDist
+    from reportlab.graphics.shapes import Polygon, Line, String, Circle
+
+    d = Drawing(w, h)
+    margin_l, margin_r, margin_b, margin_t = 12, 12, 22, 10
+    plot_w = w - margin_l - margin_r
+    plot_h = h - margin_b - margin_t
+
+    def x_to_px(x):
+        return margin_l + (x + 3) / 6 * plot_w
+
+    # Zone backgrounds: Low (<-1σ), Mid (-1σ..1σ), High (>1σ)
+    d.add(Rect(x_to_px(-3), margin_b, x_to_px(-1) - x_to_px(-3), plot_h, fillColor=_hx('#f1f5f9'), strokeColor=None))
+    d.add(Rect(x_to_px(-1), margin_b, x_to_px(1) - x_to_px(-1), plot_h, fillColor=_hx('#e0f2fe'), strokeColor=None))
+    d.add(Rect(x_to_px(1), margin_b, x_to_px(3) - x_to_px(1), plot_h, fillColor=_hx('#f1f5f9'), strokeColor=None))
+
+    # Filled Gaussian curve
+    xs = [-3 + 6 * i / 119 for i in range(120)]
+    poly_pts = [margin_l, margin_b]
+    for x in xs:
+        y = math.exp(-0.5 * x * x)
+        poly_pts += [x_to_px(x), margin_b + y * plot_h * 0.92]
+    poly_pts += [margin_l + plot_w, margin_b]
+    d.add(Polygon(poly_pts, fillColor=_hx('#7dd3fc'), strokeColor=_hx('#0284c7'), strokeWidth=1))
+    d.add(Line(margin_l, margin_b, margin_l + plot_w, margin_b, strokeColor=_hx(_BORDER)))
+
+    # Marker at this student's position (percentile -> z-score)
+    p = max(0.5, min(99.5, percentile_pct)) / 100.0
+    z = max(-3, min(3, NormalDist().inv_cdf(p)))
+    mx = x_to_px(z)
+    my = margin_b + math.exp(-0.5 * z * z) * plot_h * 0.92
+    d.add(Line(mx, margin_b, mx, margin_b + plot_h, strokeColor=_hx(_RAMCO_RED), strokeWidth=1.5, strokeDashArray=[3, 2]))
+    d.add(Circle(mx, my, 3, fillColor=_hx(_RAMCO_RED), strokeColor=colors.white, strokeWidth=0.5))
+
+    label = f"Percentile {percentile_pct}%  |  Rank {rank}"
+    label_w = len(label) * 4.3 + 10
+    lx = min(max(mx - label_w / 2, margin_l), margin_l + plot_w - label_w)
+    ly = min(my + 8, h - margin_t - 12)
+    d.add(Rect(lx, ly, label_w, 13, fillColor=_hx(_RAMCO_RED), strokeColor=None, rx=3, ry=3))
+    d.add(String(lx + label_w / 2, ly + 3.5, label, fontName='Helvetica-Bold', fontSize=7,
+                 fillColor=colors.white, textAnchor='middle'))
+
+    for x_pos, txt in ((-2, 'Low performers'), (0, 'Mid performers'), (2, 'High performers')):
+        d.add(String(x_to_px(x_pos), 4, txt, fontName='Helvetica', fontSize=6.5,
+                     fillColor=_hx(_GRAY), textAnchor='middle'))
     return d
 
 
@@ -411,6 +484,41 @@ def _generate_insights(contest, participations, problems, contest_type):
         insights.append("Suggested training topics: time complexity, edge cases, and problem decomposition.")
 
     return insights
+
+
+def _generate_individual_insight(contest, student, participation, n_problems, is_apt, norm_score):
+    """Rule-based, per-student summary paragraph — the individual analogue
+    of _generate_insights(), written in the same third-person assessment
+    tone as the sample report this feature was modelled on."""
+    name = student.name
+    if is_apt:
+        subs = AptitudeContestSubmission.objects.filter(contest=contest, student=student)
+        answered = subs.count()
+        correct = subs.filter(is_correct=True).count()
+        solved_clause = (
+            f"answered {answered}/{n_problems} question(s), {correct} correctly"
+            if answered else "did not attempt any questions"
+        )
+    else:
+        solved_clause = f"solved {participation.problems_solved}/{n_problems} problem(s)"
+
+    if norm_score >= 90:
+        tone = (f"{name} demonstrated exceptional performance in this contest, {solved_clause} and showing "
+                 f"a strong grasp of the concepts tested.")
+    elif norm_score >= 70:
+        tone = (f"{name} performed well in this contest, {solved_clause}. There is scope to sharpen a few "
+                 f"areas for a top-tier score.")
+    elif norm_score >= 40:
+        tone = (f"{name} showed a moderate grasp of the material, {solved_clause}. Focused practice on the "
+                 f"weaker areas below is recommended.")
+    else:
+        tone = (f"{name} struggled with this contest, {solved_clause}. Additional guided practice is "
+                 f"strongly recommended before the next assessment.")
+
+    if participation.auto_submitted:
+        tone += (" The session was auto-submitted after the time limit elapsed, which may have limited "
+                  "the number of problems attempted.")
+    return tone
 
 
 # ---------------------------------------------------------------------------
@@ -1092,6 +1200,550 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         story.append(Paragraph(
             f"Contest Analytics Report  -  {contest.title}  -  "
             f"Generated {datetime.now().strftime('%d %b %Y %I:%M %p')}  -  CONFIDENTIAL", fs))
+        return story
+
+
+# ---------------------------------------------------------------------------
+# Per-student contest report
+# ---------------------------------------------------------------------------
+
+@method_decorator(csrf_exempt, name='dispatch')
+class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
+    """
+    Generate a branded, individual performance report for one student's
+    attempt at one contest — the per-student counterpart to
+    ContestReportPDFView's contest-wide analytics report. Modelled on a
+    standard proctoring-vendor assessment report (cover page, test summary,
+    strengths analysis, comparative/percentile analysis, per-problem
+    breakdown with submitted code and re-verified test cases, activity log,
+    registration details).
+
+    Staff/HOD/Director/TPU/JA/Admin only — students see their own results
+    in the app UI; this printable record is for staff review/placement use.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, contest_id, register_number):
+        if not REPORTLAB_AVAILABLE:
+            return Response({"error": "reportlab not installed"}, status=500)
+
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+        if profile_type == "student":
+            return Response({"error": "Access denied."}, status=403)
+
+        try:
+            contest = Contest.objects.select_related('created_by', 'department', 'institution').get(id=contest_id)
+        except Contest.DoesNotExist:
+            return Response({"error": "Contest not found"}, status=404)
+
+        if not self._can_access_contest(profile, profile_type, contest):
+            return Response({"error": "Access denied."}, status=403)
+
+        student = StudentProfile.objects.select_related('department', 'institution').filter(
+            register_number=register_number
+        ).first()
+        if not student:
+            return Response({"error": "Student not found"}, status=404)
+
+        participation = ContestParticipation.objects.filter(contest=contest, student=student).first()
+        if not participation:
+            return Response({"error": "This student has not participated in this contest."}, status=404)
+
+        buffer = BytesIO()
+        try:
+            doc = create_watermarked_pdf_contest(
+                buffer, institution=contest.institution or student.institution,
+                pagesize=A4,
+                rightMargin=0.6*inch, leftMargin=0.6*inch,
+                topMargin=1.6*inch, bottomMargin=0.6*inch,
+            )
+            story = self._build_story(contest, student, participation, profile)
+            doc.build(story)
+        except Exception as e:
+            import traceback
+            return Response(
+                {"error": f"PDF generation failed: {str(e)}", "trace": traceback.format_exc()},
+                status=500,
+            )
+
+        buffer.seek(0)
+        resp = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+        safe_reg = (student.register_number or "student").replace("/", "-")
+        resp['Content-Disposition'] = f'attachment; filename="contest_{contest.id}_{safe_reg}_{ts}.pdf"'
+        return resp
+
+    def _can_access_contest(self, profile, profile_type, contest):
+        if profile_type in ("staff", "hod"):
+            if profile.institution != contest.institution:
+                return False
+            return contest.department is None or profile.department == contest.department
+        elif profile_type in ("director", "tpu", "ja"):
+            return profile.institution == contest.institution
+        elif profile_type == "admin":
+            return True
+        return False
+
+    def _normalise_score(self, raw_score, n_problems, contest_type, problems=None):
+        if not n_problems:
+            return 0
+        if contest_type == 'aptitude':
+            return round((raw_score / n_problems) * 100, 1)
+        DIFFICULTY_MAX = {"Easy": 100, "Medium": 200, "Hard": 300}
+        if problems:
+            max_possible = sum(DIFFICULTY_MAX.get(getattr(p, 'difficulty', 'Easy'), 100) for p in problems)
+        else:
+            max_possible = 100 * n_problems
+        return round((raw_score / max_possible) * 100, 1) if max_possible else 0
+
+    def _rank_and_percentile(self, contest, participation):
+        participations = list(
+            ContestParticipation.objects.filter(contest=contest)
+            .order_by('-total_score', 'total_time_taken')
+        )
+        n = len(participations)
+        rank = next((i + 1 for i, p in enumerate(participations) if p.id == participation.id), n or 1)
+        percentile = round((n - rank + 1) / n * 100, 1) if n else 100.0
+        return rank, n, percentile
+
+    # ------------------------------------------------------------------
+    # Master story builder
+    # ------------------------------------------------------------------
+    def _build_story(self, contest, student, participation, generated_by):
+        is_apt = contest.contest_type == 'aptitude'
+        if is_apt:
+            problems = list(contest.aptitude_questions.all().order_by('id'))
+        else:
+            problems = list(contest.problems.all().order_by('id'))
+        n_problems = len(problems)
+        rank, n_participants, percentile = self._rank_and_percentile(contest, participation)
+        norm_score = self._normalise_score(
+            participation.total_score, n_problems, contest.contest_type,
+            problems if not is_apt else None,
+        )
+
+        story = []
+        story += self._cover_page(contest, student, generated_by)
+        story.append(PageBreak())
+
+        story += self._test_summary_section(contest, student, participation, n_problems, is_apt, norm_score)
+        story.append(Spacer(1, 10))
+        story += self._strengths_section(contest, student, problems, is_apt)
+        story.append(Spacer(1, 10))
+        story += self._comparative_section(student, rank, n_participants, percentile)
+        story.append(PageBreak())
+
+        if is_apt:
+            story += self._aptitude_breakdown_section(contest, student, problems)
+        else:
+            story += self._problem_breakdown_section(contest, student, problems)
+
+        story.append(PageBreak())
+        story += self._activity_log_section(contest, student, participation, is_apt)
+        story.append(Spacer(1, 10))
+        story += self._registration_section(student)
+        story.append(Spacer(1, 14))
+        story += self._footer_section(contest, student)
+        return story
+
+    # ------------------------------------------------------------------
+    # 1. Cover page
+    # ------------------------------------------------------------------
+    def _cover_page(self, contest, student, generated_by):
+        story = []
+        styles = getSampleStyleSheet()
+        story.append(Spacer(1, 0.6 * inch))
+
+        title_s = ParagraphStyle('sct', fontName='Helvetica-Bold', fontSize=24, leading=29,
+                                 alignment=1, textColor=_hx(_NAVY), spaceAfter=8)
+        story.append(Paragraph(contest.title, title_s))
+
+        ctype = 'Aptitude Contest' if contest.contest_type == 'aptitude' else 'Programming Contest'
+        sub_s = ParagraphStyle('scs', fontName='Helvetica-Bold', fontSize=13, leading=17,
+                               alignment=1, textColor=_hx(_GRAY), spaceAfter=26)
+        story.append(Paragraph(f'Individual Performance Report — {ctype}', sub_s))
+
+        name_s = ParagraphStyle('scn', fontName='Helvetica-Bold', fontSize=19, leading=23,
+                                alignment=1, textColor=_hx(_RAMCO_BLUE), spaceAfter=4)
+        story.append(Paragraph(student.name, name_s))
+
+        meta_bits = [b for b in (student.register_number, student.personal_email) if b]
+        meta_s = ParagraphStyle('scm', fontName='Helvetica', fontSize=10, leading=13,
+                                alignment=1, textColor=_hx(_GRAY), spaceAfter=30)
+        story.append(Paragraph('  |  '.join(meta_bits), meta_s))
+
+        start_dt = contest.access_start_time or contest.start_time
+        info_data = [
+            [Paragraph('<b>Department:</b>', styles['Normal']),
+             student.department.name if student.department else 'N/A'],
+            [Paragraph('<b>Batch / Section:</b>', styles['Normal']),
+             f"{student.batch or 'N/A'} / {student.section or 'N/A'}"],
+            [Paragraph('<b>Contest Date:</b>', styles['Normal']),
+             start_dt.strftime('%d %b %Y') if start_dt else 'N/A'],
+            [Paragraph('<b>Generated By:</b>', styles['Normal']),
+             getattr(generated_by, 'name', 'Administrator')],
+            [Paragraph('<b>Report Date:</b>', styles['Normal']),
+             datetime.now().strftime('%d %b %Y %I:%M %p')],
+        ]
+        info_tbl = Table(info_data, colWidths=[1.6*inch, 3.4*inch])
+        info_tbl.hAlign = 'CENTER'
+        info_tbl.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ]))
+        story.append(info_tbl)
+
+        story.append(Spacer(1, 50))
+        d = Drawing(480, 4)
+        d.add(Rect(0, 0, 480, 4, fillColor=_hx(_RAMCO_RED), strokeColor=None))
+        story.append(d)
+        story.append(Spacer(1, 8))
+        conf_s = ParagraphStyle('conf2', fontName='Helvetica', fontSize=8, alignment=1, textColor=_hx(_GRAY))
+        story.append(Paragraph('CONFIDENTIAL — FOR INTERNAL USE ONLY', conf_s))
+        return story
+
+    # ------------------------------------------------------------------
+    # 2. Test summary
+    # ------------------------------------------------------------------
+    def _test_summary_section(self, contest, student, participation, n_problems, is_apt, norm_score):
+        story = [_section_header('TEST SUMMARY', _NAVY)]
+        header_row = Table([[
+            Paragraph('Overall Score', ParagraphStyle('lbl', fontName='Helvetica', fontSize=9, leading=12, textColor=_hx(_GRAY))),
+            Paragraph(f'{norm_score}%', ParagraphStyle('val', fontName='Helvetica-Bold', fontSize=18, leading=22,
+                                                        textColor=_hx(_RAMCO_BLUE), alignment=2)),
+        ]], colWidths=[4.5*inch, 2.3*inch])
+        header_row.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE')]))
+        story.append(header_row)
+        story.append(Spacer(1, 6))
+
+        insight = _generate_individual_insight(contest, student, participation, n_problems, is_apt, norm_score)
+        box_s = ParagraphStyle('summ', fontName='Helvetica', fontSize=9, textColor=_hx(_DARK), leading=14,
+                               backColor=_hx(_LIGHT), borderPadding=(10,10,10,10), borderColor=_hx(_BORDER), borderWidth=0.5)
+        story.append(Paragraph(insight, box_s))
+        return story
+
+    # ------------------------------------------------------------------
+    # 3. Strengths analysis
+    # ------------------------------------------------------------------
+    def _strengths_section(self, contest, student, problems, is_apt):
+        story = [_section_header('STRENGTHS ANALYSIS', _INDIGO)]
+        strengths, improvements, weaknesses = self._derive_strengths(contest, student, problems, is_apt)
+
+        def _box(title, color, items):
+            # Header + body live in one 2-row Table (rather than two stacked
+            # Paragraphs with their own backColor) so the shared background
+            # is drawn once — stacking background-colored Paragraphs directly
+            # left the next one's fill overlapping the previous one's text.
+            body = "<br/>".join(f"• {i}" for i in items) if items else f"No {title.lower()} found"
+            hdr_p = Paragraph(title, ParagraphStyle(f'boxh{title}', fontName='Helvetica-Bold', fontSize=9.5,
+                                                     leading=12, textColor=_hx(color)))
+            body_p = Paragraph(body, ParagraphStyle(f'box{title}', fontName='Helvetica', fontSize=8.5,
+                                                     leading=13, textColor=_hx(_DARK)))
+            box = Table([[hdr_p], [body_p]], colWidths=[6.8*inch])
+            box.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), _hx(_LIGHT)),
+                ('TOPPADDING', (0,0), (0,0), 8), ('BOTTOMPADDING', (0,0), (0,0), 2),
+                ('TOPPADDING', (0,1), (0,1), 2), ('BOTTOMPADDING', (0,1), (0,1), 8),
+                ('LEFTPADDING', (0,0), (-1,-1), 10), ('RIGHTPADDING', (0,0), (-1,-1), 10),
+            ]))
+            return [box, Spacer(1, 6)]
+
+        story += _box('Strengths', _GREEN, strengths)
+        story += _box('Areas of Improvement', _ORANGE, improvements)
+        story += _box('Weakness', _RED, weaknesses)
+        return story
+
+    def _derive_strengths(self, contest, student, problems, is_apt):
+        strengths, improvements, weaknesses = [], [], []
+
+        if is_apt:
+            for diff in ("Easy", "Medium", "Hard"):
+                qs = [p for p in problems if getattr(p, 'difficulty', None) == diff]
+                if not qs:
+                    continue
+                correct = AptitudeContestSubmission.objects.filter(
+                    contest=contest, student=student, question__in=qs, is_correct=True
+                ).count()
+                bucket = strengths if correct == len(qs) else (weaknesses if correct == 0 else improvements)
+                bucket.append(f"{diff} questions ({correct}/{len(qs)} correct)")
+            return strengths, improvements, weaknesses
+
+        solved_tags, missed_tags = set(), set()
+        for diff in ("Easy", "Medium", "Hard"):
+            diff_problems = [p for p in problems if p.difficulty == diff]
+            if not diff_problems:
+                continue
+            solved = 0
+            for p in diff_problems:
+                best = (ContestSubmission.objects.filter(contest=contest, student=student, problem=p)
+                        .order_by('-score', '-submitted_at').first())
+                if best and best.status == "Accepted":
+                    solved += 1
+                    solved_tags.update(p.tags or [])
+                else:
+                    missed_tags.update(p.tags or [])
+            bucket = strengths if solved == len(diff_problems) else (weaknesses if solved == 0 else improvements)
+            bucket.append(f"{diff} problems ({solved}/{len(diff_problems)} solved)")
+
+        strong_topics = sorted(solved_tags - missed_tags)
+        weak_topics = sorted(missed_tags - solved_tags)
+        if strong_topics:
+            strengths.append("Topics: " + ", ".join(strong_topics[:6]))
+        if weak_topics:
+            improvements.append("Topics needing practice: " + ", ".join(weak_topics[:6]))
+        return strengths, improvements, weaknesses
+
+    # ------------------------------------------------------------------
+    # 4. Comparative analysis
+    # ------------------------------------------------------------------
+    def _comparative_section(self, student, rank, n_participants, percentile):
+        story = [_section_header('COMPARATIVE ANALYSIS', _RAMCO_RED)]
+        if n_participants <= 1:
+            txt = f"{student.name} was the only participant recorded for this contest."
+        else:
+            txt = (f"{student.name} ranks {_ordinal(rank)} among {n_participants} candidates, placing in the "
+                   f"{percentile}th percentile. ")
+            if percentile >= 90:
+                txt += "This places them among the top performers in this cohort."
+            elif percentile >= 50:
+                txt += "This is an above-median result for this cohort."
+            else:
+                txt += "There is meaningful room to close the gap with the top performers in this cohort."
+        s = ParagraphStyle('cmp', fontName='Helvetica', fontSize=9, textColor=_hx(_DARK), leading=13, spaceAfter=8)
+        story.append(Paragraph(txt, s))
+        if n_participants > 1:
+            story.append(_bell_curve_chart(percentile, rank))
+        return story
+
+    # ------------------------------------------------------------------
+    # 5a. Problem-wise breakdown (programming contests)
+    # ------------------------------------------------------------------
+    def _problem_breakdown_section(self, contest, student, problems):
+        from .services.executor import check_executor_health
+        story = [_section_header('PROBLEM-WISE BREAKDOWN', _SLATE)]
+        if not problems:
+            story.append(Paragraph("No problems were assigned to this contest.", ParagraphStyle("np", fontSize=9)))
+            return story
+
+        executor_ok = check_executor_health().get('healthy', False)
+        code_s = ParagraphStyle('code', fontName='Courier', fontSize=7.5, leading=10, textColor=_hx(_DARK))
+        title_s = ParagraphStyle('pt', fontName='Helvetica-Bold', fontSize=11, textColor=colors.white,
+                                 backColor=_hx(_INDIGO), borderPadding=(5,8,5,8), spaceAfter=6)
+        meta_s = ParagraphStyle('pm', fontName='Helvetica', fontSize=8, textColor=_hx(_DARK), leading=12, spaceAfter=6)
+        sub_hdr_s = ParagraphStyle('sc', fontName='Helvetica-Bold', fontSize=8.5, textColor=_hx(_SLATE), spaceAfter=3)
+        note_s = ParagraphStyle('note', fontName='Helvetica-Oblique', fontSize=8, textColor=_hx(_GRAY))
+
+        for idx, prob in enumerate(problems, 1):
+            best = (ContestSubmission.objects.filter(contest=contest, student=student, problem=prob)
+                    .order_by('-score', '-submitted_at').first())
+            attempts = ContestSubmission.objects.filter(contest=contest, student=student, problem=prob).count()
+
+            story.append(Paragraph(f"Q{idx}. {prob.title} ({prob.difficulty})", title_s))
+            if not best:
+                story.append(Paragraph("Not attempted.", meta_s))
+                story.append(Spacer(1, 10))
+                continue
+
+            tags = ", ".join(prob.tags[:5]) if prob.tags else "—"
+            story.append(Paragraph(
+                f"<b>Status:</b> {best.status}  |  <b>Language:</b> {best.language}  |  "
+                f"<b>Score:</b> {best.score}  |  <b>Attempts:</b> {attempts}  |  "
+                f"<b>Submitted:</b> {best.submitted_at.strftime('%d %b %Y %I:%M:%S %p')}  |  "
+                f"<b>Tags:</b> {tags}",
+                meta_s))
+
+            story.append(Paragraph("Submitted Code:", sub_hdr_s))
+            code_box = Table([[Preformatted(best.code or "", code_s, maxLineLength=100)]], colWidths=[6.8*inch])
+            code_box.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,-1), _hx('#f8fafc')),
+                ('BOX', (0,0), (-1,-1), 0.5, _hx(_BORDER)),
+                ('TOPPADDING', (0,0), (-1,-1), 6), ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+                ('LEFTPADDING', (0,0), (-1,-1), 8), ('RIGHTPADDING', (0,0), (-1,-1), 8),
+            ]))
+            story.append(code_box)
+            story.append(Spacer(1, 6))
+
+            if executor_ok:
+                rows, note = self._reexecute_test_cases(best, prob)
+            else:
+                rows, note = [], "Re-verification skipped — the code execution service is currently unavailable."
+
+            if rows:
+                story.append(Paragraph("Test Cases:", sub_hdr_s))
+                hdr = [["Input", "Expected Output", "Received Output", "Status"]]
+                tbl_rows = [[_truncate(stdin, 40), _truncate(expected, 30), _truncate(received, 30), status_txt]
+                            for stdin, expected, received, status_txt in rows]
+                tbl = Table(hdr + tbl_rows, colWidths=[2.0*inch, 1.7*inch, 1.7*inch, 0.9*inch], repeatRows=1)
+                cmds = [
+                    ("BACKGROUND",(0,0),(-1,0),_hx(_TEAL)), ("TEXTCOLOR",(0,0),(-1,0),colors.white),
+                    ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"), ("FONTNAME",(0,1),(-1,-1),"Courier"),
+                    ("FONTSIZE",(0,0),(-1,-1),7), ("ALIGN",(3,1),(3,-1),"CENTER"),
+                    ("VALIGN",(0,0),(-1,-1),"MIDDLE"), ("GRID",(0,0),(-1,-1),0.3,_hx(_BORDER)),
+                    ("ROWBACKGROUNDS",(0,1),(-1,-1),[_hx(_WHITE),_hx(_LIGHT)]),
+                ]
+                for ri, row in enumerate(rows, 1):
+                    bg = "#d1fae5" if row[3] == "Passed" else "#fee2e2"
+                    cmds.append(("BACKGROUND", (3, ri), (3, ri), _hx(bg)))
+                tbl.setStyle(TableStyle(cmds))
+                story.append(tbl)
+            elif note:
+                story.append(Paragraph(note, note_s))
+
+            story.append(Spacer(1, 12))
+        return story
+
+    def _reexecute_test_cases(self, submission, problem):
+        """Best-effort: re-run the submitted code against this problem's
+        (now capped-at-4) test cases to build a real Input/Expected/
+        Received/Status table, since per-test-case results aren't persisted
+        anywhere at submission time — only the aggregate pass count is."""
+        from .services.executor import execute_submission, get_language_id, ExecutorError
+        test_cases = list(problem.test_cases.all().order_by('order'))
+        if not test_cases:
+            return [], "No test cases are configured for this problem."
+        try:
+            language_id = get_language_id(submission.language)
+        except Exception:
+            return [], f"Re-verification isn't available for language '{submission.language}'."
+        rows = []
+        for tc in test_cases:
+            try:
+                result = execute_submission(submission.code, language_id, stdin=tc.stdin, timeout=10)
+            except ExecutorError as exc:
+                if rows:
+                    return rows, f"Stopped re-running test cases after an execution error: {exc}"
+                return [], f"Could not re-run this submission's code: {exc}"
+            received = (result.get('stdout') or '').strip()
+            expected = (tc.expected_output or '').strip()
+            rows.append((tc.stdin, expected, received, "Passed" if received == expected else "Failed"))
+        return rows, ""
+
+    # ------------------------------------------------------------------
+    # 5b. Question-wise breakdown (aptitude contests)
+    # ------------------------------------------------------------------
+    def _aptitude_breakdown_section(self, contest, student, questions):
+        story = [_section_header('QUESTION-WISE BREAKDOWN', _SLATE)]
+        if not questions:
+            story.append(Paragraph("No questions were assigned to this contest.", ParagraphStyle("np", fontSize=9)))
+            return story
+
+        subs_by_q = {
+            s.question_id: s for s in
+            AptitudeContestSubmission.objects.filter(contest=contest, student=student)
+        }
+        rows = [["#", "Question", "Selected", "Correct Answer", "Result", "Time"]]
+        for i, q in enumerate(questions, 1):
+            sub = subs_by_q.get(q.id)
+            qt = _truncate(q.question_text, 60)
+            if sub:
+                rows.append([str(i), qt, sub.selected_option or "—", q.correct_option,
+                             "Correct" if sub.is_correct else "Incorrect",
+                             f"{sub.time_taken_seconds}s" if sub.time_taken_seconds else "—"])
+            else:
+                rows.append([str(i), qt, "—", q.correct_option, "Not attempted", "—"])
+
+        tbl = Table(rows, colWidths=[0.3*inch, 3.4*inch, 0.7*inch, 0.9*inch, 0.8*inch, 0.6*inch], repeatRows=1)
+        cmds = [
+            ("BACKGROUND",(0,0),(-1,0),_hx(_TEAL)), ("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"), ("FONTNAME",(0,1),(-1,-1),"Helvetica"),
+            ("FONTSIZE",(0,0),(-1,-1),7.5), ("ALIGN",(0,0),(0,-1),"CENTER"), ("ALIGN",(2,1),(-1,-1),"CENTER"),
+            ("VALIGN",(0,0),(-1,-1),"MIDDLE"), ("GRID",(0,0),(-1,-1),0.3,_hx(_BORDER)),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1),[_hx(_WHITE),_hx(_LIGHT)]),
+        ]
+        for ri, row in enumerate(rows[1:], 1):
+            bg = "#d1fae5" if row[4] == "Correct" else ("#fee2e2" if row[4] == "Incorrect" else _WHITE)
+            cmds.append(("BACKGROUND", (4, ri), (4, ri), _hx(bg)))
+        tbl.setStyle(TableStyle(cmds))
+        story.append(tbl)
+        return story
+
+    # ------------------------------------------------------------------
+    # 6. Activity log
+    # ------------------------------------------------------------------
+    def _activity_log_section(self, contest, student, participation, is_apt):
+        story = [_section_header('ACTIVITY LOG', _SLATE)]
+        events = []
+        if participation.started_at:
+            events.append((participation.started_at, "Started the contest session."))
+
+        if is_apt:
+            subs = (AptitudeContestSubmission.objects.filter(contest=contest, student=student)
+                    .select_related('question').order_by('submitted_at'))
+            for i, sub in enumerate(subs, 1):
+                events.append((sub.submitted_at, f"Answered question {i} — "
+                                                  f"{'correct' if sub.is_correct else 'incorrect'}."))
+        else:
+            subs = (ContestSubmission.objects.filter(contest=contest, student=student)
+                    .select_related('problem').order_by('submitted_at'))
+            for sub in subs:
+                events.append((sub.submitted_at, f"Submitted '{sub.problem.title}' in {sub.language} — {sub.status}."))
+
+        if participation.completed_at:
+            if participation.auto_submitted:
+                reason = "auto-submitted after the time limit elapsed"
+            elif participation.manually_stopped:
+                reason = "manually stopped by the student"
+            else:
+                reason = "completed normally"
+            events.append((participation.completed_at, f"Session ended ({reason})."))
+
+        events.sort(key=lambda e: e[0])
+        if not events:
+            story.append(Paragraph("No activity recorded.", ParagraphStyle("np", fontSize=9)))
+            return story
+
+        rows = [[e[0].strftime('%d %b %Y, %I:%M:%S %p'), e[1]] for e in events]
+        tbl = Table(rows, colWidths=[1.8*inch, 5.0*inch])
+        tbl.setStyle(TableStyle([
+            ('FONTNAME', (0,0), (-1,-1), 'Helvetica'), ('FONTSIZE', (0,0), (-1,-1), 8),
+            ('TEXTCOLOR', (0,0), (0,-1), _hx(_GRAY)), ('TEXTCOLOR', (1,0), (1,-1), _hx(_DARK)),
+            ('VALIGN', (0,0), (-1,-1), 'TOP'), ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('LINEBELOW', (0,0), (-1,-1), 0.3, _hx(_BORDER)),
+        ]))
+        story.append(tbl)
+        return story
+
+    # ------------------------------------------------------------------
+    # 7. Registration details
+    # ------------------------------------------------------------------
+    def _registration_section(self, student):
+        story = [_section_header('REGISTRATION DETAILS', _INDIGO)]
+        rows = [
+            ["Name", student.name],
+            ["Register Number", student.register_number or "N/A"],
+            ["Email", student.personal_email or "N/A"],
+            ["Institution", student.institution.get_display_name() if student.institution else "N/A"],
+            ["Department", student.department.name if student.department else "N/A"],
+            ["Batch / Section", f"{student.batch or 'N/A'} / {student.section or 'N/A'}"],
+        ]
+        tbl = Table(rows, colWidths=[1.8*inch, 5.0*inch])
+        tbl.setStyle(TableStyle([
+            ('FONTNAME', (0,0), (0,-1), 'Helvetica-Bold'), ('FONTNAME', (1,0), (1,-1), 'Helvetica'),
+            ('FONTSIZE', (0,0), (-1,-1), 9), ('TEXTCOLOR', (0,0), (0,-1), _hx(_SLATE)),
+            ('ROWBACKGROUNDS', (0,0), (-1,-1), [_hx(_LIGHT), _hx(_WHITE)]),
+            ('GRID', (0,0), (-1,-1), 0.3, _hx(_BORDER)),
+            ('TOPPADDING', (0,0), (-1,-1), 5), ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+            ('LEFTPADDING', (0,0), (-1,-1), 8),
+        ]))
+        story.append(tbl)
+        return story
+
+    # ------------------------------------------------------------------
+    # 8. Footer
+    # ------------------------------------------------------------------
+    def _footer_section(self, contest, student):
+        story = []
+        d = Drawing(480, 2)
+        d.add(Rect(0, 0, 480, 2, fillColor=_hx(_INDIGO), strokeColor=None))
+        story.append(d)
+        story.append(Spacer(1, 6))
+        fs = ParagraphStyle("ft2", fontName="Helvetica", fontSize=7, alignment=1, textColor=_hx(_GRAY))
+        story.append(Paragraph(
+            f"Individual Contest Report — {contest.title} — "
+            f"{student.register_number or student.name} — "
+            f"Generated {datetime.now().strftime('%d %b %Y %I:%M %p')} — CONFIDENTIAL", fs))
         return story
 
 

@@ -159,7 +159,7 @@ from .file_views import (
 )
 
 # Import PDF report views
-from .pdf_reports import ContestReportPDFView
+from .pdf_reports import ContestReportPDFView, StudentContestReportPDFView
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health-check"),
@@ -287,6 +287,7 @@ urlpatterns = [
     path("students/<str:register_number>/report/", StudentReportPDFView.as_view(), name="student-report-pdf"),
     path("staff/<str:faculty_id>/report/", StaffReportPDFView.as_view(), name="staff-report-pdf"),
     path("contests/<int:contest_id>/report/", ContestReportPDFView.as_view(), name="contest-report-pdf"),
+    path("contests/<int:contest_id>/students/<str:register_number>/report/", StudentContestReportPDFView.as_view(), name="contest-student-report-pdf"),
     
     # Institution Branding
     path("admin/v2/institutions/<int:pk>/branding/preview/", InstitutionBrandingPreviewView.as_view(), name="institution-branding-preview"),

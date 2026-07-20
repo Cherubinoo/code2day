@@ -12,6 +12,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
   const [studentSubmissions, setStudentSubmissions] = useState([]);
   const [submissionsLoading, setSubmissionsLoading] = useState(false);
   const [downloadingReport, setDownloadingReport] = useState(false);
+  const [downloadingStudentReport, setDownloadingStudentReport] = useState({});
   const [batchFilter, setBatchFilter] = useState('');
   const [sectionFilter, setSectionFilter] = useState('');
 
@@ -91,6 +92,35 @@ const ContestDetailModal = ({ contestId, onClose }) => {
       alert(`Report error: ${err.message}`);
     } finally {
       setDownloadingReport(false);
+    }
+  }
+
+  async function handleDownloadStudentReport(participant) {
+    const regNo = participant.register_number;
+    setDownloadingStudentReport(prev => ({ ...prev, [regNo]: true }));
+    try {
+      const res = await fetch(`/api/contests/${contestId}/students/${regNo}/report/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || 'Failed to generate student report');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `contest_report_${contestId}_${regNo}_${new Date().toISOString().slice(0,10)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Report error: ${err.message}`);
+    } finally {
+      setDownloadingStudentReport(prev => ({ ...prev, [regNo]: false }));
     }
   }
 
@@ -458,25 +488,48 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                         {Math.floor((participant.time_spent || 0) / 60)}m {(participant.time_spent || 0) % 60}s
                       </td>
                       <td style={{ padding: '12px 16px', textAlign: 'center' }}>
-                        <button
-                          onClick={() => handleStudentClick(participant)}
-                          style={{
-                            padding: '6px 12px',
-                            borderRadius: 6,
-                            border: '1px solid #d1d5db',
-                            background: selectedStudent?.register_number === participant.register_number ? '#059669' : 'white',
-                            color: selectedStudent?.register_number === participant.register_number ? 'white' : '#374151',
-                            cursor: 'pointer',
-                            fontSize: 13,
-                            fontWeight: 500,
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 6,
-                          }}
-                        >
-                          <Eye size={14} />
-                          {selectedStudent?.register_number === participant.register_number ? 'Hide' : 'View'}
-                        </button>
+                        <div style={{ display: 'inline-flex', gap: 6 }}>
+                          <button
+                            onClick={() => handleStudentClick(participant)}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: 6,
+                              border: '1px solid #d1d5db',
+                              background: selectedStudent?.register_number === participant.register_number ? '#059669' : 'white',
+                              color: selectedStudent?.register_number === participant.register_number ? 'white' : '#374151',
+                              cursor: 'pointer',
+                              fontSize: 13,
+                              fontWeight: 500,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                          >
+                            <Eye size={14} />
+                            {selectedStudent?.register_number === participant.register_number ? 'Hide' : 'View'}
+                          </button>
+                          <button
+                            onClick={() => handleDownloadStudentReport(participant)}
+                            disabled={!!downloadingStudentReport[participant.register_number]}
+                            title="Download this student's individual contest report"
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: 6,
+                              border: '1px solid #d1d5db',
+                              background: downloadingStudentReport[participant.register_number] ? '#f3f4f6' : 'white',
+                              color: '#374151',
+                              cursor: downloadingStudentReport[participant.register_number] ? 'not-allowed' : 'pointer',
+                              fontSize: 13,
+                              fontWeight: 500,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                          >
+                            <Download size={14} />
+                            {downloadingStudentReport[participant.register_number] ? '...' : 'Report'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
 
