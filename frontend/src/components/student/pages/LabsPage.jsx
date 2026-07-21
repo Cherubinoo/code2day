@@ -327,13 +327,28 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
         credentials: "include",
         body: JSON.stringify({ code, language: lang }),
       });
+      const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        const d = await res.json();
         setSubmitted(true);
         setSubmittedAt(d.submitted_at);
         onSubmitted(exercise.id, { code, language: lang, submitted_at: d.submitted_at });
       } else {
-        setSubmitErr("Submission failed. Please try again.");
+        setSubmitErr(d.error || "Submission failed. Please try again.");
+        // Show the failing test cases in the console too, the same
+        // Case-by-case breakdown the Run button shows, so the student can
+        // see exactly why the submission was rejected without switching views.
+        if (d.test_results && d.test_results.length > 0) {
+          const lines = [`--- Test Cases (${d.passed_cases}/${d.total_cases} passed) ---`];
+          d.test_results.forEach((tc, i) => {
+            lines.push(
+              `\nCase ${i + 1}: ${tc.passed ? "✓ Passed" : "✗ Failed"}` +
+              (tc.stdin ? `\n  Input:    ${tc.stdin}` : "") +
+              `\n  Expected: ${tc.expected}` +
+              `\n  Got:      ${tc.actual || "(no output)"}`,
+            );
+          });
+          setOutputLog(lines.join(""));
+        }
       }
     } catch { setSubmitErr("Network error"); }
     finally { stopTimer(); setBusy(false); }

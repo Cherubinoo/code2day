@@ -629,10 +629,15 @@ def execute_lab_test_case_batch(*, source_code, language, language_id, test_case
         )
         actual_raw = (tc_result["stdout"] or "").strip()
         expected = case.expected_output.strip()
-        passed = (
-            tc_result["status"] == "Accepted"
-            and normalize_comparable_output(actual_raw) == normalize_comparable_output(expected)
-        )
+        # Plain exact-match comparison, matching services.lab_report_pdf's
+        # reexecute_test_cases() — deliberately NOT normalize_comparable_output(),
+        # which is tuned for Problems' single-value LeetCode-style returns and
+        # truncates everything at the first newline (via _extract_primary_expected,
+        # meant to strip "2, nums = [1,2]"-style annotations). Lab exercises are
+        # plain stdin/stdout programs that routinely have multi-line expected
+        # output; that truncation made a completely wrong 2nd+ line still count
+        # as Passed, since only line 1 of each side ever got compared.
+        passed = tc_result["status"] == "Accepted" and actual_raw == expected
 
         latest_time = tc_result["time"] or latest_time
         latest_memory = tc_result["memory"] or latest_memory
@@ -11632,11 +11637,14 @@ class StudentExerciseRunView(APIView):
                     source_code=source_code, language_id=language_id, stdin=stdin,
                 )
             else:
-                test_cases = build_lab_runtime_test_cases(exercise, sample_only=True)
+                # Run every configured test case, not just samples — a student
+                # relying on the console to judge correctness needs to see the
+                # full picture, not a subset that can pass while others fail.
+                test_cases = build_lab_runtime_test_cases(exercise, sample_only=False)
                 if test_cases:
                     result = execute_lab_test_case_batch(
                         source_code=source_code, language=language, language_id=language_id,
-                        test_cases=test_cases, batch_kind="sample",
+                        test_cases=test_cases, batch_kind="run",
                     )
                 else:
                     result = execute_judge0_submission(
@@ -11655,6 +11663,12 @@ class StudentExerciseRunView(APIView):
 
 
 class StudentExerciseSubmitView(APIView):
+    """Student: submit a LabExercise. Only actually recorded once all of
+    the exercise's test cases pass — re-runs them here (the full set, same
+    as the Run button now does) so a submission can't be stored on the
+    strength of a subset that happened to pass while others silently
+    failed. Exercises with no test cases configured yet have nothing to
+    gate against, so those still submit best-effort as before."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, lab_id, exercise_id):
@@ -11667,15 +11681,59 @@ class StudentExerciseSubmitView(APIView):
         except LabExercise.DoesNotExist:
             return Response({"error": "Not found"}, status=404)
         data = request.data
+        code = data.get("code", "")
         language = data.get("language", "")
         allowed_languages = exercise.lab.allowed_languages or list(LAB_LANGUAGE_CHOICES)
         if language and language not in allowed_languages:
             return Response(
                 {"error": f"This lab only accepts submissions in: {', '.join(allowed_languages)}"}, status=400
             )
+        if not code.strip():
+            return Response({"error": "Code is required."}, status=400)
+
+        from .services.executor import get_language_id
+        from .services.problem_testcases import build_lab_runtime_test_cases
+
+        try:
+            language_id = get_language_id(language)
+        except Exception:
+            return Response({"error": f"Unsupported language: {language}"}, status=400)
+
+        test_cases = build_lab_runtime_test_cases(exercise, sample_only=False)
+        if test_cases:
+            try:
+                result = execute_lab_test_case_batch(
+                    source_code=code, language=language, language_id=language_id,
+                    test_cases=test_cases, batch_kind="submit",
+                )
+            except ExecutorTimeoutError as exc:
+                return Response({"error": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+            except ExecutorServiceError as exc:
+                return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            except Exception as exc:
+                logger.error(
+                    "Lab submit test-case run error for exercise %s: %s", exercise_id, exc, exc_info=True,
+                )
+                detail = f"Unexpected execution error: {exc}" if settings.DEBUG else "Unexpected execution error."
+                return Response({"error": detail}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            if result["passed_cases"] != result["total_cases"]:
+                return Response(
+                    {
+                        "error": (
+                            f"Only {result['passed_cases']}/{result['total_cases']} test case(s) passed. "
+                            f"All test cases must pass before this exercise can be submitted."
+                        ),
+                        "test_results": result["test_results"],
+                        "passed_cases": result["passed_cases"],
+                        "total_cases": result["total_cases"],
+                    },
+                    status=400,
+                )
+
         sub, created = LabExerciseSubmission.objects.update_or_create(
             exercise=exercise, student=student,
-            defaults={"code": data.get("code", ""), "language": language},
+            defaults={"code": code, "language": language},
         )
         return Response({
             "submitted": True,
