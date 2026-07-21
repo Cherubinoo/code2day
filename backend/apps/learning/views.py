@@ -11710,11 +11710,26 @@ def _generate_lab_exercise_report(exercise, submission):
 
     test_case_rows, all_passed, tc_note = reexecute_test_cases(exercise, submission.code, submission.language)
     result_text = build_result(exercise.title, all_passed=all_passed)
+    passed_n = sum(1 for r in test_case_rows if r[3] == "Passed") if test_case_rows else 0
+    total_n = len(test_case_rows) if test_case_rows else 0
     if test_case_rows:
-        passed_n = sum(1 for r in test_case_rows if r[3] == "Passed")
-        output_text = f"{passed_n}/{len(test_case_rows)} test case(s) passed."
+        output_text = f"{passed_n}/{total_n} test case(s) passed."
     else:
         output_text = tc_note or "(No test cases configured for this exercise.)"
+
+    if all_passed is True:
+        status_label = "Passed"
+    elif all_passed is False:
+        status_label = "Partially Passed" if passed_n else "Failed"
+    else:
+        status_label = "Not Verified"
+    details = {
+        "language": submission.language or "—",
+        "status": status_label,
+        "score": f"{passed_n}/{total_n}" if total_n else "—",
+        "percentage": f"{round(passed_n / total_n * 100)}%" if total_n else "—",
+        "submitted_at": submission.submitted_at,
+    }
 
     report, _created = LabExerciseReport.objects.update_or_create(
         submission=submission,
@@ -11730,7 +11745,9 @@ def _generate_lab_exercise_report(exercise, submission):
     )
 
     buffer = BytesIO()
-    build_lab_report_pdf(buffer, report=report, test_case_rows=test_case_rows, test_case_note=tc_note)
+    build_lab_report_pdf(
+        buffer, report=report, test_case_rows=test_case_rows, test_case_note=tc_note, details=details,
+    )
     buffer.seek(0)
     pdf_bytes = buffer.getvalue()
     report.pdf_file.save(f"lab_report_{report.id}.pdf", ContentFile(pdf_bytes), save=True)

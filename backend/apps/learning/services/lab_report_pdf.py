@@ -168,17 +168,46 @@ def _test_case_table(rows):
     return tbl
 
 
+def _details_table(details):
+    """A compact Language/Status/Score/Percentage/Submitted-At summary for
+    this one experiment — the lab-record analogue of the Percentage/Score/
+    Time Taken block a typical assessment-vendor report shows per question,
+    scoped down to the single exercise this record covers rather than a
+    whole test's worth of questions."""
+    submitted_at = details.get("submitted_at")
+    rows = [
+        ["Language", details.get("language") or "—"],
+        ["Status", details.get("status") or "—"],
+        ["Score", details.get("score") or "—"],
+        ["Percentage", details.get("percentage") or "—"],
+        ["Submitted At", submitted_at.strftime("%d %b %Y, %I:%M %p") if submitted_at else "—"],
+    ]
+    tbl = Table(rows, colWidths=[1.6 * inch, 3.0 * inch])
+    tbl.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"), ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9.5), ("TEXTCOLOR", (0, 0), (0, -1), _ACCENT),
+        ("TEXTCOLOR", (1, 0), (1, -1), _DARK), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    return tbl
+
+
 def _sig_block(label, width):
     line = Drawing(width, 1)
     line.add(Rect(0, 0, width, 0.6, fillColor=colors.HexColor("#94a3b8"), strokeColor=None))
     return [Spacer(1, 34), line, Paragraph(label, _SIG_CAPTION_STYLE)]
 
 
-def build_lab_report_pdf(buffer: BytesIO, *, report, test_case_rows=None, test_case_note=""):
+def build_lab_report_pdf(buffer: BytesIO, *, report, test_case_rows=None, test_case_note="", details=None):
     """report: a LabExerciseReport instance (already saved, with
     exp_no/exp_name/aim/algorithm/program/result populated). test_case_rows
     / test_case_note: the output of reexecute_test_cases(), computed once by
-    the caller at generation time and rendered here as the Output section."""
+    the caller at generation time and rendered here as the Output section.
+    details: optional {language, status, score, percentage, submitted_at}
+    dict rendered as a Details section right before Result — the single-
+    experiment analogue of the score/percentage summary a typical
+    assessment-vendor report shows per question."""
     student = report.submission.student
     doc = RegisterWatermarkDocTemplate(
         buffer,
@@ -227,6 +256,11 @@ def build_lab_report_pdf(buffer: BytesIO, *, report, test_case_rows=None, test_c
     output_content = _test_case_table(test_case_rows) if test_case_rows else Paragraph(test_case_note or "—", _NOTE_STYLE)
     story += _boxed_section("Output", output_content, avail_width, avail_height)
     story.append(Spacer(1, 10))
+
+    # ── Details (language, status, score, percentage, submitted at) ────
+    if details:
+        story += _boxed_section("Details", _details_table(details), avail_width, avail_height)
+        story.append(Spacer(1, 10))
 
     # ── Result ───────────────────────────────────────────────────────────
     story += _boxed_section("Result", Paragraph(_pre(report.result) or "—", _BODY_STYLE), avail_width, avail_height)
