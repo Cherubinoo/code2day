@@ -1125,18 +1125,18 @@ const StaffDashboard = ({ institutionId }) => {
                         </select>
                       )}
                       <input
-                        type="date"
+                        type="datetime-local"
                         value={batchReportDateFrom}
                         onChange={(e) => setBatchReportDateFrom(e.target.value)}
-                        title="Report date range — from"
+                        title="Report date & time range — from"
                         style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-hard)', fontSize: '13px' }}
                       />
                       <span style={{ color: 'var(--text-soft)', fontSize: '13px' }}>to</span>
                       <input
-                        type="date"
+                        type="datetime-local"
                         value={batchReportDateTo}
                         onChange={(e) => setBatchReportDateTo(e.target.value)}
-                        title="Report date range — to"
+                        title="Report date & time range — to"
                         style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-hard)', fontSize: '13px' }}
                       />
                       <button

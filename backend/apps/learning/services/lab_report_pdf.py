@@ -147,7 +147,17 @@ def reexecute_test_cases(exercise, code, language):
             return rows, (all(r[3] == "Passed" for r in rows) if rows else None), note
         received = (result.get("stdout") or "").strip()
         expected = (tc.expected_output or "").strip()
-        rows.append((tc.stdin, expected, received, "Passed" if received == expected else "Failed"))
+        passed = received == expected and result.get("status") == "Accepted"
+        # On a failing case with no stdout at all (a crash, timeout, or
+        # compile error), show the real reason instead of a blank cell —
+        # executor._normalize_result's unified `output` field now includes
+        # a plain-English explanation for common crash signals (e.g. a
+        # SIGSEGV null-pointer dereference) rather than leaving this column
+        # empty with no indication anything went wrong.
+        display_received = received
+        if not passed and not display_received:
+            display_received = result.get("output") or result.get("stderr") or result.get("compile_output") or ""
+        rows.append((tc.stdin, expected, display_received, "Passed" if passed else "Failed"))
     return rows, all(r[3] == "Passed" for r in rows), ""
 
 

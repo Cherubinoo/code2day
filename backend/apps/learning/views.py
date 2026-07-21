@@ -519,6 +519,22 @@ def _best_score_per_problem(contest, student):
     return sum(r['best'] for r in rows)
 
 
+def _display_actual_output(tc_result, actual_raw):
+    """What to show as "Received Output" for one test case. On a clean run
+    this is just the program's real stdout; on a failing run with no
+    stdout at all (a crash, timeout, or compile error) it falls back to
+    executor._normalize_result's unified `output` field — which now
+    includes a plain-English reason for common crash signals (e.g. "SIGSEGV
+    — likely a null pointer dereference...") — rather than leaving the
+    console showing a blank "(no output)" with no indication anything
+    actually went wrong."""
+    if actual_raw:
+        return actual_raw
+    if tc_result.get("status") == "Accepted":
+        return actual_raw
+    return tc_result.get("output") or tc_result.get("stderr") or tc_result.get("compile_output") or actual_raw
+
+
 def execute_problem_test_case_batch(
     *,
     problem,
@@ -566,7 +582,7 @@ def execute_problem_test_case_batch(
             {
                 "stdin": case.stdin,
                 "expected": expected,
-                "actual": actual_raw,
+                "actual": _display_actual_output(tc_result, actual_raw),
                 "passed": passed,
                 "status": tc_result["status"],
                 "time": tc_result["time"],
@@ -645,7 +661,7 @@ def execute_lab_test_case_batch(*, source_code, language, language_id, test_case
             {
                 "stdin": case.stdin,
                 "expected": expected,
-                "actual": actual_raw,
+                "actual": _display_actual_output(tc_result, actual_raw),
                 "passed": passed,
                 "status": tc_result["status"],
                 "time": tc_result["time"],

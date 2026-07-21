@@ -1758,13 +1758,25 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
 # Batch / section performance report
 # ---------------------------------------------------------------------------
 
-def _parse_report_date(value):
+def _parse_report_datetime(value, end_of_day=False):
+    """Accepts either a full datetime-local value ("2026-07-21T14:30", from
+    an <input type="datetime-local">) or a bare date ("2026-07-21", from a
+    plain date picker or an older link) so the batch report's date range
+    can filter down to the actual hour/minute — "today so far", not just
+    "today" — rather than only ever comparing whole calendar days. A bare
+    date for the *end* of the range defaults to the last moment of that
+    day so "up to 21 Jul" still includes everything solved on the 21st."""
     if not value:
         return None
-    try:
-        return datetime.strptime(value, "%Y-%m-%d").date()
-    except ValueError:
-        return None
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            dt = datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+        if fmt == "%Y-%m-%d" and end_of_day:
+            dt = dt.replace(hour=23, minute=59, second=59)
+        return timezone.make_aware(dt) if timezone.is_naive(dt) else dt
+    return None
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -1789,8 +1801,8 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
             return Response({"error": "Access denied."}, status=403)
 
         section = (request.GET.get("section") or "").strip()
-        date_from = _parse_report_date(request.GET.get("date_from"))
-        date_to = _parse_report_date(request.GET.get("date_to"))
+        date_from = _parse_report_datetime(request.GET.get("date_from"))
+        date_to = _parse_report_datetime(request.GET.get("date_to"), end_of_day=True)
 
         students_qs = StudentProfile.objects.filter(batch=batch_code)
         if profile_type != "admin":
@@ -1831,14 +1843,17 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
         from django.db.models import Count, Avg, Q
         from django.db.models.functions import TruncDate, TruncWeek
 
+        # Range-scoped: filtered to the selected date/time window (e.g. "just
+        # today") — real datetime comparison, not truncated to whole days,
+        # so a "from 2pm" filter actually starts at 2pm.
         solved_qs = SolvedProblem.objects.filter(student__in=students)
         solutions_qs = ProblemSolution.objects.filter(student__in=students)
         if date_from:
-            solved_qs = solved_qs.filter(solved_at__date__gte=date_from)
-            solutions_qs = solutions_qs.filter(submitted_at__date__gte=date_from)
+            solved_qs = solved_qs.filter(solved_at__gte=date_from)
+            solutions_qs = solutions_qs.filter(submitted_at__gte=date_from)
         if date_to:
-            solved_qs = solved_qs.filter(solved_at__date__lte=date_to)
-            solutions_qs = solutions_qs.filter(submitted_at__date__lte=date_to)
+            solved_qs = solved_qs.filter(solved_at__lte=date_to)
+            solutions_qs = solutions_qs.filter(submitted_at__lte=date_to)
 
         per_student_solved = {
             row["student_id"]: row["c"]
@@ -1857,10 +1872,21 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
             for row in solved_qs.values("problem__difficulty").annotate(c=Count("id"))
         }
 
+        # Overall (all-time, unfiltered) — shown alongside the range-scoped
+        # numbers so scoping a report to e.g. "just today" doesn't lose
+        # visibility into each student's total progress.
+        overall_solved_qs = SolvedProblem.objects.filter(student__in=students)
+        per_student_overall_solved = {
+            row["student_id"]: row["c"]
+            for row in overall_solved_qs.values("student_id").annotate(c=Count("id"))
+        }
+
         story = []
         story += self._cover_page(batch_code, section, students, date_from, date_to, generated_by)
         story.append(PageBreak())
-        story += self._overview_section(students, per_student_solved, per_student_attempts, per_student_passed)
+        story += self._overview_section(
+            students, per_student_solved, per_student_attempts, per_student_passed, per_student_overall_solved,
+        )
         story.append(Spacer(1, 12))
         story += self._performance_charts(students, per_student_solved, difficulty_counts)
         story.append(Spacer(1, 12))
@@ -1868,7 +1894,9 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
         story.append(PageBreak())
         story += self._strengths_section(solved_qs)
         story.append(Spacer(1, 12))
-        story += self._student_table_section(students, per_student_solved, per_student_attempts, per_student_passed)
+        story += self._student_table_section(
+            students, per_student_solved, per_student_attempts, per_student_passed, per_student_overall_solved,
+        )
         story.append(Spacer(1, 14))
         story += self._footer(batch_code, section)
         return story
@@ -1886,10 +1914,11 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
                                alignment=1, textColor=_hx(_GRAY), spaceAfter=30)
         story.append(Paragraph(scope_txt, sub_s))
 
+        fmt_dt = lambda dt: dt.strftime('%d %b %Y, %I:%M %p')
         date_range_txt = (
-            f"{date_from.strftime('%d %b %Y')} – {date_to.strftime('%d %b %Y')}" if date_from and date_to
-            else f"From {date_from.strftime('%d %b %Y')}" if date_from
-            else f"Up to {date_to.strftime('%d %b %Y')}" if date_to
+            f"{fmt_dt(date_from)} – {fmt_dt(date_to)}" if date_from and date_to
+            else f"From {fmt_dt(date_from)}" if date_from
+            else f"Up to {fmt_dt(date_to)}" if date_to
             else "All Time"
         )
         styles = getSampleStyleSheet()
@@ -1914,7 +1943,8 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
         return story
 
     # ------------------------------------------------------------------
-    def _overview_section(self, students, per_student_solved, per_student_attempts, per_student_passed):
+    def _overview_section(self, students, per_student_solved, per_student_attempts, per_student_passed,
+                          per_student_overall_solved):
         story = [_section_header('OVERVIEW', _INDIGO)]
         n = len(students)
         total_solved = sum(per_student_solved.values())
@@ -1926,15 +1956,30 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
 
         cards = [
             _metric_card('Students', str(n), bg=_INDIGO),
-            _metric_card('Problems Solved', str(total_solved), bg=_TEAL),
-            _metric_card('Avg / Student', str(avg_solved), bg=_GREEN),
-            _metric_card('Success Rate', f'{success_rate}%', bg=_ORANGE),
+            _metric_card('Solved (Range)', str(total_solved), bg=_TEAL),
+            _metric_card('Avg / Student (Range)', str(avg_solved), bg=_GREEN),
+            _metric_card('Success Rate (Range)', f'{success_rate}%', bg=_ORANGE),
             _metric_card('Active Students', str(active_students), bg='#7c3aed'),
         ]
         row = Table([cards], colWidths=[1.35*inch]*5)
         row.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER'), ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
                                   ('LEFTPADDING',(0,0),(-1,-1),3), ('RIGHTPADDING',(0,0),(-1,-1),3)]))
         story.append(row)
+        story.append(Spacer(1, 6))
+
+        # Overall (all-time) totals alongside the range-scoped row above —
+        # so filtering a report down to "just today" doesn't hide each
+        # student's total progress.
+        total_overall = sum(per_student_overall_solved.values())
+        avg_overall = round(total_overall / n, 1) if n else 0
+        overall_cards = [
+            _metric_card('Solved (Overall)', str(total_overall), bg=_SLATE, w=2.0*inch),
+            _metric_card('Avg / Student (Overall)', str(avg_overall), bg=_SLATE, w=2.0*inch),
+        ]
+        overall_row = Table([overall_cards], colWidths=[2.05*inch]*2)
+        overall_row.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER'), ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+                                          ('LEFTPADDING',(0,0),(-1,-1),3), ('RIGHTPADDING',(0,0),(-1,-1),3)]))
+        story.append(overall_row)
         return story
 
     # ------------------------------------------------------------------
@@ -2037,17 +2082,22 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
         return story
 
     # ------------------------------------------------------------------
-    def _student_table_section(self, students, per_student_solved, per_student_attempts, per_student_passed):
+    def _student_table_section(self, students, per_student_solved, per_student_attempts, per_student_passed,
+                               per_student_overall_solved):
         story = [_section_header('STUDENT-WISE PERFORMANCE', _INDIGO)]
-        rows = [["Name", "Reg. No.", "Section", "Solved", "Attempts", "Success Rate"]]
+        rows = [["Name", "Reg. No.", "Section", "Solved (Range)", "Solved (Overall)", "Attempts", "Success Rate"]]
         ranked = sorted(students, key=lambda s: per_student_solved.get(s.id, 0), reverse=True)
         for s in ranked:
             solved = per_student_solved.get(s.id, 0)
+            overall_solved = per_student_overall_solved.get(s.id, 0)
             attempts = per_student_attempts.get(s.id, 0)
             passed = per_student_passed.get(s.id, 0)
             rate = f"{round(passed/attempts*100,1)}%" if attempts else "—"
-            rows.append([s.name[:24], s.register_number or "—", s.section or "—", str(solved), str(attempts), rate])
-        tbl = Table(rows, colWidths=[1.9*inch, 1.2*inch, 0.7*inch, 0.8*inch, 0.9*inch, 1.1*inch], repeatRows=1)
+            rows.append([
+                s.name[:22], s.register_number or "—", s.section or "—",
+                str(solved), str(overall_solved), str(attempts), rate,
+            ])
+        tbl = Table(rows, colWidths=[1.6*inch, 1.1*inch, 0.6*inch, 0.85*inch, 0.9*inch, 0.75*inch, 0.9*inch], repeatRows=1)
         tbl.setStyle(TableStyle([
             ("BACKGROUND",(0,0),(-1,0),_hx(_INDIGO)), ("TEXTCOLOR",(0,0),(-1,0),colors.white),
             ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"), ("FONTNAME",(0,1),(-1,-1),"Helvetica"),

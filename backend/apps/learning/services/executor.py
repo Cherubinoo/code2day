@@ -60,6 +60,24 @@ def _http_post(url: str, payload: dict, timeout: int) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+# Piston sets run.signal (e.g. "SIGSEGV") when the process was killed by a
+# signal rather than exiting normally — run.code is then null/negative and,
+# for crashes like a null-pointer dereference, stdout/stderr are often
+# completely empty too, since the OS just kills the process. Without this
+# map that showed up to students as the actively misleading "Execution
+# finished with no output." — indistinguishable from a program that
+# legitimately produced nothing and exited cleanly.
+_SIGNAL_EXPLANATIONS = {
+    "SIGSEGV": "Segmentation fault — likely a null pointer dereference, an out-of-bounds "
+               "array/vector access, or a stack overflow from deep or infinite recursion.",
+    "SIGABRT": "Program aborted — e.g. via abort(), a failed assertion, or an unhandled C++ exception.",
+    "SIGFPE": "Floating point exception — likely integer division by zero or an invalid arithmetic operation.",
+    "SIGBUS": "Bus error — invalid memory access, often from misaligned or out-of-bounds memory.",
+    "SIGKILL": "Process was killed — often because it exceeded the memory or time limit.",
+    "SIGILL": "Illegal instruction — the program attempted to execute invalid or corrupted machine code.",
+}
+
+
 def _normalize_result(piston_resp: dict) -> dict:
     """Translate a Piston response into the Code2Day standard result dict."""
     run     = piston_resp.get("run")     or {}
@@ -67,6 +85,7 @@ def _normalize_result(piston_resp: dict) -> dict:
 
     run_code      = run.get("code")
     run_status    = run.get("status")          # "TO", "RE", "SG", "OL", "EL", "XX", or null
+    run_signal    = run.get("signal")          # e.g. "SIGSEGV", or null on a normal exit
     compile_code  = compile_stage.get("code") if compile_stage else None
 
     # Map to Judge0-style status IDs used internally
@@ -76,6 +95,8 @@ def _normalize_result(piston_resp: dict) -> dict:
         status_id, status_desc = 3, "Accepted"
     elif run_status == "TO":
         status_id, status_desc = 5, "Time Limit Exceeded"
+    elif run_signal:
+        status_id, status_desc = 11, f"Runtime Error ({run_signal})"
     else:
         status_id, status_desc = 11, "Runtime Error (NZEC)"
 
@@ -86,6 +107,7 @@ def _normalize_result(piston_resp: dict) -> dict:
         (compile_stage.get("stderr") or compile_stage.get("stdout") or "")
         if compile_stage else ""
     )
+    signal_explanation = _SIGNAL_EXPLANATIONS.get(run_signal, f"Program terminated by signal: {run_signal}." if run_signal else "")
 
     if stdout.strip():
         output = stdout
@@ -93,6 +115,8 @@ def _normalize_result(piston_resp: dict) -> dict:
         output = f"Compilation Error:\n{compile_output}"
     elif stderr.strip():
         output = f"Error:\n{stderr}"
+    elif signal_explanation:
+        output = f"Runtime Error: {signal_explanation}"
     elif message.strip():
         output = message
     else:
