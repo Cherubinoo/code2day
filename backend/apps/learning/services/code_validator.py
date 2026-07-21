@@ -40,12 +40,12 @@ class CodeValidator:
     DANGEROUS_PATTERNS = {
         "Python": [
             (r'\bopen\s*\(', "File I/O not allowed"),
-            (r'\bexec\s*\(|eval\s*\(', "Dynamic code execution not allowed"),
+            (r'\b(?:exec|eval)\s*\(', "Dynamic code execution not allowed"),
             (r'\b__import__\s*\(', "Module import not allowed"),
             (r'\bos\.\w+\(', "System calls not allowed"),
             (r'\bsubprocess\.\w+\(', "Subprocess execution not allowed"),
             (r'\bsocket\.\w+\(', "Network access not allowed"),
-            (r'\brequests\.\w+\(|urllib\.\w+\(', "HTTP requests not allowed"),
+            (r'\b(?:requests|urllib)\.\w+\(', "HTTP requests not allowed"),
         ],
         "Java": [
             (r'\bnew\s+File\s*\(', "File I/O not allowed"),
@@ -56,20 +56,20 @@ class CodeValidator:
             (r'\bURL\s*\(', "Network access not allowed"),
         ],
         "C": [
-            (r'\bopen\s*\(|fopen\s*\(|fread\s*\(|fwrite\s*\(', "File I/O not allowed"),
-            (r'\bsystem\s*\(|exec\w*\s*\(', "System calls not allowed"),
-            (r'\bsocket\s*\(|connect\s*\(', "Network access not allowed"),
+            (r'\b(?:open|fopen|fread|fwrite)\s*\(', "File I/O not allowed"),
+            (r'\b(?:system|exec[lv]\w*)\s*\(', "System calls not allowed"),
+            (r'\b(?:socket|connect)\s*\(', "Network access not allowed"),
         ],
         "C++": [
-            (r'\bstd::ifstream|std::ofstream|std::fstream', "File I/O not allowed"),
-            (r'\bsystem\s*\(|exec\w*\s*\(', "System calls not allowed"),
-            (r'\bsocket\s*\(|connect\s*\(', "Network access not allowed"),
+            (r'\bstd::(?:ifstream|ofstream|fstream)', "File I/O not allowed"),
+            (r'\b(?:system|exec[lv]\w*)\s*\(', "System calls not allowed"),
+            (r'\b(?:socket|connect)\s*\(', "Network access not allowed"),
         ],
         "JavaScript": [
             (r'\brequire\s*\(\s*[\'"]fs[\'"]\)', "File I/O not allowed"),
             (r'\brequire\s*\(\s*[\'"]child_process[\'"]\)', "System calls not allowed"),
-            (r'\bfs\.read|fs\.write|fs\.open', "File I/O not allowed"),
-            (r'\bchild_process\.exec|spawn', "System calls not allowed"),
+            (r'\bfs\.(?:read|write|open)', "File I/O not allowed"),
+            (r'\bchild_process\.exec\s*\(|\bspawn\s*\(', "System calls not allowed"),
         ],
     }
     
