@@ -11,6 +11,7 @@ Professional PDF reports for student performance data with:
 - Contest analytics and individual student reports
 """
 
+import logging
 import os
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -54,6 +55,8 @@ from .models import (
     Problem, AptitudeQuestion, Department, Institution, TestCase,
     AptitudeContestSubmission,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -1612,9 +1615,13 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
             try:
                 result = execute_submission(submission.code, language_id, stdin=tc.stdin, timeout=10)
             except ExecutorError as exc:
+                # Log the real (possibly infra-revealing) error server-side only —
+                # the note below ends up in a staff-facing PDF, so it stays generic.
+                logger.warning("Contest test-case re-execution failed: %s", exc)
                 if rows:
-                    return rows, f"Stopped re-running test cases after an execution error: {exc}"
-                return [], f"Could not re-run this submission's code: {exc}"
+                    return rows, "Stopped re-running test cases after an execution error."
+                return [], ("Could not automatically verify this submission's output — "
+                            "the code execution service was unavailable when this report was generated.")
             received = (result.get('stdout') or '').strip()
             expected = (tc.expected_output or '').strip()
             rows.append((tc.stdin, expected, received, "Passed" if received == expected else "Failed"))

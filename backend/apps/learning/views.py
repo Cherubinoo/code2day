@@ -11547,7 +11547,58 @@ class StudentExerciseSubmitView(APIView):
         }, status=201 if created else 200)
 
 
-_LAB_LANGUAGE_TO_EXECUTOR_ID = {"c": 50, "c++": 54, "cpp": 54, "java": 62, "python": 71}
+def _generate_lab_exercise_report(exercise, submission):
+    """Build (or rebuild) a LabExerciseReport + its PDF for one submission —
+    shared by the student's self-service report endpoint and the staff-
+    facing per-student one. Re-verifies the snapshotted code against the
+    exercise's test cases the same way a Problem submission is verified
+    (see services.lab_report_pdf.reexecute_test_cases), so Result and the
+    Output section reflect real pass/fail rather than a single raw capture.
+
+    Returns (report, pdf_bytes). Raises on PDF rendering failure — callers
+    decide how to surface that."""
+    from .services.lab_report import extract_problem_statement, build_aim, generate_algorithm, build_result
+    from .services.testcase_generator import TestCaseGenError
+    from .services.lab_report_pdf import build_lab_report_pdf, reexecute_test_cases
+
+    problem_statement = extract_problem_statement(exercise.description)
+    aim = build_aim(exercise.title, problem_statement)
+
+    try:
+        algorithm = generate_algorithm(
+            problem_statement=problem_statement, code=submission.code, language=submission.language,
+        )
+    except TestCaseGenError as exc:
+        logger.warning("Lab report algorithm generation failed for exercise %s: %s", exercise.id, exc)
+        algorithm = "(Algorithm generation is temporarily unavailable — add this section manually.)"
+
+    test_case_rows, all_passed, tc_note = reexecute_test_cases(exercise, submission.code, submission.language)
+    result_text = build_result(exercise.title, all_passed=all_passed)
+    if test_case_rows:
+        passed_n = sum(1 for r in test_case_rows if r[3] == "Passed")
+        output_text = f"{passed_n}/{len(test_case_rows)} test case(s) passed."
+    else:
+        output_text = tc_note or "(No test cases configured for this exercise.)"
+
+    report, _created = LabExerciseReport.objects.update_or_create(
+        submission=submission,
+        defaults=dict(
+            exp_no=exercise.order + 1,
+            exp_name=exercise.title,
+            aim=aim,
+            algorithm=algorithm,
+            program=submission.code,
+            output=output_text,
+            result=result_text,
+        ),
+    )
+
+    buffer = BytesIO()
+    build_lab_report_pdf(buffer, report=report, test_case_rows=test_case_rows, test_case_note=tc_note)
+    buffer.seek(0)
+    pdf_bytes = buffer.getvalue()
+    report.pdf_file.save(f"lab_report_{report.id}.pdf", ContentFile(pdf_bytes), save=True)
+    return report, pdf_bytes
 
 
 class StudentExerciseReportView(APIView):
@@ -11590,65 +11641,58 @@ class StudentExerciseReportView(APIView):
         if not submission or not (submission.code or "").strip():
             return Response({"error": "Submit your code for this exercise before generating a report."}, status=400)
 
-        from .services.lab_report import extract_problem_statement, build_aim, generate_algorithm, build_result
-        from .services.testcase_generator import TestCaseGenError
-        from .services.lab_report_pdf import build_lab_report_pdf
-
-        problem_statement = extract_problem_statement(exercise.description)
-        aim = build_aim(exercise.title, problem_statement)
-
         try:
-            algorithm = generate_algorithm(
-                problem_statement=problem_statement, code=submission.code, language=submission.language,
-            )
-        except TestCaseGenError as exc:
-            logger.warning("Lab report algorithm generation failed for exercise %s: %s", exercise.id, exc)
-            algorithm = "(Algorithm generation is temporarily unavailable — add this section manually.)"
-
-        # Best-effort real execution to capture Output — never let an
-        # execution failure block report generation, just note it.
-        output_text = ""
-        try:
-            from .services.executor import execute_submission
-            lang_id = _LAB_LANGUAGE_TO_EXECUTOR_ID.get((submission.language or "").strip().lower())
-            if lang_id:
-                sample_tc = exercise.test_cases.filter(is_sample=True).order_by("order").first()
-                stdin = sample_tc.stdin if sample_tc else ""
-                exec_result = execute_submission(source_code=submission.code, language_id=lang_id, stdin=stdin)
-                output_text = (exec_result.get("stdout") or "").strip()
-                if not output_text and exec_result.get("stderr"):
-                    output_text = f"(no stdout)\n{exec_result['stderr'].strip()}"
-            else:
-                output_text = "(Output capture is not available for this language — add this section manually.)"
-        except Exception as exc:
-            logger.warning("Lab report execution failed for exercise %s: %s", exercise.id, exc)
-            output_text = "(Could not execute the program to capture output — add this section manually.)"
-
-        result_text = build_result(exercise.title)
-
-        report, _created = LabExerciseReport.objects.update_or_create(
-            submission=submission,
-            defaults=dict(
-                exp_no=exercise.order + 1,
-                exp_name=exercise.title,
-                aim=aim,
-                algorithm=algorithm,
-                program=submission.code,
-                output=output_text,
-                result=result_text,
-            ),
-        )
-
-        buffer = BytesIO()
-        try:
-            build_lab_report_pdf(buffer, report=report)
+            report, pdf_bytes = _generate_lab_exercise_report(exercise, submission)
         except Exception as exc:
             logger.exception("Lab report PDF rendering failed for exercise %s", exercise.id)
             return Response({"error": f"PDF rendering failed: {exc}"}, status=500)
 
-        buffer.seek(0)
-        pdf_bytes = buffer.getvalue()
-        report.pdf_file.save(f"lab_report_{report.id}.pdf", ContentFile(pdf_bytes), save=True)
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
+        return response
+
+
+class StaffLabExerciseStudentReportView(APIView):
+    """Staff: generate (or regenerate) a specific student's lab record PDF
+    for one exercise in a lab they're in charge of — the staff-facing
+    counterpart to StudentExerciseReportView's self-service version, so a
+    staff member can pull a student's record without asking the student to
+    download and forward it."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id, exercise_id, register_number):
+        staff = _staff_from_request(request)
+        if not staff:
+            return Response({"error": "Staff access required"}, status=403)
+        try:
+            lab = Lab.objects.get(id=lab_id, staff_in_charge=staff)
+        except Lab.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+        try:
+            exercise = lab.exercises.get(id=exercise_id)
+        except LabExercise.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        student_qs = StudentProfile.objects.filter(
+            register_number=register_number, department=lab.department, batch=lab.batch,
+        )
+        if lab.section:
+            student_qs = student_qs.filter(section=lab.section)
+        student = student_qs.first()
+        if not student:
+            return Response({"error": "Student not found"}, status=404)
+
+        submission = LabExerciseSubmission.objects.filter(exercise=exercise, student=student).first()
+        if not submission or not (submission.code or "").strip():
+            return Response({"error": "This student hasn't submitted this exercise yet."}, status=400)
+
+        try:
+            report, pdf_bytes = _generate_lab_exercise_report(exercise, submission)
+        except Exception as exc:
+            logger.exception(
+                "Staff lab report generation failed for exercise %s / student %s", exercise.id, register_number,
+            )
+            return Response({"error": f"PDF rendering failed: {exc}"}, status=500)
 
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'

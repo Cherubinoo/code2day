@@ -1,8 +1,9 @@
 """
 Renders a student's lab record (Exp No / Date / Exp Name / Aim / Algorithm /
-Program / Output / Result / Seal / Signature) to PDF, boxed to match the
-traditional hand-drawn lab-record layout, watermarked with the student's
-register number.
+Program / Output / Result / Seal / Signature) to PDF as a plain, heading-led
+document — no boxed/bordered sections and no fixed page budget; a long
+algorithm, program, or test-case table just flows onto as many pages as it
+needs. Watermarked with the student's register number.
 """
 
 from io import BytesIO
@@ -11,27 +12,31 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.platypus import (
-    BaseDocTemplate, PageTemplate, Frame, Table, TableStyle, Paragraph, Spacer,
+    BaseDocTemplate, PageTemplate, Frame, Table, TableStyle, Paragraph, Spacer, Preformatted,
 )
+from reportlab.graphics.shapes import Drawing, Rect
 
 _STYLES = getSampleStyleSheet()
+_ACCENT = colors.HexColor("#005696")   # Ramco blue
+_GRAY = colors.HexColor("#64748b")
+_DARK = colors.HexColor("#1e293b")
+_BORDER = colors.HexColor("#e2e8f0")
 
-_LABEL_STYLE = ParagraphStyle(
-    "LabRecordLabel", parent=_STYLES["Normal"], fontSize=9, textColor=colors.HexColor("#555555"),
-    spaceAfter=4,
-)
 _TITLE_STYLE = ParagraphStyle(
-    "LabRecordTitle", parent=_STYLES["Normal"], fontSize=13, alignment=TA_CENTER, fontName="Helvetica-Bold",
+    "LabRecordTitle", parent=_STYLES["Normal"], fontSize=15, leading=19,
+    alignment=TA_CENTER, fontName="Helvetica-Bold", textColor=_DARK, spaceAfter=4,
 )
-_BODY_STYLE = ParagraphStyle(
-    "LabRecordBody", parent=_STYLES["Normal"], fontSize=10.5, leading=15, alignment=TA_LEFT,
+_CORNER_STYLE = ParagraphStyle("LabRecordCorner", parent=_STYLES["Normal"], fontSize=9.5, leading=12, textColor=_GRAY)
+_HEADING_STYLE = ParagraphStyle(
+    "LabRecordHeading", parent=_STYLES["Normal"], fontSize=11, leading=14,
+    fontName="Helvetica-Bold", textColor=_ACCENT, spaceBefore=14, spaceAfter=5,
 )
-_CODE_STYLE = ParagraphStyle(
-    "LabRecordCode", parent=_STYLES["Normal"], fontSize=8.5, leading=11, fontName="Courier", alignment=TA_LEFT,
-)
-_CORNER_STYLE = ParagraphStyle("LabRecordCorner", parent=_STYLES["Normal"], fontSize=9.5)
+_BODY_STYLE = ParagraphStyle("LabRecordBody", parent=_STYLES["Normal"], fontSize=10.5, leading=15, alignment=TA_LEFT, textColor=_DARK)
+_NOTE_STYLE = ParagraphStyle("LabRecordNote", parent=_BODY_STYLE, fontName="Helvetica-Oblique", textColor=_GRAY)
+_CODE_STYLE = ParagraphStyle("LabRecordCode", parent=_STYLES["Normal"], fontSize=8.5, leading=11, fontName="Courier", textColor=_DARK)
+_SIG_CAPTION_STYLE = ParagraphStyle("LabRecordSigCaption", parent=_BODY_STYLE, fontSize=9, alignment=TA_CENTER, textColor=_GRAY, spaceBefore=4)
 
 
 def _escape(text):
@@ -43,18 +48,18 @@ def _pre(text):
     return _escape(text).replace("\r\n", "\n").replace("\n", "<br/>")
 
 
-def _boxed(flowables, *, padding=10, min_height=None):
-    style = [
-        ("BOX", (0, 0), (-1, -1), 1.4, colors.black),
-        ("LEFTPADDING", (0, 0), (-1, -1), padding),
-        ("RIGHTPADDING", (0, 0), (-1, -1), padding),
-        ("TOPPADDING", (0, 0), (-1, -1), padding),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), padding),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-    ]
-    t = Table([[flowables]], colWidths=[6.6 * inch], rowHeights=[min_height] if min_height else None)
-    t.setStyle(TableStyle(style))
-    return t
+def _truncate(text, n):
+    text = (text or "").strip()
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
+def _heading(text):
+    """A plain section heading with a thin rule underneath it — deliberately
+    not a bordered/filled box, per the lab-record redesign: headings only,
+    content flows freely underneath with no fixed height."""
+    rule = Drawing(6.6 * inch, 2)
+    rule.add(Rect(0, 0, 6.6 * inch, 1.2, fillColor=_ACCENT, strokeColor=None))
+    return [Paragraph(text, _HEADING_STYLE), rule, Spacer(1, 6)]
 
 
 class RegisterWatermarkDocTemplate(BaseDocTemplate):
@@ -80,77 +85,137 @@ class RegisterWatermarkDocTemplate(BaseDocTemplate):
         canvas.restoreState()
 
 
-def build_lab_report_pdf(buffer: BytesIO, *, report):
+def reexecute_test_cases(exercise, code, language):
+    """Best-effort: re-run `code` against this exercise's LabExerciseTestCase
+    rows to build a real Input/Expected/Received/Status table — the same
+    verification method used for Problems in the per-student contest report
+    (see pdf_reports.StudentContestReportPDFView._reexecute_test_cases),
+    applied to lab exercises the same way.
+
+    Returns (rows, all_passed, note):
+      - rows: list of (stdin, expected, received, "Passed"/"Failed") tuples
+      - all_passed: True/False, or None if rows is empty (no cases run)
+      - note: explanation for why rows is empty/partial, else ""
+    """
+    import logging
+    from .executor import execute_submission, get_language_id, ExecutorError
+
+    logger = logging.getLogger(__name__)
+
+    test_cases = list(exercise.test_cases.all().order_by("order"))
+    if not test_cases:
+        return [], None, "No test cases are configured for this exercise."
+    try:
+        language_id = get_language_id(language)
+    except Exception:
+        return [], None, f"Re-verification isn't available for language '{language}'."
+
+    rows = []
+    for tc in test_cases:
+        try:
+            result = execute_submission(code, language_id, stdin=tc.stdin, timeout=10)
+        except ExecutorError as exc:
+            # Log the real (possibly infra-revealing) error server-side only —
+            # the note below ends up in a student-facing PDF, so it stays generic.
+            logger.warning("Lab test-case re-execution failed: %s", exc)
+            note = ("Stopped re-running test cases after an execution error." if rows
+                    else "Could not automatically verify this program's output — "
+                         "the code execution service was unavailable when this report was generated.")
+            return rows, (all(r[3] == "Passed" for r in rows) if rows else None), note
+        received = (result.get("stdout") or "").strip()
+        expected = (tc.expected_output or "").strip()
+        rows.append((tc.stdin, expected, received, "Passed" if received == expected else "Failed"))
+    return rows, all(r[3] == "Passed" for r in rows), ""
+
+
+def _test_case_table(rows):
+    hdr = [["Input", "Expected Output", "Received Output", "Status"]]
+    body = [[_truncate(r[0], 40), _truncate(r[1], 30), _truncate(r[2], 30), r[3]] for r in rows]
+    tbl = Table(hdr + body, colWidths=[2.2 * inch, 1.7 * inch, 1.7 * inch, 1.0 * inch], repeatRows=1)
+    cmds = [
+        ("BACKGROUND", (0, 0), (-1, 0), _ACCENT), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTNAME", (0, 1), (-1, -1), "Courier"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7.5), ("ALIGN", (3, 1), (3, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("GRID", (0, 0), (-1, -1), 0.3, _BORDER),
+    ]
+    for i, r in enumerate(rows, 1):
+        bg = "#d1fae5" if r[3] == "Passed" else "#fee2e2"
+        cmds.append(("BACKGROUND", (3, i), (3, i), colors.HexColor(bg)))
+    tbl.setStyle(TableStyle(cmds))
+    return tbl
+
+
+def _sig_block(label, width):
+    line = Drawing(width, 1)
+    line.add(Rect(0, 0, width, 0.6, fillColor=colors.HexColor("#94a3b8"), strokeColor=None))
+    return [Spacer(1, 34), line, Paragraph(label, _SIG_CAPTION_STYLE)]
+
+
+def build_lab_report_pdf(buffer: BytesIO, *, report, test_case_rows=None, test_case_note=""):
     """report: a LabExerciseReport instance (already saved, with
-    exp_no/exp_name/aim/algorithm/program/output/result populated)."""
+    exp_no/exp_name/aim/algorithm/program/result populated). test_case_rows
+    / test_case_note: the output of reexecute_test_cases(), computed once by
+    the caller at generation time and rendered here as the Output section."""
     student = report.submission.student
     doc = RegisterWatermarkDocTemplate(
         buffer,
         register_number=student.register_number or "",
         pagesize=A4,
-        leftMargin=0.6 * inch, rightMargin=0.6 * inch,
-        topMargin=0.6 * inch, bottomMargin=0.6 * inch,
+        leftMargin=0.7 * inch, rightMargin=0.7 * inch,
+        topMargin=0.7 * inch, bottomMargin=0.7 * inch,
     )
 
     story = []
 
-    # ── Header box: Exp No / Date (top row) + Exp Name (centered) ──────────
+    # ── Exp No / Date / Title ───────────────────────────────────────────
     date_str = report.generated_at.strftime("%d-%m-%Y") if report.generated_at else ""
     top_row = Table(
         [[
             Paragraph(f"Exp No: {report.exp_no}", _CORNER_STYLE),
-            Paragraph(f"Date: {date_str}", ParagraphStyle("r", parent=_CORNER_STYLE, alignment=2)),
+            Paragraph(f"Date: {date_str}", ParagraphStyle("r", parent=_CORNER_STYLE, alignment=TA_RIGHT)),
         ]],
         colWidths=[3.3 * inch, 3.3 * inch],
     )
     top_row.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
-        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
     ]))
-    header_content = [top_row, Spacer(1, 6), Paragraph(_escape(report.exp_name), _TITLE_STYLE)]
-    story.append(_boxed(header_content))
-    story.append(Spacer(1, 14))
+    story.append(top_row)
+    story.append(Paragraph(_escape(report.exp_name), _TITLE_STYLE))
 
     # ── Aim ──────────────────────────────────────────────────────────────
-    story.append(_boxed([
-        Paragraph("Aim", _LABEL_STYLE),
-        Paragraph(_pre(report.aim), _BODY_STYLE),
-    ], min_height=1.0 * inch))
-    story.append(Spacer(1, 14))
+    story += _heading("Aim")
+    story.append(Paragraph(_pre(report.aim) or "—", _BODY_STYLE))
 
     # ── Algorithm ────────────────────────────────────────────────────────
-    story.append(_boxed([
-        Paragraph("Algorithm", _LABEL_STYLE),
-        Paragraph(_pre(report.algorithm) or "—", _BODY_STYLE),
-    ], min_height=2.2 * inch))
-    story.append(Spacer(1, 14))
+    story += _heading("Algorithm")
+    story.append(Paragraph(_pre(report.algorithm) or "—", _BODY_STYLE))
 
     # ── Program ──────────────────────────────────────────────────────────
-    story.append(_boxed([
-        Paragraph("Program", _LABEL_STYLE),
-        Paragraph(_pre(report.program) or "—", _CODE_STYLE),
-    ], min_height=2.2 * inch))
-    story.append(Spacer(1, 14))
+    story += _heading("Program")
+    story.append(Preformatted(report.program or "—", _CODE_STYLE, maxLineLength=100))
 
-    # ── Output + Result ──────────────────────────────────────────────────
-    story.append(_boxed([
-        Paragraph("Output", _LABEL_STYLE),
-        Paragraph(_pre(report.output) or "—", _CODE_STYLE),
-        Spacer(1, 10),
-        Paragraph("Result", _LABEL_STYLE),
-        Paragraph(_pre(report.result) or "—", _BODY_STYLE),
-    ], min_height=1.6 * inch))
-    story.append(Spacer(1, 20))
+    # ── Output (verified against the exercise's test cases) ────────────
+    story += _heading("Output")
+    if test_case_rows:
+        story.append(_test_case_table(test_case_rows))
+    else:
+        story.append(Paragraph(test_case_note or "—", _NOTE_STYLE))
+
+    # ── Result ───────────────────────────────────────────────────────────
+    story += _heading("Result")
+    story.append(Paragraph(_pre(report.result) or "—", _BODY_STYLE))
 
     # ── Seal / Signature ────────────────────────────────────────────────
-    seal_box = _boxed([Spacer(1, 30), Paragraph("Seal", ParagraphStyle("c", parent=_BODY_STYLE, alignment=TA_CENTER))], min_height=0.9 * inch)
-    sig_box = _boxed([Spacer(1, 10), Paragraph("Signature", ParagraphStyle("c", parent=_BODY_STYLE, alignment=TA_CENTER))], min_height=0.5 * inch)
-    footer = Table([[seal_box, sig_box]], colWidths=[3.6 * inch, 3.0 * inch])
+    footer = Table(
+        [[_sig_block("Staff Seal", 3.0 * inch), _sig_block("Signature", 3.0 * inch)]],
+        colWidths=[3.3 * inch, 3.3 * inch],
+    )
     footer.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
-        ("VALIGN", (0, 0), (-1, -1), "BOTTOM"),
     ]))
+    story.append(Spacer(1, 20))
     story.append(footer)
 
     doc.build(story)

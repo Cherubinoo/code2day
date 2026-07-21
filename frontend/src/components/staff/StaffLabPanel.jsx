@@ -787,15 +787,42 @@ function BulkImportModal({ labId, onImported, onClose }) {
 }
 
 // ─── Student completion table ─────────────────────────────────────────────────
-function StudentTable({ students, exercises, activeExIdx }) {
+function StudentTable({ students, exercises, activeExIdx, labId }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
+  const [downloading, setDownloading] = useState({});
 
   if (!exercises.length) {
     return <div className="slp2-empty-msg">No exercises added yet.</div>;
   }
 
   const ex = exercises[activeExIdx];
+
+  async function downloadReport(row) {
+    const regNo = row.register_number;
+    setDownloading((d) => ({ ...d, [regNo]: true }));
+    try {
+      const res = await apiFetch(
+        `/api/lab/v2/${labId}/exercises/${ex.id}/students/${regNo}/report/`, "POST", {},
+      );
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || "Failed to generate report.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `lab_record_${ex.id}_${regNo}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert("Network error.");
+    } finally {
+      setDownloading((d) => ({ ...d, [regNo]: false }));
+    }
+  }
   const rows = students.map((s) => {
     const stat = s.exercises[activeExIdx] ?? {};
     return { ...s, completed: stat.completed, submitted_at: stat.submitted_at, language: stat.language };
@@ -863,6 +890,7 @@ function StudentTable({ students, exercises, activeExIdx }) {
               <th>Status</th>
               <th>Language</th>
               <th>Submitted At</th>
+              <th>Report</th>
             </tr>
           </thead>
           <tbody>
@@ -879,10 +907,23 @@ function StudentTable({ students, exercises, activeExIdx }) {
                 </td>
                 <td className="slp2-td-mono">{r.language || "—"}</td>
                 <td className="slp2-td-time">{r.submitted_at ? fmtDT(r.submitted_at) : "—"}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="slp2-btn-ghost"
+                    disabled={!r.completed || !!downloading[r.register_number]}
+                    onClick={() => downloadReport(r)}
+                    title={r.completed ? "Download this student's lab record PDF" : "No submission yet"}
+                    style={{ padding: "5px 10px", fontSize: 12, opacity: r.completed ? 1 : 0.4 }}
+                  >
+                    {downloading[r.register_number] ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
+                    {downloading[r.register_number] ? "…" : "Report"}
+                  </button>
+                </td>
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={7} className="slp2-empty-row">No students match this filter</td></tr>
+              <tr><td colSpan={8} className="slp2-empty-row">No students match this filter</td></tr>
             )}
           </tbody>
         </table>
@@ -1115,7 +1156,7 @@ function LabDetail({ lab: initLab, onBack }) {
           {loadingSt ? (
             <div className="slp2-loading">Loading students…</div>
           ) : (
-            <StudentTable students={students} exercises={exercises} activeExIdx={activeEx} />
+            <StudentTable students={students} exercises={exercises} activeExIdx={activeEx} labId={lab.id} />
           )}
         </div>
       )}

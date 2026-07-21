@@ -143,6 +143,7 @@ from .views import (
     StudentLabExercisesView,
     StudentExerciseSubmitView,
     StudentExerciseReportView,
+    StaffLabExerciseStudentReportView,
     HODManageStaffView,
     HODManageStaffDetailView,
     HODCompanyListView,
@@ -362,6 +363,7 @@ urlpatterns = [
     path("lab/v2/<int:lab_id>/exercises/list/",                              StudentLabExercisesView.as_view(),  name="student-lab-exercises"),
     path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/submit/",          StudentExerciseSubmitView.as_view(),name="student-exercise-submit"),
     path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/report/",          StudentExerciseReportView.as_view(), name="student-exercise-report"),
+    path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/students/<str:register_number>/report/", StaffLabExerciseStudentReportView.as_view(), name="staff-lab-exercise-student-report"),
 
     # ── HOD Staff Management ─────────────────────────────────────────────────
     path("hod/staff/",                  HODManageStaffView.as_view(),       name="hod-manage-staff"),
