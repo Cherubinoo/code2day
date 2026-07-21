@@ -6,6 +6,7 @@ Calls the Piston API (https://github.com/engineer-man/piston) for sandboxed code
 import http.client
 import json
 import logging
+import re
 import socket
 import time
 from urllib import error as urllib_error
@@ -262,11 +263,17 @@ def get_language_id(language_name: str) -> int:
         "c": 50,
         "cpp": 54, "c++": 54,
     }
-    normalized = language_name.lower().strip()
+    normalized = (language_name or "").lower().strip()
     if normalized in lang_map:
         return lang_map[normalized]
-    for name, lid in lang_map.items():
-        if name in normalized or normalized in name:
+    # Fall back to a word-boundary match (e.g. "Python 3.10" -> "python")
+    # rather than plain substring containment — a bare `name in normalized`
+    # check matched single-letter keys like "c" against any string that
+    # merely *contained* that letter (e.g. "Brainfuck" -> silently ran as
+    # C instead of raising "Unsupported language"). Longest key first so
+    # "c++"/"cpp" are tried before the bare "c" they'd otherwise shadow.
+    for name, lid in sorted(lang_map.items(), key=lambda kv: -len(kv[0])):
+        if re.search(rf'(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])', normalized):
             return lid
     raise ExecutorServiceError(
         f"Unsupported language: {language_name}. "

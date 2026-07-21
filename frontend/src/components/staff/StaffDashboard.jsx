@@ -1,6 +1,6 @@
 // Staff Dashboard - Staff view with contests and batch-wise analytics
 import { useState, useEffect } from 'react';
-import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare, GraduationCap, UserCheck, FlaskConical } from 'lucide-react';
+import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare, GraduationCap, UserCheck, FlaskConical, Download, Loader2 } from 'lucide-react';
 import EnhancedContestCreator from './EnhancedContestCreator';
 import StudentAnalyticsModal from './StudentAnalyticsModal';
 import ContestDetailModal from '../common/ContestDetailModal';
@@ -14,11 +14,47 @@ const StaffDashboard = ({ institutionId }) => {
   const [error, setError] = useState(null);
   const [selectedBatch, setSelectedBatch] = useState(null);
   const [selectedSection, setSelectedSection] = useState('');
+  const [batchReportDateFrom, setBatchReportDateFrom] = useState('');
+  const [batchReportDateTo, setBatchReportDateTo] = useState('');
+  const [downloadingBatchReport, setDownloadingBatchReport] = useState(false);
   const [showContestCreator, setShowContestCreator] = useState(false);
   const [selectedStudentForAnalytics, setSelectedStudentForAnalytics] = useState(null);
   const [showContestDetail, setShowContestDetail] = useState(null);
   const [selectedDeptId, setSelectedDeptId] = useState(null);
   const [departments, setDepartments] = useState([]);
+
+  // Downloads the batch performance report PDF — section-scoped if a
+  // section is selected, otherwise the full batch — with an optional
+  // submission-date range.
+  async function downloadBatchReport(batchCode) {
+    setDownloadingBatchReport(true);
+    try {
+      const params = new URLSearchParams();
+      if (selectedSection) params.append('section', selectedSection);
+      if (batchReportDateFrom) params.append('date_from', batchReportDateFrom);
+      if (batchReportDateTo) params.append('date_to', batchReportDateTo);
+      const res = await fetch(`/api/batches/${encodeURIComponent(batchCode)}/report/?${params.toString()}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Failed to generate batch report.');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const scope = selectedSection ? `${batchCode}_${selectedSection}` : batchCode;
+      a.download = `batch_report_${scope}_${new Date().toISOString().slice(0, 10)}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(`Report error: ${err.message}`);
+    } finally {
+      setDownloadingBatchReport(false);
+    }
+  }
 
   // Function to update filter preview
   const updatePreview = () => {
@@ -1075,18 +1111,51 @@ const StaffDashboard = ({ institutionId }) => {
                     <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-hard)' }}>
                       Batch {selectedBatch} Students
                     </h3>
-                    {(analytics.batch_wise.find(b => b.batch === selectedBatch)?.sections?.length > 0) && (
-                      <select
-                        value={selectedSection}
-                        onChange={(e) => setSelectedSection(e.target.value)}
-                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-hard)', fontSize: '13px', fontWeight: '600' }}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      {(analytics.batch_wise.find(b => b.batch === selectedBatch)?.sections?.length > 0) && (
+                        <select
+                          value={selectedSection}
+                          onChange={(e) => setSelectedSection(e.target.value)}
+                          style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-hard)', fontSize: '13px', fontWeight: '600' }}
+                        >
+                          <option value="">All Sections</option>
+                          {analytics.batch_wise.find(b => b.batch === selectedBatch)?.sections?.map(sec => (
+                            <option key={sec} value={sec}>Section {sec}</option>
+                          ))}
+                        </select>
+                      )}
+                      <input
+                        type="date"
+                        value={batchReportDateFrom}
+                        onChange={(e) => setBatchReportDateFrom(e.target.value)}
+                        title="Report date range — from"
+                        style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-hard)', fontSize: '13px' }}
+                      />
+                      <span style={{ color: 'var(--text-soft)', fontSize: '13px' }}>to</span>
+                      <input
+                        type="date"
+                        value={batchReportDateTo}
+                        onChange={(e) => setBatchReportDateTo(e.target.value)}
+                        title="Report date range — to"
+                        style={{ padding: '7px 10px', borderRadius: '8px', border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-hard)', fontSize: '13px' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => downloadBatchReport(selectedBatch)}
+                        disabled={downloadingBatchReport}
+                        title={selectedSection ? `Download report for Section ${selectedSection}` : 'Download report for the full batch'}
+                        style={{
+                          padding: '8px 16px', borderRadius: '8px', border: 'none',
+                          background: downloadingBatchReport ? '#9ca3af' : 'var(--olive-900)',
+                          color: 'white', fontWeight: '700', fontSize: '13px',
+                          cursor: downloadingBatchReport ? 'not-allowed' : 'pointer',
+                          display: 'flex', alignItems: 'center', gap: 7,
+                        }}
                       >
-                        <option value="">All Sections</option>
-                        {analytics.batch_wise.find(b => b.batch === selectedBatch)?.sections?.map(sec => (
-                          <option key={sec} value={sec}>Section {sec}</option>
-                        ))}
-                      </select>
-                    )}
+                        {downloadingBatchReport ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
+                        {downloadingBatchReport ? 'Generating…' : (selectedSection ? `Report (Section ${selectedSection})` : 'Report (Full Batch)')}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Batch Podium */}

@@ -53,23 +53,60 @@ _IMPERATIVE_PREFIXES = (
     "create a", "create an", "build a", "build an", "construct",
 )
 
+# "Implementation of X" / "Design of X" / ... — a noun-phrase title whose
+# leading noun has a matching imperative verb. Matched with a required
+# "\s+of\s+" boundary so "Implementation of X" isn't mistaken for the verb
+# "implement" (a bare .startswith("implement") check does match
+# "implementation", which produced the grammatically broken Aim "To
+# implementation of X." before this fix).
+_NOUN_OF_RE = re.compile(r'^(implementation|design|development|creation|construction)\s+of\s+(.*)$', re.IGNORECASE | re.DOTALL)
+_NOUN_TO_VERB = {
+    "implementation": "implement", "design": "design", "development": "develop",
+    "creation": "create", "construction": "construct",
+}
+_VERB_TO_NOUN = {v: k for k, v in _NOUN_TO_VERB.items()}
+
+# "Write a/an/the ... program to X" — captures the "... program" phrase
+# (e.g. "a C++ program") and the task after "to", so the noun form can drop
+# just the leading "Write" ("the C++ program to X") instead of discarding
+# the whole sentence down to "the program".
+_WRITE_PROGRAM_RE = re.compile(r'^write\s+(?:a|an|the)\s+(.*?\bprogram)\s+to\s+(.*)$', re.IGNORECASE | re.DOTALL)
+
+# A bare imperative verb ("Implement a stack using two queues") with no
+# "... of ..." noun-phrase counterpart already on file.
+_VERB_RE = re.compile(r'^(implement|design|develop|create|build|construct)\s+(.*)$', re.IGNORECASE | re.DOTALL)
+
 
 def _lead_phrase(title):
-    """Exercise titles are often already a full imperative instruction
-    ("Write a C++ program to implement...") rather than a short noun name
-    ("Array Operations") — lowercase-and-prepend "write a program to" only
-    for the latter, otherwise reuse the title as-is (lowercasing just its
-    first letter, keeping the rest — e.g. "C++" — as authored) so we don't
-    produce "To write a program to write a program to...".
-    Returns (lead_phrase, already_imperative).
+    """Exercise titles come in two shapes: an imperative instruction
+    ("Write a C++ program to implement X", "Implement X") or an already
+    nominal one ("Implementation of X", "X Traversal"). Returns
+    (imperative, noun) — imperative is used for Aim ("To {imperative}."),
+    noun for Result ("Thus the {noun} was successfully executed.") —
+    derived from the same parse so the two sections describe the exercise
+    consistently instead of each re-parsing the title independently.
     """
     title = (title or "").strip().rstrip(".")
     if not title:
-        return "write and execute a program", True
+        return "write and execute a program", "program"
+
     lowered_first = title[0].lower() + title[1:]
-    if lowered_first.startswith(_IMPERATIVE_PREFIXES):
-        return lowered_first, True
-    return f"write a program to {title.lower()}", False
+
+    m = _NOUN_OF_RE.match(lowered_first)
+    if m:
+        verb = _NOUN_TO_VERB[m.group(1).lower()]
+        return f"{verb} {m.group(2)}", lowered_first
+
+    m = _WRITE_PROGRAM_RE.match(lowered_first)
+    if m:
+        return lowered_first, f"{m.group(1)} to {m.group(2)}"
+
+    m = _VERB_RE.match(lowered_first)
+    if m:
+        noun = _VERB_TO_NOUN[m.group(1).lower()]
+        return lowered_first, f"{noun} of {m.group(2)}"
+
+    return f"write a program to {title.lower()}", title.lower()
 
 
 def build_aim(exercise_title, problem_statement):
@@ -89,13 +126,13 @@ def generate_algorithm(*, problem_statement, code, language):
 
 
 def build_result(exercise_title, all_passed=None):
-    # Deliberately generic — Aim already states the specific task, and
-    # every attempt at re-stating the title grammatically here (for both
-    # "Write a program to X" and short "X Operations" style titles at once)
-    # produced awkward or doubled phrasing. "The program" reads correctly
-    # regardless of title style.
+    """Names the exercise in the Result line (e.g. "Thus the implementation
+    of Single Dimensional Arrays in C++ was successfully executed."),
+    reusing the same noun-phrase derivation as build_aim() so Aim and
+    Result describe the exercise the same way."""
+    _, noun = _lead_phrase(exercise_title)
     if all_passed is True:
-        return "Thus the program was executed successfully and the output was verified."
+        return f"Thus the {noun} was successfully executed and the output was verified."
     if all_passed is False:
-        return "The program was executed; some outputs did not match the expected result."
-    return "Thus the program was executed successfully."
+        return f"The {noun} was executed; some outputs did not match the expected result."
+    return f"Thus the {noun} was successfully executed."

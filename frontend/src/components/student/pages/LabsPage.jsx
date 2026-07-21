@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Editor from "@monaco-editor/react";
 import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { getCsrfToken } from "../../../lib/appUtils";
-import { runCodeExecution, editorLanguageMap } from "../../../lib/codeExecution";
+import { editorLanguageMap } from "../../../lib/codeExecution";
 import { starterCodeByLanguage, LAB_LANGUAGES } from "../../../lib/appData";
 import {
   FlaskConical, ChevronLeft, BookOpen, CheckCircle2,
@@ -227,11 +227,29 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
 
   const monacoLang = editorLanguageMap[lang] || "plaintext";
 
+  // Same dirty-tracking method used on the practice-problems page: the
+  // editor's onChange (below) distinguishes a genuine keystroke from the
+  // echo of our own setCode(...) calls, so nothing here can silently
+  // overwrite code the student actually typed.
+  const lastProgrammaticCodeRef = useRef(code);
+  const userEditedCodeRef = useRef(false);
+
+  const handleEditorCodeChange = useCallback((value) => {
+    const next = value ?? "";
+    if (next !== lastProgrammaticCodeRef.current) {
+      userEditedCodeRef.current = true;
+    }
+    setCode(next);
+  }, []);
+
   function handleLangChange(newLang) {
-    const isUntouched = !code.trim() || code === starterCodeByLanguage[lang];
+    const isUntouched = !userEditedCodeRef.current || !code.trim() || code === starterCodeByLanguage[lang];
     setLang(newLang);
     if (isUntouched) {
-      setCode(starterCodeByLanguage[newLang] || "");
+      const nextCode = starterCodeByLanguage[newLang] || "";
+      lastProgrammaticCodeRef.current = nextCode;
+      userEditedCodeRef.current = false;
+      setCode(nextCode);
     }
   }
 
@@ -254,12 +272,40 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
     startTimer();
     setOutputLog("Running…");
     try {
-      const result = await runCodeExecution({ sourceCode: code, language: lang, stdin: customInput });
-      const out = [
+      const token = getCsrfToken();
+      const res = await fetch(`/api/lab/v2/${lab.id}/exercises/${exercise.id}/run/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { "X-CSRFToken": token } : {}) },
+        credentials: "include",
+        body: JSON.stringify({ code, language: lang, stdin: customInput }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setOutputLog(result.detail || "Execution failed.");
+        return;
+      }
+      let out = [
         result.stdout,
         result.stderr,
         result.compile_output,
       ].filter(Boolean).join("\n").trim() || result.output || "No output";
+
+      // When run without custom input, the backend runs the exercise's own
+      // test cases instead of a single stdin — show the same Case-by-case
+      // Passed/Failed breakdown the Problems page shows for its Run button.
+      if (result.test_results && result.test_results.length > 0) {
+        const lines = [`\n--- Test Cases (${result.passed_cases}/${result.total_cases} passed) ---`];
+        result.test_results.forEach((tc, i) => {
+          lines.push(
+            `\nCase ${i + 1}: ${tc.passed ? "✓ Passed" : "✗ Failed"}` +
+            (tc.stdin ? `\n  Input:    ${tc.stdin}` : "") +
+            `\n  Expected: ${tc.expected}` +
+            `\n  Got:      ${tc.actual || "(no output)"}` +
+            (tc.time ? `\n  Time: ${tc.time}s` : ""),
+          );
+        });
+        out = out + lines.join("");
+      }
       setOutputLog(out);
     } catch (e) {
       setOutputLog(e.message || "Execution error");
@@ -402,7 +448,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
                   language={monacoLang}
                   theme="vs-dark"
                   value={code}
-                  onChange={(v) => setCode(v ?? "")}
+                  onChange={handleEditorCodeChange}
                   options={{
                     minimap: { enabled: false },
                     fontSize: 14,

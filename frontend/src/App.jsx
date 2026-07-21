@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import AdminDashboard from "./components/admin/AdminDashboard";
 import InstitutionDetail from "./components/admin/InstitutionDetail";
@@ -520,11 +520,32 @@ function App() {
   // clobber the student's in-progress edits.
   const codeResolvedForRef = useRef("");
 
+  // Dirty-tracking for the race this fixes: problem detail (which carries
+  // last_solutions) loads asynchronously, so if the student starts typing
+  // before it arrives, the effect below used to re-run on the next
+  // problemSet update and silently overwrite their in-progress edit with
+  // starter/old code — the editor would look like it "reset itself" mid-type.
+  // activeCodeKeyRef tracks which (problem, language) userEditedCodeRef
+  // applies to; lastProgrammaticCodeRef lets the editor's onChange tell a
+  // genuine keystroke apart from the echo of our own setCode(...) calls.
+  const activeCodeKeyRef = useRef("");
+  const userEditedCodeRef = useRef(false);
+  const lastProgrammaticCodeRef = useRef(null);
+
+  const handleEditorCodeChange = useCallback((value) => {
+    const next = value ?? "";
+    if (next !== lastProgrammaticCodeRef.current) {
+      userEditedCodeRef.current = true;
+    }
+    setCode(next);
+  }, [setCode]);
+
   // On opening a problem or switching language: restore the student's own
   // last-submitted code for that exact (problem, language) if the backend
   // has one, otherwise fall back to starter code. Problem detail (which
   // carries last_solutions) loads asynchronously, so this re-runs as
-  // problemSet updates until detail has actually arrived.
+  // problemSet updates until detail has actually arrived — but never once
+  // the student has actually typed something for this (problem, language).
   useEffect(() => {
     // Skip on initial mount and on localStorage-based code restore
     if (isInitialLoad.current) {
@@ -538,7 +559,14 @@ function App() {
     if (!selectedProblemSlug) return;
 
     const key = `${selectedProblemSlug}::${selectedLanguage}`;
+    if (activeCodeKeyRef.current !== key) {
+      // Genuinely a new problem/language, not just a re-run of this effect
+      // while waiting on detail to load — reset dirty tracking for it.
+      activeCodeKeyRef.current = key;
+      userEditedCodeRef.current = false;
+    }
     if (codeResolvedForRef.current === key) return;
+    if (userEditedCodeRef.current) return;
 
     const currentProblemData = problemSet.find((p) => p.slug === selectedProblemSlug);
     const lastSolution = currentProblemData?.last_solutions?.[selectedLanguage];
@@ -547,11 +575,14 @@ function App() {
     userChangedLanguage.current = true;
 
     if (lastSolution?.source_code) {
+      lastProgrammaticCodeRef.current = lastSolution.source_code;
       setCode(lastSolution.source_code);
       codeResolvedForRef.current = key;
     } else {
       const currentStarter = starterCodeByLanguage[selectedLanguage];
-      setCode(currentStarter ?? starterCodeByLanguage.Python);
+      const nextCode = currentStarter ?? starterCodeByLanguage.Python;
+      lastProgrammaticCodeRef.current = nextCode;
+      setCode(nextCode);
       // Detail (last_solutions) hasn't loaded yet for this problem — leave
       // unresolved so this effect re-checks once problemSet updates.
       if (currentProblemData?.last_solutions) {
@@ -1245,7 +1276,7 @@ function App() {
           selectedLanguage={selectedLanguage}
           selectedProblem={selectedProblem}
           sessionMode={sessionMode}
-          setCode={setCode}
+          setCode={handleEditorCodeChange}
           setExecutionInput={setExecutionInput}
           setProblemDetailTab={setProblemDetailTab}
           setSelectedDifficulty={setSelectedDifficulty}
@@ -1360,7 +1391,7 @@ function App() {
           selectedLanguage={selectedLanguage}
           selectedProblem={selectedProblem}
           sessionMode={sessionMode}
-          setCode={setCode}
+          setCode={handleEditorCodeChange}
           setExecutionInput={setExecutionInput}
           setProblemDetailTab={setProblemDetailTab}
           setSelectedDifficulty={setSelectedDifficulty}

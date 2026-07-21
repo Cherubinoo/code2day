@@ -60,6 +60,34 @@ def build_runtime_test_cases(problem, sample_only: bool = False) -> list[Runtime
     return _build_example_test_cases(problem)
 
 
+def build_lab_runtime_test_cases(exercise, sample_only: bool = False) -> list[RuntimeTestCase]:
+    """Same shape as build_runtime_test_cases(), but for a LabExercise's
+    own LabExerciseTestCase rows — used so a lab exercise's "Run" button
+    can show a real Test Cases: X/Y passed breakdown, the same way a
+    Problem's does, instead of only ever running against raw stdin."""
+    from apps.learning.models import LabExerciseTestCase
+
+    stored_cases = list(LabExerciseTestCase.objects.filter(exercise=exercise).order_by("order", "id"))
+    if not stored_cases:
+        return []
+
+    selected_cases = stored_cases
+    if sample_only:
+        sample_cases = [case for case in stored_cases if case.is_sample]
+        selected_cases = sample_cases or stored_cases
+
+    return [
+        RuntimeTestCase(
+            stdin=case.stdin,
+            expected_output=case.expected_output,
+            is_sample=case.is_sample,
+            order=case.order,
+            source="stored",
+        )
+        for case in selected_cases
+    ]
+
+
 def sync_problem_test_cases(problem) -> int:
     if TestCase.objects.filter(problem=problem).exists():
         return 0

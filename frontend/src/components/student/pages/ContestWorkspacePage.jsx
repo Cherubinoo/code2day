@@ -427,12 +427,37 @@ function ContestWorkspacePage({ contestId, onBack }) {
     return () => clearInterval(interval);
   }, [selectedProblemIndex]);
 
+  // Dirty-tracking so a restore never clobbers an in-progress edit — the
+  // same method used on the practice-problems page: activeCodeKeyRef marks
+  // which (problem, language) userEditedCodeRef applies to, and the
+  // editor's onChange (handleEditorCodeChange below) tells a genuine
+  // keystroke apart from the echo of our own setCode(...) calls.
+  const activeCodeKeyRef = useRef("");
+  const userEditedCodeRef = useRef(false);
+  const lastProgrammaticCodeRef = useRef(null);
+
+  const handleEditorCodeChange = useCallback((value) => {
+    const next = value ?? "";
+    if (next !== lastProgrammaticCodeRef.current) {
+      userEditedCodeRef.current = true;
+    }
+    setCode(next);
+  }, []);
+
   // Restore cached code when problem or language changes; fall back to starter code
   useEffect(() => {
     if (!selectedProblem) return;
     const key = cacheKey(selectedProblem.slug, selectedLanguage);
+    if (activeCodeKeyRef.current !== key) {
+      activeCodeKeyRef.current = key;
+      userEditedCodeRef.current = false;
+    } else if (userEditedCodeRef.current) {
+      return;
+    }
     const cached = (() => { try { return localStorage.getItem(key); } catch { return null; } })();
-    setCode(cached || starterCodeByLanguage[selectedLanguage] || "// Write your solution here");
+    const nextCode = cached || starterCodeByLanguage[selectedLanguage] || "// Write your solution here";
+    lastProgrammaticCodeRef.current = nextCode;
+    setCode(nextCode);
     setProblemSecondsElapsed(0);
     setOutputLog("Run your code to see output here.");
     setExecutionMeta({ status: "Ready", time: null, memory: null });
@@ -924,7 +949,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
                   language={editorLanguage}
                   theme="vs-dark"
                   value={code || starterCodeByLanguage[selectedLanguage] || "// Write your solution here"}
-                  onChange={(value) => setCode(value ?? "")}
+                  onChange={handleEditorCodeChange}
                   onMount={(editor) => {
                     editor.focus();
                     setTimeout(() => editor.layout(), 200);

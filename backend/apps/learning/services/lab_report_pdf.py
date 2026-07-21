@@ -1,9 +1,10 @@
 """
 Renders a student's lab record (Exp No / Date / Exp Name / Aim / Algorithm /
-Program / Output / Result / Seal / Signature) to PDF as a plain, heading-led
-document — no boxed/bordered sections and no fixed page budget; a long
-algorithm, program, or test-case table just flows onto as many pages as it
-needs. Watermarked with the student's register number.
+Program / Output / Result / Signature) to PDF — a plain, box-free header
+followed by bordered content sections. Boxes size to their content rather
+than a fixed height, so a long algorithm, program, or test-case table just
+continues onto as many pages as it needs instead of clipping. Watermarked
+with the student's register number.
 """
 
 from io import BytesIO
@@ -54,12 +55,34 @@ def _truncate(text, n):
 
 
 def _heading(text):
-    """A plain section heading with a thin rule underneath it — deliberately
-    not a bordered/filled box, per the lab-record redesign: headings only,
-    content flows freely underneath with no fixed height."""
+    """A plain section heading with a thin rule underneath it — used only
+    for the Exp No/Date/Title block, which stays box-free."""
     rule = Drawing(6.6 * inch, 2)
     rule.add(Rect(0, 0, 6.6 * inch, 1.2, fillColor=_ACCENT, strokeColor=None))
     return [Paragraph(text, _HEADING_STYLE), rule, Spacer(1, 6)]
+
+
+def _boxed_section(title, flowable, avail_width, avail_height):
+    """A titled, bordered content section — boxed only when the content
+    provably fits on a single page. reportlab can't split a single Table
+    row across a page break (a too-tall boxed row is a hard LayoutError,
+    not a graceful split), so a section that runs long — a big algorithm,
+    a long program, a wide test-case table — falls back to the plain
+    heading style instead, so it can flow across pages rather than
+    crashing report generation."""
+    label = Paragraph(title, ParagraphStyle(f"boxlbl-{title}", parent=_STYLES["Normal"], fontSize=9,
+                                             fontName="Helvetica-Bold", textColor=_ACCENT, spaceAfter=4))
+    t = Table([[[label, flowable]]], colWidths=[avail_width])
+    t.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 1, _BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10), ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    _, height = t.wrap(avail_width, avail_height)
+    if height <= avail_height:
+        return [t]
+    return _heading(title) + [flowable]
 
 
 class RegisterWatermarkDocTemplate(BaseDocTemplate):
@@ -182,40 +205,41 @@ def build_lab_report_pdf(buffer: BytesIO, *, report, test_case_rows=None, test_c
     ]))
     story.append(top_row)
     story.append(Paragraph(_escape(report.exp_name), _TITLE_STYLE))
+    story.append(Spacer(1, 12))
+
+    avail_width, avail_height = doc.width, doc.height
 
     # ── Aim ──────────────────────────────────────────────────────────────
-    story += _heading("Aim")
-    story.append(Paragraph(_pre(report.aim) or "—", _BODY_STYLE))
+    story += _boxed_section("Aim", Paragraph(_pre(report.aim) or "—", _BODY_STYLE), avail_width, avail_height)
+    story.append(Spacer(1, 10))
 
     # ── Algorithm ────────────────────────────────────────────────────────
-    story += _heading("Algorithm")
-    story.append(Paragraph(_pre(report.algorithm) or "—", _BODY_STYLE))
+    story += _boxed_section("Algorithm", Paragraph(_pre(report.algorithm) or "—", _BODY_STYLE), avail_width, avail_height)
+    story.append(Spacer(1, 10))
 
     # ── Program ──────────────────────────────────────────────────────────
-    story += _heading("Program")
-    story.append(Preformatted(report.program or "—", _CODE_STYLE, maxLineLength=100))
+    story += _boxed_section(
+        "Program", Preformatted(report.program or "—", _CODE_STYLE, maxLineLength=95), avail_width, avail_height,
+    )
+    story.append(Spacer(1, 10))
 
     # ── Output (verified against the exercise's test cases) ────────────
-    story += _heading("Output")
-    if test_case_rows:
-        story.append(_test_case_table(test_case_rows))
-    else:
-        story.append(Paragraph(test_case_note or "—", _NOTE_STYLE))
+    output_content = _test_case_table(test_case_rows) if test_case_rows else Paragraph(test_case_note or "—", _NOTE_STYLE)
+    story += _boxed_section("Output", output_content, avail_width, avail_height)
+    story.append(Spacer(1, 10))
 
     # ── Result ───────────────────────────────────────────────────────────
-    story += _heading("Result")
-    story.append(Paragraph(_pre(report.result) or "—", _BODY_STYLE))
+    story += _boxed_section("Result", Paragraph(_pre(report.result) or "—", _BODY_STYLE), avail_width, avail_height)
 
-    # ── Seal / Signature ────────────────────────────────────────────────
-    footer = Table(
-        [[_sig_block("Staff Seal", 3.0 * inch), _sig_block("Signature", 3.0 * inch)]],
-        colWidths=[3.3 * inch, 3.3 * inch],
-    )
+    # ── Signature ────────────────────────────────────────────────────────
+    sig = _sig_block("Signature", 2.6 * inch)
+    footer = Table([["", sig]], colWidths=[3.8 * inch, 2.8 * inch])
     footer.setStyle(TableStyle([
         ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
         ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ("ALIGN", (1, 0), (1, 0), "CENTER"),
     ]))
-    story.append(Spacer(1, 20))
+    story.append(Spacer(1, 24))
     story.append(footer)
 
     doc.build(story)

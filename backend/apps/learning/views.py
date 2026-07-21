@@ -611,6 +611,80 @@ def execute_problem_test_case_batch(
     }
 
 
+def execute_lab_test_case_batch(*, source_code, language, language_id, test_cases, batch_kind):
+    """Same result shape as execute_problem_test_case_batch(), for
+    LabExercise test cases. Skips prepare_execution_payload()'s Problem-
+    specific execution-type/driver-injection step — lab exercises are
+    always plain stdin-in/stdout-out programs (the traditional lab-record
+    style, unlike Problems which may be function/class-signature based),
+    so the code runs as submitted, with each test case's stdin fed in
+    directly."""
+    test_results = []
+    latest_time = ""
+    latest_memory = ""
+
+    for case in test_cases:
+        tc_result = execute_judge0_submission(
+            source_code=source_code, language_id=language_id, stdin=case.stdin,
+        )
+        actual_raw = (tc_result["stdout"] or "").strip()
+        expected = case.expected_output.strip()
+        passed = (
+            tc_result["status"] == "Accepted"
+            and normalize_comparable_output(actual_raw) == normalize_comparable_output(expected)
+        )
+
+        latest_time = tc_result["time"] or latest_time
+        latest_memory = tc_result["memory"] or latest_memory
+        test_results.append(
+            {
+                "stdin": case.stdin,
+                "expected": expected,
+                "actual": actual_raw,
+                "passed": passed,
+                "status": tc_result["status"],
+                "time": tc_result["time"],
+                "memory": tc_result["memory"],
+                "stderr": tc_result["stderr"],
+                "compile_output": tc_result["compile_output"],
+                "is_sample": case.is_sample,
+                "source": case.source,
+            }
+        )
+
+    total_cases = len(test_results)
+    passed_cases = sum(1 for item in test_results if item["passed"])
+    first_failure = next((item for item in test_results if not item["passed"]), None)
+
+    if total_cases and passed_cases == total_cases:
+        status_label = "Accepted"
+    elif first_failure and first_failure["status"] != "Accepted":
+        status_label = first_failure["status"]
+    else:
+        status_label = "Wrong Answer"
+
+    if batch_kind == "sample":
+        output = f"Sample test cases passed: {passed_cases}/{total_cases}."
+    elif status_label == "Accepted":
+        output = f"All {total_cases} test cases passed."
+    else:
+        output = f"{passed_cases}/{total_cases} test cases passed."
+
+    return {
+        "stdout": output,
+        "stderr": first_failure["stderr"] if first_failure else "",
+        "compile_output": first_failure["compile_output"] if first_failure else "",
+        "status": status_label,
+        "time": latest_time,
+        "memory": latest_memory,
+        "output": output,
+        "test_results": test_results,
+        "passed_cases": passed_cases,
+        "total_cases": total_cases,
+        "test_case_mode": batch_kind,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Rate-limit settings helpers
 # ---------------------------------------------------------------------------
@@ -11516,6 +11590,68 @@ class StudentLabExercisesView(APIView):
                 "language": sub.language if sub else "",
             })
         return Response({"lab": _serialize_lab_v2(lab, student=student), "exercises": ex_data})
+
+
+class StudentExerciseRunView(APIView):
+    """Student: run code for a LabExercise — against the exercise's own
+    test cases when no custom stdin is given (same "Test Cases: X/Y
+    passed" breakdown a Problem's Run button shows), or against custom
+    stdin verbatim when the student provides one. Piston-backed, same
+    execution service Problems use — just without Problem's function/class
+    driver-injection step, since lab exercises are always plain stdin
+    programs."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id, exercise_id):
+        student = _student_from_request(request)
+        try:
+            exercise = LabExercise.objects.get(
+                id=exercise_id, lab_id=lab_id,
+                lab__department=student.department, lab__batch=student.batch,
+            )
+        except LabExercise.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        source_code = (request.data.get("code") or "").strip()
+        language = (request.data.get("language") or "").strip()
+        stdin = request.data.get("stdin") or ""
+        if not source_code:
+            return Response({"detail": "Code is required."}, status=400)
+
+        from .services.executor import get_language_id
+        try:
+            language_id = get_language_id(language)
+        except Exception:
+            return Response({"detail": f"Unsupported language: {language}"}, status=400)
+
+        from .services.problem_testcases import build_lab_runtime_test_cases
+
+        try:
+            if stdin.strip():
+                result = execute_judge0_submission(
+                    source_code=source_code, language_id=language_id, stdin=stdin,
+                )
+            else:
+                test_cases = build_lab_runtime_test_cases(exercise, sample_only=True)
+                if test_cases:
+                    result = execute_lab_test_case_batch(
+                        source_code=source_code, language=language, language_id=language_id,
+                        test_cases=test_cases, batch_kind="sample",
+                    )
+                else:
+                    result = execute_judge0_submission(
+                        source_code=source_code, language_id=language_id, stdin="",
+                    )
+        except ExecutorTimeoutError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+        except ExecutorServiceError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        except Exception as exc:
+            logger.error("Lab exercise run error for exercise %s: %s", exercise_id, exc, exc_info=True)
+            detail = f"Unexpected execution error: {exc}" if settings.DEBUG else "Unexpected execution error."
+            return Response({"detail": detail}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(result)
 
 
 class StudentExerciseSubmitView(APIView):

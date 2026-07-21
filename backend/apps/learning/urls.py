@@ -141,6 +141,7 @@ from .views import (
     StaffLabStudentsView,
     StudentLabListView,
     StudentLabExercisesView,
+    StudentExerciseRunView,
     StudentExerciseSubmitView,
     StudentExerciseReportView,
     StaffLabExerciseStudentReportView,
@@ -160,7 +161,7 @@ from .file_views import (
 )
 
 # Import PDF report views
-from .pdf_reports import ContestReportPDFView, StudentContestReportPDFView
+from .pdf_reports import ContestReportPDFView, StudentContestReportPDFView, BatchReportPDFView
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health-check"),
@@ -258,6 +259,7 @@ urlpatterns = [
     # Batch Management
     path("batches/", BatchListView.as_view(), name="batch-list"),
     path("batches/<str:batch_code>/students/", BatchStudentsView.as_view(), name="batch-students"),
+    path("batches/<str:batch_code>/report/", BatchReportPDFView.as_view(), name="batch-report-pdf"),
 
     # Student Management
     path("students/filter/", DepartmentStudentsFilterView.as_view(), name="students-filter"),
@@ -361,6 +363,7 @@ urlpatterns = [
     path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/generate-test-cases/", StaffExerciseGenerateTestCasesView.as_view(), name="staff-exercise-generate-test-cases"),
     path("lab/v2/<int:lab_id>/students/",                                    StaffLabStudentsView.as_view(),     name="staff-lab-students"),
     path("lab/v2/<int:lab_id>/exercises/list/",                              StudentLabExercisesView.as_view(),  name="student-lab-exercises"),
+    path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/run/",             StudentExerciseRunView.as_view(),   name="student-exercise-run"),
     path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/submit/",          StudentExerciseSubmitView.as_view(),name="student-exercise-submit"),
     path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/report/",          StudentExerciseReportView.as_view(), name="student-exercise-report"),
     path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/students/<str:register_number>/report/", StaffLabExerciseStudentReportView.as_view(), name="staff-lab-exercise-student-report"),

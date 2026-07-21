@@ -1754,6 +1754,324 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
         return story
 
 
+# ---------------------------------------------------------------------------
+# Batch / section performance report
+# ---------------------------------------------------------------------------
+
+def _parse_report_date(value):
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class BatchReportPDFView(UnifiedAuthMixin, APIView):
+    """
+    Staff: generate a branded performance report PDF for a batch of
+    students — general problem-solving performance (not tied to any one
+    contest or lab), optionally scoped to a single section within the
+    batch and to a submission-date range. GET-based (query params), same
+    download pattern as the existing StaffReportPDFView.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, batch_code):
+        if not REPORTLAB_AVAILABLE:
+            return Response({"error": "reportlab not installed"}, status=500)
+
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+        if profile_type not in ("staff", "hod", "director", "tpu", "ja", "admin"):
+            return Response({"error": "Access denied."}, status=403)
+
+        section = (request.GET.get("section") or "").strip()
+        date_from = _parse_report_date(request.GET.get("date_from"))
+        date_to = _parse_report_date(request.GET.get("date_to"))
+
+        students_qs = StudentProfile.objects.filter(batch=batch_code)
+        if profile_type != "admin":
+            students_qs = students_qs.filter(institution=profile.institution)
+            if profile_type in ("staff", "hod") and profile.department:
+                students_qs = students_qs.filter(department=profile.department)
+        if section:
+            students_qs = students_qs.filter(section=section)
+        students = list(students_qs.select_related("department", "institution").order_by("name"))
+        if not students:
+            return Response({"error": "No students found for this batch/section."}, status=404)
+
+        institution = students[0].institution or getattr(profile, "institution", None)
+
+        buffer = BytesIO()
+        try:
+            doc = create_watermarked_pdf_contest(
+                buffer, institution=institution, pagesize=A4,
+                rightMargin=0.6*inch, leftMargin=0.6*inch, topMargin=1.6*inch, bottomMargin=0.6*inch,
+            )
+            story = self._build_story(batch_code, section, students, date_from, date_to, profile)
+            doc.build(story)
+        except Exception as e:
+            import traceback
+            return Response(
+                {"error": f"PDF generation failed: {str(e)}", "trace": traceback.format_exc()}, status=500,
+            )
+
+        buffer.seek(0)
+        resp = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        scope = f"{batch_code}_{section}" if section else batch_code
+        resp["Content-Disposition"] = f'attachment; filename="batch_report_{scope}_{ts}.pdf"'
+        return resp
+
+    # ------------------------------------------------------------------
+    def _build_story(self, batch_code, section, students, date_from, date_to, generated_by):
+        from django.db.models import Count, Avg, Q
+        from django.db.models.functions import TruncDate, TruncWeek
+
+        solved_qs = SolvedProblem.objects.filter(student__in=students)
+        solutions_qs = ProblemSolution.objects.filter(student__in=students)
+        if date_from:
+            solved_qs = solved_qs.filter(solved_at__date__gte=date_from)
+            solutions_qs = solutions_qs.filter(submitted_at__date__gte=date_from)
+        if date_to:
+            solved_qs = solved_qs.filter(solved_at__date__lte=date_to)
+            solutions_qs = solutions_qs.filter(submitted_at__date__lte=date_to)
+
+        per_student_solved = {
+            row["student_id"]: row["c"]
+            for row in solved_qs.values("student_id").annotate(c=Count("id"))
+        }
+        per_student_attempts = {
+            row["student_id"]: row["total"]
+            for row in solutions_qs.values("student_id").annotate(total=Count("id"))
+        }
+        per_student_passed = {
+            row["student_id"]: row["passed"]
+            for row in solutions_qs.filter(all_tests_passed=True).values("student_id").annotate(passed=Count("id"))
+        }
+        difficulty_counts = {
+            row["problem__difficulty"]: row["c"]
+            for row in solved_qs.values("problem__difficulty").annotate(c=Count("id"))
+        }
+
+        story = []
+        story += self._cover_page(batch_code, section, students, date_from, date_to, generated_by)
+        story.append(PageBreak())
+        story += self._overview_section(students, per_student_solved, per_student_attempts, per_student_passed)
+        story.append(Spacer(1, 12))
+        story += self._performance_charts(students, per_student_solved, difficulty_counts)
+        story.append(Spacer(1, 12))
+        story += self._activity_chart(solved_qs, date_from, date_to)
+        story.append(PageBreak())
+        story += self._strengths_section(solved_qs)
+        story.append(Spacer(1, 12))
+        story += self._student_table_section(students, per_student_solved, per_student_attempts, per_student_passed)
+        story.append(Spacer(1, 14))
+        story += self._footer(batch_code, section)
+        return story
+
+    # ------------------------------------------------------------------
+    def _cover_page(self, batch_code, section, students, date_from, date_to, generated_by):
+        story = []
+        story.append(Spacer(1, 0.8 * inch))
+        title_s = ParagraphStyle('brt', fontName='Helvetica-Bold', fontSize=26, leading=31,
+                                 alignment=1, textColor=_hx(_NAVY), spaceAfter=12)
+        story.append(Paragraph(f"Batch {batch_code} Performance Report", title_s))
+
+        scope_txt = f"Section {section}" if section else "All Sections"
+        sub_s = ParagraphStyle('brs', fontName='Helvetica-Bold', fontSize=14, leading=18,
+                               alignment=1, textColor=_hx(_GRAY), spaceAfter=30)
+        story.append(Paragraph(scope_txt, sub_s))
+
+        date_range_txt = (
+            f"{date_from.strftime('%d %b %Y')} – {date_to.strftime('%d %b %Y')}" if date_from and date_to
+            else f"From {date_from.strftime('%d %b %Y')}" if date_from
+            else f"Up to {date_to.strftime('%d %b %Y')}" if date_to
+            else "All Time"
+        )
+        styles = getSampleStyleSheet()
+        info_data = [
+            [Paragraph('<b>Students:</b>', styles['Normal']), str(len(students))],
+            [Paragraph('<b>Date Range:</b>', styles['Normal']), date_range_txt],
+            [Paragraph('<b>Generated By:</b>', styles['Normal']), getattr(generated_by, 'name', 'Administrator')],
+            [Paragraph('<b>Report Date:</b>', styles['Normal']), datetime.now().strftime('%d %b %Y %I:%M %p')],
+        ]
+        info_tbl = Table(info_data, colWidths=[1.6*inch, 3.4*inch])
+        info_tbl.hAlign = 'CENTER'
+        info_tbl.setStyle(TableStyle([('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('BOTTOMPADDING', (0,0), (-1,-1), 8)]))
+        story.append(info_tbl)
+
+        story.append(Spacer(1, 50))
+        d = Drawing(480, 4)
+        d.add(Rect(0, 0, 480, 4, fillColor=_hx(_RAMCO_RED), strokeColor=None))
+        story.append(d)
+        story.append(Spacer(1, 8))
+        conf_s = ParagraphStyle('brc', fontName='Helvetica', fontSize=8, alignment=1, textColor=_hx(_GRAY))
+        story.append(Paragraph('CONFIDENTIAL — FOR INTERNAL USE ONLY', conf_s))
+        return story
+
+    # ------------------------------------------------------------------
+    def _overview_section(self, students, per_student_solved, per_student_attempts, per_student_passed):
+        story = [_section_header('OVERVIEW', _INDIGO)]
+        n = len(students)
+        total_solved = sum(per_student_solved.values())
+        avg_solved = round(total_solved / n, 1) if n else 0
+        total_attempts = sum(per_student_attempts.values())
+        total_passed = sum(per_student_passed.values())
+        success_rate = round(total_passed / total_attempts * 100, 1) if total_attempts else 0
+        active_students = sum(1 for s in students if per_student_solved.get(s.id))
+
+        cards = [
+            _metric_card('Students', str(n), bg=_INDIGO),
+            _metric_card('Problems Solved', str(total_solved), bg=_TEAL),
+            _metric_card('Avg / Student', str(avg_solved), bg=_GREEN),
+            _metric_card('Success Rate', f'{success_rate}%', bg=_ORANGE),
+            _metric_card('Active Students', str(active_students), bg='#7c3aed'),
+        ]
+        row = Table([cards], colWidths=[1.35*inch]*5)
+        row.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER'), ('VALIGN',(0,0),(-1,-1),'MIDDLE'),
+                                  ('LEFTPADDING',(0,0),(-1,-1),3), ('RIGHTPADDING',(0,0),(-1,-1),3)]))
+        story.append(row)
+        return story
+
+    # ------------------------------------------------------------------
+    def _performance_charts(self, students, per_student_solved, difficulty_counts):
+        story = [_section_header('PERFORMANCE', _RAMCO_RED)]
+        counts = [per_student_solved.get(s.id, 0) for s in students]
+        max_solved = max(counts) if counts else 0
+        if max_solved:
+            buckets_edges = [0, max(1, round(max_solved*0.25)), max(1, round(max_solved*0.5)),
+                              max(1, round(max_solved*0.75))]
+            buckets = [
+                sum(1 for c in counts if c <= buckets_edges[1]),
+                sum(1 for c in counts if buckets_edges[1] < c <= buckets_edges[2]),
+                sum(1 for c in counts if buckets_edges[2] < c <= buckets_edges[3]),
+                sum(1 for c in counts if c > buckets_edges[3]),
+            ]
+        else:
+            buckets = [len(students), 0, 0, 0]
+        bar = _bar_chart(buckets, ['Low', 'Below Avg', 'Above Avg', 'High'], bar_color=_INDIGO, w=300, h=140)
+
+        diff_colors = {"Easy": _GREEN, "Medium": _ORANGE, "Hard": _RED}
+        diff_data = [difficulty_counts.get(d, 0) for d in ("Easy", "Medium", "Hard")]
+        pie = _pie_chart(diff_data if sum(diff_data) else [1], ["Easy", "Medium", "Hard"] if sum(diff_data) else ["No data"],
+                          [diff_colors[d] for d in ("Easy", "Medium", "Hard")], size=130)
+
+        chart_row = Table([[bar, pie]], colWidths=[3.8*inch, 2.2*inch])
+        chart_row.setStyle(TableStyle([
+            ('VALIGN',(0,0),(-1,-1),'MIDDLE'), ('ALIGN',(0,0),(-1,-1),'CENTER'),
+            ('BOX',(0,0),(-1,-1),0.5,_hx(_BORDER)), ('BACKGROUND',(0,0),(-1,-1),_hx(_LIGHT)),
+        ]))
+        label_s = ParagraphStyle('bcl', fontName='Helvetica', fontSize=7, textColor=_hx(_GRAY), alignment=1)
+        labels = Table([[Paragraph('Students by Problems Solved', label_s),
+                          Paragraph('Solved by Difficulty', label_s)]], colWidths=[3.8*inch, 2.2*inch])
+        story.append(chart_row)
+        story.append(labels)
+        return story
+
+    # ------------------------------------------------------------------
+    def _activity_chart(self, solved_qs, date_from, date_to):
+        from django.db.models import Count
+        from django.db.models.functions import TruncDate, TruncWeek
+
+        story = [_section_header('ACTIVITY OVER TIME', _SLATE)]
+        span_days = (date_to - date_from).days if date_from and date_to else None
+        use_weekly = span_days is not None and span_days > 60
+
+        trunc = TruncWeek('solved_at') if use_weekly else TruncDate('solved_at')
+        rows = list(
+            solved_qs.annotate(bucket=trunc).values('bucket').annotate(c=Count('id')).order_by('bucket')
+        )
+        if not rows:
+            story.append(Paragraph("No solving activity recorded for this range.",
+                                    ParagraphStyle("np", fontSize=9)))
+            return story
+
+        MAX_BARS = 14
+        if len(rows) > MAX_BARS:
+            rows = rows[-MAX_BARS:]
+        labels = [r['bucket'].strftime('%d %b') for r in rows]
+        data = [r['c'] for r in rows]
+        bar = _bar_chart(data, labels, bar_color=_TEAL, w=520, h=150)
+        wrap = Table([[bar]], colWidths=[6.6*inch])
+        wrap.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER')]))
+        story.append(wrap)
+        unit = "week" if use_weekly else "day"
+        note_s = ParagraphStyle('actn', fontName='Helvetica-Oblique', fontSize=7.5, textColor=_hx(_GRAY), alignment=1)
+        story.append(Paragraph(f"Problems solved per {unit}" + (f" (last {MAX_BARS} {unit}s shown)" if len(rows) == MAX_BARS else ""), note_s))
+        return story
+
+    # ------------------------------------------------------------------
+    def _strengths_section(self, solved_qs):
+        from collections import Counter
+        story = [_section_header('BATCH STRENGTHS', _GREEN)]
+        tag_counts = Counter()
+        for tags in solved_qs.select_related('problem').values_list('problem__tags', flat=True):
+            for tag in (tags or []):
+                tag_counts[tag] += 1
+
+        if not tag_counts:
+            story.append(Paragraph("Not enough solved-problem data to identify topic strengths.",
+                                    ParagraphStyle("np", fontSize=9)))
+            return story
+
+        top = tag_counts.most_common(8)
+        max_c = top[0][1] if top else 1
+        rows = [["Topic", "Problems Solved", ""]]
+        for tag, c in top:
+            bar_w = max(4, round(c / max_c * 100))
+            bar_cell = Table([[""]], colWidths=[bar_w], rowHeights=[10])
+            bar_cell.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), _hx(_GREEN))]))
+            rows.append([tag, str(c), bar_cell])
+        tbl = Table(rows, colWidths=[2.2*inch, 1.0*inch, 3.4*inch], repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),_hx(_INDIGO)), ("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"), ("FONTNAME",(0,1),(-1,-1),"Helvetica"),
+            ("FONTSIZE",(0,0),(-1,-1),8.5), ("ALIGN",(1,1),(1,-1),"CENTER"), ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("GRID",(0,0),(-1,-1),0.3,_hx(_BORDER)), ("ROWBACKGROUNDS",(0,1),(-1,-1),[_hx(_WHITE),_hx(_LIGHT)]),
+        ]))
+        story.append(tbl)
+        return story
+
+    # ------------------------------------------------------------------
+    def _student_table_section(self, students, per_student_solved, per_student_attempts, per_student_passed):
+        story = [_section_header('STUDENT-WISE PERFORMANCE', _INDIGO)]
+        rows = [["Name", "Reg. No.", "Section", "Solved", "Attempts", "Success Rate"]]
+        ranked = sorted(students, key=lambda s: per_student_solved.get(s.id, 0), reverse=True)
+        for s in ranked:
+            solved = per_student_solved.get(s.id, 0)
+            attempts = per_student_attempts.get(s.id, 0)
+            passed = per_student_passed.get(s.id, 0)
+            rate = f"{round(passed/attempts*100,1)}%" if attempts else "—"
+            rows.append([s.name[:24], s.register_number or "—", s.section or "—", str(solved), str(attempts), rate])
+        tbl = Table(rows, colWidths=[1.9*inch, 1.2*inch, 0.7*inch, 0.8*inch, 0.9*inch, 1.1*inch], repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,0),_hx(_INDIGO)), ("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"), ("FONTNAME",(0,1),(-1,-1),"Helvetica"),
+            ("FONTSIZE",(0,0),(-1,-1),8), ("ALIGN",(3,1),(-1,-1),"CENTER"), ("VALIGN",(0,0),(-1,-1),"MIDDLE"),
+            ("GRID",(0,0),(-1,-1),0.3,_hx(_BORDER)), ("ROWBACKGROUNDS",(0,1),(-1,-1),[_hx(_WHITE),_hx(_LIGHT)]),
+        ]))
+        story.append(tbl)
+        return story
+
+    # ------------------------------------------------------------------
+    def _footer(self, batch_code, section):
+        story = []
+        d = Drawing(480, 2)
+        d.add(Rect(0, 0, 480, 2, fillColor=_hx(_INDIGO), strokeColor=None))
+        story.append(d)
+        story.append(Spacer(1, 6))
+        scope_txt = f"Batch {batch_code} — Section {section}" if section else f"Batch {batch_code} — All Sections"
+        fs = ParagraphStyle("bft", fontName="Helvetica", fontSize=7, alignment=1, textColor=_hx(_GRAY))
+        story.append(Paragraph(
+            f"Batch Performance Report — {scope_txt} — "
+            f"Generated {datetime.now().strftime('%d %b %Y %I:%M %p')} — CONFIDENTIAL", fs))
+        return story
+
+
 def generate_branded_template(institution, template_type, branding_data):
     """
     Generate branded PDF templates for institutions
