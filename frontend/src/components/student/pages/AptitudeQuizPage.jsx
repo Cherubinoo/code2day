@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, Info, Brain, Clock, Award } from 'lucide-react';
+import { getCsrfToken, extractApiError } from '../../../lib/appUtils';
 
 const AptitudeQuizPage = ({ topicId, onBack }) => {
   const [questions, setQuestions] = useState([]);
@@ -14,6 +15,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
   const [showAnswer, setShowAnswer] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const [submitError, setSubmitError] = useState('');
   const [startTime] = useState(Date.now());
   const [elapsedTime, setElapsedTime] = useState(0);
   
@@ -65,32 +67,23 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
       });
   }, [topicId, difficulty, status, reloadKey]);
 
-  const getCookie = (name) => {
-    let cookieValue = null;
-    if (document.cookie && document.cookie !== '') {
-      const cookies = document.cookie.split(';');
-      for (let i = 0; i < cookies.length; i++) {
-        const cookie = cookies[i].trim();
-        if (cookie.substring(0, name.length + 1) === (name + '=')) {
-          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
-          break;
-        }
-      }
-    }
-    return cookieValue;
-  };
-
   const handleSubmit = () => {
     if (!selectedOption || isSubmitted) return;
 
     const question = questions[currentIndex];
-    const csrftoken = getCookie('csrftoken');
+    setSubmitError('');
 
     fetch('/api/aptitude/questions/submit/', {
       method: 'POST',
-      headers: { 
+      headers: {
         'Content-Type': 'application/json',
-        'X-CSRFToken': csrftoken
+        // Shared helper (has a fetch-it-yourself fallback if the cookie
+        // isn't set) — a hand-rolled document.cookie read here previously
+        // sent an empty token whenever that cookie was missing, so the
+        // server's CSRF-rejection body (no correct_option/explanation
+        // fields) got treated as a real submit result, showing "the
+        // correct answer is: undefined" instead of a visible error.
+        'X-CSRFToken': getCsrfToken(),
       },
       body: JSON.stringify({
         question_id: question.id,
@@ -98,7 +91,13 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
       }),
       credentials: 'include'
     })
-      .then(res => res.json())
+      .then(async res => {
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          throw new Error(extractApiError(data, `Failed to submit answer (HTTP ${res.status}).`));
+        }
+        return data;
+      })
       .then(data => {
         setResult(data);
         setIsSubmitted(true);
@@ -106,7 +105,10 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
           setScore(prev => prev + 1);
         }
       })
-      .catch(err => console.error("Error submitting answer:", err));
+      .catch(err => {
+        console.error("Error submitting answer:", err);
+        setSubmitError(err.message || 'Failed to submit answer.');
+      });
   };
 
   const handleNext = () => {
@@ -116,6 +118,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
       setIsSubmitted(false);
       setResult(null);
       setShowAnswer(false);
+      setSubmitError('');
     } else {
       setShowSummary(true);
     }
@@ -281,6 +284,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
                 setIsSubmitted(false);
                 setResult(null);
                 setShowAnswer(false);
+                setSubmitError('');
               }}
               style={{
                 width: '36px',
@@ -440,6 +444,12 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
               </div>
             )}
           </div>
+
+          {submitError && (
+            <div style={{ marginTop: '20px', padding: '12px 16px', background: '#fef2f2', color: '#dc2626', borderRadius: '12px', fontWeight: 600, fontSize: '0.9rem' }}>
+              {submitError}
+            </div>
+          )}
 
           {/* Footer Actions */}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '20px' }}>
