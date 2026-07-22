@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import ContestDashboardWidget from '../ContestDashboardWidget';
 import { PerformanceDashboard, AptitudeProgressRadar, TopicRadarChart, DifficultyDistributionChart, RankedBarChart } from '../../common/PerformanceCharts';
+import { getCsrfToken, extractApiError } from '../../../lib/appUtils';
 
 const shimmerStyles = `
   @keyframes shimmer {
@@ -176,6 +177,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
   const [modalSearchTerm, setModalSearchTerm] = useState("");
   const [reportBusy, setReportBusy] = useState(false);
   const [reportError, setReportError] = useState("");
+  const [trackingError, setTrackingError] = useState("");
   const [selfAnalytics, setSelfAnalytics] = useState(null);
   const [localTracked, setLocalTracked] = useState(() => dashboard?.user?.tracked_companies || []);
 
@@ -339,31 +341,31 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
     // Instant UI update — no prop-propagation delay
     setLocalTracked(newList);
     setIsUpdating(true);
+    setTrackingError('');
 
     try {
-      const getCookie = name => {
-        for (const cookie of document.cookie.split(';')) {
-          const [k, v] = cookie.trim().split('=');
-          if (k === name) return decodeURIComponent(v || '');
-        }
-        return '';
-      };
-
+      // getCsrfToken() (shared with the rest of the app) falls back to
+      // fetching /api/csrf-token/ itself if the cookie isn't set yet —
+      // reading document.cookie directly (the old approach here) silently
+      // sends an empty token and gets a 403 if that cookie was missing,
+      // which then rolled back with zero visible error.
       const response = await fetch('/api/dashboard/tracked-companies/', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-CSRFToken': getCookie('csrftoken'),
+          'X-CSRFToken': getCsrfToken(),
         },
         body: JSON.stringify({ companies: newList }),
         credentials: 'include',
       });
 
-      if (!response.ok) throw new Error('Server rejected update');
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(extractApiError(data, `Server rejected the update (HTTP ${response.status}).`));
+      }
 
-      const data = await response.json();
       // Use authoritative list from server response
-      const authoritative = Array.isArray(data.tracked_companies) ? data.tracked_companies : newList;
+      const authoritative = Array.isArray(data?.tracked_companies) ? data.tracked_companies : newList;
       setLocalTracked(authoritative);
 
       if (setDashboard) {
@@ -375,6 +377,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
       }
     } catch (error) {
       console.error('Failed to update tracked companies, rolling back:', error);
+      setTrackingError(error.message || 'Failed to update tracked companies.');
       setLocalTracked(snapshot);
     } finally {
       setIsUpdating(false);
@@ -836,6 +839,12 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
             </div>
           )}
 
+          {trackingError && (
+            <div style={{ marginTop: 16, padding: '12px 16px', background: '#fef2f2', color: '#dc2626', borderRadius: 12, fontWeight: 600, fontSize: '0.9rem' }}>
+              {trackingError}
+            </div>
+          )}
+
           {trackedCompaniesList.length > 0 && (
             <div style={{ background: '#111827', borderRadius: 20, padding: '24px 28px', marginTop: 32, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 28 }}>
               <div>
@@ -1160,6 +1169,11 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
             </div>
 
             <div style={{ padding: 32, overflowY: 'auto', flex: 1 }}>
+              {trackingError && (
+                <div style={{ marginBottom: 16, padding: '12px 16px', background: '#fef2f2', color: '#dc2626', borderRadius: 12, fontWeight: 600, fontSize: '0.85rem' }}>
+                  {trackingError}
+                </div>
+              )}
               <p style={{ margin: '0 0 16px 0', fontSize: '0.85rem', color: 'var(--text-soft)', fontWeight: 600 }}>
                 Don't see a company below? Type its name above to add it manually — it doesn't need to already exist in the question bank.
               </p>

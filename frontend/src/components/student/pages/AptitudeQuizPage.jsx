@@ -12,6 +12,8 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
   const [score, setScore] = useState(0);
   const [showSummary, setShowSummary] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   const [startTime] = useState(Date.now());
   const [elapsedTime, setElapsedTime] = useState(0);
   
@@ -34,10 +36,20 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
 
   useEffect(() => {
     setLoading(true);
+    setLoadError('');
     fetch(`/api/aptitude/questions/?topic_id=${topicId}&difficulty=${difficulty}&status=${status}`, { credentials: 'include' })
-      .then(res => res.json())
+      .then(async res => {
+        const data = await res.json().catch(() => null);
+        if (!res.ok) {
+          // Surface real failures distinctly — treating any non-2xx response
+          // as "0 questions" (the old behaviour) made server/auth errors
+          // indistinguishable from a topic that genuinely has no questions.
+          throw new Error((data && (data.detail || data.error)) || `Failed to load questions (HTTP ${res.status}).`);
+        }
+        return data;
+      })
       .then(data => {
-        setQuestions(data || []);
+        setQuestions(Array.isArray(data) ? data : []);
         setCurrentIndex(0);
         setSelectedOption(null);
         setIsSubmitted(false);
@@ -47,9 +59,11 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
       })
       .catch(err => {
         console.error("Error fetching questions:", err);
+        setLoadError(err.message || 'Failed to load questions.');
+        setQuestions([]);
         setLoading(false);
       });
-  }, [topicId, difficulty, status]);
+  }, [topicId, difficulty, status, reloadKey]);
 
   const getCookie = (name) => {
     let cookieValue = null;
@@ -461,20 +475,38 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
         </>
       ) : (
         <div style={{ textAlign: 'center', padding: '80px 40px', background: 'white', borderRadius: '24px', border: '1px solid var(--border-soft)', boxShadow: 'var(--shadow-soft)' }}>
-          <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', color: 'var(--text-soft)' }}>
+          <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: loadError ? '#fef2f2' : 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', color: loadError ? '#dc2626' : 'var(--text-soft)' }}>
             <Info size={40} />
           </div>
-          <h2 style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--olive-900)', marginBottom: '12px' }}>No Questions Found</h2>
-          <p style={{ color: 'var(--text-soft)', fontSize: '1.1rem', maxWidth: '400px', margin: '0 auto 32px' }}>
-            We couldn't find any questions matching your current filters. Try selecting a different difficulty or status.
-          </p>
-          <button 
-            onClick={() => { setDifficulty('All'); setStatus('all'); }} 
-            className="secondary-button" 
-            style={{ padding: '12px 32px', borderRadius: '12px' }}
-          >
-            Reset All Filters
-          </button>
+          {loadError ? (
+            <>
+              <h2 style={{ fontSize: '1.8rem', fontWeight: '800', color: '#dc2626', marginBottom: '12px' }}>Couldn't Load Questions</h2>
+              <p style={{ color: 'var(--text-soft)', fontSize: '1.1rem', maxWidth: '400px', margin: '0 auto 32px' }}>
+                {loadError}
+              </p>
+              <button
+                onClick={() => setReloadKey(k => k + 1)}
+                className="secondary-button"
+                style={{ padding: '12px 32px', borderRadius: '12px' }}
+              >
+                Retry
+              </button>
+            </>
+          ) : (
+            <>
+              <h2 style={{ fontSize: '1.8rem', fontWeight: '800', color: 'var(--olive-900)', marginBottom: '12px' }}>No Questions Found</h2>
+              <p style={{ color: 'var(--text-soft)', fontSize: '1.1rem', maxWidth: '400px', margin: '0 auto 32px' }}>
+                We couldn't find any questions matching your current filters. Try selecting a different difficulty or status.
+              </p>
+              <button
+                onClick={() => { setDifficulty('All'); setStatus('all'); }}
+                className="secondary-button"
+                style={{ padding: '12px 32px', borderRadius: '12px' }}
+              >
+                Reset All Filters
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

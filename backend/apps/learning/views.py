@@ -6735,6 +6735,7 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
         if topic_ids:
             # Enhanced filtering: Include subtopics recursively if a parent topic is selected
             all_topic_ids = set()
+            invalid_ids = []
             for tid in topic_ids:
                 try:
                     all_topic_ids.add(int(tid))
@@ -6744,7 +6745,18 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
                     ).values_list('id', flat=True)
                     all_topic_ids.update(subtopic_ids)
                 except ValueError:
+                    invalid_ids.append(tid)
                     continue
+
+            # A malformed/empty topic_id used to silently fall through to
+            # `topic_id__in=set()` — a valid-looking empty result that was
+            # indistinguishable from "this topic genuinely has no questions."
+            # Fail loudly instead so the client can tell the two apart.
+            if not all_topic_ids:
+                return Response(
+                    {"error": f"No valid topic_id provided — got {invalid_ids!r}."},
+                    status=400,
+                )
             qs = qs.filter(topic_id__in=all_topic_ids)
 
         if difficulty and difficulty != 'all' and difficulty != 'All':
