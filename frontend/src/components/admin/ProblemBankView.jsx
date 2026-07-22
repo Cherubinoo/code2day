@@ -2,7 +2,7 @@
 // generate test cases (via the LLM fallback chain) for any problem missing
 // them, or regenerate for any problem.
 import { Fragment, useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2 } from 'lucide-react';
 import { getCsrfToken } from '../../lib/appUtils';
 
 function apiFetch(url, method, body) {
@@ -23,6 +23,9 @@ const ProblemBankView = ({ onBack }) => {
   const [genStates, setGenStates] = useState({}); // { [problemId]: { busy, msg } }
   const [expandedId, setExpandedId] = useState(null);
   const [tcPanels, setTcPanels] = useState({}); // { [problemId]: { loading, testCases, newStdin, newOutput, newIsSample, saving, error } }
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
   const PAGE_SIZE = 50;
 
   useEffect(() => {
@@ -161,6 +164,65 @@ const ProblemBankView = ({ onBack }) => {
     }
   }
 
+  function toggleSelected(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllOnPage() {
+    setSelectedIds((prev) => {
+      const allSelected = pageItems.length > 0 && pageItems.every((p) => prev.has(p.id));
+      const next = new Set(prev);
+      if (allSelected) {
+        pageItems.forEach((p) => next.delete(p.id));
+      } else {
+        pageItems.forEach((p) => next.add(p.id));
+      }
+      return next;
+    });
+  }
+
+  async function deleteProblem(problem) {
+    if (!window.confirm(`Delete "${problem.title}"? This permanently removes the problem and all its test cases.`)) return;
+    setDeletingId(problem.id);
+    try {
+      const res = await apiFetch(`/api/admin/v2/problem-bank/${problem.id}/`, 'DELETE');
+      if (!res.ok && res.status !== 204) {
+        setError('Failed to delete problem.');
+        return;
+      }
+      setProblems((prev) => prev.filter((p) => p.id !== problem.id));
+      setSelectedIds((prev) => { const next = new Set(prev); next.delete(problem.id); return next; });
+    } catch {
+      setError('Network error while deleting.');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  async function deleteSelected() {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Delete ${selectedIds.size} selected problem(s)? This permanently removes them and all their test cases.`)) return;
+    setBulkDeleting(true);
+    try {
+      const res = await apiFetch('/api/admin/v2/problem-bank/bulk-delete/', 'POST', { ids: Array.from(selectedIds) });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Bulk delete failed.');
+        return;
+      }
+      setProblems((prev) => prev.filter((p) => !selectedIds.has(p.id)));
+      setSelectedIds(new Set());
+    } catch {
+      setError('Network error during bulk delete.');
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
   const missingCount = problems.filter((p) => p.test_case_count === 0).length;
 
   return (
@@ -178,10 +240,20 @@ const ProblemBankView = ({ onBack }) => {
             {problems.length} problems total &middot; {missingCount} missing test cases
           </p>
         </div>
+        {selectedIds.size > 0 && (
+          <button
+            onClick={deleteSelected}
+            disabled={bulkDeleting}
+            style={{ marginLeft: 'auto', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '10px 16px', cursor: bulkDeleting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#dc2626', fontWeight: 700 }}
+          >
+            {bulkDeleting ? <Loader2 size={16} className="spin" /> : <Trash2 size={16} />}
+            Delete Selected ({selectedIds.size})
+          </button>
+        )}
         <button
           onClick={load}
           disabled={loading}
-          style={{ marginLeft: 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}
+          style={{ marginLeft: selectedIds.size > 0 ? 0 : 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}
         >
           <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
         </button>
@@ -226,6 +298,13 @@ const ProblemBankView = ({ onBack }) => {
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
               <thead>
                 <tr style={{ background: 'var(--bg-2)', borderBottom: '2px solid var(--border-soft)' }}>
+                  <th style={{ textAlign: 'center', padding: '12px 10px', width: 32 }}>
+                    <input
+                      type="checkbox"
+                      checked={pageItems.length > 0 && pageItems.every((p) => selectedIds.has(p.id))}
+                      onChange={toggleSelectAllOnPage}
+                    />
+                  </th>
                   <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 700 }}>Title</th>
                   <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 700 }}>Topic</th>
                   <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 700 }}>Difficulty</th>
@@ -241,6 +320,9 @@ const ProblemBankView = ({ onBack }) => {
                   return (
                     <Fragment key={p.id}>
                     <tr style={{ borderBottom: expanded ? 'none' : '1px solid var(--bg-1)' }}>
+                      <td style={{ padding: '12px 10px', textAlign: 'center' }}>
+                        <input type="checkbox" checked={selectedIds.has(p.id)} onChange={() => toggleSelected(p.id)} />
+                      </td>
                       <td style={{ padding: '12px 16px' }}>
                         <div style={{ fontWeight: 600 }}>{p.title}</div>
                         <div style={{ fontSize: 11, color: 'var(--text-soft)', fontFamily: 'monospace' }}>{p.slug}</div>
@@ -285,6 +367,18 @@ const ProblemBankView = ({ onBack }) => {
                           {gen.busy ? <Loader2 size={13} className="spin" /> : <FlaskConical size={13} />}
                           {gen.busy ? 'Generating…' : p.test_case_count > 0 ? 'Regenerate' : 'Generate'}
                         </button>
+                        <button
+                          onClick={() => deleteProblem(p)}
+                          disabled={deletingId === p.id}
+                          title="Delete problem"
+                          style={{
+                            marginLeft: 8, padding: '8px 10px', borderRadius: 10, border: '1px solid #fecaca',
+                            background: '#fef2f2', color: '#dc2626', fontWeight: 700, fontSize: 12,
+                            cursor: deletingId === p.id ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center',
+                          }}
+                        >
+                          {deletingId === p.id ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
+                        </button>
                         {gen.msg && (
                           <div style={{ fontSize: 11, marginTop: 4, color: gen.msg.startsWith('Generated') ? '#166534' : '#dc2626' }}>
                             {gen.msg}
@@ -294,7 +388,7 @@ const ProblemBankView = ({ onBack }) => {
                     </tr>
                     {expanded && (
                       <tr style={{ borderBottom: '1px solid var(--bg-1)' }}>
-                        <td colSpan={5} style={{ padding: '0 16px 20px', background: 'var(--bg-2)' }}>
+                        <td colSpan={6} style={{ padding: '0 16px 20px', background: 'var(--bg-2)' }}>
                           {panel.loading ? (
                             <div style={{ padding: 16, color: 'var(--text-soft)' }}>Loading test cases…</div>
                           ) : (

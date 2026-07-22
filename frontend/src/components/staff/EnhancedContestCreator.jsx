@@ -142,11 +142,12 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
   }
 
   function toggleAptitudeQuestion(id) {
+    const key = String(id);
     setFormData(prev => ({
       ...prev,
-      aptitude_question_ids: prev.aptitude_question_ids.includes(id)
-        ? prev.aptitude_question_ids.filter(i => i !== id)
-        : [...prev.aptitude_question_ids, id],
+      aptitude_question_ids: prev.aptitude_question_ids.includes(key)
+        ? prev.aptitude_question_ids.filter(i => i !== key)
+        : [...prev.aptitude_question_ids, key],
     }));
   }
 
@@ -335,7 +336,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
       
     } else {
       // For aptitude, redistribute existing selected questions by difficulty
-      const selectedQuestionObjs = aptitudeQuestions.filter(q => formData.aptitude_question_ids.includes(q.id));
+      const selectedQuestionObjs = aptitudeQuestions.filter(q => formData.aptitude_question_ids.includes(String(q.id)));
       
       const easyQuestions = selectedQuestionObjs.filter(q => q.difficulty === 'Easy');
       const mediumQuestions = selectedQuestionObjs.filter(q => q.difficulty === 'Medium');
@@ -353,9 +354,9 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
       
       // Redistribute selected questions
       const redistributed = [
-        ...easyQuestions.slice(0, distribution.easy).map(q => q.id),
-        ...mediumQuestions.slice(0, distribution.medium).map(q => q.id),
-        ...hardQuestions.slice(0, distribution.hard).map(q => q.id),
+        ...easyQuestions.slice(0, distribution.easy).map(q => String(q.id)),
+        ...mediumQuestions.slice(0, distribution.medium).map(q => String(q.id)),
+        ...hardQuestions.slice(0, distribution.hard).map(q => String(q.id)),
       ];
       
       setFormData(prev => ({
@@ -498,9 +499,9 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     }
 
     const selectedIds = [
-      ...easyPool.slice(0, distribution.easy).map(q => q.id),
-      ...mediumPool.slice(0, distribution.medium).map(q => q.id),
-      ...hardPool.slice(0, distribution.hard).map(q => q.id),
+      ...easyPool.slice(0, distribution.easy).map(q => String(q.id)),
+      ...mediumPool.slice(0, distribution.medium).map(q => String(q.id)),
+      ...hardPool.slice(0, distribution.hard).map(q => String(q.id)),
     ];
 
     setFormData(prev => ({
@@ -1938,14 +1939,14 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                                 cursor: 'pointer',
                                 borderRadius: 6,
                                 marginBottom: 4,
-                                background: formData.aptitude_question_ids.includes(q.id) ? '#f0fdf4' : 'transparent',
-                                border: formData.aptitude_question_ids.includes(q.id) ? '1px solid #bbf7d0' : '1px solid transparent',
+                                background: formData.aptitude_question_ids.includes(String(q.id)) ? '#f0fdf4' : 'transparent',
+                                border: formData.aptitude_question_ids.includes(String(q.id)) ? '1px solid #bbf7d0' : '1px solid transparent',
                                 transition: 'all 0.2s',
                               }}
                             >
                               <input
                                 type="checkbox"
-                                checked={formData.aptitude_question_ids.includes(q.id)}
+                                checked={formData.aptitude_question_ids.includes(String(q.id))}
                                 onChange={() => toggleAptitudeQuestion(q.id)}
                                 style={{ marginRight: 12, marginTop: 4, width: 16, height: 16, cursor: 'pointer' }}
                               />
@@ -1955,11 +1956,16 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                                 </div>
                                 <div style={{ display: 'flex', gap: 12, fontSize: 11, color: '#666' }}>
                                   <span>Topic: {q.topic}</span>
-                                  <span style={{ 
+                                  <span style={{
                                     color: q.difficulty === 'Easy' ? '#059669' : q.difficulty === 'Medium' ? '#d97706' : '#dc2626'
                                   }}>
                                     {q.difficulty}
                                   </span>
+                                  {q.correct_option && (
+                                    <span style={{ color: '#166534', fontWeight: 700 }}>
+                                      Correct: {q.correct_option}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </label>
@@ -2007,7 +2013,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                           <p style={{ fontSize: 14 }}>No questions selected</p>
                         </div>
                       ) : (
-                        aptitudeQuestions.filter(q => formData.aptitude_question_ids.includes(q.id)).map((q, index) => (
+                        aptitudeQuestions.filter(q => formData.aptitude_question_ids.includes(String(q.id))).map((q, index) => (
                           <div key={q.id} style={{
                             display: 'flex', alignItems: 'flex-start', padding: '12px', borderRadius: 6, marginBottom: 6, background: '#f9fafb', border: '1px solid #e5e7eb',
                           }}>

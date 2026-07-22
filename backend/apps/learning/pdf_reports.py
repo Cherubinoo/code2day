@@ -66,9 +66,10 @@ logger = logging.getLogger(__name__)
 class WatermarkDocTemplate(BaseDocTemplate):
     """Custom document template that adds watermark to all pages"""
     
-    def __init__(self, filename, institution=None, **kwargs):
+    def __init__(self, filename, institution=None, department=None, **kwargs):
         BaseDocTemplate.__init__(self, filename, **kwargs)
         self.institution = institution
+        self.department = department
         self.watermark_image = None
         
         # Try to get watermark image — prefer the local file's filesystem
@@ -194,20 +195,31 @@ class WatermarkDocTemplate(BaseDocTemplate):
             canvas.drawCentredString(text_x, page_height - 0.62*inch, subheading.upper())
         
         # Address lines (Blue/Grey)
+        y = page_height - (0.76 * inch if subheading else 0.62 * inch)
         if address:
             canvas.setFont("Helvetica", 7.5)
             canvas.setFillColor(colors.HexColor('#2c3e50'))
             address_lines = address.split('\n')
-            y = page_height - (0.76 * inch if subheading else 0.62 * inch)
             for line in address_lines[:3]:
                 canvas.drawCentredString(text_x, y, line.strip())
                 y -= 11
-        
-        # Red line
+
+        # Department (Olive green, below institution/address block)
+        dept = self.department
+        dept_name = dept.get_full_name() if dept is not None and hasattr(dept, 'get_full_name') else (str(dept) if dept else '')
+        if dept_name:
+            canvas.setFont("Helvetica-Bold", 8.5)
+            canvas.setFillColor(colors.HexColor('#2c5016'))
+            canvas.drawCentredString(text_x, y - 2, dept_name)
+            y -= 13
+
+        # Red line — placed below whatever header content was drawn, but never
+        # above the usual 1.2in floor (keeps the common case pixel-identical)
+        line_y = min(page_height - 1.2 * inch, y - 6)
         canvas.setStrokeColor(colors.HexColor('#ED1C24'))
         canvas.setLineWidth(1.2)
-        canvas.line(margin, page_height - 1.2*inch, page_width - margin, page_height - 1.2*inch)
-        
+        canvas.line(margin, line_y, page_width - margin, line_y)
+
         canvas.restoreState()
 
 
@@ -554,7 +566,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         buffer = BytesIO()
         try:
             doc = create_watermarked_pdf_contest(
-                buffer, institution=contest.institution,
+                buffer, institution=contest.institution, department=contest.department,
                 pagesize=A4,
                 rightMargin=0.6*inch, leftMargin=0.6*inch,
                 topMargin=1.6*inch, bottomMargin=0.6*inch,
@@ -628,7 +640,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         story += self._cover_page(contest, profile)
         story.append(PageBreak())
         
-        story += self._overview_section(contest, participations, is_apt, n_problems)
+        story += self._overview_section(contest, participations, is_apt, n_problems, problems)
         story.append(Spacer(1, 15))
         story += self._analytics_dashboard(contest, participations, problems, is_apt)
         story.append(PageBreak())
@@ -658,7 +670,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
 
         # ── Info section ──
         story.append(Spacer(1, 20))
-        dept  = contest.department.name if contest.department else 'N/A'
+        dept  = contest.department.get_full_name() if contest.department else 'N/A'
         by    = getattr(profile, 'name', 'Administrator')
         start_dt = contest.access_start_time or contest.start_time
         dur   = contest.session_duration_minutes or contest.duration_minutes or 0
@@ -707,7 +719,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
     # ------------------------------------------------------------------
     # 3. Contest Overview
     # ------------------------------------------------------------------
-    def _overview_section(self, contest, participations, is_apt, n_problems):
+    def _overview_section(self, contest, participations, is_apt, n_problems, problems=None):
         from django.db.models import Avg, Max
         from .models import AptitudeContestSubmission
         story = [_section_header('CONTEST OVERVIEW', _INDIGO)]
@@ -735,7 +747,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             ['Contest Title', contest.title],
             ['Type', 'Aptitude' if is_apt else 'Programming'],
             ['Status', contest.get_status_display()],
-            ['Department', contest.department.name if contest.department else 'N/A'],
+            ['Department', contest.department.get_full_name() if contest.department else 'N/A'],
             ['Created By', contest.created_by.name if contest.created_by else 'N/A'],
         ]
         right = [
@@ -1258,6 +1270,7 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
         try:
             doc = create_watermarked_pdf_contest(
                 buffer, institution=contest.institution or student.institution,
+                department=student.department or contest.department,
                 pagesize=A4,
                 rightMargin=0.6*inch, leftMargin=0.6*inch,
                 topMargin=1.6*inch, bottomMargin=0.6*inch,
@@ -1380,7 +1393,7 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
         start_dt = contest.access_start_time or contest.start_time
         info_data = [
             [Paragraph('<b>Department:</b>', styles['Normal']),
-             student.department.name if student.department else 'N/A'],
+             student.department.get_full_name() if student.department else 'N/A'],
             [Paragraph('<b>Batch / Section:</b>', styles['Normal']),
              f"{student.batch or 'N/A'} / {student.section or 'N/A'}"],
             [Paragraph('<b>Contest Date:</b>', styles['Normal']),
@@ -1722,7 +1735,7 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
             ["Register Number", student.register_number or "N/A"],
             ["Email", student.personal_email or "N/A"],
             ["Institution", student.institution.get_display_name() if student.institution else "N/A"],
-            ["Department", student.department.name if student.department else "N/A"],
+            ["Department", student.department.get_full_name() if student.department else "N/A"],
             ["Batch / Section", f"{student.batch or 'N/A'} / {student.section or 'N/A'}"],
         ]
         tbl = Table(rows, colWidths=[1.8*inch, 5.0*inch])
@@ -1816,11 +1829,12 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
             return Response({"error": "No students found for this batch/section."}, status=404)
 
         institution = students[0].institution or getattr(profile, "institution", None)
+        department = getattr(profile, "department", None) or students[0].department
 
         buffer = BytesIO()
         try:
             doc = create_watermarked_pdf_contest(
-                buffer, institution=institution, pagesize=A4,
+                buffer, institution=institution, department=department, pagesize=A4,
                 rightMargin=0.6*inch, leftMargin=0.6*inch, topMargin=1.6*inch, bottomMargin=0.6*inch,
             )
             story = self._build_story(batch_code, section, students, date_from, date_to, profile)
@@ -2119,6 +2133,111 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
         story.append(Paragraph(
             f"Batch Performance Report — {scope_txt} — "
             f"Generated {datetime.now().strftime('%d %b %Y %I:%M %p')} — CONFIDENTIAL", fs))
+        return story
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class StudentCompanyTrackReportPDFView(UnifiedAuthMixin, APIView):
+    """
+    Student: generate a PDF snapshot of their placement-preparation progress
+    across the companies they've chosen to track (StudentProfile.tracked_companies)
+    — company name, problems solved against it, and a short list of which
+    problems. Self-service only; no staff/HOD access.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not REPORTLAB_AVAILABLE:
+            return Response({"error": "reportlab not installed"}, status=500)
+
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+        if profile_type != "student":
+            return Response({"error": "Student access required."}, status=403)
+
+        tracked = profile.tracked_companies or []
+        if not tracked:
+            return Response({"error": "You haven't tracked any companies yet."}, status=400)
+
+        solved = (SolvedProblem.objects
+                  .filter(student=profile)
+                  .select_related("problem")
+                  .order_by("problem__title"))
+
+        by_company = {c: [] for c in tracked}
+        for row in solved:
+            if not row.problem.companies:
+                continue
+            tags = [t.strip() for t in row.problem.companies.split(",") if t.strip()]
+            for c in tags:
+                if c in by_company:
+                    by_company[c].append(row.problem.title)
+
+        buffer = BytesIO()
+        try:
+            doc = create_watermarked_pdf_contest(
+                buffer, institution=profile.institution, department=profile.department,
+                pagesize=A4,
+                rightMargin=0.6 * inch, leftMargin=0.6 * inch,
+                topMargin=1.6 * inch, bottomMargin=0.6 * inch,
+            )
+            story = self._build_story(profile, by_company)
+            doc.build(story)
+        except Exception as e:
+            import traceback
+            return Response(
+                {"error": f"PDF generation failed: {str(e)}", "trace": traceback.format_exc()}, status=500,
+            )
+
+        buffer.seek(0)
+        resp = HttpResponse(buffer.getvalue(), content_type="application/pdf")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        resp["Content-Disposition"] = f'attachment; filename="company_track_report_{profile.register_number}_{ts}.pdf"'
+        return resp
+
+    def _build_story(self, student, by_company):
+        styles = getSampleStyleSheet()
+        story = []
+
+        title_s = ParagraphStyle('ct', fontName='Helvetica-Bold', fontSize=22,
+                                  alignment=1, textColor=_hx(_NAVY), spaceAfter=6)
+        story.append(Paragraph("Placement Preparation Report", title_s))
+        sub_s = ParagraphStyle('cs', fontName='Helvetica', fontSize=11,
+                                alignment=1, textColor=_hx(_GRAY), spaceAfter=24)
+        story.append(Paragraph(f"{student.name} - {student.register_number or 'N/A'}", sub_s))
+
+        total_solved = sum(len(v) for v in by_company.values())
+        cards = [
+            _metric_card("Companies Tracked", str(len(by_company)), bg=_hx(_INDIGO)),
+            _metric_card("Total Problems Solved", str(total_solved), bg=_hx(_TEAL)),
+        ]
+        card_table = Table([cards], colWidths=[2.6 * inch, 2.6 * inch])
+        card_table.setStyle(TableStyle([('ALIGN', (0, 0), (-1, -1), 'CENTER')]))
+        story.append(card_table)
+        story.append(Spacer(1, 20))
+
+        story.append(_section_header('COMPANY PROGRESS', _INDIGO))
+        rows = [["Company", "Problems Solved", "Titles"]]
+        for company in sorted(by_company, key=lambda c: -len(by_company[c])):
+            titles = by_company[company]
+            titles_txt = ", ".join(titles[:4]) + (f" +{len(titles) - 4} more" if len(titles) > 4 else "") if titles else "—"
+            rows.append([company, str(len(titles)), Paragraph(titles_txt, styles['Normal'])])
+
+        tbl = Table(rows, colWidths=[1.6 * inch, 1.1 * inch, 3.9 * inch], repeatRows=1)
+        tbl.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(_INDIGO)),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#e2e8f0')),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('TOPPADDING', (0, 0), (-1, -1), 6), ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+        ]))
+        story.append(tbl)
+
         return story
 
 

@@ -67,6 +67,27 @@ class SystemConfiguration(models.Model):
         return "Global System Configuration"
 
 
+
+# Department.name is stored as a short abbreviation (e.g. "CSE", "AD", "Mech")
+# rather than the full descriptive title used on official documents/PDFs. This
+# maps every abbreviation variant seen in the wild to its official full name.
+DEPARTMENT_FULL_NAMES = {
+    "AD": "Artificial Intelligence & Data Science (AI&DS)",
+    "AIDS": "Artificial Intelligence & Data Science (AI&DS)",
+    "AI&DS": "Artificial Intelligence & Data Science (AI&DS)",
+    "CSE": "Computer Science & Engineering (CSE)",
+    "CSE-AIML": "Computer Science & Engineering (Artificial Intelligence & Machine Learning) (CSE-AIML)",
+    "CSEAIML": "Computer Science & Engineering (Artificial Intelligence & Machine Learning) (CSE-AIML)",
+    "AIML": "Computer Science & Engineering (Artificial Intelligence & Machine Learning) (CSE-AIML)",
+    "CSBS": "Computer Science & Business Systems (CSBS)",
+    "IT": "Information Technology (IT)",
+    "ECE": "Electronics & Communication Engineering (ECE)",
+    "EEE": "Electrical & Electronics Engineering (EEE)",
+    "MECH": "Mechanical Engineering (MECH)",
+    "CIVIL": "Civil Engineering (CIVIL)",
+}
+
+
 class Department(models.Model):
     """Department model for organizing students and staff"""
     institution = models.ForeignKey(
@@ -85,6 +106,11 @@ class Department(models.Model):
 
     def __str__(self):
         return f"{self.code} - {self.name}"
+
+    def get_full_name(self):
+        """Official descriptive department name for headers/PDFs, e.g. 'CSE' -> 'Computer Science & Engineering (CSE)'."""
+        key = (self.name or "").strip().upper().replace(" ", "")
+        return DEPARTMENT_FULL_NAMES.get(key, self.name)
 
 
 class StudentProfile(models.Model):
@@ -608,6 +634,33 @@ class SolvedAptitude(models.Model):
 
     def __str__(self):
         return f"{self.student} solved aptitude q#{self.question.id}"
+
+
+class AptitudeAttempt(models.Model):
+    """Logs every free-practice aptitude answer — correct or wrong.
+    SolvedAptitude only records correct answers, so it can show "questions
+    solved" but not real per-topic accuracy; this is what the progress-page
+    Study Progress radar is built from."""
+    student = models.ForeignKey(
+        StudentProfile,
+        on_delete=models.CASCADE,
+        related_name='aptitude_attempts',
+    )
+    question = models.ForeignKey(
+        AptitudeQuestion,
+        on_delete=models.CASCADE,
+        related_name='attempts',
+    )
+    selected_option = models.CharField(max_length=1)
+    is_correct = models.BooleanField()
+    attempted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "aptitude_attempts"
+        ordering = ("-attempted_at",)
+
+    def __str__(self):
+        return f"{self.student} attempted aptitude q#{self.question_id} ({'correct' if self.is_correct else 'wrong'})"
 
 
 class DiscussionMessage(models.Model):

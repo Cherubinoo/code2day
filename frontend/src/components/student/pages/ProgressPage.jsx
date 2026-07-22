@@ -20,7 +20,9 @@ import {
   Trophy,
   Users,
   GraduationCap,
-  UserCheck
+  UserCheck,
+  Download,
+  Loader2
 } from 'lucide-react';
 import ContestDashboardWidget from '../ContestDashboardWidget';
 import { PerformanceDashboard, AptitudeProgressRadar } from '../../common/PerformanceCharts';
@@ -171,6 +173,8 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
   const [isUpdating, setIsUpdating] = useState(false);
   const [companySearchTerm, setCompanySearchTerm] = useState("");
   const [modalSearchTerm, setModalSearchTerm] = useState("");
+  const [reportBusy, setReportBusy] = useState(false);
+  const [reportError, setReportError] = useState("");
   const [selfAnalytics, setSelfAnalytics] = useState(null);
   const [localTracked, setLocalTracked] = useState(() => dashboard?.user?.tracked_companies || []);
 
@@ -303,6 +307,32 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
       setLocalTracked(snapshot);
     } finally {
       setIsUpdating(false);
+    }
+  };
+
+  const downloadCompanyReport = async () => {
+    if (reportBusy) return;
+    setReportBusy(true);
+    setReportError("");
+    try {
+      const res = await fetch('/api/dashboard/tracked-companies/report/', { credentials: 'include' });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'Failed to generate report.');
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'placement_preparation_report.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setReportError(err.message || 'Failed to generate report.');
+    } finally {
+      setReportBusy(false);
     }
   };
 
@@ -636,9 +666,20 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                   style={{ padding: '12px 16px 12px 48px', borderRadius: 16, border: '2px solid #f1f5f9', background: '#f8fafc', fontSize: '0.9rem', fontWeight: 600, width: 220 }}
                 />
               </div>
-              <button 
+              {trackedCompaniesList.length > 0 && (
+                <button
+                  onClick={downloadCompanyReport}
+                  disabled={reportBusy}
+                  className="secondary-button"
+                  style={{ padding: '12px 24px', borderRadius: 16, display: 'flex', alignItems: 'center', gap: 10, cursor: reportBusy ? 'not-allowed' : 'pointer' }}
+                >
+                  {reportBusy ? <Loader2 size={18} className="spin" /> : <Download size={18} />}
+                  Generate Report
+                </button>
+              )}
+              <button
                 onClick={() => setIsTrackingModalOpen(true)}
-                className="primary-button" 
+                className="primary-button"
                 style={{ padding: '12px 24px', borderRadius: 16, display: 'flex', alignItems: 'center', gap: 10 }}
               >
                 <Settings size={18} />
@@ -646,6 +687,12 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
               </button>
             </div>
           </div>
+
+          {reportError && (
+            <div style={{ marginTop: 16, padding: '12px 16px', background: '#fef2f2', color: '#dc2626', borderRadius: 12, fontWeight: 600, fontSize: '0.9rem' }}>
+              {reportError}
+            </div>
+          )}
 
           {companyProgress.length === 0 ? (
             <div style={{ padding: '80px 40px', textAlign: 'center', background: '#f8fafc', borderRadius: 32, marginTop: 40, border: '2px dashed #e2e8f0' }}>
@@ -753,7 +800,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
 
           <AptitudeProgressRadar
             topicAccuracy={topicAccuracy}
-            aptitudeStats={dashboard?.aptitude_stats || []}
+            topicAccuracyPractice={selfAnalytics?.topic_accuracy_practice || []}
           />
 
           <div className="section-head" style={{ marginTop: 48 }}>
@@ -865,8 +912,27 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
               </div>
               <button onClick={() => setIsTrackingModalOpen(false)} style={{ padding: 12, borderRadius: '50%', background: '#f8fafc', border: 'none', cursor: 'pointer' }}><X size={20} /></button>
             </div>
-            
+
             <div style={{ padding: 32, overflowY: 'auto', flex: 1 }}>
+              {modalSearchTerm.trim() && !allAvailableCompanies.some(c => c.toLowerCase() === modalSearchTerm.trim().toLowerCase()) && (
+                <button
+                  onClick={() => { toggleTrackedCompany(modalSearchTerm.trim()); setModalSearchTerm(''); }}
+                  disabled={isUpdating || trackedCompaniesList.includes(modalSearchTerm.trim())}
+                  style={{
+                    width: '100%', padding: '14px 20px', borderRadius: 16, marginBottom: 20,
+                    border: '2px dashed var(--accent)', background: '#fffbeb',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    cursor: trackedCompaniesList.includes(modalSearchTerm.trim()) ? 'default' : 'pointer',
+                  }}
+                >
+                  <span style={{ fontWeight: 800, color: 'var(--accent-dark)' }}>
+                    {trackedCompaniesList.includes(modalSearchTerm.trim())
+                      ? `"${modalSearchTerm.trim()}" is already tracked`
+                      : `Add "${modalSearchTerm.trim()}" as a new company to track`}
+                  </span>
+                  {!trackedCompaniesList.includes(modalSearchTerm.trim()) && <Plus size={18} color="var(--accent-dark)" />}
+                </button>
+              )}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16 }}>
                 {filteredModalCompanies.length > 0 ? (
                   filteredModalCompanies.map(comp => {

@@ -3,21 +3,23 @@
 
 import { useState, useEffect } from 'react';
 import { 
-  Building2, Lock, Unlock, Plus, Shield, Users, 
+  Building2, Lock, Unlock, Plus, Shield, Users,
   Trash2, Activity, Database, LayoutDashboard,
   GraduationCap, Briefcase, Award, Settings,
   ChevronRight, ArrowLeft, BarChart3, HardHat,
-  UserCheck, Wrench, Search
+  UserCheck, Wrench, Search, Brain
 } from 'lucide-react';
 import api from '../../lib/api';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import ProblemBankView from './ProblemBankView';
+import AptitudeBankView from './AptitudeBankView';
 import LLMProviderView from './LLMProviderView';
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [selectedInstitution, setSelectedInstitution] = useState(null);
   const [showProblemBank, setShowProblemBank] = useState(false);
+  const [showAptitudeBank, setShowAptitudeBank] = useState(false);
   const [showLLMProviders, setShowLLMProviders] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -346,18 +348,21 @@ const AdminDashboard = () => {
 
         {showProblemBank ? (
           <ProblemBankView onBack={() => setShowProblemBank(false)} />
+        ) : showAptitudeBank ? (
+          <AptitudeBankView onBack={() => setShowAptitudeBank(false)} />
         ) : showLLMProviders ? (
           <LLMProviderView onBack={() => setShowLLMProviders(false)} />
         ) : !selectedInstitution ? (
           /* GLOBAL LANDING VIEW - INSTITUTIONS LIST */
           <div className="global-view animate-fade-in">
             {/* SYSTEM METRICS */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 24, marginBottom: 48 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 24, marginBottom: 48 }}>
               {[
                 { label: 'Total Institutions', value: institutions.length, icon: Building2, color: '#6366f1' },
                 { label: 'Active Users', value: metrics.total_users, icon: Users, color: '#10b981' },
                 { label: 'Faculty Members', value: metrics.total_staff, icon: Briefcase, color: '#f59e0b' },
-                { label: 'Problem Bank', value: metrics.total_problems + metrics.total_aptitude, icon: Database, color: '#ef4444', onClick: () => setShowProblemBank(true) }
+                { label: 'Problem Bank', value: metrics.total_problems, icon: Database, color: '#ef4444', onClick: () => setShowProblemBank(true) },
+                { label: 'Aptitude Bank', value: metrics.total_aptitude, icon: Brain, color: '#8b5cf6', onClick: () => setShowAptitudeBank(true) },
               ].map((m, i) => (
                 <div
                   key={i}

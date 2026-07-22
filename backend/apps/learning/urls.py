@@ -101,6 +101,12 @@ from .views import (
     AdminProblemGenerateTestCasesView,
     AdminProblemTestCasesView,
     AdminProblemTestCaseDetailView,
+    AdminProblemDetailView,
+    AdminProblemBulkDeleteView,
+    AdminAptitudeBankView,
+    AdminAptitudeQuestionDetailView,
+    AdminAptitudeBulkDeleteView,
+    AdminAptitudeBulkUploadView,
     AdminLLMProvidersView,
     AdminLLMProviderDetailView,
     AdminLLMProviderParseSnippetView,
@@ -161,7 +167,7 @@ from .file_views import (
 )
 
 # Import PDF report views
-from .pdf_reports import ContestReportPDFView, StudentContestReportPDFView, BatchReportPDFView
+from .pdf_reports import ContestReportPDFView, StudentContestReportPDFView, BatchReportPDFView, StudentCompanyTrackReportPDFView
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health-check"),
@@ -173,6 +179,7 @@ urlpatterns = [
     # Dashboard & problems
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
     path("dashboard/tracked-companies/", UpdateTrackedCompaniesView.as_view(), name="update-tracked-companies"),
+    path("dashboard/tracked-companies/report/", StudentCompanyTrackReportPDFView.as_view(), name="tracked-companies-report-pdf"),
     path("dashboard/daily/leaderboard/", DailyLeaderboardView.as_view(), name="daily-leaderboard"),
     path("ranking/", CampusRankingView.as_view(), name="campus-ranking"),
     path("problems/", ProblemListView.as_view(), name="problem-list"),
@@ -229,6 +236,12 @@ urlpatterns = [
     path("admin/v2/problem-bank/<int:problem_id>/generate-test-cases/", AdminProblemGenerateTestCasesView.as_view(), name="admin-problem-bank-generate"),
     path("admin/v2/problem-bank/<int:problem_id>/test-cases/", AdminProblemTestCasesView.as_view(), name="admin-problem-bank-test-cases"),
     path("admin/v2/problem-bank/<int:problem_id>/test-cases/<int:test_case_id>/", AdminProblemTestCaseDetailView.as_view(), name="admin-problem-bank-test-case-detail"),
+    path("admin/v2/problem-bank/<int:problem_id>/", AdminProblemDetailView.as_view(), name="admin-problem-bank-detail"),
+    path("admin/v2/problem-bank/bulk-delete/", AdminProblemBulkDeleteView.as_view(), name="admin-problem-bank-bulk-delete"),
+    path("admin/v2/aptitude-bank/", AdminAptitudeBankView.as_view(), name="admin-aptitude-bank"),
+    path("admin/v2/aptitude-bank/<int:question_id>/", AdminAptitudeQuestionDetailView.as_view(), name="admin-aptitude-bank-detail"),
+    path("admin/v2/aptitude-bank/bulk-delete/", AdminAptitudeBulkDeleteView.as_view(), name="admin-aptitude-bank-bulk-delete"),
+    path("admin/v2/aptitude-bank/bulk-upload/", AdminAptitudeBulkUploadView.as_view(), name="admin-aptitude-bank-bulk-upload"),
     path("admin/v2/llm-providers/", AdminLLMProvidersView.as_view(), name="admin-llm-providers"),
     path("admin/v2/llm-providers/parse-snippet/", AdminLLMProviderParseSnippetView.as_view(), name="admin-llm-provider-parse-snippet"),
     path("admin/v2/llm-providers/<int:provider_id>/", AdminLLMProviderDetailView.as_view(), name="admin-llm-provider-detail"),

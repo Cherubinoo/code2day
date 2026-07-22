@@ -29,6 +29,14 @@ _TITLE_STYLE = ParagraphStyle(
     "LabRecordTitle", parent=_STYLES["Normal"], fontSize=15, leading=19,
     alignment=TA_CENTER, fontName="Helvetica-Bold", textColor=_DARK, spaceAfter=4,
 )
+_INSTITUTION_STYLE = ParagraphStyle(
+    "LabRecordInstitution", parent=_STYLES["Normal"], fontSize=14, leading=17,
+    alignment=TA_CENTER, fontName="Helvetica-Bold", textColor=_ACCENT, spaceAfter=1,
+)
+_DEPARTMENT_STYLE = ParagraphStyle(
+    "LabRecordDepartment", parent=_STYLES["Normal"], fontSize=10, leading=13,
+    alignment=TA_CENTER, fontName="Helvetica-Bold", textColor=_GRAY, spaceAfter=8,
+)
 _CORNER_STYLE = ParagraphStyle("LabRecordCorner", parent=_STYLES["Normal"], fontSize=9.5, leading=12, textColor=_GRAY)
 _HEADING_STYLE = ParagraphStyle(
     "LabRecordHeading", parent=_STYLES["Normal"], fontSize=11, leading=14,
@@ -228,6 +236,23 @@ def build_lab_report_pdf(buffer: BytesIO, *, report, test_case_rows=None, test_c
     )
 
     story = []
+
+    # ── Institution / Department header ─────────────────────────────────
+    institution = student.institution
+    department = student.department
+    if institution is not None:
+        inst_name = getattr(institution, "display_name", "") or getattr(institution, "name", "")
+        if inst_name:
+            story.append(Paragraph(_escape(inst_name), _INSTITUTION_STYLE))
+    if department is not None:
+        dept_name = department.get_full_name()
+        if dept_name:
+            story.append(Paragraph(_escape(dept_name), _DEPARTMENT_STYLE))
+    if institution is not None or department is not None:
+        rule = Drawing(6.6 * inch, 2)
+        rule.add(Rect(0, 0, 6.6 * inch, 1, fillColor=_ACCENT, strokeColor=None))
+        story.append(rule)
+        story.append(Spacer(1, 10))
 
     # ── Exp No / Date / Title ───────────────────────────────────────────
     date_str = report.generated_at.strftime("%d-%m-%Y") if report.generated_at else ""

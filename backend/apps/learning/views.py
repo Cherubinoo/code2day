@@ -49,6 +49,7 @@ from .models import (
     SystemConfiguration,
     Department,
     SolvedAptitude,
+    AptitudeAttempt,
     AptitudeContestSubmission,
     LabTopic,
     LabProblem,
@@ -3928,7 +3929,7 @@ class AptitudeContestSubmitView(APIView):
         if not question:
             return Response({"detail": "Question not found in this contest."}, status=status.HTTP_404_NOT_FOUND)
 
-        is_correct = (selected_option == question.correct_option)
+        is_correct = bool(selected_option) and selected_option.strip().upper() == (question.correct_option or "").strip().upper()
         score = 1 if is_correct else 0 # Simple scoring for now
 
         try:
@@ -5313,6 +5314,34 @@ class StudentSelfAnalyticsView(APIView):
             logger.exception("Failed to compute topic_accuracy for self-analytics (student %s)", getattr(student, 'register_number', '?'))
             topic_accuracy = []
 
+        # Practice-mode topic accuracy — built from every logged attempt
+        # (correct AND wrong), unlike SolvedAptitude which only records
+        # correct answers. This is what makes the Study Progress radar real
+        # and per-topic instead of a 3-category "% of bank solved" summary.
+        try:
+            practice_acc_qs = AptitudeAttempt.objects.filter(
+                student=student
+            ).select_related('question__topic__parent').values(
+                'question__topic__title', 'question__topic__parent__title'
+            ).annotate(
+                total=Count('id'),
+                correct=Count('id', filter=Q(is_correct=True))
+            ).order_by('-total')[:20]
+
+            topic_accuracy_practice = [
+                {
+                    'topic': t['question__topic__title'],
+                    'category': t['question__topic__parent__title'] or t['question__topic__title'],
+                    'accuracy': round(t['correct'] / t['total'] * 100, 1) if t['total'] else 0,
+                    'total': t['total'],
+                    'correct': t['correct'],
+                }
+                for t in practice_acc_qs
+            ]
+        except Exception:
+            logger.exception("Failed to compute topic_accuracy_practice for self-analytics (student %s)", getattr(student, 'register_number', '?'))
+            topic_accuracy_practice = []
+
         try:
             return Response({
                 "analytics": {
@@ -5327,6 +5356,7 @@ class StudentSelfAnalyticsView(APIView):
                     },
                     "score_history": score_history,
                     "topic_accuracy": topic_accuracy,
+                    "topic_accuracy_practice": topic_accuracy_practice,
                     "tests_completed": tests_completed,
                     "avg_score": avg_score,
                     "peak_score": peak_score,
@@ -6736,6 +6766,10 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
                 "option_b": q.option_b,
                 "option_c": q.option_c,
                 "option_d": q.option_d,
+                # Only staff/HOD building a contest get to see the answer — never
+                # send this to a student, who fetches this same endpoint to take
+                # the quiz itself, or it would leak the answer via the network tab.
+                **({} if is_student else {"correct_option": q.correct_option}),
                 "is_solved": q.id in solved_ids
             })
             
@@ -6754,7 +6788,15 @@ class AptitudeQuestionSubmitView(APIView):
             
         question = get_object_or_404(AptitudeQuestion, id=question_id)
         is_correct = question.correct_option.upper() == selected_option.upper()
-        
+
+        if hasattr(request.user, 'student_profile'):
+            AptitudeAttempt.objects.create(
+                student=request.user.student_profile,
+                question=question,
+                selected_option=selected_option.upper()[:1],
+                is_correct=is_correct,
+            )
+
         if is_correct:
             if hasattr(request.user, 'student_profile'):
                 profile = request.user.student_profile
@@ -6762,7 +6804,7 @@ class AptitudeQuestionSubmitView(APIView):
                     student=profile,
                     question=question
                 )
-                
+
                 # Check for aptitude achievements
                 total_aptitude_solved = SolvedAptitude.objects.filter(student=profile).count()
                 unearned = Achievement.objects.filter(category='aptitude').exclude(userachievement__user=request.user)
@@ -6864,10 +6906,17 @@ class StudentReportPDFView(APIView):
         institution = student.institution
         display_name = institution.display_name or institution.name
         elements.append(Paragraph(f"{display_name}", title_style))
-        
+
+        if student.department:
+            dept_header_style = ParagraphStyle(
+                'DeptHeader', parent=styles['Normal'], fontSize=12, alignment=1,
+                fontName='Helvetica-Bold', textColor=colors.HexColor('#39482a'), spaceAfter=6,
+            )
+            elements.append(Paragraph(student.department.get_full_name().replace('&', '&amp;'), dept_header_style))
+
         if institution.subheading:
             elements.append(Paragraph(f"{institution.subheading}", styles['Normal']))
-        
+
         if institution.address:
             elements.append(Paragraph(f"{institution.address}", styles['Normal']))
         
@@ -6899,11 +6948,11 @@ class StudentReportPDFView(APIView):
         student_data = [
             ["Name:", student.name],
             ["Register Number:", student.register_number],
-            ["Department:", student.department.name if student.department else 'N/A'],
+            ["Department:", student.department.get_full_name() if student.department else 'N/A'],
             ["Batch:", student.batch or 'N/A'],
             ["Report Period:", f"{date_from or 'All time'} to {date_to or 'Present'}"],
         ]
-        
+
         if topic_filter:
             student_data.append(["Topic Filter:", topic_filter])
             
@@ -7280,7 +7329,14 @@ class StaffReportPDFView(APIView):
         institution = target_staff.institution
         display_name = institution.display_name or institution.name
         elements.append(Paragraph(f"{display_name}", title_style))
-        
+
+        if target_staff.department:
+            dept_header_style = ParagraphStyle(
+                'DeptHeader', parent=styles['Normal'], fontSize=12, alignment=1,
+                fontName='Helvetica-Bold', textColor=colors.HexColor('#39482a'), spaceAfter=6,
+            )
+            elements.append(Paragraph(target_staff.department.get_full_name().replace('&', '&amp;'), dept_header_style))
+
         if institution.subheading:
             elements.append(Paragraph(f"{institution.subheading}", styles['Normal']))
         
@@ -7315,7 +7371,7 @@ class StaffReportPDFView(APIView):
         faculty_data = [
             ["Name:", target_staff.name],
             ["Faculty ID:", target_staff.faculty_id],
-            ["Department:", target_staff.department.name if target_staff.department else 'N/A'],
+            ["Department:", target_staff.department.get_full_name() if target_staff.department else 'N/A'],
             ["Role:", target_staff.get_role_display() if hasattr(target_staff, 'get_role_display') else target_staff.role],
             ["Report Period:", f"{date_from or 'All time'} to {date_to or 'Present'}"],
         ]
@@ -8304,6 +8360,363 @@ class AdminProblemGenerateTestCasesView(APIView):
             "test_case_count": problem.test_cases.count(),
             "examples_count": len(problem.examples),
         })
+
+
+class AdminProblemDetailView(APIView):
+    """System Admin: delete a single Problem (and its test cases, via
+    on_delete cascade) from the Problem Bank."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+        problem.delete()
+        return Response(status=204)
+
+
+class AdminProblemBulkDeleteView(APIView):
+    """System Admin: delete many Problems at once, selected in the Problem
+    Bank UI."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, list) or not ids:
+            return Response({"error": "ids (non-empty list) is required"}, status=400)
+
+        qs = Problem.objects.filter(id__in=ids)
+        deleted_count = qs.count()
+        qs.delete()
+        return Response({"deleted_count": deleted_count})
+
+
+class AdminAptitudeBankView(APIView):
+    """System Admin: list every aptitude question (with topic + correct
+    option, for admin review) and create a new one."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        qs = AptitudeQuestion.objects.select_related("topic").order_by("-id")
+
+        topic_id = request.query_params.get("topic_id")
+        if topic_id:
+            qs = qs.filter(topic_id=topic_id)
+        difficulty = request.query_params.get("difficulty")
+        if difficulty and difficulty != "all":
+            qs = qs.filter(difficulty__iexact=difficulty)
+        search = request.query_params.get("q")
+        if search:
+            qs = qs.filter(question_text__icontains=search)
+
+        data = [{
+            "id": q.id,
+            "topic_id": q.topic_id,
+            "topic": q.topic.title if q.topic else "",
+            "question_text": q.question_text,
+            "option_a": q.option_a,
+            "option_b": q.option_b,
+            "option_c": q.option_c,
+            "option_d": q.option_d,
+            "correct_option": q.correct_option,
+            "explanation": q.explanation or "",
+            "difficulty": q.difficulty,
+        } for q in qs[:2000]]
+
+        return Response({"questions": data, "total": len(data)})
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        topic_id = request.data.get("topic_id")
+        question_text = (request.data.get("question_text") or "").strip()
+        option_a = (request.data.get("option_a") or "").strip()
+        option_b = (request.data.get("option_b") or "").strip()
+        option_c = (request.data.get("option_c") or "").strip()
+        option_d = (request.data.get("option_d") or "").strip()
+        correct_option = (request.data.get("correct_option") or "").strip().upper()
+        difficulty = request.data.get("difficulty") or "Easy"
+        explanation = request.data.get("explanation") or ""
+
+        if not topic_id:
+            return Response({"error": "topic_id is required"}, status=400)
+        topic = AptitudeTopic.objects.filter(id=topic_id).first()
+        if not topic:
+            return Response({"error": "Topic not found"}, status=404)
+        if not question_text:
+            return Response({"error": "question_text is required"}, status=400)
+        if not all([option_a, option_b, option_c, option_d]):
+            return Response({"error": "All four options (A-D) are required"}, status=400)
+        if correct_option not in ("A", "B", "C", "D"):
+            return Response({"error": "correct_option must be one of A, B, C, D"}, status=400)
+        if difficulty not in ("Easy", "Medium", "Hard"):
+            return Response({"error": "difficulty must be Easy, Medium, or Hard"}, status=400)
+
+        q = AptitudeQuestion.objects.create(
+            topic=topic, question_text=question_text,
+            option_a=option_a, option_b=option_b, option_c=option_c, option_d=option_d,
+            correct_option=correct_option, difficulty=difficulty, explanation=explanation,
+        )
+        return Response({
+            "id": q.id, "topic_id": q.topic_id, "topic": topic.title,
+            "question_text": q.question_text,
+            "option_a": q.option_a, "option_b": q.option_b, "option_c": q.option_c, "option_d": q.option_d,
+            "correct_option": q.correct_option, "explanation": q.explanation, "difficulty": q.difficulty,
+        }, status=201)
+
+
+class AdminAptitudeQuestionDetailView(APIView):
+    """System Admin: edit or delete a single aptitude question."""
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, question_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        q = AptitudeQuestion.objects.filter(id=question_id).first()
+        if not q:
+            return Response({"error": "Not found"}, status=404)
+
+        topic_id = request.data.get("topic_id")
+        if topic_id:
+            topic = AptitudeTopic.objects.filter(id=topic_id).first()
+            if not topic:
+                return Response({"error": "Topic not found"}, status=404)
+            q.topic = topic
+
+        question_text = request.data.get("question_text")
+        if question_text is not None:
+            question_text = question_text.strip()
+            if not question_text:
+                return Response({"error": "question_text cannot be empty"}, status=400)
+            q.question_text = question_text
+
+        for field in ("option_a", "option_b", "option_c", "option_d"):
+            val = request.data.get(field)
+            if val is not None:
+                val = val.strip()
+                if not val:
+                    return Response({"error": f"{field} cannot be empty"}, status=400)
+                setattr(q, field, val)
+
+        correct_option = request.data.get("correct_option")
+        if correct_option is not None:
+            correct_option = correct_option.strip().upper()
+            if correct_option not in ("A", "B", "C", "D"):
+                return Response({"error": "correct_option must be one of A, B, C, D"}, status=400)
+            q.correct_option = correct_option
+
+        difficulty = request.data.get("difficulty")
+        if difficulty is not None:
+            if difficulty not in ("Easy", "Medium", "Hard"):
+                return Response({"error": "difficulty must be Easy, Medium, or Hard"}, status=400)
+            q.difficulty = difficulty
+
+        explanation = request.data.get("explanation")
+        if explanation is not None:
+            q.explanation = explanation
+
+        q.save()
+        return Response({
+            "id": q.id, "topic_id": q.topic_id, "topic": q.topic.title if q.topic else "",
+            "question_text": q.question_text,
+            "option_a": q.option_a, "option_b": q.option_b, "option_c": q.option_c, "option_d": q.option_d,
+            "correct_option": q.correct_option, "explanation": q.explanation, "difficulty": q.difficulty,
+        })
+
+    def delete(self, request, question_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        q = AptitudeQuestion.objects.filter(id=question_id).first()
+        if not q:
+            return Response({"error": "Not found"}, status=404)
+        q.delete()
+        return Response(status=204)
+
+
+class AdminAptitudeBulkDeleteView(APIView):
+    """System Admin: delete many aptitude questions at once."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        ids = request.data.get("ids") or []
+        if not isinstance(ids, list) or not ids:
+            return Response({"error": "ids (non-empty list) is required"}, status=400)
+
+        qs = AptitudeQuestion.objects.filter(id__in=ids)
+        deleted_count = qs.count()
+        qs.delete()
+        return Response({"deleted_count": deleted_count})
+
+
+class AdminAptitudeBulkUploadView(APIView):
+    """System Admin: bulk-add aptitude questions from an uploaded .xlsx/.csv
+    file — every row is added under a single selected topic. Accepts the
+    same column names used by the original load_aptitude.py Excel imports
+    (Question / Option A-D / Answer / Level / Explanation) as well as the
+    admin form's own field names (question_text / option_a-d /
+    correct_option / difficulty / explanation)."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        topic_id = request.data.get("topic_id")
+        if not topic_id:
+            return Response({"error": "topic_id is required"}, status=400)
+        topic = AptitudeTopic.objects.filter(id=topic_id).first()
+        if not topic:
+            return Response({"error": "Topic not found"}, status=404)
+
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response({"error": "No file uploaded."}, status=400)
+
+        name = upload.name.lower()
+        try:
+            if name.endswith((".xlsx", ".xls")):
+                rows = self._read_excel(upload)
+            elif name.endswith(".csv"):
+                rows = self._read_csv(upload)
+            else:
+                return Response({"error": "Only .xlsx, .xls, or .csv files are supported."}, status=400)
+        except Exception as e:
+            return Response({"error": f"Could not read file: {e}"}, status=400)
+
+        if not rows:
+            return Response({"error": "File is empty."}, status=400)
+
+        header = rows[0]
+        col_idx = {col: i for i, col in enumerate(header) if col}
+
+        def col(row, *names):
+            for n in names:
+                idx = col_idx.get(n)
+                if idx is not None and idx < len(row) and row[idx] is not None:
+                    val = str(row[idx]).strip()
+                    if val and val.lower() != "nan":
+                        return val
+            return ""
+
+        required_any = [
+            ("question_text", "question"),
+            ("option_a",), ("option_b",), ("option_c",), ("option_d",),
+            ("correct_option", "answer"),
+        ]
+        missing = [names[0] for names in required_any if not any(n in col_idx for n in names)]
+        if missing:
+            return Response({
+                "error": f"Missing required column(s): {', '.join(missing)}. "
+                         f"Expected: question_text/Question, option_a-d/Option A-D, correct_option/Answer "
+                         f"(difficulty/Level and explanation are optional).",
+            }, status=400)
+
+        created_count = 0
+        skipped_count = 0
+        errors = []
+
+        for row_num, row in enumerate(rows[1:], start=2):
+            if not any(row):
+                continue
+            question_text = col(row, "question_text", "question")
+            option_a = col(row, "option_a")
+            option_b = col(row, "option_b")
+            option_c = col(row, "option_c")
+            option_d = col(row, "option_d")
+            raw_answer = col(row, "correct_option", "answer")
+            difficulty = col(row, "difficulty", "level") or "Easy"
+            if difficulty not in ("Easy", "Medium", "Hard"):
+                difficulty = "Easy"
+            explanation = col(row, "explanation")
+
+            if not question_text or not all([option_a, option_b, option_c, option_d]):
+                errors.append(f"Row {row_num}: missing question text or an option — skipped.")
+                continue
+
+            correct_option = self._resolve_correct_option(raw_answer, option_a, option_b, option_c, option_d)
+            if correct_option is None:
+                errors.append(
+                    f"Row {row_num}: could not verify a correct answer from {raw_answer!r} against the "
+                    f"four options — must be A-D or match one option's text exactly — skipped."
+                )
+                continue
+
+            _, created = AptitudeQuestion.objects.get_or_create(
+                topic=topic, question_text=question_text,
+                defaults={
+                    "option_a": option_a, "option_b": option_b, "option_c": option_c, "option_d": option_d,
+                    "correct_option": correct_option, "difficulty": difficulty, "explanation": explanation,
+                },
+            )
+            if created:
+                created_count += 1
+            else:
+                skipped_count += 1
+
+        return Response({
+            "created_count": created_count,
+            "skipped_count": skipped_count,
+            "error_count": len(errors),
+            "errors": errors[:50],
+        })
+
+    def _resolve_correct_option(self, raw_answer, option_a, option_b, option_c, option_d):
+        """Verify/derive the correct option letter for one row. Handles a
+        bare letter (A/B/C/D), a prefixed form like "Option A" or "Ans: B",
+        and — for source sheets that list the answer as the option's actual
+        text rather than a letter — matches it case-insensitively against
+        the four option texts. Returns None (row rejected) if nothing
+        resolves to exactly one of the four options."""
+        val = (raw_answer or "").strip()
+        if not val:
+            return None
+        upper = val.upper()
+        if upper in ("A", "B", "C", "D"):
+            return upper
+        m = re.search(r'(?<![A-Za-z0-9])([ABCD])(?![A-Za-z0-9])', upper)
+        if m:
+            return m.group(1)
+        options = {"A": option_a, "B": option_b, "C": option_c, "D": option_d}
+        matches = [letter for letter, text in options.items() if text.strip().lower() == val.lower()]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
+    def _read_excel(self, upload):
+        import openpyxl
+        wb = openpyxl.load_workbook(upload, read_only=True, data_only=True)
+        ws = wb.active
+        raw_rows = list(ws.iter_rows(values_only=True))
+        if not raw_rows:
+            return []
+        header = [str(h).strip().lower().replace(" ", "_") if h else "" for h in raw_rows[0]]
+        return [header] + [list(r) for r in raw_rows[1:]]
+
+    def _read_csv(self, upload):
+        import csv
+        import io
+        text = upload.read().decode("utf-8-sig")
+        reader = csv.reader(io.StringIO(text))
+        raw_rows = list(reader)
+        if not raw_rows:
+            return []
+        header = [h.strip().lower().replace(" ", "_") for h in raw_rows[0]]
+        return [header] + raw_rows[1:]
 
 
 class InstitutionBrandingPreviewView(APIView):
