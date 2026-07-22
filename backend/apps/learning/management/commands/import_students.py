@@ -97,7 +97,16 @@ class Command(BaseCommand):
     def _upsert_student(self, row, register_number):
         import re
 
-        email = (row.get("PersonalEmailID") or "").strip()
+        # Students get their official institutional address, derived from
+        # their register number, rather than whatever personal email the
+        # source admissions system has on file — this sync runs on every
+        # deploy, so if it kept pulling the raw source email it would
+        # silently undo any register-number-based email fix on the very
+        # next deploy. Only a plain numeric register number can build a
+        # valid address (e.g. "2024-25/053" placeholders can't); those fall
+        # back to the source system's email so their login isn't broken.
+        source_email = (row.get("PersonalEmailID") or "").strip()
+        email = f"{register_number}@ritrjpm.ac.in" if register_number.isdigit() else source_email
         name = (row.get("Name") or register_number).strip()
 
         # Parse register number: 953623243023
