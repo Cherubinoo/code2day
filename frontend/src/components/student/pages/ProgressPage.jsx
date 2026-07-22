@@ -25,7 +25,7 @@ import {
   Loader2
 } from 'lucide-react';
 import ContestDashboardWidget from '../ContestDashboardWidget';
-import { PerformanceDashboard, AptitudeProgressRadar } from '../../common/PerformanceCharts';
+import { PerformanceDashboard, AptitudeProgressRadar, TopicRadarChart, DifficultyDistributionChart } from '../../common/PerformanceCharts';
 
 const shimmerStyles = `
   @keyframes shimmer {
@@ -250,6 +250,30 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
       .sort((a, b) => b.count - a.count);
   }, [problemSet, trackedCompaniesList, companySearchTerm]);
 
+  // Coding topic mastery — solved/total per tag across the whole problem
+  // bank, computed client-side from problemSet (same source companyProgress
+  // uses) since the bank isn't otherwise topic-tagged with totals server-side.
+  const codingTopicMastery = useMemo(() => {
+    if (!problemSet) return [];
+    const counts = {};
+    problemSet.forEach(p => {
+      (p.tags || []).forEach(tag => {
+        if (!counts[tag]) counts[tag] = { solved: 0, total: 0 };
+        counts[tag].total += 1;
+        if (p.progress_state === 'completed') counts[tag].solved += 1;
+      });
+    });
+    return Object.entries(counts)
+      .map(([topic, c]) => ({
+        topic,
+        accuracy: c.total ? Math.round((c.solved / c.total) * 100) : 0,
+        total: c.total,
+        correct: c.solved,
+      }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 14);
+  }, [problemSet]);
+
   const filteredModalCompanies = useMemo(() => {
     return allAvailableCompanies.filter(c => 
       c.toLowerCase().includes(modalSearchTerm.toLowerCase())
@@ -347,12 +371,17 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
   const contestsAttended = (contestHistory || []).length;
   const contestWins = (contestHistory || []).filter(c => c.solved > 0).length;
 
+  const earnedCodingBadges = (dashboard?.achievements || []).filter(a => a.category === 'coding' && a.is_earned);
+  const earnedAptitudeBadges = (dashboard?.achievements || []).filter(a => a.category === 'aptitude' && a.is_earned);
+
   // ── Performance charts data (from self-analytics API) ─────────────────────
   const scoreHistory = selfAnalytics?.score_history || [];
   const topicAccuracy = selfAnalytics?.topic_accuracy || [];
   const testsCompleted = selfAnalytics?.tests_completed || 0;
   const avgScore = selfAnalytics?.avg_score || 0;
   const peakScore = selfAnalytics?.peak_score || 0;
+  const companyInsights = selfAnalytics?.company_insights || [];
+  const skillInsights = selfAnalytics?.project_insights || [];
 
   const tabs = [
     { id: "overall", label: "Dashboard", icon: <TrendingUp size={18} /> },
@@ -614,14 +643,80 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                );
             })}
           </div>
+
+          <div style={{ background: '#111827', borderRadius: 20, padding: '24px 28px', marginBottom: 48, display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 28 }}>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.38)', textTransform: 'uppercase', letterSpacing: '0.09em' }}>
+                DIFFICULTY BREAKDOWN
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: 'white', marginTop: 2, marginBottom: 20 }}>Problems Solved</div>
+              <DifficultyDistributionChart easy={easy} medium={medium} hard={hard} />
+            </div>
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.38)', textTransform: 'uppercase', letterSpacing: '0.09em' }}>
+                SKILLS PROFILER
+              </div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: 'white', marginTop: 2 }}>Topic Mastery</div>
+              <TopicRadarChart data={codingTopicMastery} />
+              <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,255,255,0.3)', textAlign: 'center' }}>
+                Solved vs. total problems per topic tag
+              </div>
+            </div>
+          </div>
+
+          {(companyInsights.length > 0 || skillInsights.length > 0) && (
+            <>
+              <div className="section-head">
+                <h3 style={{ fontSize: '1.4rem', fontWeight: 900 }}>Skill Profile</h3>
+                <span>Built from the companies and topics behind the problems you've solved</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginTop: 24, marginBottom: 48 }}>
+                <div style={{ padding: 28, borderRadius: 24, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                  <h4 style={{ margin: '0 0 16px 0', fontSize: '1rem', fontWeight: 900, color: 'var(--olive-900)' }}>Companies You've Practiced For</h4>
+                  {companyInsights.length > 0 ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                      {companyInsights.map(c => (
+                        <span key={c.name} style={{ padding: '8px 16px', borderRadius: 999, background: 'linear-gradient(135deg, #fef9c3, #fef3c7)', color: '#92400e', fontWeight: 800, fontSize: '0.85rem' }}>
+                          {c.name} <span style={{ opacity: 0.7 }}>· {c.count}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem', margin: 0 }}>Solve problems tagged with a company to build this up.</p>
+                  )}
+                </div>
+                <div style={{ padding: 28, borderRadius: 24, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
+                  <h4 style={{ margin: '0 0 16px 0', fontSize: '1rem', fontWeight: 900, color: 'var(--olive-900)' }}>Key Skills Demonstrated</h4>
+                  {skillInsights.length > 0 ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                      {skillInsights.map(s => (
+                        <span key={s.skill} style={{ padding: '8px 16px', borderRadius: 999, background: '#e0e7ff', color: '#3730a3', fontWeight: 800, fontSize: '0.85rem', textTransform: 'capitalize' }}>
+                          {s.skill} <span style={{ opacity: 0.7 }}>· {s.count}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem', margin: 0 }}>Solve project/system-design style problems to build this up.</p>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
           <div className="section-head">
             <h3 style={{ fontSize: '1.4rem', fontWeight: 900 }}>Coding Badges</h3>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 20, marginTop: 24, marginBottom: 48 }}>
-            {(dashboard?.achievements || []).filter(a => a.category === 'coding').map(badge => (
-              <BadgeCard key={badge.id} badge={badge} earned={badge.is_earned} setSelectedBadge={setSelectedBadge} />
-            ))}
-          </div>
+          {earnedCodingBadges.length > 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 20, marginTop: 24, marginBottom: 48 }}>
+              {earnedCodingBadges.map(badge => (
+                <BadgeCard key={badge.id} badge={badge} earned={true} setSelectedBadge={setSelectedBadge} />
+              ))}
+            </div>
+          ) : (
+            <p style={{ marginTop: 16, marginBottom: 48, color: 'var(--text-soft)', fontWeight: 600 }}>
+              No coding badges earned yet — keep solving to unlock some!
+            </p>
+          )}
 
           <div className="section-head">
             <h3>Topic Wise Performance</h3>
@@ -699,17 +794,35 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
               <div style={{ width: 80, height: 80, borderRadius: '50%', background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
                 <Building2 size={40} color="#94a3b8" />
               </div>
-              <h3 style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--olive-950)' }}>No Companies Tracked</h3>
-              <p style={{ color: 'var(--text-soft)', fontSize: '1.1rem', margin: '12px auto 32px', maxWidth: 400 }}>
-                Select companies from the question bank to start measuring your readiness for specific recruitment drives.
-              </p>
-              <button 
-                onClick={() => setIsTrackingModalOpen(true)}
-                className="primary-button" 
-                style={{ padding: '16px 32px', borderRadius: 18 }}
-              >
-                Choose Companies to Track
-              </button>
+              {trackedCompaniesList.length > 0 ? (
+                <>
+                  <h3 style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--olive-950)' }}>No Matches</h3>
+                  <p style={{ color: 'var(--text-soft)', fontSize: '1.1rem', margin: '12px auto 32px', maxWidth: 400 }}>
+                    None of your {trackedCompaniesList.length} tracked companies match "{companySearchTerm}". They're still tracked — clear the search to see them.
+                  </p>
+                  <button
+                    onClick={() => setCompanySearchTerm('')}
+                    className="primary-button"
+                    style={{ padding: '16px 32px', borderRadius: 18 }}
+                  >
+                    Clear Search
+                  </button>
+                </>
+              ) : (
+                <>
+                  <h3 style={{ fontSize: '1.4rem', fontWeight: 900, color: 'var(--olive-950)' }}>No Companies Tracked</h3>
+                  <p style={{ color: 'var(--text-soft)', fontSize: '1.1rem', margin: '12px auto 32px', maxWidth: 400 }}>
+                    Select companies from the question bank to start measuring your readiness for specific recruitment drives.
+                  </p>
+                  <button
+                    onClick={() => setIsTrackingModalOpen(true)}
+                    className="primary-button"
+                    style={{ padding: '16px 32px', borderRadius: 18 }}
+                  >
+                    Choose Companies to Track
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 32, marginTop: 40 }}>
@@ -736,13 +849,14 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                       <p style={{ margin: '12px 0 0 0', fontSize: '0.8rem', color: '#92400e', fontWeight: 700 }}>Click to view solved problems →</p>
                     </div>
                   </button>
-                  <button 
+                  <button
                     onClick={(e) => {
                       e.stopPropagation();
                       toggleTrackedCompany(comp.name);
                     }}
+                    disabled={isUpdating}
                     title="Remove from tracking"
-                    style={{ position: 'absolute', top: 12, right: 12, padding: 8, borderRadius: '50%', background: '#fff1f2', border: '1px solid #fecaca', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', zIndex: 10 }}
+                    style={{ position: 'absolute', top: 12, right: 12, padding: 8, borderRadius: '50%', background: '#fff1f2', border: '1px solid #fecaca', color: '#ef4444', cursor: isUpdating ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease', zIndex: 10, opacity: isUpdating ? 0.6 : 1 }}
                     onMouseEnter={e => { e.currentTarget.style.background = '#ef4444'; e.currentTarget.style.color = 'white'; }}
                     onMouseLeave={e => { e.currentTarget.style.background = '#fff1f2'; e.currentTarget.style.color = '#ef4444'; }}
                   >
@@ -806,12 +920,18 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
           <div className="section-head" style={{ marginTop: 48 }}>
             <h3 style={{ fontSize: '1.4rem', fontWeight: 900 }}>Aptitude Badges</h3>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 20, marginTop: 24, marginBottom: 48 }}>
-            {(dashboard?.achievements || []).filter(a => a.category === 'aptitude').map(badge => (
-              <BadgeCard key={badge.id} badge={badge} earned={badge.is_earned} setSelectedBadge={setSelectedBadge} />
-            ))}
-          </div>
-          
+          {earnedAptitudeBadges.length > 0 ? (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 20, marginTop: 24, marginBottom: 48 }}>
+              {earnedAptitudeBadges.map(badge => (
+                <BadgeCard key={badge.id} badge={badge} earned={true} setSelectedBadge={setSelectedBadge} />
+              ))}
+            </div>
+          ) : (
+            <p style={{ marginTop: 16, marginBottom: 48, color: 'var(--text-soft)', fontWeight: 600 }}>
+              No aptitude badges earned yet — keep practicing to unlock some!
+            </p>
+          )}
+
           <div style={{ marginTop: 48, textAlign: 'center' }}>
             <button 
               className="primary-button" 

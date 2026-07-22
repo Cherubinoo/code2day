@@ -5025,6 +5025,38 @@ class ContestBatchAssignView(APIView):
         })
 
 
+def _compute_skill_insights(solved_problems):
+    """Aggregate company-tag and project/skill-tag counts across a
+    student's solved problems — shared by the staff-facing individual
+    analytics view and the student's own self-analytics view so both
+    render the same "companies you've practiced for" / "skills
+    demonstrated" breakdown."""
+    company_counts = {}
+    skill_counts = {}
+    project_tags = {'project', 'real-world', 'application', 'system', 'database', 'web', 'api', 'full-stack'}
+
+    for sp in solved_problems:
+        companies_str = sp.problem.companies or ""
+        for comp in (c.strip() for c in companies_str.split(',')):
+            if comp:
+                company_counts[comp] = company_counts.get(comp, 0) + 1
+
+        for tag in (sp.problem.tags or []):
+            tag_lower = tag.lower()
+            skill_counts[tag_lower] = skill_counts.get(tag_lower, 0) + 1
+
+    sorted_companies = sorted(company_counts.items(), key=lambda x: x[1], reverse=True)[:8]
+    company_insights = [{'name': name, 'count': count} for name, count in sorted_companies]
+
+    project_insights = []
+    for skill, count in sorted(skill_counts.items(), key=lambda x: x[1], reverse=True):
+        if skill in project_tags or any(pt in skill for pt in project_tags):
+            project_insights.append({'skill': skill, 'count': count})
+    project_insights = project_insights[:6]
+
+    return company_insights, project_insights
+
+
 class StudentIndividualAnalyticsView(APIView):
     """Get detailed analytics for an individual student."""
     permission_classes = [IsAuthenticated]
@@ -5102,32 +5134,7 @@ class StudentIndividualAnalyticsView(APIView):
         total_aptitude = AptitudeQuestion.objects.count()
         
         # ── Company & Project Insights ────────────────────────────────────────
-        company_counts = {}
-        skill_counts = {}
-        project_tags = {'project', 'real-world', 'application', 'system', 'database', 'web', 'api', 'full-stack'}
-        
-        for sp in solved_problems:
-            # Company
-            companies_str = sp.problem.companies or ""
-            if companies_str:
-                clist = [c.strip() for c in companies_str.replace(',', ' ').split() if c.strip()]
-                for comp in clist:
-                    company_counts[comp] = company_counts.get(comp, 0) + 1
-            
-            # Skills/Projects
-            tags = sp.problem.tags or []
-            for tag in tags:
-                tag_lower = tag.lower()
-                skill_counts[tag_lower] = skill_counts.get(tag_lower, 0) + 1
-
-        sorted_companies = sorted(company_counts.items(), key=lambda x: x[1], reverse=True)[:8]
-        company_insights = [{'name': name, 'count': count} for name, count in sorted_companies]
-
-        project_insights = []
-        for skill, count in sorted(skill_counts.items(), key=lambda x: x[1], reverse=True):
-            if skill in project_tags or any(pt in skill for pt in project_tags):
-                project_insights.append({'skill': skill, 'count': count})
-        project_insights = project_insights[:6]
+        company_insights, project_insights = _compute_skill_insights(solved_problems)
 
         # ── Score History (from ContestParticipation) ─────────────────────────
         cp_qs = ContestParticipation.objects.filter(
@@ -5260,6 +5267,8 @@ class StudentSelfAnalyticsView(APIView):
         aptitude_solved = SolvedAptitude.objects.filter(student=student).count()
         total_aptitude = AptitudeQuestion.objects.count()
 
+        company_insights, project_insights = _compute_skill_insights(solved_problems)
+
         # Score history
         cp_qs = ContestParticipation.objects.filter(
             student=student, is_active=False
@@ -5354,6 +5363,8 @@ class StudentSelfAnalyticsView(APIView):
                         "total": total_aptitude,
                         "percentage": round(aptitude_solved / total_aptitude * 100, 1) if total_aptitude else 0,
                     },
+                    "company_insights": company_insights,
+                    "project_insights": project_insights,
                     "score_history": score_history,
                     "topic_accuracy": topic_accuracy,
                     "topic_accuracy_practice": topic_accuracy_practice,
@@ -6872,16 +6883,20 @@ class StudentReportPDFView(APIView):
         date_from = request.GET.get('date_from', '')
         date_to = request.GET.get('date_to', '')
 
-        # Create PDF with enhanced template and watermark
+        # Create PDF with the shared branded header (logo + name + subheading +
+        # address + department, drawn once on page 1 only) instead of the
+        # plain-text-only title block this view used to build by hand.
+        from .pdf_reports import create_watermarked_pdf_contest
         buffer = BytesIO()
-        doc = create_watermarked_pdf(
-            buffer, 
+        doc = create_watermarked_pdf_contest(
+            buffer,
             institution=student.institution,
-            pagesize=A4, 
-            topMargin=1.6*inch, 
+            department=student.department,
+            pagesize=A4,
+            topMargin=1.6*inch,
             bottomMargin=0.6*inch
         )
-        
+
         # Custom styles
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
@@ -6892,7 +6907,7 @@ class StudentReportPDFView(APIView):
             alignment=1,  # Center
             textColor=colors.HexColor('#2d5016')
         )
-        
+
         header_style = ParagraphStyle(
             'CustomHeader',
             parent=styles['Heading2'],
@@ -6900,27 +6915,10 @@ class StudentReportPDFView(APIView):
             spaceAfter=12,
             textColor=colors.HexColor('#39482a')
         )
-        
+
         elements = []
-        
-        # College Header
         institution = student.institution
-        display_name = institution.display_name or institution.name
-        elements.append(Paragraph(f"{display_name}", title_style))
 
-        if student.department:
-            dept_header_style = ParagraphStyle(
-                'DeptHeader', parent=styles['Normal'], fontSize=12, alignment=1,
-                fontName='Helvetica-Bold', textColor=colors.HexColor('#39482a'), spaceAfter=6,
-            )
-            elements.append(Paragraph(student.department.get_full_name().replace('&', '&amp;'), dept_header_style))
-
-        if institution.subheading:
-            elements.append(Paragraph(f"{institution.subheading}", styles['Normal']))
-
-        if institution.address:
-            elements.append(Paragraph(f"{institution.address}", styles['Normal']))
-        
         contact_info = []
         if institution.contact_email:
             contact_info.append(f"Email: {institution.contact_email}")
@@ -6928,7 +6926,7 @@ class StudentReportPDFView(APIView):
             contact_info.append(f"Phone: {institution.contact_phone}")
         if institution.website:
             contact_info.append(f"Website: {institution.website}")
-        
+
         if contact_info:
             elements.append(Paragraph(" | ".join(contact_info), styles['Normal']))
         
@@ -7295,16 +7293,20 @@ class StaffReportPDFView(APIView):
         date_from = request.GET.get('date_from', '')
         date_to = request.GET.get('date_to', '')
 
-        # Create PDF with enhanced template and watermark
+        # Create PDF with the shared branded header (logo + name + subheading +
+        # address + department, drawn once on page 1 only) instead of the
+        # plain-text-only title block this view used to build by hand.
+        from .pdf_reports import create_watermarked_pdf_contest
         buffer = BytesIO()
-        doc = create_watermarked_pdf(
-            buffer, 
+        doc = create_watermarked_pdf_contest(
+            buffer,
             institution=target_staff.institution,
-            pagesize=A4, 
-            topMargin=1.6*inch, 
+            department=target_staff.department,
+            pagesize=A4,
+            topMargin=1.6*inch,
             bottomMargin=0.6*inch
         )
-        
+
         # Custom styles
         styles = getSampleStyleSheet()
         title_style = ParagraphStyle(
@@ -7315,7 +7317,7 @@ class StaffReportPDFView(APIView):
             alignment=1,  # Center
             textColor=colors.HexColor('#2d5016')
         )
-        
+
         header_style = ParagraphStyle(
             'CustomHeader',
             parent=styles['Heading2'],
@@ -7323,27 +7325,10 @@ class StaffReportPDFView(APIView):
             spaceAfter=12,
             textColor=colors.HexColor('#39482a')
         )
-        
+
         elements = []
-        
-        # College Header
         institution = target_staff.institution
-        display_name = institution.display_name or institution.name
-        elements.append(Paragraph(f"{display_name}", title_style))
 
-        if target_staff.department:
-            dept_header_style = ParagraphStyle(
-                'DeptHeader', parent=styles['Normal'], fontSize=12, alignment=1,
-                fontName='Helvetica-Bold', textColor=colors.HexColor('#39482a'), spaceAfter=6,
-            )
-            elements.append(Paragraph(target_staff.department.get_full_name().replace('&', '&amp;'), dept_header_style))
-
-        if institution.subheading:
-            elements.append(Paragraph(f"{institution.subheading}", styles['Normal']))
-        
-        if institution.address:
-            elements.append(Paragraph(f"{institution.address}", styles['Normal']))
-        
         contact_info = []
         if institution.contact_email:
             contact_info.append(f"Email: {institution.contact_email}")

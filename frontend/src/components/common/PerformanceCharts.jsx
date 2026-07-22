@@ -181,6 +181,36 @@ export function TopicRadarChart({ data }) {
   );
 }
 
+// ── Difficulty Distribution Bar Chart ──────────────────────────────────────────
+export function DifficultyDistributionChart({ easy, medium, hard }) {
+  const rows = [
+    { label: 'Easy', value: easy || 0, color: '#4ade80' },
+    { label: 'Medium', value: medium || 0, color: '#fbbf24' },
+    { label: 'Hard', value: hard || 0, color: '#f87171' },
+  ];
+  const max = Math.max(1, ...rows.map(r => r.value));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {rows.map(r => (
+        <div key={r.label} style={{ display: 'grid', gridTemplateColumns: '70px 1fr 36px', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{r.label}</span>
+          <div style={{ height: 14, borderRadius: 7, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+            <div style={{
+              width: `${(r.value / max) * 100}%`,
+              height: '100%',
+              background: r.color,
+              borderRadius: 7,
+              transition: 'width 0.6s ease',
+            }} />
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 900, color: 'white', textAlign: 'right' }}>{r.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Combined Performance Dashboard Panel ──────────────────────────────────────
 export function PerformanceDashboard({ scoreHistory, topicAccuracy, testsCompleted, avgScore, peakScore }) {
   const isAbovePar = (avgScore || 0) >= 60;
