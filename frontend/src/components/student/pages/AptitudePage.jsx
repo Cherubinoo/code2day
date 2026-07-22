@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronRight, Brain, Calculator, MessageSquare, BookOpen, ChevronDown } from 'lucide-react';
+import { Brain, Calculator, MessageSquare, ChevronDown } from 'lucide-react';
 import AptitudeQuizPage from './AptitudeQuizPage';
 
 export default function AptitudePage({ onToggleWorkspace }) {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCats, setExpandedCats] = useState({});
-  const [expandedSubcats, setExpandedSubcats] = useState({});
   const [practiceTopicId, setPracticeTopicId] = useState(null);
 
   // Sync isInsideWorkspace state with parent
@@ -46,10 +45,6 @@ export default function AptitudePage({ onToggleWorkspace }) {
 
   const toggleCat = (id) => {
     setExpandedCats(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const toggleSubcat = (id) => {
-    setExpandedSubcats(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   if (practiceTopicId) {
@@ -170,134 +165,52 @@ export default function AptitudePage({ onToggleWorkspace }) {
                   gap: '20px', 
                   marginTop: '16px' 
                 }}>
-                  {cat.subcategories.map((subcat) => (
-                    <div 
-                      key={subcat.id} 
-                      className="subcategory-card"
-                      style={{ 
-                        background: 'var(--bg-2)', 
-                        borderRadius: '20px', 
-                        border: '1px solid var(--border-soft)',
-                        padding: '24px',
-                        transition: 'all 0.3s ease'
-                      }}
-                    >
-                      <div 
-                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', marginBottom: '16px' }}
-                        onClick={() => toggleSubcat(subcat.id)}
+                  {cat.subcategories.map((subcat) => {
+                    const hasQuestions = subcat.question_count > 0;
+                    return (
+                      <button
+                        key={subcat.id}
+                        className="subcategory-card"
+                        onClick={() => hasQuestions && setPracticeTopicId(subcat.id)}
+                        disabled={!hasQuestions}
+                        style={{
+                          background: 'var(--bg-2)',
+                          borderRadius: '20px',
+                          border: '1px solid var(--border-soft)',
+                          padding: '24px',
+                          transition: 'all 0.2s ease',
+                          textAlign: 'left',
+                          cursor: hasQuestions ? 'pointer' : 'default',
+                          opacity: hasQuestions ? 1 : 0.6,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                        }}
+                        onMouseEnter={(e) => { if (hasQuestions) { e.currentTarget.style.borderColor = 'var(--olive-400)'; e.currentTarget.style.transform = 'translateY(-2px)'; } }}
+                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border-soft)'; e.currentTarget.style.transform = 'none'; }}
                       >
                         <div style={{ display: 'flex', flexDirection: 'column' }}>
                           <h3 style={{ fontSize: '1.25rem', fontWeight: '700', margin: 0, color: 'var(--text-main)' }}>{subcat.title}</h3>
-                          {subcat.question_count > 0 && (
-                            <span style={{ fontSize: '0.8rem', color: 'var(--text-soft)', marginTop: '4px' }}>
-                              {subcat.solved_count}/{subcat.question_count} Questions Solved
-                            </span>
-                          )}
+                          <span style={{ fontSize: '0.8rem', color: 'var(--text-soft)', marginTop: '4px' }}>
+                            {hasQuestions ? `${subcat.solved_count}/${subcat.question_count} Questions Solved` : 'Coming Soon'}
+                          </span>
                         </div>
-                        <div style={{ 
-                          width: '32px', 
-                          height: '32px', 
-                          borderRadius: '10px', 
-                          background: expandedSubcats[subcat.id] ? 'var(--olive-900)' : 'var(--bg-1)',
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center',
-                          color: expandedSubcats[subcat.id] ? '#fff' : 'var(--text-soft)',
-                          transition: 'all 0.3s ease'
-                        }}>
-                          <ChevronRight 
-                            size={20} 
-                            style={{ 
-                              transform: expandedSubcats[subcat.id] ? 'rotate(90deg)' : 'rotate(0)',
-                              transition: 'transform 0.3s ease'
-                            }} 
-                          />
-                        </div>
-                      </div>
-                      
-                      {expandedSubcats[subcat.id] && (
                         <div style={{
+                          width: '32px',
+                          height: '32px',
+                          borderRadius: '10px',
+                          background: hasQuestions ? 'var(--olive-900)' : 'var(--bg-1)',
                           display: 'flex',
-                          flexDirection: 'column',
-                          gap: '6px',
-                          marginTop: '12px',
-                          borderLeft: '2px solid var(--sage-200)',
-                          paddingLeft: '16px'
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: hasQuestions ? '#fff' : 'var(--text-soft)',
+                          flexShrink: 0,
                         }}>
-                          {subcat.question_count > 0 && (
-                            <button
-                              onClick={() => setPracticeTopicId(subcat.id)}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '12px',
-                                padding: '12px 16px',
-                                background: 'var(--olive-900)',
-                                border: '1px solid var(--olive-900)',
-                                borderRadius: '12px',
-                                textAlign: 'left',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s ease',
-                                color: '#fff',
-                                fontWeight: '700'
-                              }}
-                            >
-                              <Brain size={16} />
-                              <span style={{ fontSize: '1rem' }}>Practice All Questions</span>
-                              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ fontSize: '0.8rem' }}>
-                                  {subcat.solved_count}/{subcat.question_count}
-                                </span>
-                              </div>
-                            </button>
-                          )}
-                          {subcat.question_count === 0 && subcat.topics.length === 0 && (
-                            <div style={{ padding: '12px 16px', color: 'var(--text-soft)', fontSize: '0.9rem' }}>
-                              No questions yet.
-                            </div>
-                          )}
-                          {subcat.topics.map((topic) => (
-                            <button 
-                              key={topic.id}
-                              onClick={() => setPracticeTopicId(topic.id)}
-                              style={{ 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                gap: '12px',
-                                padding: '12px 16px',
-                                background: 'var(--bg-1)',
-                                border: '1px solid var(--border-soft)',
-                                borderRadius: '12px',
-                                textAlign: 'left',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s ease',
-                                color: 'var(--text-main)',
-                                fontWeight: '500'
-                              }}
-                              onMouseOver={(e) => {
-                                e.currentTarget.style.borderColor = 'var(--olive-400)';
-                                e.currentTarget.style.transform = 'translateY(-2px)';
-                                e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.05)';
-                              }}
-                              onMouseOut={(e) => {
-                                e.currentTarget.style.borderColor = 'var(--border-soft)';
-                                e.currentTarget.style.transform = 'translateY(0)';
-                                e.currentTarget.style.boxShadow = 'none';
-                              }}
-                            >
-                              <BookOpen size={16} style={{ color: 'var(--olive-600)' }} />
-                              <span style={{ fontSize: '1rem' }}>{topic.title}</span>
-                              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ fontSize: '0.8rem', color: 'var(--text-soft)' }}>
-                                  {topic.solved_count}/{topic.question_count}
-                                </span>
-                              </div>
-                            </button>
-                          ))}
+                          <Brain size={18} />
                         </div>
-                      )}
-                    </div>
-                  ))}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}

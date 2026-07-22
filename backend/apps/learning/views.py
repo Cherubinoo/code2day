@@ -6656,53 +6656,32 @@ class AptitudeTopicListView(UnifiedAuthMixin, APIView):
             solved_qs = SolvedAptitude.objects.filter(student=profile).values('question__topic_id').annotate(count=Count('id'))
             solved_counts = {item['question__topic_id']: item['count'] for item in solved_qs}
 
-        # Fetch top-level topics (Categories)
-        categories = AptitudeTopic.objects.filter(parent=None).prefetch_related('subtopics__subtopics')
-        
+        # Fetch top-level topics (Categories). Two levels only — Category >
+        # Main Topic — since every admin workflow (bulk upload, add/edit
+        # question, topic manager) files questions on the Main Topic node;
+        # a third level was a dead end nothing ever wrote to.
+        categories = AptitudeTopic.objects.filter(parent=None).prefetch_related('subtopics')
+
         category_list = []
         for cat in categories:
             subcategory_list = []
             cat_total_questions = 0
             cat_solved_questions = 0
-            
-            for subcat in cat.subtopics.all():
-                topic_list = []
-                subcat_total_questions = 0
-                subcat_solved_questions = 0
-                
-                for topic in subcat.subtopics.all():
-                    q_count = topic.questions.count()
-                    s_count = solved_counts.get(topic.id, 0)
-                    
-                    subcat_total_questions += q_count
-                    subcat_solved_questions += s_count
-                    
-                    topic_list.append({
-                        "id": topic.id,
-                        "title": topic.title,
-                        "question_count": q_count,
-                        "solved_count": s_count
-                    })
-                
-                # Questions can be filed directly on this subcategory (the "main
-                # topic" level admin bulk-upload/manage screens use) in addition
-                # to any Level 3 subtopics beneath it — count both, not just one
-                # or the other, or newly-uploaded/added direct questions never
-                # show up in the topic tree's counts once any subtopic exists.
-                subcat_total_questions += subcat.questions.count()
-                subcat_solved_questions += solved_counts.get(subcat.id, 0)
 
-                cat_total_questions += subcat_total_questions
-                cat_solved_questions += subcat_solved_questions
-                
+            for subcat in cat.subtopics.all():
+                q_count = subcat.questions.count()
+                s_count = solved_counts.get(subcat.id, 0)
+
+                cat_total_questions += q_count
+                cat_solved_questions += s_count
+
                 subcategory_list.append({
                     "id": subcat.id,
                     "title": subcat.title,
-                    "topics": topic_list,
-                    "question_count": subcat_total_questions,
-                    "solved_count": subcat_solved_questions
+                    "question_count": q_count,
+                    "solved_count": s_count
                 })
-                
+
             category_list.append({
                 "id": cat.id,
                 "title": cat.title,
@@ -6710,7 +6689,7 @@ class AptitudeTopicListView(UnifiedAuthMixin, APIView):
                 "question_count": cat_total_questions,
                 "solved_count": cat_solved_questions
             })
-            
+
         return Response({"categories": category_list})
 
 
@@ -6739,10 +6718,11 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
             for tid in topic_ids:
                 try:
                     all_topic_ids.add(int(tid))
-                    # Get all subtopics (recursive-ish, 2 levels deep is enough for our structure)
-                    subtopic_ids = AptitudeTopic.objects.filter(
-                        Q(parent_id=tid) | Q(parent__parent_id=tid)
-                    ).values_list('id', flat=True)
+                    # Topics are two levels deep now (Category > Main Topic) —
+                    # if tid is a category, pull in its main topics too, so
+                    # selecting a whole category still grabs everything filed
+                    # under it.
+                    subtopic_ids = AptitudeTopic.objects.filter(parent_id=tid).values_list('id', flat=True)
                     all_topic_ids.update(subtopic_ids)
                 except ValueError:
                     invalid_ids.append(tid)
@@ -8421,9 +8401,10 @@ def _resolve_aptitude_correct_option(raw_answer, option_a, option_b, option_c, o
 
 class AdminAptitudeTopicListCreateView(APIView):
     """System Admin: create a new aptitude topic node — a top-level
-    category (parent_id omitted/null), a main topic under a category
-    (parent_id = that category's id), or a level-3 topic under a main
-    topic (parent_id = that main topic's id)."""
+    category (parent_id omitted/null) or a main topic under a category
+    (parent_id = that category's id). Capped at two levels: every admin
+    workflow files questions on the main topic, so a third level would
+    just be a dead end nothing writes to (see migration 0068)."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -8440,6 +8421,12 @@ class AdminAptitudeTopicListCreateView(APIView):
             parent = AptitudeTopic.objects.filter(id=parent_id).first()
             if not parent:
                 return Response({"error": "Parent topic not found"}, status=404)
+            if parent.parent_id is not None:
+                return Response(
+                    {"error": "Topics are capped at two levels (Category > Main Topic) — "
+                              "pick a top-level category as the parent, not another main topic."},
+                    status=400,
+                )
 
         if AptitudeTopic.objects.filter(parent=parent, title__iexact=title).exists():
             return Response({"error": f'"{title}" already exists at this level.'}, status=400)
@@ -8486,14 +8473,11 @@ class AdminAptitudeBankView(APIView):
 
         topic_id = request.query_params.get("topic_id")
         if topic_id:
-            # Include questions filed directly under this topic AND under
-            # any of its subtopics — e.g. selecting "AVERAGES" should show
-            # everything filed under its subtopics too, not just questions
-            # attached to the "AVERAGES" node itself, since staff manage
-            # questions at the main-topic level rather than per subtopic.
-            subtopic_ids = AptitudeTopic.objects.filter(
-                Q(parent_id=topic_id) | Q(parent__parent_id=topic_id)
-            ).values_list("id", flat=True)
+            # topic_id is normally a Main Topic id here, which has no
+            # children of its own — but if it's ever a Category id, include
+            # its Main Topics too so selecting the whole category still
+            # shows everything filed under it.
+            subtopic_ids = AptitudeTopic.objects.filter(parent_id=topic_id).values_list("id", flat=True)
             qs = qs.filter(topic_id__in={int(topic_id), *subtopic_ids})
         difficulty = request.query_params.get("difficulty")
         if difficulty and difficulty != "all":
