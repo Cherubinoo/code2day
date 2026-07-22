@@ -8434,7 +8434,15 @@ class AdminAptitudeBankView(APIView):
 
         topic_id = request.query_params.get("topic_id")
         if topic_id:
-            qs = qs.filter(topic_id=topic_id)
+            # Include questions filed directly under this topic AND under
+            # any of its subtopics — e.g. selecting "AVERAGES" should show
+            # everything filed under its subtopics too, not just questions
+            # attached to the "AVERAGES" node itself, since staff manage
+            # questions at the main-topic level rather than per subtopic.
+            subtopic_ids = AptitudeTopic.objects.filter(
+                Q(parent_id=topic_id) | Q(parent__parent_id=topic_id)
+            ).values_list("id", flat=True)
+            qs = qs.filter(topic_id__in={int(topic_id), *subtopic_ids})
         difficulty = request.query_params.get("difficulty")
         if difficulty and difficulty != "all":
             qs = qs.filter(difficulty__iexact=difficulty)
@@ -12228,10 +12236,19 @@ def _generate_lab_exercise_report(exercise, submission):
         "submitted_at": submission.submitted_at,
     }
 
+    # Exp No is the exercise's 1-indexed position among its lab's exercises
+    # (same order students see them in), not exercise.order + 1 directly —
+    # that field isn't guaranteed to be 0-indexed/gap-free (e.g. seeded labs
+    # start their `order` at 1, which produced an off-by-one Exp No).
+    lab_exercise_ids = list(
+        exercise.lab.exercises.order_by("order", "created_at").values_list("id", flat=True)
+    )
+    exp_no = lab_exercise_ids.index(exercise.id) + 1 if exercise.id in lab_exercise_ids else exercise.order + 1
+
     report, _created = LabExerciseReport.objects.update_or_create(
         submission=submission,
         defaults=dict(
-            exp_no=exercise.order + 1,
+            exp_no=exp_no,
             exp_name=exercise.title,
             aim=aim,
             algorithm=algorithm,

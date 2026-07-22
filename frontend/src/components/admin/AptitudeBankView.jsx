@@ -4,7 +4,7 @@
 import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
 import {
   ArrowLeft, Search, Loader2, RefreshCw, Trash2, Plus, Pencil, Save, Upload,
-  ChevronDown, ChevronRight, Calculator, Brain, MessageSquare, BookOpen,
+  ChevronDown, Calculator, Brain, MessageSquare,
 } from 'lucide-react';
 import { getCsrfToken } from '../../lib/appUtils';
 
@@ -29,14 +29,12 @@ const BLANK_FORM = {
 };
 
 function flattenTopics(categories) {
+  // Stops at the subcategory (main topic) level on purpose — questions are
+  // managed per main topic (e.g. "AVERAGES"), not split out per subtopic.
   const out = [];
   (categories || []).forEach((cat) => {
     (cat.subcategories || []).forEach((sub) => {
-      if ((sub.topics || []).length > 0) {
-        sub.topics.forEach((t) => out.push({ id: t.id, label: `${cat.title} > ${sub.title} > ${t.title}` }));
-      } else {
-        out.push({ id: sub.id, label: `${cat.title} > ${sub.title}` });
-      }
+      out.push({ id: sub.id, label: `${cat.title} > ${sub.title}` });
     });
   });
   return out;
@@ -48,7 +46,6 @@ function TopicTree({ onSelect, onBack }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [expandedCats, setExpandedCats] = useState({});
-  const [expandedSubcats, setExpandedSubcats] = useState({});
 
   useEffect(() => { load(); }, []);
 
@@ -118,41 +115,16 @@ function TopicTree({ onSelect, onBack }) {
 
               {expandedCats[cat.id] && (
                 <div style={{ padding: '8px 20px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
-                  {cat.subcategories.map((sub) => {
-                    const hasLeafTopics = (sub.topics || []).length > 0;
-                    return (
-                      <div key={sub.id} style={{ background: 'var(--bg-2)', borderRadius: 14, border: '1px solid var(--border-soft)', padding: 14 }}>
-                        <div
-                          onClick={() => hasLeafTopics
-                            ? setExpandedSubcats((s) => ({ ...s, [sub.id]: !s[sub.id] }))
-                            : onSelect(sub.id, `${cat.title} > ${sub.title}`)}
-                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
-                        >
-                          <div>
-                            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{sub.title}</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-soft)' }}>{sub.question_count} questions</div>
-                          </div>
-                          {hasLeafTopics ? (
-                            <ChevronRight size={16} style={{ transform: expandedSubcats[sub.id] ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', color: 'var(--text-soft)' }} />
-                          ) : (
-                            <Pencil size={14} color="var(--olive-600)" />
-                          )}
-                        </div>
-                        {hasLeafTopics && expandedSubcats[sub.id] && (
-                          <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4, borderLeft: '2px solid var(--border-soft)', paddingLeft: 10 }}>
-                            {sub.topics.map((t) => (
-                              <button key={t.id} onClick={() => onSelect(t.id, `${cat.title} > ${sub.title} > ${t.title}`)}
-                                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', textAlign: 'left', fontSize: 12.5 }}>
-                                <BookOpen size={13} color="var(--olive-600)" />
-                                <span style={{ flex: 1 }}>{t.title}</span>
-                                <span style={{ color: 'var(--text-soft)', fontSize: 11 }}>{t.question_count}</span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                  {cat.subcategories.map((sub) => (
+                    <button key={sub.id} onClick={() => onSelect(sub.id, `${cat.title} > ${sub.title}`)}
+                      style={{ background: 'var(--bg-2)', borderRadius: 14, border: '1px solid var(--border-soft)', padding: 14, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{sub.title}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-soft)' }}>{sub.question_count} questions</div>
                       </div>
-                    );
-                  })}
+                      <Pencil size={14} color="var(--olive-600)" />
+                    </button>
+                  ))}
                 </div>
               )}
             </section>
