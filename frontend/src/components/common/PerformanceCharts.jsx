@@ -258,30 +258,24 @@ export function PerformanceDashboard({ scoreHistory, topicAccuracy, testsComplet
 }
 
 // ── Aptitude Progress Radar (large, filterable) ───────────────────────────────
-export function AptitudeProgressRadar({ topicAccuracy, aptitudeStats }) {
+export function AptitudeProgressRadar({ topicAccuracy, topicAccuracyPractice }) {
   const [mode, setMode] = useState('contest'); // 'contest' | 'study'
   const [activeCategory, setActiveCategory] = useState('All');
   const [hoveredIdx, setHoveredIdx] = useState(null);
 
   const contestData = topicAccuracy || [];
-  const studyData = useMemo(() => (aptitudeStats || []).map(s => ({
-    topic: s.name,
-    accuracy: Math.round(s.percentage || 0),
-    total: null,
-    correct: null,
-    category: null,
-  })), [aptitudeStats]);
+  const studyData = topicAccuracyPractice || [];
 
+  const activeData = mode === 'study' ? studyData : contestData;
   const categories = useMemo(() => {
-    const cats = contestData.map(t => t.category).filter(Boolean);
+    const cats = activeData.map(t => t.category).filter(Boolean);
     return ['All', ...Array.from(new Set(cats))];
-  }, [contestData]);
+  }, [activeData]);
 
   const filtered = useMemo(() => {
-    if (mode === 'study') return studyData.slice(0, 12);
-    const base = activeCategory === 'All' ? contestData : contestData.filter(t => t.category === activeCategory);
+    const base = activeCategory === 'All' ? activeData : activeData.filter(t => t.category === activeCategory);
     return base.slice(0, 12);
-  }, [mode, activeCategory, contestData, studyData]);
+  }, [activeCategory, activeData]);
 
   const sorted = useMemo(() => [...filtered].sort((a, b) => b.accuracy - a.accuracy), [filtered]);
   const strongest = sorted[0] || null;
@@ -321,8 +315,8 @@ export function AptitudeProgressRadar({ topicAccuracy, aptitudeStats }) {
         </div>
       </div>
 
-      {/* Category filter pills — contest mode only */}
-      {mode === 'contest' && categories.length > 1 && (
+      {/* Category filter pills — both modes now carry real category data */}
+      {categories.length > 1 && (
         <div style={{ padding: '10px 26px', borderBottom: '1px solid rgba(255,255,255,0.04)', display: 'flex', gap: 7, flexWrap: 'wrap' }}>
           {categories.map(cat => (
             <button key={cat} onClick={() => { setActiveCategory(cat); setHoveredIdx(null); }}
@@ -474,7 +468,7 @@ export function AptitudeProgressRadar({ topicAccuracy, aptitudeStats }) {
 
           <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.22)', textAlign: 'center', fontWeight: 600, marginTop: 4 }}>
             {filtered.length} topic{filtered.length !== 1 ? 's' : ''} plotted
-            {mode === 'contest' && activeCategory !== 'All' ? ` · ${activeCategory}` : ''}
+            {activeCategory !== 'All' ? ` · ${activeCategory}` : ''}
           </div>
         </div>
       </div>
