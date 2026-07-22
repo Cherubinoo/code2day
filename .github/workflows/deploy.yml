@@ -3,7 +3,7 @@ name: CI/CD — Build & Deploy
 on:
   push:
     branches:
-      - main
+      - server
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────────
@@ -79,9 +79,9 @@ jobs:
 
           # ── 1. Pull latest code ────────────────────────────────────────────
           echo "→ Pulling latest code..."
-          git fetch origin main
-          git checkout main
-          git reset --hard origin/main
+          git fetch origin server
+          git checkout server
+          git reset --hard origin/server
           echo "✓ $(git log --oneline -1)"
 
           # Each service is deployed from its own compose file — frontend,

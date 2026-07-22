@@ -31,17 +31,17 @@ echo -e "╚══════════════════════�
 echo ""
 
 # ── Step 1: Git pull ──────────────────────────────────────────────────────────
-info "[1/6] Pulling latest code from main branch..."
+info "[1/6] Pulling latest code from server branch..."
 cd "$DEPLOY_DIR"
 
-# Make sure we are on main
+# Make sure we are on server
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-if [ "$CURRENT_BRANCH" != "main" ]; then
-    warn "Currently on branch '$CURRENT_BRANCH'. Switching to main..."
-    git checkout main
+if [ "$CURRENT_BRANCH" != "server" ]; then
+    warn "Currently on branch '$CURRENT_BRANCH'. Switching to server..."
+    git checkout server
 fi
 
-git pull origin main
+git pull origin server
 ok "Code updated to latest commit: $(git log -1 --format='%h %s')"
 echo ""
 
