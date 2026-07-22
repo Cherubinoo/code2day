@@ -11,6 +11,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
   const [result, setResult] = useState(null);
   const [score, setScore] = useState(0);
   const [showSummary, setShowSummary] = useState(false);
+  const [showAnswer, setShowAnswer] = useState(false);
   const [startTime] = useState(Date.now());
   const [elapsedTime, setElapsedTime] = useState(0);
   
@@ -41,6 +42,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
         setSelectedOption(null);
         setIsSubmitted(false);
         setResult(null);
+        setShowAnswer(false);
         setLoading(false);
       })
       .catch(err => {
@@ -99,6 +101,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
       setSelectedOption(null);
       setIsSubmitted(false);
       setResult(null);
+      setShowAnswer(false);
     } else {
       setShowSummary(true);
     }
@@ -153,6 +156,11 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
   ] : [];
 
   const progress = questions.length > 0 ? ((currentIndex + 1) / questions.length) * 100 : 0;
+
+  // Correct answer stays hidden after a wrong submission until the student
+  // asks for it — a right answer has nothing left to hide, so it reveals
+  // immediately.
+  const revealed = Boolean(isSubmitted && (result?.is_correct || showAnswer));
 
   return (
     <div style={{ maxWidth: '800px', margin: '20px auto', padding: '0 20px' }}>
@@ -258,6 +266,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
                 setSelectedOption(null);
                 setIsSubmitted(false);
                 setResult(null);
+                setShowAnswer(false);
               }}
               style={{
                 width: '36px',
@@ -318,7 +327,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
                 }
 
                 if (isSubmitted) {
-                  if (opt.key === result.correct_option) {
+                  if (revealed && opt.key === result.correct_option) {
                     bgColor = '#dcfce7'; // Success green
                     borderColor = '#22c55e';
                     if (selectedOption !== opt.key) {
@@ -357,7 +366,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
                     </div>
                     {opt.value}
                     <div style={{ marginLeft: 'auto' }}>
-                      {isSubmitted && opt.key === result.correct_option && <CheckCircle size={20} color="#22c55e" />}
+                      {revealed && opt.key === result.correct_option && <CheckCircle size={20} color="#22c55e" />}
                       {isSubmitted && selectedOption === opt.key && opt.key !== result.correct_option && <XCircle size={20} color="#ef4444" />}
                     </div>
                   </button>
@@ -366,38 +375,54 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
             </div>
 
             {isSubmitted && (
-              <div style={{ 
-                marginTop: '32px', 
-                padding: '24px', 
-                background: result.is_correct ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.05)', 
-                borderRadius: '20px', 
+              <div style={{
+                marginTop: '32px',
+                padding: '24px',
+                background: result.is_correct ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.05)',
+                borderRadius: '20px',
                 border: `1px solid ${result.is_correct ? '#22c55e' : '#ef4444'}`,
                 animation: 'slideUp 0.4s ease'
               }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                  <div style={{ 
-                    width: '32px', 
-                    height: '32px', 
-                    borderRadius: '50%', 
-                    background: result.is_correct ? '#22c55e' : '#ef4444', 
-                    display: 'flex', 
-                    alignItems: 'center', 
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: revealed ? '12px' : 0 }}>
+                  <div style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    background: result.is_correct ? '#22c55e' : '#ef4444',
+                    display: 'flex',
+                    alignItems: 'center',
                     justifyContent: 'center',
                     color: 'white'
                   }}>
                     {result.is_correct ? <CheckCircle size={18} /> : <Info size={18} />}
                   </div>
                   <span style={{ fontWeight: '800', fontSize: '1.1rem', color: result.is_correct ? '#166534' : '#991b1b' }}>
-                    {result.is_correct ? 'Brilliant! Correct Answer' : `Incorrect. The correct answer is: ${result.correct_option}. ${options.find(o => o.key === result.correct_option)?.value || ''}`}
+                    {result.is_correct
+                      ? 'Brilliant! Correct Answer'
+                      : revealed
+                        ? `Incorrect. The correct answer is: ${result.correct_option}. ${options.find(o => o.key === result.correct_option)?.value || ''}`
+                        : 'Incorrect answer.'}
                   </span>
                 </div>
-                
-                <div style={{ paddingLeft: '42px' }}>
-                  <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Explanation:</h4>
-                  <p style={{ color: 'var(--text-main)', margin: 0, fontSize: '1rem', lineHeight: '1.6', fontWeight: '500' }}>
-                    {result.explanation && result.explanation !== 'nan' ? result.explanation : "Analyze the question logic carefully. Review the core concepts for this topic if you're stuck!"}
-                  </p>
-                </div>
+
+                {!revealed && (
+                  <button
+                    onClick={() => setShowAnswer(true)}
+                    className="secondary-button"
+                    style={{ marginLeft: '42px', padding: '10px 20px', borderRadius: '10px', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
+                  >
+                    <Info size={16} /> Show Answer &amp; Explanation
+                  </button>
+                )}
+
+                {revealed && (
+                  <div style={{ paddingLeft: '42px' }}>
+                    <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Explanation:</h4>
+                    <p style={{ color: 'var(--text-main)', margin: 0, fontSize: '1rem', lineHeight: '1.6', fontWeight: '500' }}>
+                      {result.explanation && result.explanation !== 'nan' ? result.explanation : "Analyze the question logic carefully. Review the core concepts for this topic if you're stuck!"}
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>
