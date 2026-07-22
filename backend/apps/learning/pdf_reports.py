@@ -149,9 +149,12 @@ class WatermarkDocTemplate(BaseDocTemplate):
                 canvas.drawImage(self.watermark_image, x, y, width=watermark_size, height=watermark_size, mask='auto')
             except: pass
         
-        # ── 2. Draw Header ──
+        # ── 2. Draw Header — first page only ──
+        if doc.page != 1:
+            return
+
         canvas.saveState()
-        
+
         # Logo — try logo_file path first, then logo_url via HTTP
         logo_image = None
         if inst:
