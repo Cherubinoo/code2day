@@ -8656,14 +8656,14 @@ class AdminAptitudeBulkUploadView(APIView):
         required_any = [
             ("question_text", "question"),
             ("option_a",), ("option_b",), ("option_c",), ("option_d",),
-            ("correct_option", "answer"),
+            ("correct_option", "answer", "correct_answer"),
         ]
         missing = [names[0] for names in required_any if not any(n in col_idx for n in names)]
         if missing:
             return Response({
                 "error": f"Missing required column(s): {', '.join(missing)}. "
-                         f"Expected: question_text/Question, option_a-d/Option A-D, correct_option/Answer "
-                         f"(difficulty/Level and explanation are optional).",
+                         f"Expected: question_text/Question, option_a-d/Option A-D, correct_option/Answer/Correct Answer "
+                         f"(question_no/Question No, difficulty/Level and explanation are optional and ignored if absent).",
             }, status=400)
 
         created_count = 0
@@ -8678,7 +8678,7 @@ class AdminAptitudeBulkUploadView(APIView):
             option_b = col(row, "option_b")
             option_c = col(row, "option_c")
             option_d = col(row, "option_d")
-            raw_answer = col(row, "correct_option", "answer")
+            raw_answer = col(row, "correct_option", "answer", "correct_answer")
             difficulty = col(row, "difficulty", "level") or "Easy"
             if difficulty not in ("Easy", "Medium", "Hard"):
                 difficulty = "Easy"

@@ -424,8 +424,8 @@ function TopicQuestionsManager({ topic, onBack }) {
         <div style={{ padding: 20, background: 'white', borderRadius: 12, border: '1px solid var(--border-soft)', marginBottom: 20 }}>
           <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-soft)' }}>
             Upload a .xlsx, .xls, or .csv file — every row becomes a question under <strong>{topic.label}</strong>.
-            Columns: <code>question_text</code>/<code>Question</code>, <code>option_a</code>-<code>option_d</code>/<code>Option A</code>-<code>Option D</code>,{' '}
-            <code>correct_option</code>/<code>Answer</code> (A-D or the option's own text), and optionally <code>difficulty</code>/<code>Level</code> and <code>explanation</code>.
+            Columns: <code>Question</code>, <code>Option A</code>-<code>Option D</code>, <code>Correct Answer</code>/<code>Answer</code>{' '}
+            (A-D or the option's own text), and optionally <code>Question No</code>, <code>Difficulty</code>/<code>Level</code>, and <code>Explanation</code> — extra columns are ignored.
             Duplicate question text under this topic is skipped automatically.
           </p>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
