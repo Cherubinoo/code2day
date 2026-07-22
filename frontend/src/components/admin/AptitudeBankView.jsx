@@ -4,7 +4,7 @@
 import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
 import {
   ArrowLeft, Search, Loader2, RefreshCw, Trash2, Plus, Pencil, Save, Upload,
-  ChevronDown, Calculator, Brain, MessageSquare, Sparkles,
+  ChevronDown, Calculator, Brain, MessageSquare, Sparkles, X,
 } from 'lucide-react';
 import { getCsrfToken } from '../../lib/appUtils';
 
@@ -40,12 +40,54 @@ function flattenTopics(categories) {
   return out;
 }
 
+// ── Small inline add/rename form (input + save/cancel), reused for
+// categories, main topics, and rename-in-place on either. ─────────────────────
+function InlineTitleForm({ value, onChange, onSubmit, onCancel, busy, placeholder }) {
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') onSubmit(); if (e.key === 'Escape') onCancel(); }}
+        placeholder={placeholder}
+        style={{ flex: 1, minWidth: 120, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13 }}
+      />
+      <button onClick={onSubmit} disabled={busy} title="Save"
+        style={{ padding: 6, border: 'none', background: 'none', cursor: busy ? 'not-allowed' : 'pointer', color: 'var(--olive-900)', display: 'flex' }}>
+        {busy ? <Loader2 size={14} className="spin" /> : <Save size={14} />}
+      </button>
+      <button onClick={onCancel} title="Cancel"
+        style={{ padding: 6, border: 'none', background: 'none', cursor: 'pointer', color: '#dc2626', display: 'flex' }}>
+        <X size={14} />
+      </button>
+    </div>
+  );
+}
+
 // ── Topic tree browser (mirrors the student Aptitude page's structure) ────────
 function TopicTree({ onSelect, onBack }) {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [expandedCats, setExpandedCats] = useState({});
+
+  // Rename-in-place — shared by category rows and main-topic cards; only one
+  // node can be renamed at a time so a single id/value pair is enough.
+  const [renamingId, setRenamingId] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState('');
+
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [newCategoryTitle, setNewCategoryTitle] = useState('');
+  const [addCategoryBusy, setAddCategoryBusy] = useState(false);
+  const [addCategoryError, setAddCategoryError] = useState('');
+
+  const [addingTopicForCat, setAddingTopicForCat] = useState(null); // category id, or null
+  const [newTopicTitle, setNewTopicTitle] = useState('');
+  const [addTopicBusy, setAddTopicBusy] = useState(false);
+  const [addTopicError, setAddTopicError] = useState('');
 
   useEffect(() => { load(); }, []);
 
@@ -65,13 +107,70 @@ function TopicTree({ onSelect, onBack }) {
     }
   }
 
+  async function createTopic(parentId, title) {
+    const res = await apiFetch('/api/admin/v2/aptitude-topics/', 'POST', { title, parent_id: parentId });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to create topic.');
+  }
+
+  async function submitNewCategory() {
+    const title = newCategoryTitle.trim();
+    if (!title) { setAddCategoryError('Name is required.'); return; }
+    setAddCategoryBusy(true); setAddCategoryError('');
+    try {
+      await createTopic(null, title);
+      setNewCategoryTitle(''); setAddingCategory(false);
+      load();
+    } catch (err) {
+      setAddCategoryError(err.message || 'Network error.');
+    } finally {
+      setAddCategoryBusy(false);
+    }
+  }
+
+  async function submitNewTopic(catId) {
+    const title = newTopicTitle.trim();
+    if (!title) { setAddTopicError('Name is required.'); return; }
+    setAddTopicBusy(true); setAddTopicError('');
+    try {
+      await createTopic(catId, title);
+      setNewTopicTitle(''); setAddingTopicForCat(null);
+      load();
+    } catch (err) {
+      setAddTopicError(err.message || 'Network error.');
+    } finally {
+      setAddTopicBusy(false);
+    }
+  }
+
+  function startRename(id, currentTitle) {
+    setRenamingId(id); setRenameValue(currentTitle); setRenameError('');
+  }
+
+  async function submitRename() {
+    const title = renameValue.trim();
+    if (!title) { setRenameError('Name is required.'); return; }
+    setRenameBusy(true); setRenameError('');
+    try {
+      const res = await apiFetch(`/api/admin/v2/aptitude-topics/${renamingId}/`, 'PATCH', { title });
+      const data = await res.json();
+      if (!res.ok) { setRenameError(data.error || 'Failed to rename.'); return; }
+      setRenamingId(null);
+      load();
+    } catch {
+      setRenameError('Network error.');
+    } finally {
+      setRenameBusy(false);
+    }
+  }
+
   const catIcon = (title) => (
     title.includes('QUANT') ? <Calculator size={22} /> : title.includes('LOGIC') ? <Brain size={22} /> : <MessageSquare size={22} />
   );
 
   return (
     <div className="animate-fade-in">
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
         <button onClick={onBack} style={{ background: 'white', border: '1px solid var(--border-soft)', width: 44, height: 44, borderRadius: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--olive-900)', boxShadow: 'var(--shadow-soft)' }}>
           <ArrowLeft size={20} />
         </button>
@@ -81,11 +180,26 @@ function TopicTree({ onSelect, onBack }) {
             Pick a topic to add, edit, delete, or bulk-upload its questions.
           </p>
         </div>
-        <button onClick={load} disabled={loading}
+        <button onClick={() => { setAddingCategory((v) => !v); setNewCategoryTitle(''); setAddCategoryError(''); }}
           style={{ marginLeft: 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
+          <Plus size={16} /> New Category
+        </button>
+        <button onClick={load} disabled={loading}
+          style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
           <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
         </button>
       </div>
+
+      {addingCategory && (
+        <div style={{ marginBottom: 16, background: 'white', border: '1px solid var(--border-soft)', borderRadius: 14, padding: 14 }}>
+          <InlineTitleForm
+            value={newCategoryTitle} onChange={setNewCategoryTitle}
+            onSubmit={submitNewCategory} onCancel={() => setAddingCategory(false)}
+            busy={addCategoryBusy} placeholder="Category name (e.g. QUANTITATIVE)"
+          />
+          {addCategoryError && <div style={{ color: '#dc2626', fontSize: 12, marginTop: 8 }}>{addCategoryError}</div>}
+        </div>
+      )}
 
       {error && <div style={{ padding: 16, background: '#fef2f2', color: '#dc2626', borderRadius: 12, marginBottom: 16 }}>{error}</div>}
 
@@ -99,32 +213,81 @@ function TopicTree({ onSelect, onBack }) {
                 onClick={() => setExpandedCats((s) => ({ ...s, [cat.id]: !s[cat.id] }))}
                 style={{ padding: 20, display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', background: 'var(--bg-2)' }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--olive-900)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1, minWidth: 0 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--olive-900)', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     {catIcon(cat.title)}
                   </div>
-                  <div>
-                    <div style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--olive-950)' }}>{cat.title}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {renamingId === cat.id ? (
+                      <>
+                        <InlineTitleForm
+                          value={renameValue} onChange={setRenameValue}
+                          onSubmit={submitRename} onCancel={() => setRenamingId(null)}
+                          busy={renameBusy} placeholder="Category name"
+                        />
+                        {renameError && <div style={{ color: '#dc2626', fontSize: 11, marginTop: 4 }}>{renameError}</div>}
+                      </>
+                    ) : (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--olive-950)' }}>{cat.title}</div>
+                        <button onClick={(e) => { e.stopPropagation(); startRename(cat.id, cat.title); }} title="Rename category"
+                          style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--olive-600)', display: 'flex' }}>
+                          <Pencil size={13} />
+                        </button>
+                      </div>
+                    )}
                     <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>
                       {cat.subcategories.length} sub-topics &middot; {cat.question_count} questions
                     </div>
                   </div>
                 </div>
-                <ChevronDown size={20} style={{ transform: expandedCats[cat.id] ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', color: 'var(--olive-900)' }} />
+                <ChevronDown size={20} style={{ transform: expandedCats[cat.id] ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s', color: 'var(--olive-900)', flexShrink: 0 }} />
               </div>
 
               {expandedCats[cat.id] && (
                 <div style={{ padding: '8px 20px 20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 12 }}>
                   {cat.subcategories.map((sub) => (
-                    <button key={sub.id} onClick={() => onSelect(sub.id, `${cat.title} > ${sub.title}`)}
-                      style={{ background: 'var(--bg-2)', borderRadius: 14, border: '1px solid var(--border-soft)', padding: 14, cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{sub.title}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text-soft)' }}>{sub.question_count} questions</div>
-                      </div>
-                      <Pencil size={14} color="var(--olive-600)" />
-                    </button>
+                    <div key={sub.id} style={{ background: 'var(--bg-2)', borderRadius: 14, border: '1px solid var(--border-soft)', padding: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      {renamingId === sub.id ? (
+                        <div style={{ flex: 1 }}>
+                          <InlineTitleForm
+                            value={renameValue} onChange={setRenameValue}
+                            onSubmit={submitRename} onCancel={() => setRenamingId(null)}
+                            busy={renameBusy} placeholder="Topic name"
+                          />
+                          {renameError && <div style={{ color: '#dc2626', fontSize: 11, marginTop: 4 }}>{renameError}</div>}
+                        </div>
+                      ) : (
+                        <>
+                          <button onClick={() => onSelect(sub.id, `${cat.title} > ${sub.title}`)}
+                            style={{ flex: 1, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0, minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>{sub.title}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-soft)' }}>{sub.question_count} questions</div>
+                          </button>
+                          <button onClick={() => startRename(sub.id, sub.title)} title="Rename topic"
+                            style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--olive-600)', flexShrink: 0, display: 'flex' }}>
+                            <Pencil size={14} />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   ))}
+
+                  {addingTopicForCat === cat.id ? (
+                    <div style={{ background: 'var(--bg-2)', borderRadius: 14, border: '1px dashed var(--border-soft)', padding: 14 }}>
+                      <InlineTitleForm
+                        value={newTopicTitle} onChange={setNewTopicTitle}
+                        onSubmit={() => submitNewTopic(cat.id)} onCancel={() => setAddingTopicForCat(null)}
+                        busy={addTopicBusy} placeholder="Main topic name"
+                      />
+                      {addTopicError && <div style={{ color: '#dc2626', fontSize: 11, marginTop: 4 }}>{addTopicError}</div>}
+                    </div>
+                  ) : (
+                    <button onClick={() => { setAddingTopicForCat(cat.id); setNewTopicTitle(''); setAddTopicError(''); }}
+                      style={{ background: 'white', borderRadius: 14, border: '1px dashed var(--border-soft)', padding: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700, fontSize: 13 }}>
+                      <Plus size={14} /> Add Main Topic
+                    </button>
+                  )}
                 </div>
               )}
             </section>

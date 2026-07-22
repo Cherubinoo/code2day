@@ -8422,6 +8422,60 @@ def _resolve_aptitude_correct_option(raw_answer, option_a, option_b, option_c, o
     return None
 
 
+class AdminAptitudeTopicListCreateView(APIView):
+    """System Admin: create a new aptitude topic node — a top-level
+    category (parent_id omitted/null), a main topic under a category
+    (parent_id = that category's id), or a level-3 topic under a main
+    topic (parent_id = that main topic's id)."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        title = (request.data.get("title") or "").strip()
+        if not title:
+            return Response({"error": "title is required"}, status=400)
+
+        parent_id = request.data.get("parent_id")
+        parent = None
+        if parent_id:
+            parent = AptitudeTopic.objects.filter(id=parent_id).first()
+            if not parent:
+                return Response({"error": "Parent topic not found"}, status=404)
+
+        if AptitudeTopic.objects.filter(parent=parent, title__iexact=title).exists():
+            return Response({"error": f'"{title}" already exists at this level.'}, status=400)
+
+        topic = AptitudeTopic.objects.create(title=title, parent=parent)
+        return Response({"id": topic.id, "title": topic.title, "parent_id": topic.parent_id}, status=201)
+
+
+class AdminAptitudeTopicDetailView(APIView):
+    """System Admin: rename an aptitude topic node (category, main topic,
+    or level-3 topic)."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, topic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        topic = AptitudeTopic.objects.filter(id=topic_id).first()
+        if not topic:
+            return Response({"error": "Not found"}, status=404)
+
+        title = (request.data.get("title") or "").strip()
+        if not title:
+            return Response({"error": "title is required"}, status=400)
+
+        if AptitudeTopic.objects.filter(parent=topic.parent, title__iexact=title).exclude(id=topic.id).exists():
+            return Response({"error": f'"{title}" already exists at this level.'}, status=400)
+
+        topic.title = title
+        topic.save()
+        return Response({"id": topic.id, "title": topic.title, "parent_id": topic.parent_id})
+
+
 class AdminAptitudeBankView(APIView):
     """System Admin: list every aptitude question (with topic + correct
     option, for admin review) and create a new one."""
