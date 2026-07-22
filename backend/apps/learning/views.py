@@ -8397,6 +8397,30 @@ class AdminProblemBulkDeleteView(APIView):
         return Response({"deleted_count": deleted_count})
 
 
+def _resolve_aptitude_correct_option(raw_answer, option_a, option_b, option_c, option_d):
+    """Verify/derive the correct option letter for an aptitude question —
+    shared by the individual add/edit form and the bulk upload, so an
+    existing question edited by hand gets the same verification as a
+    freshly-bulk-uploaded one. Handles a bare letter (A/B/C/D), a prefixed
+    form like "Option A" or "Ans: B", and an answer given as the option's
+    own text rather than a letter. Returns None if nothing resolves to
+    exactly one of the four options."""
+    val = (raw_answer or "").strip()
+    if not val:
+        return None
+    upper = val.upper()
+    if upper in ("A", "B", "C", "D"):
+        return upper
+    m = re.search(r'(?<![A-Za-z0-9])([ABCD])(?![A-Za-z0-9])', upper)
+    if m:
+        return m.group(1)
+    options = {"A": option_a, "B": option_b, "C": option_c, "D": option_d}
+    matches = [letter for letter, text in options.items() if (text or "").strip().lower() == val.lower()]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 class AdminAptitudeBankView(APIView):
     """System Admin: list every aptitude question (with topic + correct
     option, for admin review) and create a new one."""
@@ -8444,7 +8468,7 @@ class AdminAptitudeBankView(APIView):
         option_b = (request.data.get("option_b") or "").strip()
         option_c = (request.data.get("option_c") or "").strip()
         option_d = (request.data.get("option_d") or "").strip()
-        correct_option = (request.data.get("correct_option") or "").strip().upper()
+        raw_answer = request.data.get("correct_option") or ""
         difficulty = request.data.get("difficulty") or "Easy"
         explanation = request.data.get("explanation") or ""
 
@@ -8457,10 +8481,15 @@ class AdminAptitudeBankView(APIView):
             return Response({"error": "question_text is required"}, status=400)
         if not all([option_a, option_b, option_c, option_d]):
             return Response({"error": "All four options (A-D) are required"}, status=400)
-        if correct_option not in ("A", "B", "C", "D"):
-            return Response({"error": "correct_option must be one of A, B, C, D"}, status=400)
         if difficulty not in ("Easy", "Medium", "Hard"):
             return Response({"error": "difficulty must be Easy, Medium, or Hard"}, status=400)
+
+        correct_option = _resolve_aptitude_correct_option(raw_answer, option_a, option_b, option_c, option_d)
+        if correct_option is None:
+            return Response({
+                "error": f"Could not verify a correct answer from {raw_answer!r} against the four "
+                         f"options — must be A-D or match one option's text exactly.",
+            }, status=400)
 
         q = AptitudeQuestion.objects.create(
             topic=topic, question_text=question_text,
@@ -8509,12 +8538,15 @@ class AdminAptitudeQuestionDetailView(APIView):
                     return Response({"error": f"{field} cannot be empty"}, status=400)
                 setattr(q, field, val)
 
-        correct_option = request.data.get("correct_option")
-        if correct_option is not None:
-            correct_option = correct_option.strip().upper()
-            if correct_option not in ("A", "B", "C", "D"):
-                return Response({"error": "correct_option must be one of A, B, C, D"}, status=400)
-            q.correct_option = correct_option
+        raw_answer = request.data.get("correct_option")
+        if raw_answer is not None:
+            resolved = _resolve_aptitude_correct_option(raw_answer, q.option_a, q.option_b, q.option_c, q.option_d)
+            if resolved is None:
+                return Response({
+                    "error": f"Could not verify a correct answer from {raw_answer!r} against the four "
+                             f"options — must be A-D or match one option's text exactly.",
+                }, status=400)
+            q.correct_option = resolved
 
         difficulty = request.data.get("difficulty")
         if difficulty is not None:
@@ -8648,7 +8680,7 @@ class AdminAptitudeBulkUploadView(APIView):
                 errors.append(f"Row {row_num}: missing question text or an option — skipped.")
                 continue
 
-            correct_option = self._resolve_correct_option(raw_answer, option_a, option_b, option_c, option_d)
+            correct_option = _resolve_aptitude_correct_option(raw_answer, option_a, option_b, option_c, option_d)
             if correct_option is None:
                 errors.append(
                     f"Row {row_num}: could not verify a correct answer from {raw_answer!r} against the "
@@ -8674,28 +8706,6 @@ class AdminAptitudeBulkUploadView(APIView):
             "error_count": len(errors),
             "errors": errors[:50],
         })
-
-    def _resolve_correct_option(self, raw_answer, option_a, option_b, option_c, option_d):
-        """Verify/derive the correct option letter for one row. Handles a
-        bare letter (A/B/C/D), a prefixed form like "Option A" or "Ans: B",
-        and — for source sheets that list the answer as the option's actual
-        text rather than a letter — matches it case-insensitively against
-        the four option texts. Returns None (row rejected) if nothing
-        resolves to exactly one of the four options."""
-        val = (raw_answer or "").strip()
-        if not val:
-            return None
-        upper = val.upper()
-        if upper in ("A", "B", "C", "D"):
-            return upper
-        m = re.search(r'(?<![A-Za-z0-9])([ABCD])(?![A-Za-z0-9])', upper)
-        if m:
-            return m.group(1)
-        options = {"A": option_a, "B": option_b, "C": option_c, "D": option_d}
-        matches = [letter for letter, text in options.items() if text.strip().lower() == val.lower()]
-        if len(matches) == 1:
-            return matches[0]
-        return None
 
     def _read_excel(self, upload):
         import openpyxl
