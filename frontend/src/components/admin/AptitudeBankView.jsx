@@ -4,7 +4,7 @@
 import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
 import {
   ArrowLeft, Search, Loader2, RefreshCw, Trash2, Plus, Pencil, Save, Upload,
-  ChevronDown, Calculator, Brain, MessageSquare,
+  ChevronDown, Calculator, Brain, MessageSquare, Sparkles,
 } from 'lucide-react';
 import { getCsrfToken } from '../../lib/appUtils';
 
@@ -214,6 +214,7 @@ function TopicQuestionsManager({ topic, onBack }) {
   const [editingId, setEditingId] = useState(null);
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState('');
+  const [validateStates, setValidateStates] = useState({}); // { [id]: { busy, msg, ok } }
   const [showBulkUpload, setShowBulkUpload] = useState(false);
   const [bulkFile, setBulkFile] = useState(null);
   const [bulkBusy, setBulkBusy] = useState(false);
@@ -313,6 +314,26 @@ function TopicQuestionsManager({ topic, onBack }) {
       setEditError('Network error.');
     } finally {
       setEditBusy(false);
+    }
+  }
+
+  async function validateQuestion(q) {
+    setValidateStates((s) => ({ ...s, [q.id]: { busy: true, msg: '', ok: true } }));
+    try {
+      const res = await apiFetch(`/api/admin/v2/aptitude-bank/${q.id}/validate/`, 'POST');
+      const data = await res.json();
+      if (!res.ok) {
+        setValidateStates((s) => ({ ...s, [q.id]: { busy: false, msg: data.error || 'Validation failed.', ok: false } }));
+        return;
+      }
+      setQuestions((prev) => prev.map((x) => (x.id === q.id ? data : x)));
+      const changed = data.changed_fields || [];
+      const msg = changed.length === 0
+        ? 'Verified — already correct.'
+        : `Fixed (${changed.join(', ')})${data.reason ? `: ${data.reason}` : '.'}`;
+      setValidateStates((s) => ({ ...s, [q.id]: { busy: false, msg, ok: true } }));
+    } catch {
+      setValidateStates((s) => ({ ...s, [q.id]: { busy: false, msg: 'Network error during validation.', ok: false } }));
     }
   }
 
@@ -492,6 +513,7 @@ function TopicQuestionsManager({ topic, onBack }) {
               <tbody>
                 {pageItems.map((q) => {
                   const editing = editingId === q.id;
+                  const validateState = validateStates[q.id] || { busy: false, msg: '', ok: true };
                   return (
                     <Fragment key={q.id}>
                       <tr style={{ borderBottom: editing ? 'none' : '1px solid var(--bg-1)' }}>
@@ -510,6 +532,10 @@ function TopicQuestionsManager({ topic, onBack }) {
                         </td>
                         <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 800, color: '#166534' }}>{q.correct_option}</td>
                         <td style={{ padding: '12px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          <button onClick={() => validateQuestion(q)} disabled={validateState.busy} title="AI-validate this question and answer"
+                            style={{ padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--olive-900)', cursor: validateState.busy ? 'not-allowed' : 'pointer', marginRight: 8 }}>
+                            {validateState.busy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+                          </button>
                           <button onClick={() => { setEditingId(editing ? null : q.id); setEditError(''); }} title="Edit"
                             style={{ padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--olive-900)', cursor: 'pointer', marginRight: 8 }}>
                             <Pencil size={13} />
@@ -518,6 +544,11 @@ function TopicQuestionsManager({ topic, onBack }) {
                             style={{ padding: '8px 10px', borderRadius: 10, border: '1px solid #fecaca', background: '#fef2f2', color: '#dc2626', cursor: deletingId === q.id ? 'not-allowed' : 'pointer' }}>
                             {deletingId === q.id ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
                           </button>
+                          {validateState.msg && (
+                            <div style={{ fontSize: 11, marginTop: 6, textAlign: 'right', color: validateState.ok ? '#166534' : '#dc2626' }}>
+                              {validateState.msg}
+                            </div>
+                          )}
                         </td>
                       </tr>
                       {editing && (

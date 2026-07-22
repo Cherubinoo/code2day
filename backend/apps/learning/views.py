@@ -6673,13 +6673,14 @@ class AptitudeTopicListView(UnifiedAuthMixin, APIView):
                         "solved_count": s_count
                     })
                 
-                # If there are no Level 3 topics, check if questions are directly on Level 2
-                if not topic_list:
-                    q_count = subcat.questions.count()
-                    s_count = solved_counts.get(subcat.id, 0)
-                    subcat_total_questions = q_count
-                    subcat_solved_questions = s_count
-                
+                # Questions can be filed directly on this subcategory (the "main
+                # topic" level admin bulk-upload/manage screens use) in addition
+                # to any Level 3 subtopics beneath it — count both, not just one
+                # or the other, or newly-uploaded/added direct questions never
+                # show up in the topic tree's counts once any subtopic exists.
+                subcat_total_questions += subcat.questions.count()
+                subcat_solved_questions += solved_counts.get(subcat.id, 0)
+
                 cat_total_questions += subcat_total_questions
                 cat_solved_questions += subcat_solved_questions
                 
@@ -8583,6 +8584,59 @@ class AdminAptitudeQuestionDetailView(APIView):
             return Response({"error": "Not found"}, status=404)
         q.delete()
         return Response(status=204)
+
+
+class AdminAptitudeQuestionValidateView(APIView):
+    """System Admin: AI-review one aptitude question — checks the marked
+    correct answer is actually right and the question/options are
+    well-formed, autocorrecting and saving the fix (just the answer key, or
+    a full rewrite when the question itself is broken/ambiguous) rather
+    than only flagging it for manual review."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, question_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        q = AptitudeQuestion.objects.select_related("topic").filter(id=question_id).first()
+        if not q:
+            return Response({"error": "Not found"}, status=404)
+
+        from .services.aptitude_validator import validate_aptitude_question
+        from .services.testcase_generator import TestCaseGenError
+
+        try:
+            result = validate_aptitude_question(
+                question_text=q.question_text,
+                option_a=q.option_a, option_b=q.option_b, option_c=q.option_c, option_d=q.option_d,
+                correct_option=q.correct_option, difficulty=q.difficulty,
+            )
+        except TestCaseGenError as e:
+            return Response({"error": f"AI validation failed: {e}"}, status=502)
+
+        changed_fields = []
+        if result["needs_rewrite"]:
+            for field in ("question_text", "option_a", "option_b", "option_c", "option_d"):
+                new_val = result[field]
+                if new_val != getattr(q, field):
+                    setattr(q, field, new_val)
+                    changed_fields.append(field)
+
+        if result["correct_option"] != q.correct_option:
+            q.correct_option = result["correct_option"]
+            changed_fields.append("correct_option")
+
+        if changed_fields:
+            q.save()
+
+        return Response({
+            "id": q.id, "topic_id": q.topic_id, "topic": q.topic.title if q.topic else "",
+            "question_text": q.question_text,
+            "option_a": q.option_a, "option_b": q.option_b, "option_c": q.option_c, "option_d": q.option_d,
+            "correct_option": q.correct_option, "explanation": q.explanation, "difficulty": q.difficulty,
+            "changed_fields": changed_fields,
+            "reason": result["reason"],
+        })
 
 
 class AdminAptitudeBulkDeleteView(APIView):
