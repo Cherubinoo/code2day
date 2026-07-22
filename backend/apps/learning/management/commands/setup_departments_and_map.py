@@ -106,12 +106,23 @@ class Command(BaseCommand):
             # Find department
             dept = depts_by_code.get(dept_code)
 
-            # Check if needs update
-            if student.batch != batch or student.department_id != (dept.id if dept else None):
+            # Only fill in what's currently missing — this runs on every
+            # deploy, so overwriting an already-set batch/department would
+            # silently revert any manual correction staff made afterward
+            # (e.g. a student moved section, or a source-data error was
+            # fixed by hand). New/blank students still get auto-mapped.
+            needs_batch = not student.batch and batch
+            needs_dept = student.department_id is None and dept is not None
+            if needs_batch or needs_dept:
                 if not dry_run:
-                    student.batch = batch
-                    student.department = dept
-                    student.save(update_fields=["batch", "department"])
+                    update_fields = []
+                    if needs_batch:
+                        student.batch = batch
+                        update_fields.append("batch")
+                    if needs_dept:
+                        student.department = dept
+                        update_fields.append("department")
+                    student.save(update_fields=update_fields)
                 updated += 1
                 status = "WOULD UPDATE" if dry_run else "UPDATED"
                 dept_name = dept.name if dept else "None"
