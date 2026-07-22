@@ -119,7 +119,10 @@ export function ScoreLineChart({ data, avgScore }) {
 }
 
 // ── Topic Accuracy Radar Chart ─────────────────────────────────────────────────
-export function TopicRadarChart({ data }) {
+// `onSelect(item)` is optional — when given, dots and labels become clickable
+// (with a generous invisible hit-area) so the caller can show a detail view
+// for whichever topic the student picks.
+export function TopicRadarChart({ data, onSelect, selectedTopic }) {
   const items = (data || []).slice(0, 14);
 
   if (items.length === 0) {
@@ -158,10 +161,19 @@ export function TopicRadarChart({ data }) {
       <path d={toPath(dataPts)} fill={`${ACCENT}44`} stroke={ACCENT} strokeWidth={2} />
 
       {/* Data dots */}
-      {dataPts.map(([x, y], i) => (
-        <circle key={i} cx={x.toFixed(1)} cy={y.toFixed(1)} r={3.5}
-          fill={ACCENT} stroke="rgba(255,255,255,0.2)" strokeWidth={0.8} />
-      ))}
+      {dataPts.map(([x, y], i) => {
+        const isSelected = selectedTopic === items[i].topic;
+        return (
+          <g key={i}
+            style={onSelect ? { cursor: 'pointer' } : undefined}
+            onClick={onSelect ? () => onSelect(items[i]) : undefined}
+          >
+            {onSelect && <circle cx={x.toFixed(1)} cy={y.toFixed(1)} r={14} fill="transparent" />}
+            <circle cx={x.toFixed(1)} cy={y.toFixed(1)} r={isSelected ? 5.5 : 3.5}
+              fill={isSelected ? '#4ade80' : ACCENT} stroke="rgba(255,255,255,0.2)" strokeWidth={0.8} />
+          </g>
+        );
+      })}
 
       {/* Labels */}
       {items.map((d, i) => {
@@ -169,10 +181,14 @@ export function TopicRadarChart({ data }) {
         const [lx, ly] = polar(R + 17, a);
         const anchor = lx > CX + 6 ? 'start' : lx < CX - 6 ? 'end' : 'middle';
         const label = d.topic.length > 16 ? d.topic.slice(0, 15) + '…' : d.topic;
+        const isSelected = selectedTopic === d.topic;
         return (
           <text key={i} x={lx.toFixed(1)} y={ly.toFixed(1)} dy={3}
-            textAnchor={anchor} fill="rgba(255,255,255,0.5)"
-            fontSize={7} fontWeight="600">
+            textAnchor={anchor} fill={isSelected ? '#4ade80' : 'rgba(255,255,255,0.5)'}
+            fontSize={7} fontWeight={isSelected ? 800 : 600}
+            style={onSelect ? { cursor: 'pointer' } : undefined}
+            onClick={onSelect ? () => onSelect(d) : undefined}
+          >
             {label}
           </text>
         );
@@ -207,6 +223,55 @@ export function DifficultyDistributionChart({ easy, medium, hard }) {
           <span style={{ fontSize: 12, fontWeight: 900, color: 'white', textAlign: 'right' }}>{r.value}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ── Ranked Horizontal Bar Chart ────────────────────────────────────────────────
+// Generic label/value ranking (e.g. companies by problems solved). `onSelect`
+// is optional — when given, each bar/label becomes clickable.
+export function RankedBarChart({ items, onSelect, selected, color = ACCENT, emptyText = 'No data yet' }) {
+  const rows = (items || []).slice(0, 10);
+  if (rows.length === 0) {
+    return (
+      <div style={{ height: 160, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.25)', fontSize: 13, fontStyle: 'italic' }}>
+        {emptyText}
+      </div>
+    );
+  }
+  const max = Math.max(1, ...rows.map(r => r.value));
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {rows.map(r => {
+        const isSelected = selected === r.label;
+        return (
+          <div key={r.label}
+            onClick={onSelect ? () => onSelect(r) : undefined}
+            style={{
+              display: 'grid', gridTemplateColumns: '110px 1fr 30px', alignItems: 'center', gap: 12,
+              cursor: onSelect ? 'pointer' : 'default',
+            }}
+          >
+            <span style={{
+              fontSize: 11, fontWeight: 800, color: isSelected ? '#4ade80' : 'rgba(255,255,255,0.55)',
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {r.label}
+            </span>
+            <div style={{ height: 12, borderRadius: 6, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+              <div style={{
+                width: `${(r.value / max) * 100}%`,
+                height: '100%',
+                background: isSelected ? '#4ade80' : color,
+                borderRadius: 6,
+                transition: 'width 0.5s ease, background 0.2s ease',
+              }} />
+            </div>
+            <span style={{ fontSize: 11, fontWeight: 900, color: 'white', textAlign: 'right' }}>{r.value}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

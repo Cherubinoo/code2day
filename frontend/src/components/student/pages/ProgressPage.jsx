@@ -25,7 +25,7 @@ import {
   Loader2
 } from 'lucide-react';
 import ContestDashboardWidget from '../ContestDashboardWidget';
-import { PerformanceDashboard, AptitudeProgressRadar, TopicRadarChart, DifficultyDistributionChart } from '../../common/PerformanceCharts';
+import { PerformanceDashboard, AptitudeProgressRadar, TopicRadarChart, DifficultyDistributionChart, RankedBarChart } from '../../common/PerformanceCharts';
 
 const shimmerStyles = `
   @keyframes shimmer {
@@ -169,6 +169,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
   const [activeTab, setActiveTab] = useState("overall");
   const [selectedBadge, setSelectedBadge] = useState(null);
   const [selectedCompanyDetail, setSelectedCompanyDetail] = useState(null);
+  const [selectedTopicDetail, setSelectedTopicDetail] = useState(null);
   const [isTrackingModalOpen, setIsTrackingModalOpen] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [companySearchTerm, setCompanySearchTerm] = useState("");
@@ -208,7 +209,19 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
 
   // Company Track - uses local state so UI updates instantly on toggle
   const trackedCompaniesList = localTracked;
-  
+  const trackedCompaniesListLower = useMemo(
+    () => trackedCompaniesList.map(c => c.toLowerCase()),
+    [trackedCompaniesList]
+  );
+  // Case-insensitive lowercase -> as-tracked-name lookup, so a problem's
+  // company tag matches regardless of casing but aggregates under the name
+  // the student actually tracked (not the tag's own casing).
+  const trackedCompaniesLowerMap = useMemo(() => {
+    const map = new Map();
+    trackedCompaniesList.forEach(c => map.set(c.toLowerCase(), c));
+    return map;
+  }, [trackedCompaniesList]);
+
   const allAvailableCompanies = useMemo(() => {
     if (!problemSet) return [];
     const comps = new Set();
@@ -230,15 +243,17 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
       if (p.companies && p.progress_state === 'completed') {
         const comps = p.companies.split(',').map(c => c.trim()).filter(Boolean);
         comps.forEach(c => {
-          // Only show if user has explicitly tracked this company
-          if (trackedCompaniesList.includes(c)) {
-            if (!solvedComps[c]) solvedComps[c] = [];
-            solvedComps[c].push({ title: p.title, difficulty: p.difficulty, slug: p.slug });
+          // Only show if user has explicitly tracked this company (matched
+          // case-insensitively, aggregated under the as-tracked name)
+          const trackedName = trackedCompaniesLowerMap.get(c.toLowerCase());
+          if (trackedName) {
+            if (!solvedComps[trackedName]) solvedComps[trackedName] = [];
+            solvedComps[trackedName].push({ title: p.title, difficulty: p.difficulty, slug: p.slug });
           }
         });
       }
     });
-    
+
     // Ensure all tracked companies are represented even if 0 solved
     trackedCompaniesList.forEach(c => {
       if (!solvedComps[c]) solvedComps[c] = [];
@@ -248,7 +263,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
       .map(([name, problems]) => ({ name, count: problems.length, problems }))
       .filter(comp => comp.name.toLowerCase().includes(companySearchTerm.toLowerCase()))
       .sort((a, b) => b.count - a.count);
-  }, [problemSet, trackedCompaniesList, companySearchTerm]);
+  }, [problemSet, trackedCompaniesList, trackedCompaniesLowerMap, companySearchTerm]);
 
   // Coding topic mastery — solved/total per tag across the whole problem
   // bank, computed client-side from problemSet (same source companyProgress
@@ -274,6 +289,38 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
       .slice(0, 14);
   }, [problemSet]);
 
+  // Clicking a point/label on the coding topic radar opens this — every
+  // problem tagged with that topic, solved or not, so a click both selects
+  // the topic and lets the student "check" it.
+  function openTopicDetail(item) {
+    const tag = item.topic;
+    const problems = (problemSet || []).filter(p => (p.tags || []).includes(tag));
+    setSelectedTopicDetail({ topic: tag, accuracy: item.accuracy, problems });
+  }
+
+  // Company readiness radar — same 20%-per-solved scaling already used for
+  // each company card's progress bar, reused here across all tracked
+  // companies at once.
+  const companyReadinessRadar = useMemo(() => (
+    companyProgress.map(c => ({ topic: c.name, accuracy: Math.min(c.count * 20, 100), total: undefined, correct: c.count }))
+  ), [companyProgress]);
+
+  const companyRankedBars = useMemo(() => (
+    companyProgress.map(c => ({ label: c.name, value: c.count }))
+  ), [companyProgress]);
+
+  // Difficulty mix across every solved problem behind a tracked company
+  // (a problem solved for two tracked companies counts once per company).
+  const trackedDifficultyMix = useMemo(() => {
+    const mix = { Easy: 0, Medium: 0, Hard: 0 };
+    companyProgress.forEach(c => {
+      c.problems.forEach(p => {
+        if (mix[p.difficulty] !== undefined) mix[p.difficulty] += 1;
+      });
+    });
+    return mix;
+  }, [companyProgress]);
+
   const filteredModalCompanies = useMemo(() => {
     return allAvailableCompanies.filter(c => 
       c.toLowerCase().includes(modalSearchTerm.toLowerCase())
@@ -284,9 +331,9 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
     if (isUpdating) return;
 
     const snapshot = [...localTracked];
-    const isCurrentlyTracked = snapshot.includes(companyName);
+    const isCurrentlyTracked = snapshot.some(c => c.toLowerCase() === companyName.toLowerCase());
     const newList = isCurrentlyTracked
-      ? snapshot.filter(c => c !== companyName)
+      ? snapshot.filter(c => c.toLowerCase() !== companyName.toLowerCase())
       : [...snapshot, companyName];
 
     // Instant UI update — no prop-propagation delay
@@ -657,9 +704,9 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                 SKILLS PROFILER
               </div>
               <div style={{ fontSize: 15, fontWeight: 900, color: 'white', marginTop: 2 }}>Topic Mastery</div>
-              <TopicRadarChart data={codingTopicMastery} />
+              <TopicRadarChart data={codingTopicMastery} onSelect={openTopicDetail} selectedTopic={selectedTopicDetail?.topic} />
               <div style={{ marginTop: 6, fontSize: 10, color: 'rgba(255,255,255,0.3)', textAlign: 'center' }}>
-                Solved vs. total problems per topic tag
+                Solved vs. total problems per topic tag — click a point to see its problems
               </div>
             </div>
           </div>
@@ -786,6 +833,37 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
           {reportError && (
             <div style={{ marginTop: 16, padding: '12px 16px', background: '#fef2f2', color: '#dc2626', borderRadius: 12, fontWeight: 600, fontSize: '0.9rem' }}>
               {reportError}
+            </div>
+          )}
+
+          {trackedCompaniesList.length > 0 && (
+            <div style={{ background: '#111827', borderRadius: 20, padding: '24px 28px', marginTop: 32, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 28 }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.38)', textTransform: 'uppercase', letterSpacing: '0.09em' }}>
+                  READINESS RADAR
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 900, color: 'white', marginTop: 2 }}>Company Readiness</div>
+                <TopicRadarChart data={companyReadinessRadar} />
+              </div>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.38)', textTransform: 'uppercase', letterSpacing: '0.09em' }}>
+                  COMPARISON
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 900, color: 'white', marginTop: 2, marginBottom: 20 }}>Problems Solved by Company</div>
+                <RankedBarChart
+                  items={companyRankedBars}
+                  onSelect={(r) => setSelectedCompanyDetail(companyProgress.find(c => c.name === r.label))}
+                  color="#fbbf24"
+                  emptyText="Track a company to see it here"
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.38)', textTransform: 'uppercase', letterSpacing: '0.09em' }}>
+                  DIFFICULTY MIX
+                </div>
+                <div style={{ fontSize: 15, fontWeight: 900, color: 'white', marginTop: 2, marginBottom: 20 }}>Across Tracked Companies</div>
+                <DifficultyDistributionChart easy={trackedDifficultyMix.Easy} medium={trackedDifficultyMix.Medium} hard={trackedDifficultyMix.Hard} />
+              </div>
             </div>
           )}
 
@@ -988,6 +1066,54 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
         </div>
       )}
 
+      {/* Topic Detail Popup (from clicking a point on the coding topic radar) */}
+      {selectedTopicDetail && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(57, 72, 42, 0.45)', backdropFilter: 'blur(12px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1001, padding: 24 }}
+          onClick={() => setSelectedTopicDetail(null)}
+        >
+          <div
+            style={{ background: 'white', maxWidth: 520, width: '100%', borderRadius: 40, boxShadow: '0 40px 80px rgba(0,0,0,0.25)', overflow: 'hidden' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ background: 'linear-gradient(135deg, #2D6A4F, #1b4332)', padding: '36px 40px 28px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+                <div style={{ width: 72, height: 72, borderRadius: 20, background: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+                  <Brain size={32} />
+                </div>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 950, color: 'white' }}>{selectedTopicDetail.topic}</h2>
+                  <p style={{ margin: '6px 0 0 0', color: 'rgba(255,255,255,0.85)', fontWeight: 700 }}>
+                    {selectedTopicDetail.accuracy}% mastery · {selectedTopicDetail.problems.length} problem{selectedTopicDetail.problems.length !== 1 ? 's' : ''}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div style={{ padding: '28px 40px 40px', maxHeight: '55vh', overflowY: 'auto' }}>
+              <h3 style={{ margin: '0 0 20px 0', fontSize: '1rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Problems in This Topic</h3>
+              <ol style={{ margin: 0, padding: '0 0 0 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                {selectedTopicDetail.problems.map((prob) => {
+                  const diffColor = prob.difficulty === 'Easy' ? '#22c55e' : prob.difficulty === 'Medium' ? '#f59e0b' : '#ef4444';
+                  const solved = prob.progress_state === 'completed';
+                  return (
+                    <li key={prob.slug} style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--olive-950)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {solved && <CheckCircle2 size={16} color="#22c55e" />}
+                        {prob.title}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 900, color: diffColor, background: `${diffColor}15`, padding: '3px 12px', borderRadius: 20, whiteSpace: 'nowrap', flexShrink: 0 }}>{prob.difficulty}</span>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+            <div style={{ padding: '0 40px 36px' }}>
+              <button className="primary-button" style={{ width: '100%', padding: '16px', borderRadius: 20, fontSize: '1rem', fontWeight: 800 }} onClick={() => setSelectedTopicDetail(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal for badges */}
       {selectedBadge && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(57, 72, 42, 0.4)', backdropFilter: 'blur(10px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}>
@@ -1034,37 +1160,38 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
             </div>
 
             <div style={{ padding: 32, overflowY: 'auto', flex: 1 }}>
-              {modalSearchTerm.trim() && !allAvailableCompanies.some(c => c.toLowerCase() === modalSearchTerm.trim().toLowerCase()) && (
+              <p style={{ margin: '0 0 16px 0', fontSize: '0.85rem', color: 'var(--text-soft)', fontWeight: 600 }}>
+                Don't see a company below? Type its name above to add it manually — it doesn't need to already exist in the question bank.
+              </p>
+              {modalSearchTerm.trim() && !trackedCompaniesListLower.includes(modalSearchTerm.trim().toLowerCase()) && (
                 <button
                   onClick={() => { toggleTrackedCompany(modalSearchTerm.trim()); setModalSearchTerm(''); }}
-                  disabled={isUpdating || trackedCompaniesList.includes(modalSearchTerm.trim())}
+                  disabled={isUpdating}
                   style={{
                     width: '100%', padding: '14px 20px', borderRadius: 16, marginBottom: 20,
                     border: '2px dashed var(--accent)', background: '#fffbeb',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    cursor: trackedCompaniesList.includes(modalSearchTerm.trim()) ? 'default' : 'pointer',
+                    cursor: isUpdating ? 'not-allowed' : 'pointer',
                   }}
                 >
                   <span style={{ fontWeight: 800, color: 'var(--accent-dark)' }}>
-                    {trackedCompaniesList.includes(modalSearchTerm.trim())
-                      ? `"${modalSearchTerm.trim()}" is already tracked`
-                      : `Add "${modalSearchTerm.trim()}" as a new company to track`}
+                    Add "{modalSearchTerm.trim()}" as a new company to track
                   </span>
-                  {!trackedCompaniesList.includes(modalSearchTerm.trim()) && <Plus size={18} color="var(--accent-dark)" />}
+                  <Plus size={18} color="var(--accent-dark)" />
                 </button>
               )}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16 }}>
                 {filteredModalCompanies.length > 0 ? (
                   filteredModalCompanies.map(comp => {
-                    const isTracked = trackedCompaniesList.includes(comp);
+                    const isTracked = trackedCompaniesListLower.includes(comp.toLowerCase());
                     return (
                       <button
                         key={comp}
                         onClick={() => toggleTrackedCompany(comp)}
                         disabled={isUpdating}
-                        style={{ 
-                          padding: '16px 20px', 
-                          borderRadius: 16, 
+                        style={{
+                          padding: '16px 20px',
+                          borderRadius: 16,
                           border: `2px solid ${isTracked ? 'var(--accent)' : '#f1f5f9'}`,
                           background: isTracked ? '#fefce8' : 'white',
                           display: 'flex',
@@ -1082,7 +1209,9 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                   })
                 ) : (
                   <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px 0', color: 'var(--text-soft)' }}>
-                    No companies found matching "{modalSearchTerm}"
+                    {allAvailableCompanies.length === 0
+                      ? 'No companies are tagged in the problem bank yet — type a name above and add it manually.'
+                      : `No companies found matching "${modalSearchTerm}".`}
                   </div>
                 )}
               </div>
