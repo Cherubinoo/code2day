@@ -216,14 +216,46 @@ export default function AptitudePage({ onToggleWorkspace }) {
                       </div>
                       
                       {expandedSubcats[subcat.id] && (
-                        <div style={{ 
-                          display: 'flex', 
-                          flexDirection: 'column', 
-                          gap: '6px', 
+                        <div style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px',
                           marginTop: '12px',
                           borderLeft: '2px solid var(--sage-200)',
                           paddingLeft: '16px'
                         }}>
+                          {subcat.question_count > 0 && (
+                            <button
+                              onClick={() => setPracticeTopicId(subcat.id)}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px',
+                                padding: '12px 16px',
+                                background: 'var(--olive-900)',
+                                border: '1px solid var(--olive-900)',
+                                borderRadius: '12px',
+                                textAlign: 'left',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                color: '#fff',
+                                fontWeight: '700'
+                              }}
+                            >
+                              <Brain size={16} />
+                              <span style={{ fontSize: '1rem' }}>Practice All Questions</span>
+                              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '0.8rem' }}>
+                                  {subcat.solved_count}/{subcat.question_count}
+                                </span>
+                              </div>
+                            </button>
+                          )}
+                          {subcat.question_count === 0 && subcat.topics.length === 0 && (
+                            <div style={{ padding: '12px 16px', color: 'var(--text-soft)', fontSize: '0.9rem' }}>
+                              No questions yet.
+                            </div>
+                          )}
                           {subcat.topics.map((topic) => (
                             <button 
                               key={topic.id}
