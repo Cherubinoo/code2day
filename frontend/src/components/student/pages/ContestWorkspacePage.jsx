@@ -1065,14 +1065,14 @@ function ContestWorkspacePage({ contestId, onBack }) {
             </div>
 
             <div className="tab-strip dense">
-              {["current", "hints"].map((tab) => (
+              {["current", "explanation"].map((tab) => (
                 <button
                   key={tab}
                   type="button"
                   className={problemDetailTab === tab ? "tab-pill active dense" : "tab-pill dense"}
                   onClick={() => setProblemDetailTab(tab)}
                 >
-                  {tab === "current" ? "Problem" : "Hints"}
+                  {tab === "current" ? "Problem" : "Explanation"}
                 </button>
               ))}
             </div>
@@ -1107,19 +1107,15 @@ function ContestWorkspacePage({ contestId, onBack }) {
                       </div>
                     </>
                   )}
-                  {problemDetailTab === "hints" && (
+                  {problemDetailTab === "explanation" && (
                     <>
-                      {selectedProblemDetails.hints && selectedProblemDetails.hints.length > 0 ? (
-                        <div className="hints-list">
-                          {selectedProblemDetails.hints.map((hint, idx) => (
-                            <div key={idx} className="hint-item">
-                              <strong>Hint {idx + 1}</strong>
-                              <p className="body-copy">{hint}</p>
-                            </div>
-                          ))}
+                      {selectedProblemDetails.explanation ? (
+                        <div className="info-box">
+                          <h4>Explanation</h4>
+                          <p className="body-copy">{selectedProblemDetails.explanation}</p>
                         </div>
                       ) : (
-                        <p className="body-copy">No hints available for this problem yet.</p>
+                        <p className="body-copy">No explanation available for this problem yet.</p>
                       )}
                     </>
                   )}

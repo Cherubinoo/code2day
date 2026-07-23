@@ -104,7 +104,7 @@ function parseExampleLines(lines) {
   return examples;
 }
 
-function ProblemStatement({ text }) {
+function ProblemStatement({ text, explanation }) {
   const [collapsed, setCollapsed] = useState(false);
   if (!text) return null;
 
@@ -199,6 +199,11 @@ function ProblemStatement({ text }) {
             if (s.type === "constraints") return null;
             return null;
           })}
+          {explanation && (
+            <div className="slab-hint-box">
+              <strong>Explanation:</strong> {explanation}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -431,7 +436,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
               </div>
               <div className="statement-scroll">
                 <div className="problem-description">
-                  <ProblemStatement text={exercise.description} />
+                  <ProblemStatement text={exercise.description} explanation={exercise.explanation} />
                 </div>
               </div>
             </article>

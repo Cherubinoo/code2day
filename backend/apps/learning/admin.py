@@ -120,47 +120,12 @@ class ProblemAdmin(admin.ModelAdmin):
         self.message_user(request, msg, level=messages.WARNING if failed else messages.INFO)
 
     def save_model(self, request, obj, form, change):
-        is_new = not change
+        # Saving (including bulk imports that go through this ModelAdmin)
+        # only ever creates/updates the Problem row — test cases are always
+        # a separate, explicit step via the "Generate test cases" action
+        # above or the admin bank's per-problem Generate button, never
+        # triggered automatically on save.
         super().save_model(request, obj, form, change)
-
-        if not is_new or TestCase.objects.filter(problem=obj).exists():
-            return
-
-        try:
-            generated = generate_test_cases(
-                title=obj.title,
-                description=obj.description,
-                examples=obj.examples,
-                difficulty=obj.difficulty,
-            )
-        except TestCaseGenError as exc:
-            logger.warning("Auto test-case generation failed for problem %r: %s", obj.slug, exc)
-            self.message_user(
-                request,
-                f"Problem saved, but automatic test case generation failed ({exc}). "
-                f"Add test cases manually below.",
-                level=messages.WARNING,
-            )
-            return
-
-        for order, case in enumerate(generated, start=1):
-            TestCase.objects.create(
-                problem=obj,
-                stdin=case["stdin"],
-                expected_output=case["expected_output"],
-                is_sample=case["is_sample"],
-                order=order,
-            )
-        examples_note = ""
-        if not obj.examples:
-            obj.examples = derive_examples(generated)
-            obj.save(update_fields=["examples"])
-            examples_note = f" and {len(obj.examples)} example(s)"
-        self.message_user(
-            request,
-            f"Automatically generated {len(generated)} test case(s){examples_note} for this problem — "
-            f"please review them below before publishing.",
-        )
 
 
 admin.site.register(Submission)

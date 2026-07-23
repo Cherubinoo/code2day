@@ -8211,6 +8211,7 @@ class AdminProblemBankView(APIView):
             "tags": p.tags,
             "execution_type": p.execution_type,
             "test_case_count": p.test_case_count,
+            "explanation": p.explanation,
         } for p in problems]
 
         return Response({"problems": data, "total": len(data)})
@@ -8338,6 +8339,42 @@ class AdminProblemGenerateTestCasesView(APIView):
             "test_case_count": problem.test_cases.count(),
             "examples_count": len(problem.examples),
         })
+
+
+class AdminProblemGenerateExplanationView(APIView):
+    """System Admin: on-demand (re)generate a brief explanation for one
+    Problem via the LLM fallback chain. Separate endpoint from test-case
+    generation so the admin bank can fire both concurrently instead of
+    waiting on one before starting the other."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        force = bool(request.data.get("force"))
+        if problem.explanation and not force:
+            return Response(
+                {"error": "This problem already has an explanation. Pass force=true to replace it."},
+                status=400,
+            )
+
+        from .services.testcase_generator import generate_explanation, TestCaseGenError
+        try:
+            explanation = generate_explanation(
+                title=problem.title, description=problem.description,
+                examples=problem.examples, difficulty=problem.difficulty,
+            )
+        except TestCaseGenError as exc:
+            return Response({"error": f"Generation failed: {exc}"}, status=502)
+
+        problem.explanation = explanation
+        problem.save(update_fields=["explanation"])
+        return Response({"explanation": problem.explanation})
 
 
 class AdminProblemDetailView(APIView):
@@ -11463,6 +11500,7 @@ def _serialize_exercise(ex):
         "id": ex.id,
         "title": ex.title,
         "description": ex.description,
+        "explanation": ex.explanation,
         "order": ex.order,
         "created_at": ex.created_at.isoformat(),
         "added_by": {"id": ex.added_by.id, "name": ex.added_by.name} if ex.added_by else None,
@@ -11857,7 +11895,9 @@ class StaffLabExercisesView(APIView):
             order=data.get("order", lab.exercises.count()),
             added_by=staff,
         )
-        _auto_generate_lab_test_cases(exercise)
+        # Test cases (and the explanation) are always a separate, explicit
+        # step via the Generate buttons — never triggered automatically on
+        # create, same as the Problem bank.
         return Response(_serialize_exercise(exercise), status=201)
 
 
@@ -11951,24 +11991,12 @@ class StaffLabExercisesBulkView(APIView):
                     LabExerciseTestCase.objects.bulk_create(tc_to_create)
                 tc_created_count = len(tc_to_create)
 
-        # Auto-generate test cases for newly-created exercises the CSV didn't
-        # supply any for — capped, since each generation is a ~10-15s LLM call
-        # made synchronously in this request and a large bulk import (up to
-        # 500 rows) would otherwise blow the request timeout.
-        auto_generated_count = 0
-        AUTO_GEN_CAP = 5
-        for exercise in created:
-            if auto_generated_count >= AUTO_GEN_CAP:
-                break
-            if exercise.test_cases.exists():
-                continue
-            if _auto_generate_lab_test_cases(exercise):
-                auto_generated_count += 1
-
+        # No auto-generation here — test cases and explanations for any
+        # exercise the CSV didn't supply test cases for are always a
+        # separate, explicit step via the per-exercise Generate buttons.
         return Response({
             "created": [_serialize_exercise(e) for e in created],
             "created_count": len(created),
-            "auto_generated_test_cases_for": auto_generated_count,
             "skipped_count": len(errors),
             "errors": errors,
             "test_cases_created_count": tc_created_count,
@@ -12037,6 +12065,37 @@ class StaffExerciseGenerateTestCasesView(APIView):
             "generated_count": count,
             "test_cases": [_serialize_test_case(tc) for tc in ex.test_cases.all().order_by("order")],
         })
+
+
+class StaffExerciseGenerateExplanationView(APIView):
+    """Manual 'Generate' trigger for a lab exercise's brief explanation —
+    a separate endpoint from test-case generation so the staff panel can
+    fire both concurrently instead of waiting on one before the other."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id, exercise_id):
+        staff = _staff_from_request(request)
+        try:
+            ex = LabExercise.objects.get(id=exercise_id, lab_id=lab_id, lab__staff_in_charge=staff)
+        except LabExercise.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+
+        force = bool(request.data.get("force"))
+        if ex.explanation and not force:
+            return Response(
+                {"error": "This exercise already has an explanation. Pass force=true to replace it."},
+                status=400,
+            )
+
+        from .services.testcase_generator import generate_explanation, TestCaseGenError
+        try:
+            explanation = generate_explanation(title=ex.title, description=ex.description)
+        except TestCaseGenError as exc:
+            return Response({"error": f"Generation failed: {exc}"}, status=502)
+
+        ex.explanation = explanation
+        ex.save(update_fields=["explanation"])
+        return Response({"explanation": ex.explanation})
 
 
 class StaffLabStudentsView(APIView):

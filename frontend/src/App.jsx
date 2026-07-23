@@ -352,7 +352,7 @@ function App() {
     }
 
     const existingProblem = problemSet.find((problem) => problem.slug === selectedProblemSlug);
-    if (existingProblem?.examples?.length || existingProblem?.editorial || existingProblem?.hints?.length) {
+    if (existingProblem?.examples?.length || existingProblem?.editorial || existingProblem?.explanation) {
       return undefined;
     }
 

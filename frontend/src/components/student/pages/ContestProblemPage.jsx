@@ -443,7 +443,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
         </div>
 
         <div className="tab-strip dense">
-          {["current", "hints", "submissions"].map((tab) => (
+          {["current", "explanation", "submissions"].map((tab) => (
             <button
               key={tab}
               type="button"
@@ -487,19 +487,15 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
             </>
           )}
 
-          {activeTab === "hints" && (
+          {activeTab === "explanation" && (
             <>
-              {problem.hints && problem.hints.length > 0 ? (
-                <div className="hints-list">
-                  {problem.hints.map((hint, idx) => (
-                    <div key={idx} className="hint-item">
-                      <strong>Hint {idx + 1}</strong>
-                      <p className="body-copy">{hint}</p>
-                    </div>
-                  ))}
+              {problem.explanation ? (
+                <div className="info-box">
+                  <h4>Explanation</h4>
+                  <p className="body-copy">{problem.explanation}</p>
                 </div>
               ) : (
-                <p className="body-copy">No hints available for this problem.</p>
+                <p className="body-copy">No explanation available for this problem.</p>
               )}
             </>
           )}

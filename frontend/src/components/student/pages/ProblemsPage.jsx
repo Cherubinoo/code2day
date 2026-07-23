@@ -644,7 +644,7 @@ function WorkspaceView({
               </div>
 
               <div className="tab-strip dense">
-                {["current", "hints"].map((tab) => (
+                {["current", "explanation"].map((tab) => (
                   <button
                     key={tab}
                     type="button"
@@ -678,19 +678,15 @@ function WorkspaceView({
                         </div>
                       </>
                     )}
-                    {problemDetailTab === "hints" && (
+                    {problemDetailTab === "explanation" && (
                       <>
-                        {selectedProblem.hints && selectedProblem.hints.length > 0 ? (
-                          <div className="hints-list">
-                            {selectedProblem.hints.map((hint, idx) => (
-                              <div key={idx} className="hint-item">
-                                <strong>Hint {idx + 1}</strong>
-                                <p className="body-copy">{hint}</p>
-                              </div>
-                            ))}
+                        {selectedProblem.explanation ? (
+                          <div className="info-box">
+                            <h4>Explanation</h4>
+                            <p className="body-copy">{selectedProblem.explanation}</p>
                           </div>
                         ) : null}
-                        
+
                         {selectedProblem.examples && selectedProblem.examples.length > 0 && (
                           <div className="info-box">
                             <h4>Examples</h4>
@@ -705,7 +701,7 @@ function WorkspaceView({
                     )}
                   </>
                 ) : (
-                  <p className="body-copy">Pick a problem to see the statement, hints, and editorial.</p>
+                  <p className="body-copy">Pick a problem to see the statement, explanation, and editorial.</p>
                 )}
               </div>
             </article>

@@ -141,7 +141,7 @@ export function normalizeProblems(problems) {
       available_languages:
         problem.available_languages ?? fallback?.available_languages ?? languageOptions,
       examples: problem.examples ?? fallback?.examples ?? [],
-      hints: problem.hints ?? fallback?.hints ?? [],
+      explanation: problem.explanation ?? fallback?.explanation ?? "",
       editorial: problem.editorial ?? fallback?.editorial ?? "",
     };
   });

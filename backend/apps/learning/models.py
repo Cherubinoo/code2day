@@ -302,7 +302,8 @@ class Problem(models.Model):
     is_daily = models.BooleanField(default=False)
     # Dynamic content fields from LeetCode dataset
     examples = models.JSONField(default=list, blank=True)  # [{input, output, explanation}]
-    hints = models.JSONField(default=list, blank=True)  # ["hint1", "hint2"]
+    hints = models.JSONField(default=list, blank=True)  # ["hint1", "hint2"] — legacy, unused by generation
+    explanation = models.TextField(blank=True, default="")  # brief LLM-generated approach summary
     editorial = models.TextField(blank=True, default="")
     companies = models.TextField(blank=True, default="")
     source_dataset_id = models.CharField(max_length=50, blank=True, default="")
@@ -1577,6 +1578,7 @@ class LabExercise(models.Model):
     lab         = models.ForeignKey(Lab, on_delete=models.CASCADE, related_name="exercises")
     title       = models.CharField(max_length=200)
     description = models.TextField(blank=True, default="")
+    explanation = models.TextField(blank=True, default="")  # brief LLM-generated approach summary
     order       = models.PositiveIntegerField(default=0)
     added_by    = models.ForeignKey(
         StaffProfile, on_delete=models.SET_NULL, null=True, blank=True,

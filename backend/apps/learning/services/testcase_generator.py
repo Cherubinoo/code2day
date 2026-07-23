@@ -347,6 +347,39 @@ def generate_test_cases(*, title, description, examples=None, num_cases=None, di
     return cases
 
 
+EXPLANATION_PROMPT_TEMPLATE = """You are writing a brief explanation for a student attempting the following problem.
+
+Title: {title}
+
+Description:
+{description}
+
+Write a short explanation (2-4 sentences, no code) that helps a student understand what
+the problem is asking and the general approach/concept needed to solve it — e.g. the
+technique, data structure, or pattern involved. Do not give away the full solution or
+write any code. Do not restate the problem statement verbatim.
+
+Respond with ONLY the explanation text — no markdown headers, no "Explanation:" prefix,
+no commentary.
+"""
+
+
+def generate_explanation(*, title, description, examples=None, difficulty=None):
+    """Returns a brief (2-4 sentence) plain-text explanation of the problem's
+    approach/concept — shown to students instead of the old hints list.
+    Raises a TestCaseGenError subclass if every active provider fails.
+
+    `examples`/`difficulty` aren't used in the prompt (the explanation is
+    concept-level, not example-specific) but are accepted so callers can
+    pass the same kwargs used for generate_test_cases() without filtering."""
+    prompt = EXPLANATION_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
+    text = generate_text_with_fallback(prompt, log_label=f"{title} (explanation)")
+    explanation = text.strip()
+    if not explanation:
+        raise TestCaseGenServiceError("LLM returned an empty explanation.")
+    return explanation
+
+
 def derive_examples(cases):
     """Reshape the is_sample=True entries from generate_test_cases() into
     Problem.examples format ({input, output, explanation}), so a problem

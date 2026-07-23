@@ -73,24 +73,37 @@ const ProblemBankView = ({ onBack }) => {
 
   async function generate(problem, force) {
     setGenStates((s) => ({ ...s, [problem.id]: { busy: true, msg: '' } }));
-    try {
-      const res = await apiFetch(
-        `/api/admin/v2/problem-bank/${problem.id}/generate-test-cases/`,
-        'POST',
-        force ? { force: true } : {},
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        setGenStates((s) => ({ ...s, [problem.id]: { busy: false, msg: data.error || 'Generation failed.' } }));
-        return;
-      }
-      setProblems((prev) => prev.map((p) => (
-        p.id === problem.id ? { ...p, test_case_count: data.test_case_count } : p
-      )));
-      setGenStates((s) => ({ ...s, [problem.id]: { busy: false, msg: `Generated ${data.generated_count} test case(s).` } }));
-    } catch {
-      setGenStates((s) => ({ ...s, [problem.id]: { busy: false, msg: 'Network error.' } }));
+    const body = force ? { force: true } : {};
+
+    // Test cases and the explanation are independent LLM calls with
+    // nothing to hand off between them — fire both at once instead of
+    // waiting for one to finish before starting the other.
+    const [tcOutcome, expOutcome] = await Promise.all([
+      apiFetch(`/api/admin/v2/problem-bank/${problem.id}/generate-test-cases/`, 'POST', body)
+        .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
+        .catch(() => ({ ok: false, data: null, networkError: true })),
+      apiFetch(`/api/admin/v2/problem-bank/${problem.id}/generate-explanation/`, 'POST', body)
+        .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
+        .catch(() => ({ ok: false, data: null, networkError: true })),
+    ]);
+
+    const messages = [];
+    const update = { };
+    if (tcOutcome.ok) {
+      update.test_case_count = tcOutcome.data.test_case_count;
+      messages.push(`Generated ${tcOutcome.data.generated_count} test case(s).`);
+    } else {
+      messages.push(`Test cases: ${tcOutcome.networkError ? 'network error.' : (tcOutcome.data?.error || 'failed.')}`);
     }
+    if (expOutcome.ok) {
+      update.explanation = expOutcome.data.explanation;
+      messages.push('Explanation generated.');
+    } else {
+      messages.push(`Explanation: ${expOutcome.networkError ? 'network error.' : (expOutcome.data?.error || 'failed.')}`);
+    }
+
+    setProblems((prev) => prev.map((p) => (p.id === problem.id ? { ...p, ...update } : p)));
+    setGenStates((s) => ({ ...s, [problem.id]: { busy: false, msg: messages.join(' ') } }));
   }
 
   async function toggleExpand(problem) {
@@ -353,6 +366,17 @@ const ProblemBankView = ({ onBack }) => {
                         >
                           {p.test_case_count} {expanded ? '▲' : '▼'}
                         </button>
+                        <div
+                          title={p.explanation || 'No explanation generated yet'}
+                          style={{
+                            marginTop: 6, padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                            background: p.explanation ? '#dcfce7' : '#f1f5f9',
+                            color: p.explanation ? '#166534' : '#94a3b8',
+                            display: 'inline-block',
+                          }}
+                        >
+                          {p.explanation ? 'Explanation ✓' : 'No explanation'}
+                        </div>
                       </td>
                       <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                         <button
@@ -380,7 +404,7 @@ const ProblemBankView = ({ onBack }) => {
                           {deletingId === p.id ? <Loader2 size={13} className="spin" /> : <Trash2 size={13} />}
                         </button>
                         {gen.msg && (
-                          <div style={{ fontSize: 11, marginTop: 4, color: gen.msg.startsWith('Generated') ? '#166534' : '#dc2626' }}>
+                          <div style={{ fontSize: 11, marginTop: 4, color: /failed|error/i.test(gen.msg) ? '#dc2626' : '#166534' }}>
                             {gen.msg}
                           </div>
                         )}

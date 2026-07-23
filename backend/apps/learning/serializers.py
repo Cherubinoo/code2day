@@ -105,7 +105,7 @@ class ProblemDetailSerializer(ProblemSerializer):
     class Meta(ProblemSerializer.Meta):
         fields = ProblemSerializer.Meta.fields + (
             "examples",
-            "hints",
+            "explanation",
             "editorial",
             "last_solutions",
         )

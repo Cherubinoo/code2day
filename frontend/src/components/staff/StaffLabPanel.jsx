@@ -407,27 +407,38 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
   const [genBusy, setGenBusy] = useState(false);
   const [genMsg, setGenMsg] = useState("");
   const [genCount, setGenCount] = useState(exercise?.test_case_count ?? null);
+  const [explanation, setExplanation] = useState(exercise?.explanation ?? "");
 
   async function generateTestCases(force) {
     setGenBusy(true); setGenMsg("");
-    try {
-      const res = await apiFetch(
-        `/api/lab/v2/${labId}/exercises/${exercise.id}/generate-test-cases/`,
-        "POST",
-        force ? { force: true } : {},
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        setGenMsg(data.error || "Generation failed.");
-        return;
-      }
-      setGenCount(data.test_cases?.length ?? data.generated_count ?? 0);
-      setGenMsg(`Generated ${data.generated_count} test case(s).`);
-    } catch {
-      setGenMsg("Network error.");
-    } finally {
-      setGenBusy(false);
+    const body = force ? { force: true } : {};
+
+    // Test cases and the explanation are independent LLM calls — fire both
+    // at once instead of waiting for one before starting the other.
+    const [tcOutcome, expOutcome] = await Promise.all([
+      apiFetch(`/api/lab/v2/${labId}/exercises/${exercise.id}/generate-test-cases/`, "POST", body)
+        .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
+        .catch(() => ({ ok: false, data: null, networkError: true })),
+      apiFetch(`/api/lab/v2/${labId}/exercises/${exercise.id}/generate-explanation/`, "POST", body)
+        .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
+        .catch(() => ({ ok: false, data: null, networkError: true })),
+    ]);
+
+    const messages = [];
+    if (tcOutcome.ok) {
+      setGenCount(tcOutcome.data.test_cases?.length ?? tcOutcome.data.generated_count ?? 0);
+      messages.push(`Generated ${tcOutcome.data.generated_count} test case(s).`);
+    } else {
+      messages.push(`Test cases: ${tcOutcome.networkError ? "network error." : (tcOutcome.data?.error || "failed.")}`);
     }
+    if (expOutcome.ok) {
+      setExplanation(expOutcome.data.explanation);
+      messages.push("Explanation generated.");
+    } else {
+      messages.push(`Explanation: ${expOutcome.networkError ? "network error." : (expOutcome.data?.error || "failed.")}`);
+    }
+    setGenMsg(messages.join(" "));
+    setGenBusy(false);
   }
 
   function setEx(idx, key, val) {
@@ -534,10 +545,10 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
           value={fields.hint} onChange={(e) => setFields((f) => ({ ...f, hint: e.target.value }))} />
       </div>
 
-      {/* Test case generation (only available once the exercise exists) */}
+      {/* Test case + explanation generation (only available once the exercise exists) */}
       {editing && (
         <div className="slp2-form-field">
-          <label className="slp2-form-label">Test Cases</label>
+          <label className="slp2-form-label">Test Cases &amp; Explanation</label>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <button
               type="button"
@@ -546,11 +557,14 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
               onClick={() => generateTestCases(genCount > 0)}
             >
               {genBusy ? <Loader2 size={14} className="spin" /> : <FlaskConical size={14} />}
-              {genBusy ? "Generating…" : genCount > 0 ? "Regenerate Test Cases" : "Generate Test Cases"}
+              {genBusy ? "Generating…" : genCount > 0 ? "Regenerate" : "Generate"}
             </button>
             {genCount > 0 && <span style={{ fontSize: 12, color: "var(--text-soft)" }}>{genCount} test case(s) on file</span>}
-            {genMsg && <span style={{ fontSize: 12, color: genMsg.startsWith("Generated") ? "var(--easy, #4f8b62)" : "#dc2626" }}>{genMsg}</span>}
+            {genMsg && <span style={{ fontSize: 12, color: /failed|error/i.test(genMsg) ? "#dc2626" : "var(--easy, #4f8b62)" }}>{genMsg}</span>}
           </div>
+          {explanation && (
+            <p style={{ marginTop: 8, fontSize: 12, color: "var(--text-soft)", fontStyle: "italic" }}>{explanation}</p>
+          )}
         </div>
       )}
 
@@ -954,24 +968,36 @@ function LabDetail({ lab: initLab, onBack }) {
 
   async function generateTestCases(ex, force) {
     setGenState((s) => ({ ...s, [ex.id]: { busy: true, msg: "" } }));
-    try {
-      const res = await apiFetch(
-        `/api/lab/v2/${lab.id}/exercises/${ex.id}/generate-test-cases/`,
-        "POST",
-        force ? { force: true } : {},
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        setGenState((s) => ({ ...s, [ex.id]: { busy: false, msg: data.error || "Generation failed." } }));
-        return;
-      }
-      setExercises((prev) => prev.map((e) => (
-        e.id === ex.id ? { ...e, test_case_count: data.test_cases?.length ?? data.generated_count } : e
-      )));
-      setGenState((s) => ({ ...s, [ex.id]: { busy: false, msg: `Generated ${data.generated_count} test case(s).` } }));
-    } catch {
-      setGenState((s) => ({ ...s, [ex.id]: { busy: false, msg: "Network error." } }));
+    const body = force ? { force: true } : {};
+
+    // Test cases and the explanation are independent LLM calls — fire both
+    // at once instead of waiting for one before starting the other.
+    const [tcOutcome, expOutcome] = await Promise.all([
+      apiFetch(`/api/lab/v2/${lab.id}/exercises/${ex.id}/generate-test-cases/`, "POST", body)
+        .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
+        .catch(() => ({ ok: false, data: null, networkError: true })),
+      apiFetch(`/api/lab/v2/${lab.id}/exercises/${ex.id}/generate-explanation/`, "POST", body)
+        .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
+        .catch(() => ({ ok: false, data: null, networkError: true })),
+    ]);
+
+    const messages = [];
+    const update = {};
+    if (tcOutcome.ok) {
+      update.test_case_count = tcOutcome.data.test_cases?.length ?? tcOutcome.data.generated_count;
+      messages.push(`Generated ${tcOutcome.data.generated_count} test case(s).`);
+    } else {
+      messages.push(`Test cases: ${tcOutcome.networkError ? "network error." : (tcOutcome.data?.error || "failed.")}`);
     }
+    if (expOutcome.ok) {
+      update.explanation = expOutcome.data.explanation;
+      messages.push("Explanation generated.");
+    } else {
+      messages.push(`Explanation: ${expOutcome.networkError ? "network error." : (expOutcome.data?.error || "failed.")}`);
+    }
+
+    setExercises((prev) => prev.map((e) => (e.id === ex.id ? { ...e, ...update } : e)));
+    setGenState((s) => ({ ...s, [ex.id]: { busy: false, msg: messages.join(" ") } }));
   }
 
   async function fetchExercises() {
@@ -1104,15 +1130,18 @@ function LabDetail({ lab: initLab, onBack }) {
                       <span className="slp2-chip" style={!hasCases ? { background: "#fee2e2", color: "#991b1b" } : undefined}>
                         {hasCases ? `${ex.test_case_count} test case${ex.test_case_count !== 1 ? "s" : ""}` : "⚠ No test cases"}
                       </span>
+                      <span className="slp2-chip" style={!ex.explanation ? { background: "#f1f5f9", color: "#94a3b8" } : undefined}>
+                        {ex.explanation ? "Explanation ✓" : "No explanation"}
+                      </span>
                       {gen.msg && (
-                        <span className="slp2-chip" style={{ color: gen.msg.startsWith("Generated") ? "#166534" : "#dc2626" }}>
+                        <span className="slp2-chip" style={{ color: /failed|error/i.test(gen.msg) ? "#dc2626" : "#166534" }}>
                           {gen.msg}
                         </span>
                       )}
                     </div>
                   </div>
                   <div className="slp2-ex-actions">
-                    <button type="button" className="slp2-icon-btn" title={hasCases ? "Regenerate test cases" : "Generate test cases"}
+                    <button type="button" className="slp2-icon-btn" title={hasCases ? "Regenerate test cases & explanation" : "Generate test cases & explanation"}
                       disabled={gen.busy}
                       onClick={() => generateTestCases(ex, hasCases)}>
                       {gen.busy ? <Loader2 size={13} className="spin" /> : <FlaskConical size={13} />}
