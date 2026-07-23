@@ -347,27 +347,50 @@ def generate_test_cases(*, title, description, examples=None, num_cases=None, di
     return cases
 
 
-EXPLANATION_PROMPT_TEMPLATE = """You are writing a brief explanation for a student attempting the following problem.
+EXPLANATION_PROMPT_TEMPLATE = """You are writing a real, thorough explanation for a student attempting the
+following problem — not a one-line teaser, an explanation substantial enough that a
+student who reads it actually understands the problem and how to approach it.
 
 Title: {title}
 
 Description:
 {description}
 
-Write a short explanation (2-4 sentences, no code) that helps a student understand what
-the problem is asking and the general approach/concept needed to solve it — e.g. the
-technique, data structure, or pattern involved. Do not give away the full solution or
-write any code. Do not restate the problem statement verbatim.
+Write a clear, detailed explanation (a few short paragraphs) covering:
+- What the problem is really asking, in plain language.
+- The key insight / concept / technique needed (e.g. the data structure, algorithmic
+  pattern, or trick that makes this problem tractable), explained well enough that a
+  student unfamiliar with it would come away understanding it.
+- The general shape of the approach — the steps, in words — without writing actual code
+  or a line-by-line solution walkthrough.
+
+This should read like a good teacher explaining the problem, not a summary. Do not
+write any code, and do not restate the problem statement verbatim.
 
 Respond with ONLY the explanation text — no markdown headers, no "Explanation:" prefix,
 no commentary.
 """
 
+HINT_PROMPT_TEMPLATE = """You are writing a single short hint for a student who is stuck on the
+following problem.
+
+Title: {title}
+
+Description:
+{description}
+
+Write ONE short sentence — a nudge toward the right technique or approach, not the
+answer. It should help someone who is stuck get moving again without solving the
+problem for them.
+
+Respond with ONLY the hint text — no "Hint:" prefix, no commentary, one sentence.
+"""
+
 
 def generate_explanation(*, title, description, examples=None, difficulty=None):
-    """Returns a brief (2-4 sentence) plain-text explanation of the problem's
-    approach/concept — shown to students instead of the old hints list.
-    Raises a TestCaseGenError subclass if every active provider fails.
+    """Returns a real, multi-paragraph plain-text explanation of the
+    problem's concept/approach — shown to students instead of the old hints
+    list. Raises a TestCaseGenError subclass if every active provider fails.
 
     `examples`/`difficulty` aren't used in the prompt (the explanation is
     concept-level, not example-specific) but are accepted so callers can
@@ -378,6 +401,20 @@ def generate_explanation(*, title, description, examples=None, difficulty=None):
     if not explanation:
         raise TestCaseGenServiceError("LLM returned an empty explanation.")
     return explanation
+
+
+def generate_hint(*, title, description):
+    """Returns a single short (one-sentence) nudge-hint — distinct from
+    generate_explanation()'s full write-up. Used for lab exercises, whose
+    description blob has an optional "Hint: ..." line staff can otherwise
+    author by hand. Raises a TestCaseGenError subclass if every active
+    provider fails."""
+    prompt = HINT_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
+    text = generate_text_with_fallback(prompt, log_label=f"{title} (hint)")
+    hint = text.strip()
+    if not hint:
+        raise TestCaseGenServiceError("LLM returned an empty hint.")
+    return hint
 
 
 def derive_examples(cases):

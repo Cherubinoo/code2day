@@ -11823,28 +11823,152 @@ class StaffLabListView(APIView):
         return Response([_serialize_lab_v2(lab) for lab in labs])
 
 
+def _parse_lab_description(text):
+    """Parse a LabExercise.description blob into {problem, examples,
+    difficulty, hint} — a Python port of parseDescription() in
+    StaffLabPanel.jsx. Keep the two in sync if the text format changes."""
+    result = {"problem": "", "examples": [], "difficulty": "Medium", "hint": ""}
+    if not text:
+        return result
+
+    section = "problem"
+    problem_lines = []
+    cur_ex = None
+
+    for line in text.split("\n"):
+        t = line.strip()
+        if t == "Examples:":
+            section = "examples"
+            cur_ex = {"input": "", "output": "", "explanation": ""}
+            continue
+        if t == "Constraints:":
+            if cur_ex:
+                result["examples"].append(cur_ex)
+                cur_ex = None
+            section = "constraints"
+            continue
+        diff_match = re.match(r"^Difficulty:\s*(.*)", t)
+        if diff_match:
+            result["difficulty"] = diff_match.group(1).strip() or "Medium"
+            continue
+        hint_match = re.match(r"^Hint:\s*(.*)", t)
+        if hint_match:
+            result["hint"] = hint_match.group(1).strip()
+            continue
+
+        if section == "problem":
+            problem_lines.append(line)
+        elif section == "examples":
+            im = re.match(r"^\s*Input:\s*(.*)", line)
+            om = re.match(r"^\s*Output:\s*(.*)", line)
+            em = re.match(r"^\s*Explanation:\s*(.*)", line)
+            if im:
+                if cur_ex and cur_ex["input"]:
+                    result["examples"].append(cur_ex)
+                    cur_ex = {"input": "", "output": "", "explanation": ""}
+                if cur_ex is not None:
+                    cur_ex["input"] = im.group(1)
+            elif om and cur_ex is not None:
+                cur_ex["output"] = om.group(1)
+            elif em and cur_ex is not None:
+                cur_ex["explanation"] = em.group(1)
+        # section == "constraints": intentionally dropped, matching the JS port.
+
+    if cur_ex:
+        result["examples"].append(cur_ex)
+    result["problem"] = "\n".join(problem_lines).strip()
+    return result
+
+
+def _compile_lab_description(parsed):
+    """Rebuild a LabExercise.description blob from parsed fields — a
+    Python port of compileDescription() in StaffLabPanel.jsx."""
+    parts = []
+    if parsed["problem"].strip():
+        parts.append(parsed["problem"].strip())
+
+    exs = [e for e in parsed["examples"] if e.get("input", "").strip() or e.get("output", "").strip()]
+    if exs:
+        parts.append("\nExamples:")
+        for e in exs:
+            if e.get("input", "").strip():
+                parts.append(f"  Input:  {e['input'].strip()}")
+            if e.get("output", "").strip():
+                parts.append(f"  Output: {e['output'].strip()}")
+            if e.get("explanation", "").strip():
+                parts.append(f"  Explanation: {e['explanation'].strip()}")
+
+    if parsed.get("difficulty"):
+        parts.append(f"\nDifficulty: {parsed['difficulty']}")
+    if parsed.get("hint", "").strip():
+        parts.append(f"\nHint: {parsed['hint'].strip()}")
+
+    return "\n".join(parts)
+
+
+def _run_and_close_connections(fn, **kwargs):
+    """Thread-pool target wrapper — a worker thread that touches the ORM
+    (as generate_test_cases/generate_hint do, for LLMProvider rotation)
+    opens its own DB connection that Django never closes on its own,
+    since the request-lifecycle cleanup signals only cover the main
+    request thread. Close it explicitly once the call is done either way,
+    or a connection leaks every time this runs."""
+    from django.db import connections
+    try:
+        return fn(**kwargs)
+    finally:
+        connections.close_all()
+
+
 def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False):
-    """LLM test case generation for a LabExercise. By default best-effort —
-    a generation failure shouldn't block exercise creation. Pass
-    raise_on_error=True for manual/on-demand triggers where the caller
-    wants to surface the failure to the user instead of silently no-op'ing."""
+    """LLM test case generation for a LabExercise, plus a best-effort
+    backfill of the description's Hint: line and Examples: section when
+    they're missing — examples are derived from the generated test cases,
+    and the hint is a separate LLM call made concurrently with the test
+    case generation (the two are independent, so there's no reason to
+    serialize them). Existing Hint/Examples content is never overwritten.
+
+    By default best-effort — a generation failure shouldn't block exercise
+    creation. Pass raise_on_error=True for manual/on-demand triggers where
+    the caller wants to surface the failure to the user instead of
+    silently no-op'ing."""
     if exercise.test_cases.exists():
         return 0
 
-    from .services.testcase_generator import generate_test_cases, extract_difficulty, TestCaseGenError
+    from concurrent.futures import ThreadPoolExecutor
+    from .services.testcase_generator import (
+        generate_test_cases, generate_hint, derive_examples, extract_difficulty, TestCaseGenError,
+    )
 
-    try:
-        generated = generate_test_cases(
-            title=exercise.title,
-            description=exercise.description,
-            num_cases=num_cases,
-            difficulty=extract_difficulty(exercise.description),
+    parsed = _parse_lab_description(exercise.description)
+    needs_hint = not parsed["hint"]
+    needs_examples = not parsed["examples"]
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        tc_future = pool.submit(
+            _run_and_close_connections, generate_test_cases,
+            title=exercise.title, description=exercise.description,
+            num_cases=num_cases, difficulty=extract_difficulty(exercise.description),
         )
-    except TestCaseGenError as exc:
-        logger.warning("Auto test-case generation failed for lab exercise %r: %s", exercise.title, exc)
-        if raise_on_error:
-            raise
-        return 0
+        hint_future = (
+            pool.submit(_run_and_close_connections, generate_hint, title=exercise.title, description=exercise.description)
+            if needs_hint else None
+        )
+
+        try:
+            generated = tc_future.result()
+        except TestCaseGenError as exc:
+            logger.warning("Auto test-case generation failed for lab exercise %r: %s", exercise.title, exc)
+            if raise_on_error:
+                raise
+            return 0
+
+        hint_text = None
+        if hint_future is not None:
+            try:
+                hint_text = hint_future.result()
+            except TestCaseGenError as exc:
+                logger.warning("Auto hint generation failed for lab exercise %r: %s", exercise.title, exc)
 
     LabExerciseTestCase.objects.bulk_create([
         LabExerciseTestCase(
@@ -11856,6 +11980,15 @@ def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False
         )
         for order, case in enumerate(generated, start=1)
     ])
+
+    if needs_examples or hint_text:
+        if needs_examples:
+            parsed["examples"] = derive_examples(generated)
+        if hint_text:
+            parsed["hint"] = hint_text
+        exercise.description = _compile_lab_description(parsed)
+        exercise.save(update_fields=["description"])
+
     return len(generated)
 
 
@@ -12064,6 +12197,7 @@ class StaffExerciseGenerateTestCasesView(APIView):
         return Response({
             "generated_count": count,
             "test_cases": [_serialize_test_case(tc) for tc in ex.test_cases.all().order_by("order")],
+            "description": ex.description,
         })
 
 

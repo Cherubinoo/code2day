@@ -428,6 +428,12 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
     if (tcOutcome.ok) {
       setGenCount(tcOutcome.data.test_cases?.length ?? tcOutcome.data.generated_count ?? 0);
       messages.push(`Generated ${tcOutcome.data.generated_count} test case(s).`);
+      // Generation also backfills the Hint/Examples lines in the
+      // description when they were missing — re-parse so the form fields
+      // pick up whatever it added instead of showing stale (empty) ones.
+      if (tcOutcome.data.description) {
+        setFields(parseDescription(tcOutcome.data.description));
+      }
     } else {
       messages.push(`Test cases: ${tcOutcome.networkError ? "network error." : (tcOutcome.data?.error || "failed.")}`);
     }
@@ -985,6 +991,9 @@ function LabDetail({ lab: initLab, onBack }) {
     const update = {};
     if (tcOutcome.ok) {
       update.test_case_count = tcOutcome.data.test_cases?.length ?? tcOutcome.data.generated_count;
+      // Generation also backfills the Hint/Examples lines in the
+      // description when they were missing.
+      if (tcOutcome.data.description) update.description = tcOutcome.data.description;
       messages.push(`Generated ${tcOutcome.data.generated_count} test case(s).`);
     } else {
       messages.push(`Test cases: ${tcOutcome.networkError ? "network error." : (tcOutcome.data?.error || "failed.")}`);
