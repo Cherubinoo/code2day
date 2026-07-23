@@ -58,20 +58,37 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Official letterhead — used as the page-1 background for every generated
+# report (student/staff/contest/batch/company-track), except lab reports
+# which have their own separate generator (services/lab_report_pdf.py) and
+# are deliberately left untouched.
+# ---------------------------------------------------------------------------
+LETTERHEAD_PATH = os.path.join(os.path.dirname(__file__), 'assets', 'RIT_Letterhead_Template.pdf')
+
+# Measured from the template's own content stream: the header block's
+# bottom divider line sits at y=710.5516pt on its (A4) page. Department name
+# is drawn just below that; report content starts further below still (see
+# each view's topMargin, bumped to clear both).
+_LETTERHEAD_DIVIDER_Y = 710.5516
+_DEPT_NAME_Y = _LETTERHEAD_DIVIDER_Y - 16
+
 
 # ---------------------------------------------------------------------------
 # PDF Watermark Utility for Contest Reports
 # ---------------------------------------------------------------------------
 
 class WatermarkDocTemplate(BaseDocTemplate):
-    """Custom document template that adds watermark to all pages"""
-    
+    """Custom document template that adds a watermark to every page and
+    overlays the official letterhead (assets/RIT_Letterhead_Template.pdf) as
+    the page-1 background, with the department name drawn just below it."""
+
     def __init__(self, filename, institution=None, department=None, **kwargs):
         BaseDocTemplate.__init__(self, filename, **kwargs)
         self.institution = institution
         self.department = department
         self.watermark_image = None
-        
+
         # Try to get watermark image — prefer the local file's filesystem
         # path (logo_display_url is a media *URL* like "/media/...", which
         # isn't openable as a local path) and fall back to logo_url for HTTP.
@@ -83,18 +100,50 @@ class WatermarkDocTemplate(BaseDocTemplate):
                     self.watermark_image = self._get_watermark_image(institution.logo_url)
             except Exception as e:
                 print(f"Failed to load watermark image: {e}")
-        
+
         # Add page template with frame
         # Reserve 1.5 inches at the top for the header
         header_height = 1.5 * inch
         frame = Frame(
-            self.leftMargin, self.bottomMargin, 
-            self.width, self.height, 
+            self.leftMargin, self.bottomMargin,
+            self.width, self.height,
             id='normal'
         )
         template = PageTemplate(id='main', frames=frame, onPage=self._add_header_and_watermark)
         self.addPageTemplates([template])
-    
+
+    def build(self, flowables, **kwargs):
+        """Render normally into a scratch buffer, then merge the literal
+        letterhead PDF in as page 1's background before writing the final
+        bytes into the buffer the caller actually gave us."""
+        scratch = BytesIO()
+        BaseDocTemplate.build(self, flowables, filename=scratch, **kwargs)
+        scratch.seek(0)
+        merged = self._merge_letterhead(scratch)
+        self.filename.write(merged.getvalue())
+
+    def _merge_letterhead(self, content_buffer):
+        try:
+            from pypdf import PdfReader, PdfWriter
+            content_reader = PdfReader(content_buffer)
+            letterhead_reader = PdfReader(LETTERHEAD_PATH)
+            base_page = letterhead_reader.pages[0]
+            base_page.merge_page(content_reader.pages[0])
+
+            writer = PdfWriter()
+            writer.add_page(base_page)
+            for page in content_reader.pages[1:]:
+                writer.add_page(page)
+
+            out = BytesIO()
+            writer.write(out)
+            out.seek(0)
+            return out
+        except Exception:
+            logger.exception("Failed to merge letterhead onto PDF — returning unbranded content instead")
+            content_buffer.seek(0)
+            return content_buffer
+
     def _get_watermark_image(self, logo_url):
         """Download and prepare watermark image"""
         try:
@@ -131,14 +180,12 @@ class WatermarkDocTemplate(BaseDocTemplate):
             return None
     
     def _add_header_and_watermark(self, canvas, doc):
-        """Add dynamic institution header and watermark to each page"""
+        """Add the background watermark to every page, and the department
+        name just below the letterhead's header block on page 1 (the
+        letterhead artwork itself — logo, institution name, subheading,
+        address, divider — is merged in afterwards from the literal
+        template PDF; see build()/_merge_letterhead)."""
         page_width, page_height = A4
-        margin = 0.6 * inch
-        
-        inst = self.institution
-        display_name = getattr(inst, 'display_name', '') or getattr(inst, 'name', 'Institution')
-        subheading = getattr(inst, 'subheading', '')
-        address = getattr(inst, 'address', '')
 
         # ── 1. Draw Watermark (Background) ──
         if self.watermark_image:
@@ -148,81 +195,20 @@ class WatermarkDocTemplate(BaseDocTemplate):
                 y = (page_height - watermark_size) / 2
                 canvas.drawImage(self.watermark_image, x, y, width=watermark_size, height=watermark_size, mask='auto')
             except: pass
-        
-        # ── 2. Draw Header — first page only ──
+
+        # ── 2. Department name — first page only ──
         if doc.page != 1:
             return
 
-        canvas.saveState()
-
-        # Logo — try logo_file path first, then logo_url via HTTP
-        logo_image = None
-        if inst:
-            # Try local file first (fastest, no network)
-            if inst.logo_file:
-                try:
-                    logo_image = inst.logo_file.path
-                except Exception:
-                    logo_image = None
-            # Fall back to URL
-            if not logo_image and inst.logo_url:
-                try:
-                    resp = requests.get(inst.logo_url, timeout=5)
-                    resp.raise_for_status()
-                    logo_image = ImageReader(io.BytesIO(resp.content))
-                except Exception:
-                    logo_image = None
-
-        if logo_image:
-            try:
-                logo_x = margin
-                logo_y = page_height - 1.1 * inch
-                canvas.drawImage(logo_image, logo_x, logo_y,
-                                 width=0.85 * inch, height=0.85 * inch,
-                                 preserveAspectRatio=True, mask='auto')
-            except Exception:
-                pass
-
-        # Text block — centred in the remaining width after logo
-        text_x = margin + 0.95 * inch + (page_width - margin - 0.95 * inch - margin) / 2
-        
-        # Display Name (Red)
-        canvas.setFont("Helvetica-Bold", 14)
-        canvas.setFillColor(colors.HexColor('#ED1C24'))
-        canvas.drawCentredString(text_x, page_height - 0.45*inch, display_name.upper())
-        
-        # Subheading (Gold)
-        if subheading:
-            canvas.setFont("Helvetica-Bold", 9)
-            canvas.setFillColor(colors.HexColor('#FFA000'))
-            canvas.drawCentredString(text_x, page_height - 0.62*inch, subheading.upper())
-        
-        # Address lines (Blue/Grey)
-        y = page_height - (0.76 * inch if subheading else 0.62 * inch)
-        if address:
-            canvas.setFont("Helvetica", 7.5)
-            canvas.setFillColor(colors.HexColor('#2c3e50'))
-            address_lines = address.split('\n')
-            for line in address_lines[:3]:
-                canvas.drawCentredString(text_x, y, line.strip())
-                y -= 11
-
-        # Department (Olive green, below institution/address block)
         dept = self.department
         dept_name = dept.get_full_name() if dept is not None and hasattr(dept, 'get_full_name') else (str(dept) if dept else '')
-        if dept_name:
-            canvas.setFont("Helvetica-Bold", 8.5)
-            canvas.setFillColor(colors.HexColor('#2c5016'))
-            canvas.drawCentredString(text_x, y - 2, dept_name)
-            y -= 13
+        if not dept_name:
+            return
 
-        # Red line — placed below whatever header content was drawn, but never
-        # above the usual 1.2in floor (keeps the common case pixel-identical)
-        line_y = min(page_height - 1.2 * inch, y - 6)
-        canvas.setStrokeColor(colors.HexColor('#ED1C24'))
-        canvas.setLineWidth(1.2)
-        canvas.line(margin, line_y, page_width - margin, line_y)
-
+        canvas.saveState()
+        canvas.setFont("Helvetica-Bold", 10)
+        canvas.setFillColor(colors.HexColor('#2c5016'))
+        canvas.drawCentredString(page_width / 2, _DEPT_NAME_Y, dept_name)
         canvas.restoreState()
 
 
@@ -572,7 +558,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
                 buffer, institution=contest.institution, department=contest.department,
                 pagesize=A4,
                 rightMargin=0.6*inch, leftMargin=0.6*inch,
-                topMargin=1.6*inch, bottomMargin=0.6*inch,
+                topMargin=2.1*inch, bottomMargin=0.6*inch,
             )
             story = self._build_story(contest, profile)
             doc.build(story)
@@ -1276,7 +1262,7 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
                 department=student.department or contest.department,
                 pagesize=A4,
                 rightMargin=0.6*inch, leftMargin=0.6*inch,
-                topMargin=1.6*inch, bottomMargin=0.6*inch,
+                topMargin=2.1*inch, bottomMargin=0.6*inch,
             )
             story = self._build_story(contest, student, participation, profile)
             doc.build(story)
@@ -1838,7 +1824,7 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
         try:
             doc = create_watermarked_pdf_contest(
                 buffer, institution=institution, department=department, pagesize=A4,
-                rightMargin=0.6*inch, leftMargin=0.6*inch, topMargin=1.6*inch, bottomMargin=0.6*inch,
+                rightMargin=0.6*inch, leftMargin=0.6*inch, topMargin=2.1*inch, bottomMargin=0.6*inch,
             )
             story = self._build_story(batch_code, section, students, date_from, date_to, profile)
             doc.build(story)
@@ -2183,7 +2169,7 @@ class StudentCompanyTrackReportPDFView(UnifiedAuthMixin, APIView):
                 buffer, institution=profile.institution, department=profile.department,
                 pagesize=A4,
                 rightMargin=0.6 * inch, leftMargin=0.6 * inch,
-                topMargin=1.6 * inch, bottomMargin=0.6 * inch,
+                topMargin=2.1 * inch, bottomMargin=0.6 * inch,
             )
             story = self._build_story(profile, by_company)
             doc.build(story)

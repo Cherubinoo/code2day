@@ -6885,7 +6885,7 @@ class StudentReportPDFView(APIView):
             institution=student.institution,
             department=student.department,
             pagesize=A4,
-            topMargin=1.6*inch,
+            topMargin=2.1*inch,
             bottomMargin=0.6*inch
         )
 
@@ -7295,7 +7295,7 @@ class StaffReportPDFView(APIView):
             institution=target_staff.institution,
             department=target_staff.department,
             pagesize=A4,
-            topMargin=1.6*inch,
+            topMargin=2.1*inch,
             bottomMargin=0.6*inch
         )
 
