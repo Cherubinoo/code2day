@@ -51,7 +51,7 @@ class NoProvidersAvailableError(TestCaseGenError):
     """Raised when there are no active LLMProvider rows to try, or every one failed."""
 
 
-PROMPT_TEMPLATE = """You are generating test cases for a competitive-programming-style judge.
+PROMPT_TEMPLATE = """You are an expert competitive programmer and computer science educator generating test cases for an online judge system.
 
 Problem title: {title}
 
@@ -66,18 +66,18 @@ large values, duplicates, negative numbers, boundary conditions — whatever is 
 to THIS specific problem).
 
 Rules:
-- "stdin" must be the exact raw text a program reading from standard input would
-  receive — match the format shown in the examples above exactly (same layout, same
-  separators, same line breaks). Do not invent a different input format.
-- "expected_output" must be the exact expected stdout text for that input, correctly
-  computed by actually solving the problem step by step — not guessed.
-- Mark the cases that reproduce the given examples as "is_sample": true; mark the rest
-  "is_sample": false. For every "is_sample": true case, also include a short one or two
-  sentence "explanation" of why that input produces that output (this is shown to
-  students alongside the example, so it should read like a worked example, not just
-  restate the input/output).
-- Respond with ONLY a JSON object, no markdown code fences, no commentary, in exactly
-  this shape:
+1. COMPLETE & VALID INPUT (CRITICAL):
+   - "stdin" MUST contain the COMPLETE raw input data required for a program reading from standard input.
+   - For Tree / Graph / List / Array problems: If the problem asks for tree traversal, node counts, or list operations, stdin MUST contain the complete dataset (e.g. node count N followed by the N node values, or a complete level-order array like "3 9 20 null null 15 8"). NEVER generate a single arbitrary integer (like "4") when the output requires 5 or more tree nodes!
+2. EXACT EXPECTED OUTPUT (CRITICAL):
+   - "expected_output" must be the EXACT stdout text produced by correctly solving the problem step-by-step.
+   - For Tree Traversals (preorder/inorder/postorder), calculate the EXACT node visit sequence (e.g. "3 9 20 15 8").
+3. RICH WORKED EXPLANATION:
+   - For every "is_sample": true case, provide a clear, step-by-step explanation. If the problem involves a Binary Tree or Graph, describe the tree structure (root, left child, right child) and show how the traversal order was derived step-by-step.
+   - Preserve formatting inside "explanation" strings using \\n line breaks and spaces when showing ASCII trees or traversal traces. For traversal examples, include a final line like "Preorder Order: 1 -> 2 -> 4 -> 5 -> 3 -> 6" (or the matching traversal name/order for the problem).
+   - The explanation MUST match the exact "stdin" tree/graph/list data and the exact "expected_output"; never explain a different structure than the one in the test case.
+4. JSON SHAPE:
+   - Respond with ONLY a JSON object in this exact shape:
 {{"test_cases": [{{"stdin": "...", "expected_output": "...", "is_sample": true, "explanation": "..."}}]}}
 """
 
@@ -347,28 +347,19 @@ def generate_test_cases(*, title, description, examples=None, num_cases=None, di
     return cases
 
 
-EXPLANATION_PROMPT_TEMPLATE = """You are writing a real, thorough explanation for a student attempting the
-following problem — not a one-line teaser, an explanation substantial enough that a
-student who reads it actually understands the problem and how to approach it.
+EXPLANATION_PROMPT_TEMPLATE = """You are a computer science professor writing a comprehensive, crystal-clear explanation for a student attempting the following problem.
 
 Title: {title}
 
 Description:
 {description}
 
-Write a clear, detailed explanation (a few short paragraphs) covering:
-- What the problem is really asking, in plain language.
-- The key insight / concept / technique needed (e.g. the data structure, algorithmic
-  pattern, or trick that makes this problem tractable), explained well enough that a
-  student unfamiliar with it would come away understanding it.
-- The general shape of the approach — the steps, in words — without writing actual code
-  or a line-by-line solution walkthrough.
+Write a detailed, pedagogical explanation covering:
+1. Core Problem Concept: Explain what the problem is asking in plain language. If it involves a Binary Tree, Graph, Stack, or specific Data Structure, clearly explain the structure and properties (e.g. for Binary Trees: Root, Left Subtree, Right Subtree, and how Preorder/Inorder/Postorder traversals work).
+2. Step-by-Step Approach & Key Insights: Explain the algorithmic approach, key insights, and edge cases to handle.
+3. Visualization: For Tree or Graph problems, include an ASCII diagram of a sample tree and trace its step-by-step traversal so the student can visually understand the process.
 
-This should read like a good teacher explaining the problem, not a summary. Do not
-write any code, and do not restate the problem statement verbatim.
-
-Respond with ONLY the explanation text — no markdown headers, no "Explanation:" prefix,
-no commentary.
+Respond with ONLY the explanation text — clear, educational, and structured.
 """
 
 HINT_PROMPT_TEMPLATE = """You are writing a single short hint for a student who is stuck on the

@@ -398,6 +398,173 @@ function parseSpreadsheetFile(file) {
 }
 
 // ─── Add / Edit exercise form ─────────────────────────────────────────────────
+const blankTestCase = (order = 0) => ({
+  stdin: "",
+  expected_output: "",
+  is_sample: false,
+  order,
+});
+
+function TestCaseEditor({ labId, exerciseId, refreshKey, onCountChange }) {
+  const [cases, setCases] = useState([]);
+  const [newCase, setNewCase] = useState(() => blankTestCase());
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState({});
+  const [msg, setMsg] = useState("");
+
+  async function loadCases() {
+    setLoading(true); setMsg("");
+    try {
+      const res = await fetch(`/api/lab/v2/${labId}/exercises/${exerciseId}/test-cases/`, { credentials: "include" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setMsg(data.error || "Could not load test cases."); return; }
+      const rows = data.test_cases ?? [];
+      setCases(rows);
+      setNewCase(blankTestCase(rows.length));
+      onCountChange?.(rows.length);
+    } catch {
+      setMsg("Network error while loading test cases.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (exerciseId) loadCases();
+  }, [exerciseId, refreshKey]);
+
+  function updateCase(id, key, value) {
+    setCases((prev) => prev.map((tc) => tc.id === id ? { ...tc, [key]: value } : tc));
+  }
+
+  async function saveCase(tc) {
+    if (!String(tc.expected_output || "").trim()) { setMsg("Expected output is required."); return; }
+    setSaving((s) => ({ ...s, [tc.id]: true })); setMsg("");
+    try {
+      const res = await apiFetch(`/api/lab/v2/${labId}/exercises/${exerciseId}/test-cases/${tc.id}/`, "PUT", {
+        stdin: tc.stdin,
+        expected_output: tc.expected_output,
+        is_sample: tc.is_sample,
+        order: Number(tc.order) || 0,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setMsg(data.error || "Save failed."); return; }
+      setCases((prev) => prev.map((row) => row.id === tc.id ? data : row));
+      setMsg("Test case saved.");
+    } catch {
+      setMsg("Network error while saving.");
+    } finally {
+      setSaving((s) => ({ ...s, [tc.id]: false }));
+    }
+  }
+
+  async function addCase() {
+    if (!String(newCase.expected_output || "").trim()) { setMsg("Expected output is required."); return; }
+    setSaving((s) => ({ ...s, new: true })); setMsg("");
+    try {
+      const res = await apiFetch(`/api/lab/v2/${labId}/exercises/${exerciseId}/test-cases/`, "POST", {
+        ...newCase,
+        order: Number(newCase.order) || cases.length,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setMsg(data.error || "Could not add test case."); return; }
+      const rows = [...cases, data];
+      setCases(rows);
+      setNewCase(blankTestCase(rows.length));
+      onCountChange?.(rows.length);
+      setMsg("Test case added.");
+    } catch {
+      setMsg("Network error while adding.");
+    } finally {
+      setSaving((s) => ({ ...s, new: false }));
+    }
+  }
+
+  async function deleteCase(tc) {
+    setSaving((s) => ({ ...s, [tc.id]: true })); setMsg("");
+    try {
+      const res = await apiFetch(`/api/lab/v2/${labId}/exercises/${exerciseId}/test-cases/${tc.id}/`, "DELETE");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setMsg(data.error || "Delete failed.");
+        return;
+      }
+      const rows = cases.filter((row) => row.id !== tc.id);
+      setCases(rows);
+      setNewCase((prev) => ({ ...prev, order: rows.length }));
+      onCountChange?.(rows.length);
+      setMsg("Test case deleted.");
+    } catch {
+      setMsg("Network error while deleting.");
+    } finally {
+      setSaving((s) => ({ ...s, [tc.id]: false }));
+    }
+  }
+
+  return (
+    <div className="slp2-tc-editor">
+      <div className="slp2-tc-head">
+        <span>{cases.length} editable test case{cases.length !== 1 ? "s" : ""}</span>
+        <button type="button" className="slp2-btn-ghost" onClick={loadCases} disabled={loading}>
+          {loading ? <Loader2 size={13} className="spin" /> : <Search size={13} />}
+          Refresh
+        </button>
+      </div>
+
+      {cases.map((tc, idx) => (
+        <div key={tc.id} className="slp2-tc-card">
+          <div className="slp2-tc-card-head">
+            <strong>Test Case {idx + 1}</strong>
+            <label className="slp2-check-label">
+              <input type="checkbox" checked={!!tc.is_sample} onChange={(e) => updateCase(tc.id, "is_sample", e.target.checked)} />
+              Sample
+            </label>
+          </div>
+          <label className="slp2-mini-label">Input</label>
+          <textarea className="slp2-textarea slp2-tc-area" rows={3} value={tc.stdin} onChange={(e) => updateCase(tc.id, "stdin", e.target.value)} />
+          <label className="slp2-mini-label">Expected Output *</label>
+          <textarea className="slp2-textarea slp2-tc-area" rows={3} value={tc.expected_output} onChange={(e) => updateCase(tc.id, "expected_output", e.target.value)} />
+          <div className="slp2-tc-actions">
+            <label className="slp2-order-label">Order
+              <input className="slp2-order-input" type="number" min="0" value={tc.order} onChange={(e) => updateCase(tc.id, "order", e.target.value)} />
+            </label>
+            <button type="button" className="slp2-btn-ghost" disabled={!!saving[tc.id]} onClick={() => saveCase(tc)}>
+              {saving[tc.id] ? <Loader2 size={13} className="spin" /> : <Save size={13} />}
+              Save
+            </button>
+            <button type="button" className="slp2-icon-btn danger" disabled={!!saving[tc.id]} onClick={() => deleteCase(tc)}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        </div>
+      ))}
+
+      <div className="slp2-tc-card new">
+        <div className="slp2-tc-card-head"><strong>Add Test Case</strong></div>
+        <label className="slp2-mini-label">Input</label>
+        <textarea className="slp2-textarea slp2-tc-area" rows={3} value={newCase.stdin} onChange={(e) => setNewCase((tc) => ({ ...tc, stdin: e.target.value }))} />
+        <label className="slp2-mini-label">Expected Output *</label>
+        <textarea className="slp2-textarea slp2-tc-area" rows={3} value={newCase.expected_output} onChange={(e) => setNewCase((tc) => ({ ...tc, expected_output: e.target.value }))} />
+        <div className="slp2-tc-actions">
+          <label className="slp2-check-label">
+            <input type="checkbox" checked={!!newCase.is_sample} onChange={(e) => setNewCase((tc) => ({ ...tc, is_sample: e.target.checked }))} />
+            Sample
+          </label>
+          <label className="slp2-order-label">Order
+            <input className="slp2-order-input" type="number" min="0" value={newCase.order} onChange={(e) => setNewCase((tc) => ({ ...tc, order: e.target.value }))} />
+          </label>
+          <button type="button" className="slp2-btn-primary" disabled={!!saving.new} onClick={addCase}>
+            {saving.new ? <Loader2 size={13} className="spin" /> : <Plus size={13} />}
+            Add Test Case
+          </button>
+        </div>
+      </div>
+
+      {msg && <p className={/error|failed|required|could not/i.test(msg) ? "slp2-error" : "slp2-tc-msg"}>{msg}</p>}
+    </div>
+  );
+}
+
 function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
   const editing = !!exercise;
   const [title, setTitle] = useState(exercise?.title ?? "");
@@ -408,6 +575,7 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
   const [genMsg, setGenMsg] = useState("");
   const [genCount, setGenCount] = useState(exercise?.test_case_count ?? null);
   const [explanation, setExplanation] = useState(exercise?.explanation ?? "");
+  const [tcRefreshKey, setTcRefreshKey] = useState(0);
 
   useEffect(() => {
     if (exercise) {
@@ -443,6 +611,7 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
       if (tcOutcome.data.description) {
         setFields(parseDescription(tcOutcome.data.description));
       }
+      setTcRefreshKey((key) => key + 1);
     } else {
       messages.push(`Test cases: ${tcOutcome.networkError ? "network error." : (tcOutcome.data?.error || "failed.")}`);
     }
@@ -578,8 +747,14 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
             {genMsg && <span style={{ fontSize: 12, color: /failed|error/i.test(genMsg) ? "#dc2626" : "var(--easy, #4f8b62)" }}>{genMsg}</span>}
           </div>
           {explanation && (
-            <p style={{ marginTop: 8, fontSize: 12, color: "var(--text-soft)", fontStyle: "italic" }}>{explanation}</p>
+            <p className="formatted-explanation" style={{ marginTop: 8, fontSize: 12, color: "var(--text-soft)", fontStyle: "italic" }}>{explanation}</p>
           )}
+          <TestCaseEditor
+            labId={labId}
+            exerciseId={exercise.id}
+            refreshKey={tcRefreshKey}
+            onCountChange={setGenCount}
+          />
         </div>
       )}
 

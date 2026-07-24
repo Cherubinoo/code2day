@@ -27,6 +27,7 @@ import {
 import ContestDashboardWidget from '../ContestDashboardWidget';
 import { PerformanceDashboard, AptitudeProgressRadar, TopicRadarChart, DifficultyDistributionChart, RankedBarChart } from '../../common/PerformanceCharts';
 import { getCsrfToken, extractApiError } from '../../../lib/appUtils';
+import { appUrlForPage } from '../../../lib/useHistoryNav';
 
 const shimmerStyles = `
   @keyframes shimmer {
@@ -1033,7 +1034,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
             <button 
               className="primary-button" 
               style={{ padding: '16px 32px', borderRadius: 16, fontSize: '1rem', fontWeight: 800 }}
-              onClick={() => (window.location.href = '/aptitude')}
+              onClick={() => { window.location.href = appUrlForPage('aptitude'); }}
             >
               Continue Masterclass
             </button>

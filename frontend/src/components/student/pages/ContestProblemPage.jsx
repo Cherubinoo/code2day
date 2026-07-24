@@ -492,7 +492,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
               {problem.explanation ? (
                 <div className="info-box">
                   <h4>Explanation</h4>
-                  <p className="body-copy">{problem.explanation}</p>
+                  <p className="body-copy formatted-explanation">{problem.explanation}</p>
                 </div>
               ) : (
                 <p className="body-copy">No explanation available for this problem.</p>

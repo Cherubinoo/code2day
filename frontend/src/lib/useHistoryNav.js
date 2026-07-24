@@ -40,12 +40,22 @@ const PATH_TO_PAGE = Object.fromEntries(
   Object.entries(PAGE_PATHS).map(([page, path]) => [path, page]),
 );
 
+function normalizePath(pathname) {
+  if (!pathname || pathname === "/") return "/";
+  return pathname.replace(/\/+$/, "");
+}
+
+export function appUrlForPage(page) {
+  const path = PAGE_PATHS[page] ?? "/";
+  return new URL(path, window.location.origin).href;
+}
+
 /** Read the current page from the URL (used on first load & popstate).
  * This app's routing is exactly the fixed set of pages in PAGE_PATHS —
  * nothing else ever calls pushState/replaceState — so any other path is a
  * genuine unknown route, not just an unmodeled valid one. */
 function pageFromCurrentPath() {
-  return PATH_TO_PAGE[window.location.pathname] ?? "not-found";
+  return PATH_TO_PAGE[normalizePath(window.location.pathname)] ?? "not-found";
 }
 
 /**
@@ -71,14 +81,15 @@ export function useHistoryNav(getInitialPage) {
   const navigate = useCallback(
     (page, { replace = false } = {}) => {
       const path = PAGE_PATHS[page] ?? "/";
+      const url = appUrlForPage(page);
       const state = { page };
 
       if (replace) {
-        window.history.replaceState(state, "", path);
+        window.history.replaceState(state, "", url);
       } else {
         // Avoid pushing a duplicate entry when clicking the active nav item
-        if (window.location.pathname !== path) {
-          window.history.pushState(state, "", path);
+        if (normalizePath(window.location.pathname) !== path) {
+          window.history.pushState(state, "", url);
         }
       }
 
@@ -101,9 +112,9 @@ export function useHistoryNav(getInitialPage) {
   // even if the user landed via a bookmark or deep link.
   useEffect(() => {
     const page = pageFromCurrentPath();
-    const path = PAGE_PATHS[page] ?? "/";
+    const url = appUrlForPage(page);
     // replaceState so we don't push an extra entry on the very first load
-    window.history.replaceState({ page }, "", path);
+    window.history.replaceState({ page }, "", url);
   }, []);
 
   return [activePage, navigate];

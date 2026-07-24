@@ -1142,7 +1142,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
                       {selectedProblemDetails.explanation ? (
                         <div className="info-box">
                           <h4>Explanation</h4>
-                          <p className="body-copy">{selectedProblemDetails.explanation}</p>
+                          <p className="body-copy formatted-explanation">{selectedProblemDetails.explanation}</p>
                         </div>
                       ) : (
                         <p className="body-copy">No explanation available for this problem yet.</p>

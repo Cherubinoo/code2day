@@ -165,7 +165,7 @@ function ProblemStatement({ text, explanation }) {
                         <div key={j} className="slab-example">
                           <div className="slab-io"><span>Input</span><code>{ex.input}</code></div>
                           <div className="slab-io"><span>Output</span><code>{ex.output}</code></div>
-                          {ex.explanation && <div className="slab-io explanation"><span>Explanation</span><span>{ex.explanation}</span></div>}
+                          {ex.explanation && <div className="slab-io explanation"><span>Explanation</span><span className="formatted-explanation">{ex.explanation}</span></div>}
                         </div>
                       ))}
                     </div>
@@ -188,7 +188,7 @@ function ProblemStatement({ text, explanation }) {
                       <div key={j} className="slab-example">
                         <div className="slab-io"><span>Input</span><code>{ex.input}</code></div>
                         <div className="slab-io"><span>Output</span><code>{ex.output}</code></div>
-                        {ex.explanation && <div className="slab-io explanation"><span>Explanation</span><span>{ex.explanation}</span></div>}
+                        {ex.explanation && <div className="slab-io explanation"><span>Explanation</span><span className="formatted-explanation">{ex.explanation}</span></div>}
                       </div>
                     ))}
                   </div>
@@ -202,7 +202,8 @@ function ProblemStatement({ text, explanation }) {
           })}
           {explanation && (
             <div className="slab-hint-box">
-              <strong>Explanation:</strong> {explanation}
+              <strong>Explanation:</strong>
+              <div className="formatted-explanation">{explanation}</div>
             </div>
           )}
         </div>

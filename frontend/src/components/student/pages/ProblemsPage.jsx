@@ -690,7 +690,7 @@ function WorkspaceView({
                         {selectedProblem.explanation ? (
                           <div className="info-box">
                             <h4>Explanation</h4>
-                            <p className="body-copy">{selectedProblem.explanation}</p>
+                            <p className="body-copy formatted-explanation">{selectedProblem.explanation}</p>
                           </div>
                         ) : null}
 

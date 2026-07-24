@@ -1567,6 +1567,11 @@ button.tab-pill {
   margin: 0 0 10px;
 }
 
+.formatted-explanation {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .info-box pre {
   margin: 12px 0 0;
   white-space: pre-wrap;
@@ -9155,6 +9160,70 @@ html.discuss-page {
   width: fit-content; margin-top: 2px; transition: background .15s;
 }
 .slp2-add-row-btn:hover { background: var(--sage-50); }
+
+.slp2-tc-editor {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.slp2-tc-head,
+.slp2-tc-card-head,
+.slp2-tc-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.slp2-tc-head {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--olive-800);
+}
+.slp2-tc-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.slp2-tc-card.new {
+  background: var(--sage-50);
+}
+.slp2-tc-card-head strong {
+  font-size: 0.78rem;
+  color: var(--olive-900);
+}
+.slp2-tc-area {
+  min-height: 74px;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 0.78rem;
+}
+.slp2-check-label,
+.slp2-order-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-soft);
+}
+.slp2-order-input {
+  width: 68px;
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-size: 0.78rem;
+}
+.slp2-tc-msg {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--easy, #4f8b62);
+  font-weight: 700;
+}
 
 /* Difficulty pills */
 .slp2-diff-pills { display: flex; gap: 8px; }

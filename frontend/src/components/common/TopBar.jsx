@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { LayoutGrid, Bell, X, MessageSquare, ExternalLink, Mail, Menu } from "lucide-react";
 import { buildJsonPostOptions } from "../../lib/appUtils";
+import { PAGE_PATHS, appUrlForPage } from "../../lib/useHistoryNav";
 
 function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, userType, hideNav }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -226,6 +227,20 @@ function NotificationInbox() {
     }
   }
 
+  function notificationHref(link) {
+    if (!link) return "#";
+    try {
+      const parsed = new URL(link, window.location.origin);
+      if (parsed.origin !== window.location.origin) return parsed.href;
+      const cleanPath = parsed.pathname.replace(/\/+$/, "") || "/";
+      const page = Object.keys(PAGE_PATHS).find((key) => PAGE_PATHS[key] === cleanPath);
+      return page ? appUrlForPage(page) : parsed.href;
+    } catch {
+      const normalized = link.startsWith("/") ? link : `/${link}`;
+      return new URL(normalized, window.location.origin).href;
+    }
+  }
+
   return (
     <div className="notification-wrapper" ref={dropdownRef}>
       <button
@@ -257,7 +272,7 @@ function NotificationInbox() {
                     </div>
                     <p>{n.message}</p>
                     {n.link && (
-                      <a href={n.link} className="inbox-link">
+                      <a href={notificationHref(n.link)} className="inbox-link">
                         View Detail <ExternalLink size={10} />
                       </a>
                     )}

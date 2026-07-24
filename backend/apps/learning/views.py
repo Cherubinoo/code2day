@@ -62,6 +62,7 @@ from .models import (
     LabExerciseSubmission,
     LabExerciseTestCase,
     LabExerciseReport,
+    LabStudentSession,
     LLMProvider,
     Company,
     LAB_LANGUAGE_CHOICES,
@@ -8395,15 +8396,6 @@ class AdminProblemGenerateTestCasesView(APIView):
         if not problem:
             return Response({"error": "Not found"}, status=404)
 
-        force = bool(request.data.get("force"))
-        if force:
-            problem.test_cases.all().delete()
-        elif problem.test_cases.exists():
-            return Response(
-                {"error": "This problem already has test cases. Pass force=true to replace them."},
-                status=400,
-            )
-
         from .services.testcase_generator import generate_test_cases, derive_examples, TestCaseGenError
         try:
             generated = generate_test_cases(
@@ -8415,14 +8407,18 @@ class AdminProblemGenerateTestCasesView(APIView):
         except TestCaseGenError as exc:
             return Response({"error": f"Generation failed: {exc}"}, status=502)
 
-        for order, case in enumerate(generated, start=1):
-            TestCase.objects.create(
-                problem=problem,
-                stdin=case["stdin"],
-                expected_output=case["expected_output"],
-                is_sample=case["is_sample"],
-                order=order,
-            )
+        with transaction.atomic():
+            problem.test_cases.all().delete()
+            TestCase.objects.bulk_create([
+                TestCase(
+                    problem=problem,
+                    stdin=case["stdin"],
+                    expected_output=case["expected_output"],
+                    is_sample=case["is_sample"],
+                    order=order,
+                )
+                for order, case in enumerate(generated, start=1)
+            ])
 
         generated_examples = 0
         if not problem.examples:
@@ -9419,8 +9415,8 @@ class PublicInstitutionListView(APIView):
             if search:
                 institutions = institutions.filter(
                     Q(name__icontains=search) |
-                    Q(code__icontains=search) |
-                    Q(location__icontains=search)
+                    Q(short_code__icontains=search) |
+                    Q(address__icontains=search)
                 )
             
             # Prepare response data
@@ -9437,8 +9433,9 @@ class PublicInstitutionListView(APIView):
                 institution_data = {
                     'id': institution.id,
                     'name': institution.name,
-                    'code': getattr(institution, 'code', ''),
-                    'location': getattr(institution, 'location', ''),
+                    'code': institution.short_code,
+                    'institution_id': institution.institution_id,
+                    'location': institution.address,
                     'is_active': getattr(institution, 'is_active', True),
                     'student_count': StudentProfile.objects.filter(institution=institution).count(),
                     'staff_count': StaffProfile.objects.filter(institution=institution).count(),
@@ -9483,6 +9480,7 @@ class PublicInstitutionListView(APIView):
             name = request.data.get('name', '').strip()
             code = request.data.get('code', '').strip()
             location = request.data.get('location', '').strip()
+            institution_id = request.data.get('institution_id')
             
             if not name:
                 return Response(
@@ -9497,17 +9495,30 @@ class PublicInstitutionListView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            if code and Institution.objects.filter(code=code).exists():
+            if not institution_id:
+                return Response(
+                    {'error': 'Institution ID is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if code and Institution.objects.filter(short_code=code).exists():
                 return Response(
                     {'error': 'Institution with this code already exists'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if Institution.objects.filter(institution_id=institution_id).exists():
+                return Response(
+                    {'error': 'Institution with this ID already exists'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
             # Create new institution
             institution = Institution.objects.create(
+                institution_id=institution_id,
                 name=name,
-                code=code or name.upper()[:10],  # Generate code if not provided
-                location=location,
+                short_code=code or name.upper()[:10],  # Generate code if not provided
+                address=location,
                 is_active=True
             )
             
@@ -9515,9 +9526,10 @@ class PublicInstitutionListView(APIView):
                 'message': 'Institution created successfully',
                 'institution': {
                     'id': institution.id,
+                    'institution_id': institution.institution_id,
                     'name': institution.name,
-                    'code': institution.code,
-                    'location': institution.location,
+                    'code': institution.short_code,
+                    'location': institution.address,
                     'is_active': institution.is_active
                 }
             }, status=status.HTTP_201_CREATED)
@@ -11593,6 +11605,12 @@ def _serialize_lab_v2(lab, student=None):
 
 
 def _serialize_exercise(ex):
+    submission_count = getattr(ex, "submission_count", None)
+    test_case_count = getattr(ex, "test_case_count", None)
+    if submission_count is None and ex.pk:
+        submission_count = ex.submissions.count()
+    if test_case_count is None and ex.pk:
+        test_case_count = ex.test_cases.count()
     return {
         "id": ex.id,
         "title": ex.title,
@@ -11601,8 +11619,8 @@ def _serialize_exercise(ex):
         "order": ex.order,
         "created_at": ex.created_at.isoformat(),
         "added_by": {"id": ex.added_by.id, "name": ex.added_by.name} if ex.added_by else None,
-        "submission_count": getattr(ex, "submission_count", None),
-        "test_case_count": getattr(ex, "test_case_count", None),
+        "submission_count": submission_count,
+        "test_case_count": test_case_count,
     }
 
 
@@ -11615,6 +11633,13 @@ def _serialize_test_case(tc):
         "is_sample": tc.is_sample,
         "order": tc.order,
     }
+
+
+def _nonnegative_int(value, default=0):
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
 
 
 def _serialize_company_practical(company):
@@ -12055,7 +12080,7 @@ def _run_and_close_connections(fn, **kwargs):
         connections.close_all()
 
 
-def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False):
+def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False, replace_existing=False):
     """LLM test case generation for a LabExercise, plus a best-effort
     backfill of the description's Hint: line and Examples: section when
     they're missing — examples are derived from the generated test cases,
@@ -12067,7 +12092,7 @@ def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False
     creation. Pass raise_on_error=True for manual/on-demand triggers where
     the caller wants to surface the failure to the user instead of
     silently no-op'ing."""
-    if exercise.test_cases.exists():
+    if exercise.test_cases.exists() and not replace_existing:
         return 0
 
     from concurrent.futures import ThreadPoolExecutor
@@ -12105,7 +12130,7 @@ def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False
             except TestCaseGenError as exc:
                 logger.warning("Auto hint generation failed for lab exercise %r: %s", exercise.title, exc)
 
-    LabExerciseTestCase.objects.bulk_create([
+    generated_rows = [
         LabExerciseTestCase(
             exercise=exercise,
             stdin=case["stdin"],
@@ -12114,7 +12139,11 @@ def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False
             order=order,
         )
         for order, case in enumerate(generated, start=1)
-    ])
+    ]
+    with transaction.atomic():
+        if replace_existing:
+            exercise.test_cases.all().delete()
+        LabExerciseTestCase.objects.bulk_create(generated_rows)
 
     if needs_examples or hint_text:
         if needs_examples:
@@ -12304,6 +12333,94 @@ class StaffExerciseDetailView(APIView):
         return Response(status=204)
 
 
+class StaffExerciseTestCasesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_ex(self, lab_id, exercise_id, staff):
+        try:
+            return LabExercise.objects.get(
+                id=exercise_id, lab_id=lab_id, lab__staff_in_charge=staff
+            )
+        except LabExercise.DoesNotExist:
+            return None
+
+    def get(self, request, lab_id, exercise_id):
+        staff = _staff_from_request(request)
+        ex = self._get_ex(lab_id, exercise_id, staff)
+        if not ex:
+            return Response({"error": "Not found"}, status=404)
+        cases = ex.test_cases.all().order_by("order", "id")
+        return Response({"test_cases": [_serialize_test_case(tc) for tc in cases]})
+
+    def post(self, request, lab_id, exercise_id):
+        staff = _staff_from_request(request)
+        ex = self._get_ex(lab_id, exercise_id, staff)
+        if not ex:
+            return Response({"error": "Not found"}, status=404)
+
+        expected_output = str(request.data.get("expected_output", "")).strip()
+        if not expected_output:
+            return Response({"error": "Expected output is required"}, status=400)
+
+        order = request.data.get("order")
+        if order is None:
+            order = ex.test_cases.count()
+        else:
+            order = _nonnegative_int(order, ex.test_cases.count())
+        tc = LabExerciseTestCase.objects.create(
+            exercise=ex,
+            stdin=str(request.data.get("stdin", "")).strip(),
+            expected_output=expected_output,
+            is_sample=bool(request.data.get("is_sample")),
+            order=order,
+        )
+        return Response(_serialize_test_case(tc), status=201)
+
+
+class StaffExerciseTestCaseDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_tc(self, lab_id, exercise_id, test_case_id, staff):
+        try:
+            return LabExerciseTestCase.objects.get(
+                id=test_case_id,
+                exercise_id=exercise_id,
+                exercise__lab_id=lab_id,
+                exercise__lab__staff_in_charge=staff,
+            )
+        except LabExerciseTestCase.DoesNotExist:
+            return None
+
+    def put(self, request, lab_id, exercise_id, test_case_id):
+        staff = _staff_from_request(request)
+        tc = self._get_tc(lab_id, exercise_id, test_case_id, staff)
+        if not tc:
+            return Response({"error": "Not found"}, status=404)
+
+        if "stdin" in request.data:
+            tc.stdin = str(request.data.get("stdin", "")).strip()
+        if "expected_output" in request.data:
+            expected_output = str(request.data.get("expected_output", "")).strip()
+            if not expected_output:
+                return Response({"error": "Expected output is required"}, status=400)
+            tc.expected_output = expected_output
+        if "is_sample" in request.data:
+            tc.is_sample = bool(request.data.get("is_sample"))
+        if "order" in request.data:
+            tc.order = _nonnegative_int(request.data.get("order"), tc.order)
+
+        tc.save(update_fields=["stdin", "expected_output", "is_sample", "order"])
+        return Response(_serialize_test_case(tc))
+
+    def delete(self, request, lab_id, exercise_id, test_case_id):
+        staff = _staff_from_request(request)
+        tc = self._get_tc(lab_id, exercise_id, test_case_id, staff)
+        if not tc:
+            return Response({"error": "Not found"}, status=404)
+        tc.delete()
+        return Response(status=204)
+
+
 class StaffExerciseGenerateTestCasesView(APIView):
     """Manual 'Generate' trigger — staff clicks this when adding/editing an
     exercise to (re)generate its test cases via the LLM fallback chain."""
@@ -12316,16 +12433,10 @@ class StaffExerciseGenerateTestCasesView(APIView):
         except LabExercise.DoesNotExist:
             return Response({"error": "Not found"}, status=404)
 
-        force = bool(request.data.get("force"))
-        if force:
-            ex.test_cases.all().delete()
-        elif ex.test_cases.exists():
-            return Response({"error": "This exercise already has test cases. Pass force=true to replace them."}, status=400)
-
         from .services.testcase_generator import TestCaseGenError
 
         try:
-            count = _auto_generate_lab_test_cases(ex, raise_on_error=True)
+            count = _auto_generate_lab_test_cases(ex, raise_on_error=True, replace_existing=True)
         except TestCaseGenError as exc:
             return Response({"error": f"Generation failed: {exc}"}, status=502)
 
