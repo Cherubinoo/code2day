@@ -14,6 +14,9 @@ const ContestDetailModal = ({ contestId, onClose }) => {
   const [downloadingReport, setDownloadingReport] = useState(false);
   const [downloadingStudentReport, setDownloadingStudentReport] = useState({});
   const [unlockingStudent, setUnlockingStudent] = useState({});
+  const [unlockingAll, setUnlockingAll] = useState(false);
+  const [activeTab, setActiveTab] = useState('submissions'); // 'submissions' | 'unblock' | 'questions'
+  const [unblockSearch, setUnblockSearch] = useState('');
   const [batchFilter, setBatchFilter] = useState('');
   const [sectionFilter, setSectionFilter] = useState('');
 
@@ -41,6 +44,31 @@ const ContestDetailModal = ({ contestId, onClose }) => {
       alert(`Unlock error: ${err.message}`);
     } finally {
       setUnlockingStudent(prev => ({ ...prev, [regNo]: false }));
+    }
+  }
+
+  async function handleUnlockAllStudents() {
+    const allParticipants = analytics?.participants || [];
+    if (allParticipants.length === 0) return;
+    if (!window.confirm("Are you sure you want to unlock ALL participating students? Their sessions will be re-activated with extra time.")) return;
+
+    setUnlockingAll(true);
+    try {
+      let count = 0;
+      for (const p of allParticipants) {
+        const res = await fetch(`/api/contests/${contestId}/student/${p.register_number}/unlock/`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        });
+        if (res.ok) count++;
+      }
+      alert(`✅ Successfully unlocked ${count} student(s)!`);
+      loadContestData();
+    } catch (err) {
+      alert(`Unlock all error: ${err.message}`);
+    } finally {
+      setUnlockingAll(false);
     }
   }
 
@@ -334,53 +362,175 @@ const ContestDetailModal = ({ contestId, onClose }) => {
           </div>
         </div>
 
-        {/* Contest Content */}
-        <div style={{ padding: '24px 32px', borderBottom: '1px solid #e5e7eb' }}>
-          <h3 style={{ margin: '0 0 16px', fontSize: 18 }}>
-            Contest {contest.contest_type === 'aptitude' ? 'Questions' : 'Problems'}
-          </h3>
-          <div style={{ display: 'grid', gap: 12 }}>
-            {(contest.problems || []).map((item, idx) => (
-              <div key={idx} style={{
-                padding: 16,
-                background: '#f9fafb',
-                borderRadius: 8,
-                border: '1px solid #e5e7eb',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}>
-                <div>
-                  <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
-                    {contest.contest_type === 'aptitude' ? `Question ${idx + 1}` : `Problem ${idx + 1}`}
-                  </div>
-                  <div style={{ fontWeight: 600 }}>
-                    {contest.contest_type === 'aptitude' ? item.question_text : item.title}
-                  </div>
-                  {contest.contest_type === 'aptitude' && (
-                    <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
-                      Topic: {item.topic} • Difficulty: {item.difficulty}
-                    </div>
-                  )}
-                </div>
-                <div style={{
-                  padding: '4px 10px',
-                  borderRadius: 6,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                  background: item.difficulty === 'Easy' ? '#dcfce7' : item.difficulty === 'Medium' ? '#fef3c7' : '#fee2e2',
-                  color: item.difficulty === 'Easy' ? '#166534' : item.difficulty === 'Medium' ? '#92400e' : '#991b1b',
-                }}>
-                  {item.difficulty}
-                </div>
-              </div>
-            ))}
-          </div>
+        {/* Navigation Tabs */}
+        <div style={{
+          display: 'flex', gap: 12, padding: '0 32px', background: '#f9fafb',
+          borderBottom: '1px solid #e5e7eb',
+        }}>
+          <button
+            onClick={() => setActiveTab('submissions')}
+            style={{
+              padding: '14px 20px', border: 'none', background: 'none',
+              borderBottom: activeTab === 'submissions' ? '3px solid #4f46e5' : '3px solid transparent',
+              color: activeTab === 'submissions' ? '#4f46e5' : '#64748b',
+              fontWeight: 700, fontSize: 14, cursor: 'pointer',
+            }}
+          >
+            📊 Submissions & Results ({submittedParticipants.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('unblock')}
+            style={{
+              padding: '14px 20px', border: 'none', background: 'none',
+              borderBottom: activeTab === 'unblock' ? '3px solid #10b981' : '3px solid transparent',
+              color: activeTab === 'unblock' ? '#10b981' : '#64748b',
+              fontWeight: 700, fontSize: 14, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            🔓 Unlock / Unblock Students ({analytics?.participants?.length || 0})
+          </button>
+          <button
+            onClick={() => setActiveTab('questions')}
+            style={{
+              padding: '14px 20px', border: 'none', background: 'none',
+              borderBottom: activeTab === 'questions' ? '3px solid #4f46e5' : '3px solid transparent',
+              color: activeTab === 'questions' ? '#4f46e5' : '#64748b',
+              fontWeight: 700, fontSize: 14, cursor: 'pointer',
+            }}
+          >
+            📝 Contest {contest.contest_type === 'aptitude' ? 'Questions' : 'Problems'}
+          </button>
         </div>
 
-        {/* Student Submissions Table */}
-        {analytics && (
+        {/* Tab 1: Contest Questions */}
+        {activeTab === 'questions' && (
+          <div style={{ padding: '24px 32px', borderBottom: '1px solid #e5e7eb' }}>
+            <h3 style={{ margin: '0 0 16px', fontSize: 18 }}>
+              Contest {contest.contest_type === 'aptitude' ? 'Questions' : 'Problems'}
+            </h3>
+            <div style={{ display: 'grid', gap: 12 }}>
+              {(contest.problems || []).map((item, idx) => (
+                <div key={idx} style={{
+                  padding: 16,
+                  background: '#f9fafb',
+                  borderRadius: 8,
+                  border: '1px solid #e5e7eb',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>
+                      {contest.contest_type === 'aptitude' ? `Question ${idx + 1}` : `Problem ${idx + 1}`}
+                    </div>
+                    <div style={{ fontWeight: 600 }}>
+                      {contest.contest_type === 'aptitude' ? item.question_text : item.title}
+                    </div>
+                    {contest.contest_type === 'aptitude' && (
+                      <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>
+                        Topic: {item.topic} • Difficulty: {item.difficulty}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    background: item.difficulty === 'Easy' ? '#dcfce7' : item.difficulty === 'Medium' ? '#fef3c7' : '#fee2e2',
+                    color: item.difficulty === 'Easy' ? '#166534' : item.difficulty === 'Medium' ? '#92400e' : '#991b1b',
+                  }}>
+                    {item.difficulty}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: Unlock / Unblock Students */}
+        {activeTab === 'unblock' && (
+          <div style={{ padding: '24px 32px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 18, color: '#0f172a', fontWeight: 800 }}>
+                  🔓 Unlock & Re-activate Students
+                </h3>
+                <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
+                  Unlock blocked or auto-submitted students so they can continue their contest session without losing their work.
+                </p>
+              </div>
+              <button
+                onClick={handleUnlockAllStudents}
+                disabled={unlockingAll || !analytics?.participants?.length}
+                style={{
+                  padding: '10px 20px', borderRadius: 10, border: 'none',
+                  background: unlockingAll ? '#9ca3af' : '#10b981', color: 'white',
+                  fontWeight: 700, fontSize: 14, cursor: unlockingAll ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 12px rgba(16,185,129,0.3)',
+                }}
+              >
+                🔓 {unlockingAll ? 'Unlocking All...' : 'Unlock ALL Students'}
+              </button>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <input
+                type="text"
+                placeholder="Search student by name or register number..."
+                value={unblockSearch}
+                onChange={(e) => setUnblockSearch(e.target.value)}
+                style={{ width: '100%', padding: '10px 14px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 14 }}
+              />
+            </div>
+
+            {(!analytics?.participants || analytics.participants.length === 0) ? (
+              <div style={{ padding: 40, textAlign: 'center', background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                <p style={{ color: '#64748b', margin: 0 }}>No participating students recorded for this contest yet.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: 12, maxHeight: 400, overflowY: 'auto' }}>
+                {analytics.participants
+                  .filter(p => !unblockSearch || p.name.toLowerCase().includes(unblockSearch.toLowerCase()) || p.register_number.toLowerCase().includes(unblockSearch.toLowerCase()))
+                  .map((participant) => (
+                    <div key={participant.register_number} style={{
+                      padding: '16px 20px', background: 'white', borderRadius: 12, border: '1px solid #e2e8f0',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                    }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>{participant.name}</div>
+                        <div style={{ fontSize: 13, color: '#64748b', fontFamily: 'monospace', marginTop: 2 }}>
+                          Reg No: {participant.register_number} • Batch {participant.batch || '—'} ({participant.section || '—'})
+                        </div>
+                        <div style={{ fontSize: 12, color: '#4f46e5', fontWeight: 600, marginTop: 4 }}>
+                          Score: {participant.score || 0} • Solved: {participant.problems_solved || 0}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleUnlockStudent(participant)}
+                        disabled={!!unlockingStudent[participant.register_number]}
+                        style={{
+                          padding: '10px 18px', borderRadius: 8, border: '1px solid #10b981',
+                          background: unlockingStudent[participant.register_number] ? '#f3f4f6' : '#ecfdf5',
+                          color: '#047857', fontWeight: 700, fontSize: 14,
+                          cursor: unlockingStudent[participant.register_number] ? 'not-allowed' : 'pointer',
+                          display: 'flex', alignItems: 'center', gap: 6,
+                        }}
+                      >
+                        🔓 {unlockingStudent[participant.register_number] ? 'Unlocking...' : 'Unlock Student'}
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 3: Student Submissions Table */}
+        {activeTab === 'submissions' && analytics && (
           <>
             <div style={{ padding: '24px 32px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 16 }}>

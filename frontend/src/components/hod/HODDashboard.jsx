@@ -1642,77 +1642,136 @@ const HODDashboard = ({ institutionId }) => {
               </div>
 
               <div className="premium-card">
-                <div style={{ marginBottom: 24 }}>
-                  <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Department Contest History</h3>
-                  <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '14px' }}>
-                    All past and scheduled contests for {department?.name || 'the department'}.
-                  </p>
-                </div>
+                {(() => {
+                  const filtered = contests.filter(c => {
+                    const matchSearch = !hodContestSearch || 
+                      c.title.toLowerCase().includes(hodContestSearch.toLowerCase()) ||
+                      (c.description && c.description.toLowerCase().includes(hodContestSearch.toLowerCase())) ||
+                      (c.created_by?.name && c.created_by.name.toLowerCase().includes(hodContestSearch.toLowerCase()));
+                    
+                    const matchDate = !hodContestDateFilter ||
+                      (c.created_at && c.created_at.startsWith(hodContestDateFilter)) ||
+                      (c.start_time && c.start_time.startsWith(hodContestDateFilter));
+                    
+                    return matchSearch && matchDate;
+                  });
+                  const visible = filtered.slice(0, hodContestLimit);
 
-                {contests.length === 0 ? (
-                  <div style={{ textAlign: 'center', color: '#999', padding: '60px 0' }}>
-                    <Trophy size={64} style={{ marginBottom: 20, opacity: 0.2, color: 'var(--olive-900)' }} />
-                    <p>No contests have been created yet.</p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'grid', gap: 16 }}>
-                    {contests.map((contest) => (
-                      <div 
-                        key={contest.id} 
-                        onClick={() => setShowContestDetail(contest.id)}
-                        style={{
-                          padding: '20px 24px',
-                          background: 'white',
-                          borderRadius: '16px',
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          border: '1px solid var(--border-soft)',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease',
-                          borderLeft: `4px solid ${
-                            contest.status === 'active' ? '#10b981' : 
-                            contest.status === 'published' ? '#3b82f6' :
-                            contest.status === 'pending_approval' ? '#f59e0b' :
-                            '#94a3b8'
-                          }`
-                        }}
-                        className="contest-list-item-hover"
-                      >
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-                            <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: 'var(--text-hard)' }}>
-                              {contest.title}
-                            </h4>
-                            <span style={{ 
-                              padding: '2px 8px', borderRadius: '6px', 
-                              background: contest.status === 'active' ? '#dcfce7' : '#f1f5f9',
-                              color: contest.status === 'active' ? '#166534' : '#475569',
-                              fontSize: '10px', fontWeight: '700', textTransform: 'uppercase'
-                            }}>
-                              {contest.status.replace('_', ' ')}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>
-                            By {contest.created_by?.name || 'Faculty'} • {new Date(contest.created_at).toLocaleDateString()}
-                          </div>
+                  return (
+                    <>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+                        <div>
+                          <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Department Contest History</h3>
+                          <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '14px' }}>
+                            All past and scheduled contests for {department?.name || 'the department'}.
+                          </p>
                         </div>
-
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
-                          <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-hard)' }}>{contest.total_participants || 0}</div>
-                            <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Students</div>
-                          </div>
-                          <div style={{ textAlign: 'center' }}>
-                            <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--olive-700)' }}>{contest.total_submissions || 0}</div>
-                            <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Submissions</div>
-                          </div>
-                          <ChevronRight size={20} color="var(--text-soft)" />
+                        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <input
+                            type="text"
+                            placeholder="🔍 Search contests..."
+                            value={hodContestSearch}
+                            onChange={(e) => { setHodContestSearch(e.target.value); setHodContestLimit(10); }}
+                            style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13, minWidth: 200 }}
+                          />
+                          <input
+                            type="date"
+                            value={hodContestDateFilter}
+                            onChange={(e) => { setHodContestDateFilter(e.target.value); setHodContestLimit(10); }}
+                            style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13 }}
+                          />
+                          {(hodContestSearch || hodContestDateFilter) && (
+                            <button
+                              onClick={() => { setHodContestSearch(''); setHodContestDateFilter(''); setHodContestLimit(10); }}
+                              style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #d1d5db', background: '#f3f4f6', fontSize: 12, cursor: 'pointer' }}
+                            >
+                              Clear
+                            </button>
+                          )}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                )}
+
+                      {visible.length === 0 ? (
+                        <div style={{ textAlign: 'center', color: '#999', padding: '60px 0' }}>
+                          <Trophy size={64} style={{ marginBottom: 20, opacity: 0.2, color: 'var(--olive-900)' }} />
+                          <p>{contests.length === 0 ? 'No contests have been created yet.' : 'No contests match your search or date filter.'}</p>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 16 }}>
+                          {visible.map((contest) => (
+                            <div 
+                              key={contest.id} 
+                              onClick={() => setShowContestDetail(contest.id)}
+                              style={{
+                                padding: '20px 24px',
+                                background: 'white',
+                                borderRadius: '16px',
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                border: '1px solid var(--border-soft)',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                borderLeft: `4px solid ${
+                                  contest.status === 'active' ? '#10b981' : 
+                                  contest.status === 'published' ? '#3b82f6' :
+                                  contest.status === 'pending_approval' ? '#f59e0b' :
+                                  '#94a3b8'
+                                }`
+                              }}
+                              className="contest-list-item-hover"
+                            >
+                              <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+                                  <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: 'var(--text-hard)' }}>
+                                    {contest.title}
+                                  </h4>
+                                  <span style={{ 
+                                    padding: '2px 8px', borderRadius: '6px', 
+                                    background: contest.status === 'active' ? '#dcfce7' : '#f1f5f9',
+                                    color: contest.status === 'active' ? '#166534' : '#475569',
+                                    fontSize: '10px', fontWeight: '700', textTransform: 'uppercase'
+                                  }}>
+                                    {contest.status.replace('_', ' ')}
+                                  </span>
+                                </div>
+                                <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>
+                                  By {contest.created_by?.name || 'Faculty'} • {new Date(contest.created_at).toLocaleDateString()}
+                                </div>
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
+                                <div style={{ textAlign: 'center' }}>
+                                  <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-hard)' }}>{contest.total_participants || 0}</div>
+                                  <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Students</div>
+                                </div>
+                                <div style={{ textAlign: 'center' }}>
+                                  <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--olive-700)' }}>{contest.total_submissions || 0}</div>
+                                  <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Submissions</div>
+                                </div>
+                                <ChevronRight size={20} color="var(--text-soft)" />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {filtered.length > hodContestLimit && (
+                        <div style={{ textAlign: 'center', marginTop: 24 }}>
+                          <button
+                            onClick={() => setHodContestLimit(prev => prev + 10)}
+                            style={{
+                              padding: '10px 24px', borderRadius: 10, border: '1px solid var(--olive-700)',
+                              background: 'white', color: 'var(--olive-700)', fontWeight: 700, fontSize: 14, cursor: 'pointer',
+                            }}
+                          >
+                            Load More Contests ({filtered.length - hodContestLimit} remaining)
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           )}

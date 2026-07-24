@@ -276,7 +276,6 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
-      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     };
   }, [recordViolation]);
 

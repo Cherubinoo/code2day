@@ -86,6 +86,12 @@ const StudentContestsPage = ({ onNavigateToContest, autoOpenContestId, onResetAu
 
   async function handleStartContest(contestId) {
     try {
+      const el = document.documentElement;
+      if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    } catch {}
+
+    try {
       const res = await fetch(`/api/student/contests/${contestId}/start/`, {
         method: 'POST',
         credentials: 'include',
@@ -96,8 +102,7 @@ const StudentContestsPage = ({ onNavigateToContest, autoOpenContestId, onResetAu
 
       if (res.ok) {
         setShowStartModal(null);
-        // Reload contests to get updated participation status
-        await loadContests();
+        loadContests();
         onNavigateToContest(contestId);
       } else {
         const data = await res.json();

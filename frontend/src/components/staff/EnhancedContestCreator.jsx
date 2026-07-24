@@ -2106,7 +2106,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                     Disable Copy & Paste in Workspace
                   </label>
                   <p style={{ margin: '6px 0 0 30px', color: '#64748b', fontSize: 13 }}>
-                    Prevents pasting external code or text into the editor during the contest session.
+                    Prevents copying or pasting text or external solutions during the contest session.
                   </p>
                 </div>
               </div>

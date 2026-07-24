@@ -702,62 +702,122 @@ const StaffDashboard = ({ institutionId }) => {
             </div>
           )}
           {/* Contests Tab */}
-          {activeTab === 'contests' && (
-            <div className="contests-tab">
-              <div className="premium-card">
-                <h3 style={{ margin: '0 0 24px', fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Your Contests</h3>
+          {activeTab === 'contests' && (() => {
+            const filteredContests = (analytics.contests || []).filter(c => {
+              const matchSearch = !contestSearch || 
+                c.title.toLowerCase().includes(contestSearch.toLowerCase()) || 
+                (c.description && c.description.toLowerCase().includes(contestSearch.toLowerCase()));
+              
+              const matchDate = !contestDateFilter || 
+                (c.created_at && c.created_at.startsWith(contestDateFilter)) ||
+                (c.start_time && c.start_time.startsWith(contestDateFilter));
+              
+              return matchSearch && matchDate;
+            });
+            const visibleContests = filteredContests.slice(0, contestLimit);
 
-                <div style={{ display: 'grid', gap: 16 }}>
-                  {analytics.contests?.map((contest) => (
-                    <div 
-                      key={contest.id} 
-                      onClick={() => setShowContestDetail(contest.id)}
-                      className="contest-list-item-hover"
-                      style={{
-                        padding: '20px 24px',
-                        background: 'white',
-                        borderRadius: '16px',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        border: '1px solid var(--border-soft)',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                      }}
-                    >
-                      <div style={{ flex: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-                          <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: 'var(--text-hard)' }}>{contest.title}</h4>
-                          <span style={{ 
-                            padding: '2px 8px', borderRadius: '6px', 
-                            background: contest.status === 'active' ? '#dcfce7' : '#f1f5f9',
-                            color: contest.status === 'active' ? '#166534' : '#475569',
-                            fontSize: '10px', fontWeight: '700', textTransform: 'uppercase'
-                          }}>
-                            {contest.status}
-                          </span>
-                        </div>
-                        <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>
-                          Created on {new Date(contest.created_at).toLocaleDateString()}
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
-                        <div style={{ textAlign: 'center' }}>
-                          <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-hard)' }}>{contest.total_participants || 0}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Students</div>
-                        </div>
-                        <div style={{ textAlign: 'center' }}>
-                          <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--olive-700)' }}>{contest.total_submissions || 0}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Submissions</div>
-                        </div>
-                        <ChevronRight size={20} color="var(--text-soft)" />
-                      </div>
+            return (
+              <div className="contests-tab">
+                <div className="premium-card">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
+                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Your Contests</h3>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <input
+                        type="text"
+                        placeholder="🔍 Search contests..."
+                        value={contestSearch}
+                        onChange={(e) => { setContestSearch(e.target.value); setContestLimit(10); }}
+                        style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13, minWidth: 200 }}
+                      />
+                      <input
+                        type="date"
+                        value={contestDateFilter}
+                        onChange={(e) => { setContestDateFilter(e.target.value); setContestLimit(10); }}
+                        style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13 }}
+                      />
+                      {(contestSearch || contestDateFilter) && (
+                        <button
+                          onClick={() => { setContestSearch(''); setContestDateFilter(''); setContestLimit(10); }}
+                          style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #d1d5db', background: '#f3f4f6', fontSize: 12, cursor: 'pointer' }}
+                        >
+                          Clear
+                        </button>
+                      )}
                     </div>
-                  ))}
+                  </div>
+
+                  {visibleContests.length === 0 ? (
+                    <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>
+                      No contests match your search or date filter.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gap: 16 }}>
+                      {visibleContests.map((contest) => (
+                        <div 
+                          key={contest.id} 
+                          onClick={() => setShowContestDetail(contest.id)}
+                          className="contest-list-item-hover"
+                          style={{
+                            padding: '20px 24px',
+                            background: 'white',
+                            borderRadius: '16px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            border: '1px solid var(--border-soft)',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s ease',
+                          }}
+                        >
+                          <div style={{ flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+                              <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: 'var(--text-hard)' }}>{contest.title}</h4>
+                              <span style={{ 
+                                padding: '2px 8px', borderRadius: '6px', 
+                                background: contest.status === 'active' ? '#dcfce7' : '#f1f5f9',
+                                color: contest.status === 'active' ? '#166534' : '#475569',
+                                fontSize: '10px', fontWeight: '700', textTransform: 'uppercase'
+                              }}>
+                                {contest.status}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>
+                              Created on {new Date(contest.created_at).toLocaleDateString()}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
+                            <div style={{ textAlign: 'center' }}>
+                              <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text-hard)' }}>{contest.total_participants || 0}</div>
+                              <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Students</div>
+                            </div>
+                            <div style={{ textAlign: 'center' }}>
+                              <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--olive-700)' }}>{contest.total_submissions || 0}</div>
+                              <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Submissions</div>
+                            </div>
+                            <ChevronRight size={20} color="var(--text-soft)" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {filteredContests.length > contestLimit && (
+                    <div style={{ textAlign: 'center', marginTop: 24 }}>
+                      <button
+                        onClick={() => setContestLimit(prev => prev + 10)}
+                        style={{
+                          padding: '10px 24px', borderRadius: 10, border: '1px solid var(--olive-700)',
+                          background: 'white', color: 'var(--olive-700)', fontWeight: 700, fontSize: 14, cursor: 'pointer',
+                        }}
+                      >
+                        Load More Contests ({filteredContests.length - contestLimit} remaining)
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Reports Tab */}
           {activeTab === 'reports' && (
