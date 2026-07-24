@@ -250,6 +250,9 @@ const StaffDashboard = ({ institutionId }) => {
         <StudentAnalyticsModal
           registerNumber={selectedStudentForAnalytics}
           onClose={() => setSelectedStudentForAnalytics(null)}
+          batchAnalytics={analytics}
+          batchStudents={students}
+          onStudentClick={(reg) => setSelectedStudentForAnalytics(reg)}
         />
       )}
 
@@ -1149,7 +1152,6 @@ const StaffDashboard = ({ institutionId }) => {
           {/* Batches Tab */}
           {activeTab === 'batches' && (
             <div className="batches-tab">
-
               {/* ── Default-visible graphs: Weekly Solving Activity + Project Builders ── */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 28 }}>
                 {/* Weekly Solving Activity */}
@@ -1233,6 +1235,8 @@ const StaffDashboard = ({ institutionId }) => {
                 </div>
               </div>
 
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20, marginBottom: 24 }}>
+              </div>
               <div className="premium-card" style={{ marginBottom: 24 }}>
                 <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Batch Insights</h3>
                 <p style={{ margin: '4px 0 24px', color: 'var(--text-soft)', fontSize: '14px' }}>Analyze performance across different student groups.</p>

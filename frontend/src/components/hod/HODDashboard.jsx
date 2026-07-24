@@ -17,6 +17,7 @@ import DiscussPage from '../student/pages/DiscussPage';
 import HODLabCenter from './HODLabCenter';
 import HODCompanyCenter from './HODCompanyCenter';
 import StaffLabPanel from '../staff/StaffLabPanel';
+import { PerformanceDashboard } from '../common/PerformanceCharts';
 import { FlaskConical } from 'lucide-react';
 import { useTabNav } from '../../lib/useTabNav';
 
@@ -346,10 +347,17 @@ const HODDashboard = ({ institutionId }) => {
     setStudentDetailLoading(true);
     setStudentDetail(null);
     try {
-      const res = await fetch(`/api/students/${registerNumber}/details/`, { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        setStudentDetail(data);
+      const [detailsRes, analyticsRes] = await Promise.all([
+        fetch(`/api/students/${registerNumber}/details/`, { credentials: 'include' }),
+        fetch(`/api/students/${registerNumber}/analytics/`, { credentials: 'include' })
+      ]);
+      if (detailsRes.ok && analyticsRes.ok) {
+        const detailsData = await detailsRes.json();
+        const analyticsData = await analyticsRes.json();
+        setStudentDetail({
+          ...detailsData,
+          fullAnalytics: analyticsData
+        });
       } else {
         setError('Failed to load student details');
       }
@@ -1785,7 +1793,6 @@ const HODDashboard = ({ institutionId }) => {
           {/* Students Tab */}
           {activeTab === 'students' && (
             <div className="students-tab">
-
               {/* ── Default-visible graphs: Weekly Solving Activity + Project Builders ── */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 28 }}>
                 {/* Weekly Solving Activity */}
@@ -2525,6 +2532,27 @@ const HODDashboard = ({ institutionId }) => {
                       </div>
                    </div>
                 </div>
+
+                {/* ── Performance Dashboard ───────────────────────────── */}
+                {studentDetail.fullAnalytics && (
+                  <div style={{ marginBottom: 32 }}>
+                    <PerformanceDashboard
+                      scoreHistory={studentDetail.fullAnalytics.score_history || []}
+                      topicAccuracy={studentDetail.fullAnalytics.topic_accuracy || []}
+                      testsCompleted={studentDetail.fullAnalytics.tests_completed || 0}
+                      avgScore={studentDetail.fullAnalytics.avg_score || 0}
+                      peakScore={studentDetail.fullAnalytics.peak_score || 0}
+                      solvedCount={studentDetail.fullAnalytics.solved_count || 0}
+                      aptitude={studentDetail.fullAnalytics.aptitude}
+                      overallPerformance={studentDetail.fullAnalytics.overall_performance || []}
+                      profileRadar={studentDetail.fullAnalytics.profile_radar}
+                      dailySolvedTrend={studentDetail.fullAnalytics.daily_solved_trend || []}
+                      knowledgeDistribution={studentDetail.fullAnalytics.knowledge_distribution}
+                      contestPerformance={studentDetail.fullAnalytics.contest_performance || []}
+                      summaryCards={studentDetail.fullAnalytics.summary_cards}
+                    />
+                  </div>
+                )}
 
                 {/* ── Difficulty Progress Bar ─────────────────────────── */}
                 {studentDetail.analytics.total_solved > 0 && (
