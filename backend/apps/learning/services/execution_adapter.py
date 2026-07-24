@@ -55,7 +55,9 @@ def build_function_name_candidates(slug: str, source_code: str = "") -> list[str
             # C++ method inside a class body reached via a bare "public:"
             # access specifier (no modifier keyword on the method's own line),
             # e.g. "vector<int> twoSum(vector<int>& nums, int target) {"
-            r'(?:vector<[^;{}]*>&?|string&?|bool|char\*?|int|long(?:\s+long)?|float|double|void|auto|[A-Za-z_]\w*\*)\s+'
+            r'(?:vector<[^;{}]*>&?|deque<[^;{}]*>&?|stack<[^;{}]*>&?|queue<[^;{}]*>&?|priority_queue<[^;{}]*>&?|'
+            r'unordered_(?:map|set)<[^;{}]*>&?|pair<[^;{}]*>&?|tuple<[^;{}]*>&?|string&?|bool|char\*?|'
+            r'int|long(?:\s+long)?|float|double|void|auto|[A-Za-z_]\w*\*)\s+'
             r'([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^;{}]*\)\s*(?:const\s*)?\{',
         ]
         for pattern in patterns:
@@ -124,6 +126,49 @@ def _coerce_literal(value: str):
             continue
 
     return candidate
+
+
+def _coerce_whitespace_rows(raw_input: str):
+    """Parse classic judge input rows like:
+
+      3 3
+      1 2 3
+      4 5 6
+
+    into nested lists when every non-empty row is simple scalar tokens. This
+    keeps stdin-style DS cases usable for function wrappers without requiring
+    staff to author JSON.
+    """
+    lines = [line.strip() for line in str(raw_input or "").splitlines() if line.strip()]
+    if not lines:
+        return []
+
+    def atom(token: str):
+        lowered = token.lower()
+        if lowered in {"null", "none", "nil"}:
+            return None
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        try:
+            return int(token)
+        except ValueError:
+            pass
+        try:
+            return float(token)
+        except ValueError:
+            return token
+
+    rows = []
+    for line in lines:
+        if any(ch in line for ch in "[]{}=,"):
+            return None
+        tokens = line.split()
+        if not tokens:
+            continue
+        rows.append([atom(token) for token in tokens])
+    return rows
 
 
 def _split_top_level_arguments(raw_input: str) -> list[str]:
@@ -197,6 +242,13 @@ def parse_argument_list(raw_input: str):
         if isinstance(parsed, list):
             return parsed
 
+        whitespace_rows = _coerce_whitespace_rows(cleaned)
+        if whitespace_rows:
+            if "\n" not in cleaned:
+                return whitespace_rows[0]
+            if any(len(row) > 1 for row in whitespace_rows):
+                return whitespace_rows
+
         # Multi-line plain values without "=" (e.g. "[2,7,11,15]\n9")
         if "\n" in cleaned:
             lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
@@ -261,6 +313,12 @@ def normalize_comparable_output(value: str) -> str:
     parsed = _coerce_literal(cleaned)
 
     if isinstance(parsed, str):
+        if re.fullmatch(r"-?\d+(?:\s+-?\d+)+", parsed):
+            values = [int(part) for part in parsed.split()]
+            return json.dumps(values, separators=(",", ":"), ensure_ascii=False)
+        if re.fullmatch(r"-?\d+(?:\.\d+)?(?:\s+-?\d+(?:\.\d+)?)+", parsed):
+            values = [float(part) for part in parsed.split()]
+            return json.dumps(_canonicalize_numbers(values), separators=(",", ":"), ensure_ascii=False)
         return " ".join(parsed.split())
     if isinstance(parsed, (list, dict, bool, int, float)) or parsed is None:
         return json.dumps(_canonicalize_numbers(parsed), separators=(",", ":"), ensure_ascii=False)
@@ -509,7 +567,9 @@ def _looks_like_cpp_solution(source_code: str, candidates: list[str]) -> bool:
     # the problem slug and the class-body method sits after a bare
     # "public:" access specifier the candidate-extraction regex can't see.
     if re.search(
-        r'\b(?:void|bool|char|int|long|float|double|auto|string|vector<[^;{}]*>|[A-Za-z_]\w*\*)\s*&?\s+'
+        r'\b(?:void|bool|char|int|long|float|double|auto|string|vector<[^;{}]*>|deque<[^;{}]*>|'
+        r'stack<[^;{}]*>|queue<[^;{}]*>|priority_queue<[^;{}]*>|unordered_(?:map|set)<[^;{}]*>|'
+        r'pair<[^;{}]*>|tuple<[^;{}]*>|[A-Za-z_]\w*\*)\s*&?\s+'
         r'[a-zA-Z_]\w*\s*\([^;{}]*\)\s*\{',
         source_code,
     ):
@@ -535,187 +595,206 @@ def _looks_like_javascript_solution(source_code: str, candidates: list[str]) -> 
 
 
 def _build_java_wrapper(source_code: str, candidates: list[str]) -> str:
-    """Build Java wrapper that reads from stdin and calls the solution method."""
-    candidate_list = json.dumps(candidates)
+    """Build Java wrapper that converts raw args by the method signature."""
     candidate_list_java = "{" + ", ".join(json.dumps(c) for c in candidates) + "}"
-    return f'''
+    source_code = re.sub(r'\bpublic\s+class\s+Solution\b', 'class Solution', source_code)
+    source_code = re.sub(r'^\s*package\s+[^;]+;\s*', '', source_code, flags=re.MULTILINE)
+    source_code = re.sub(r'^\s*import\s+[^;]+;\s*', '', source_code, flags=re.MULTILINE)
+    standard_defs = []
+    if not re.search(r'\b(?:class|static\s+class)\s+TreeNode\b', source_code):
+        standard_defs.append("class TreeNode { int val; TreeNode left, right; TreeNode() {} TreeNode(int v) { val = v; } }")
+    if not re.search(r'\b(?:class|static\s+class)\s+ListNode\b', source_code):
+        standard_defs.append("class ListNode { int val; ListNode next; ListNode() {} ListNode(int v) { val = v; } }")
+    if not re.search(r'\b(?:class|static\s+class)\s+DoublyNode\b', source_code):
+        standard_defs.append("class DoublyNode { int val; DoublyNode prev, next; DoublyNode() {} DoublyNode(int v) { val = v; } }")
+    if not re.search(r'\b(?:class|static\s+class)\s+Node\b', source_code):
+        standard_defs.append("class Node { public int val; public List<Node> children; public Node() { children = new ArrayList<>(); } public Node(int v) { val = v; children = new ArrayList<>(); } }")
+    template = r'''
 import java.io.*;
+import java.lang.reflect.*;
 import java.util.*;
 
-{source_code}
+__STANDARD_DEFS__
 
-class Main {{
-    public static void main(String[] args) throws Exception {{
+__SOURCE_CODE__
+
+class Main {
+    public static void main(String[] args) throws Exception {
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         String line = reader.readLine();
-        if (line == null || line.trim().isEmpty()) {{
-            line = "[]";
-        }}
-        
-        // Parse JSON-like array
-        line = line.trim();
-        List<Object> argList = new ArrayList<>();
-        if (line.startsWith("[") && line.endsWith("]")) {{
-            line = line.substring(1, line.length() - 1);
-            // Simple parsing - split by comma but respect strings
-            argList = parseArguments(line);
-        }} else {{
-            argList.add(parseValue(line));
-        }}
-        
-        // Find and call the solution method
+        if (line == null || line.trim().isEmpty()) line = "[]";
+        Object parsed = parseValue(line.trim());
+        List<Object> argList = parsed instanceof List ? (List<Object>) parsed : new ArrayList<>(Arrays.asList(parsed));
         Object result = callSolution(argList);
         System.out.println(serialize(result));
-    }}
-    
-    static List<Object> parseArguments(String s) {{
-        List<Object> result = new ArrayList<>();
-        if (s.trim().isEmpty()) return result;
-        
-        // Simple comma-separated parsing respecting quotes
-        List<String> parts = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
-        boolean inString = false;
-        char stringChar = 0;
-        int depth = 0;
-        
-        for (int i = 0; i < s.length(); i++) {{
-            char c = s.charAt(i);
-            if (!inString && (c == '"' || c == '\\'')) {{
-                inString = true;
-                stringChar = c;
-                current.append(c);
-            }} else if (inString && c == stringChar) {{
-                inString = false;
-                current.append(c);
-            }} else if (!inString && (c == '[' || c == '{{')) {{
-                depth++;
-                current.append(c);
-            }} else if (!inString && (c == ']' || c == '}}')) {{
-                depth--;
-                current.append(c);
-            }} else if (!inString && c == ',' && depth == 0) {{
-                parts.add(current.toString().trim());
-                current = new StringBuilder();
-            }} else {{
-                current.append(c);
-            }}
-        }}
-        if (current.length() > 0) {{
-            parts.add(current.toString().trim());
-        }}
-        
-        for (String part : parts) {{
-            result.add(parseValue(part));
-        }}
-        return result;
-    }}
-    
-    static Object parseValue(String s) {{
+    }
+
+    static Object parseValue(String s) {
         s = s.trim();
-        if (s.isEmpty()) return null;
-        if (s.equals("null")) return null;
-        if (s.equals("true")) return true;
-        if (s.equals("false")) return false;
-        if (s.startsWith("[") && s.endsWith("]")) {{
-            // Array
-            return parseArguments(s.substring(1, s.length() - 1));
-        }}
-        if ((s.startsWith("\\"") && s.endsWith("\\"")) || (s.startsWith("'") && s.endsWith("'"))) {{
-            return s.substring(1, s.length() - 1);
-        }}
-        // Try number
-        try {{
-            if (s.contains(".")) {{
-                return Double.parseDouble(s);
-            }}
-            return Integer.parseInt(s);
-        }} catch (NumberFormatException e) {{
-            return s;
-        }}
-    }}
-    
-    static Object callSolution(List<Object> args) throws Exception {{
-        String[] candidateNames = {candidate_list_java};
-        
-        // Try to find Solution class
-        Class<?> solutionClass = null;
-        Object solutionInstance = null;
-        try {{
-            solutionClass = Class.forName("Solution");
-            solutionInstance = solutionClass.getDeclaredConstructor().newInstance();
-        }} catch (Exception e) {{
-            // No Solution class, look for class with methods
-            for (Class<?> cls : new Class<?>[]{{ Main.class }}) {{
-                if (solutionClass != null) break;
-                for (String name : candidateNames) {{
-                    try {{
-                        cls.getMethod(name, getParamTypes(args));
-                        solutionClass = cls;
-                        solutionInstance = solutionClass.getDeclaredConstructor().newInstance();
-                        break;
-                    }} catch (Exception ignored) {{}}
-                }}
-            }}
-        }}
-        
-        if (solutionClass == null) {{
-            // Try static methods
-            for (String name : candidateNames) {{
-                try {{
-                    java.lang.reflect.Method m = Main.class.getMethod(name, getParamTypes(args));
-                    return m.invoke(null, args.toArray());
-                }} catch (Exception ignored) {{}}
-            }}
-            throw new RuntimeException("Could not find solution method");
-        }}
-        
-        // Try instance methods on Solution
-        for (String name : candidateNames) {{
-            try {{
-                java.lang.reflect.Method m = solutionClass.getMethod(name, getParamTypes(args));
-                return m.invoke(solutionInstance, args.toArray());
-            }} catch (Exception ignored) {{}}
-        }}
-        
-        throw new RuntimeException("Could not find matching method");
-    }}
-    
-    static Class<?>[] getParamTypes(List<Object> args) {{
-        Class<?>[] types = new Class<?>[args.size()];
-        for (int i = 0; i < args.size(); i++) {{
-            Object arg = args.get(i);
-            if (arg == null) types[i] = Object.class;
-            else if (arg instanceof Integer) types[i] = int.class;
-            else if (arg instanceof Double) types[i] = double.class;
-            else if (arg instanceof Boolean) types[i] = boolean.class;
-            else if (arg instanceof String) types[i] = String.class;
-            else if (arg instanceof List) types[i] = List.class;
-            else types[i] = arg.getClass();
-        }}
-        return types;
-    }}
-    
-    static String serialize(Object obj) {{
+        if (s.isEmpty() || s.equalsIgnoreCase("null")) return null;
+        if (s.equalsIgnoreCase("true")) return true;
+        if (s.equalsIgnoreCase("false")) return false;
+        if (s.startsWith("[") && s.endsWith("]")) return parseList(s.substring(1, s.length() - 1));
+        if ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'"))) return s.substring(1, s.length() - 1);
+        try { return s.contains(".") ? Double.parseDouble(s) : Integer.parseInt(s); }
+        catch (NumberFormatException e) { return s; }
+    }
+
+    static List<Object> parseList(String s) {
+        List<Object> result = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        boolean inString = false; char quote = 0; int depth = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!inString && (c == '"' || c == '\'')) { inString = true; quote = c; cur.append(c); }
+            else if (inString && c == quote) { inString = false; cur.append(c); }
+            else if (!inString && c == '[') { depth++; cur.append(c); }
+            else if (!inString && c == ']') { depth--; cur.append(c); }
+            else if (!inString && c == ',' && depth == 0) { result.add(parseValue(cur.toString())); cur.setLength(0); }
+            else cur.append(c);
+        }
+        if (cur.length() > 0) result.add(parseValue(cur.toString()));
+        return result;
+    }
+
+    static Object callSolution(List<Object> args) throws Exception {
+        String[] names = __CANDIDATES__;
+        Class<?> cls = Class.forName("Solution");
+        Object instance = cls.getDeclaredConstructor().newInstance();
+        for (String name : names) {
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!m.getName().equals(name)) continue;
+                try {
+                    Object[] converted = convertArgs(args, m.getParameterTypes());
+                    if (converted == null) continue;
+                    m.setAccessible(true);
+                    return m.invoke(instance, converted);
+                } catch (Exception ignored) {}
+            }
+        }
+        throw new RuntimeException("Could not find matching Solution method");
+    }
+
+    static Object[] convertArgs(List<Object> args, Class<?>[] types) {
+        if (types.length == 1) return new Object[] { convertOne(args.size() == 1 ? args.get(0) : args, types[0]) };
+        List<Object> values = args.size() == 1 && args.get(0) instanceof List ? (List<Object>) args.get(0) : args;
+        if (values.size() < types.length) return null;
+        Object[] out = new Object[types.length];
+        for (int i = 0; i < types.length; i++) out[i] = convertOne(values.get(i), types[i]);
+        return out;
+    }
+
+    static Object convertOne(Object value, Class<?> type) {
+        if (type == int.class || type == Integer.class) return toInt(value);
+        if (type == long.class || type == Long.class) return Long.valueOf(toLong(value));
+        if (type == double.class || type == Double.class) return Double.valueOf(toDouble(value));
+        if (type == boolean.class || type == Boolean.class) return Boolean.valueOf(toBool(value));
+        if (type == char.class || type == Character.class) return Character.valueOf(toStringValue(value).isEmpty() ? '\0' : toStringValue(value).charAt(0));
+        if (type == String.class) return toStringValue(value);
+        if (type.isArray()) return toArray(value, type.getComponentType());
+        if (List.class.isAssignableFrom(type)) return value instanceof List ? value : new ArrayList<>(Arrays.asList(value));
+        if (Queue.class.isAssignableFrom(type)) return new LinkedList<>((List<Object>) (value instanceof List ? value : Arrays.asList(value)));
+        if (Deque.class.isAssignableFrom(type)) return new ArrayDeque<>((List<Object>) (value instanceof List ? value : Arrays.asList(value)));
+        if (Stack.class.isAssignableFrom(type)) { Stack<Object> s = new Stack<>(); for (Object v : (List<Object>) (value instanceof List ? value : Arrays.asList(value))) s.push(v); return s; }
+        if (PriorityQueue.class.isAssignableFrom(type)) return new PriorityQueue<>((List<Object>) (value instanceof List ? value : Arrays.asList(value)));
+        if (Set.class.isAssignableFrom(type)) return new HashSet<>((List<Object>) (value instanceof List ? value : Arrays.asList(value)));
+        if (Map.class.isAssignableFrom(type)) return toMap(value);
+        if (type.getSimpleName().equals("TreeNode")) return toTree(asList(value));
+        if (type.getSimpleName().equals("ListNode")) return toListNode(asList(value));
+        if (type.getSimpleName().equals("DoublyNode")) return toDoublyNode(asList(value));
+        if (type.getSimpleName().equals("Node")) return toNary(asList(value));
+        return value;
+    }
+
+    static Object toArray(Object value, Class<?> component) {
+        List<Object> list = asList(value);
+        Object arr = Array.newInstance(component, list.size());
+        for (int i = 0; i < list.size(); i++) Array.set(arr, i, convertOne(list.get(i), component));
+        return arr;
+    }
+
+    static List<Object> asList(Object value) {
+        return value instanceof List ? (List<Object>) value : new ArrayList<>(Arrays.asList(value));
+    }
+    static int toInt(Object v) { return v instanceof Number ? ((Number) v).intValue() : Integer.parseInt(String.valueOf(v)); }
+    static long toLong(Object v) { return v instanceof Number ? ((Number) v).longValue() : Long.parseLong(String.valueOf(v)); }
+    static double toDouble(Object v) { return v instanceof Number ? ((Number) v).doubleValue() : Double.parseDouble(String.valueOf(v)); }
+    static boolean toBool(Object v) { return v instanceof Boolean ? ((Boolean) v) : Boolean.parseBoolean(String.valueOf(v)); }
+    static String toStringValue(Object v) { return v == null ? "" : String.valueOf(v); }
+
+    static TreeNode toTree(List<Object> vals) {
+        if (vals.isEmpty() || vals.get(0) == null) return null;
+        TreeNode root = new TreeNode(toInt(vals.get(0)));
+        Queue<TreeNode> q = new LinkedList<>(); q.add(root); int i = 1;
+        while (!q.isEmpty() && i < vals.size()) {
+            TreeNode node = q.poll();
+            if (i < vals.size() && vals.get(i) != null) { node.left = new TreeNode(toInt(vals.get(i))); q.add(node.left); }
+            i++;
+            if (i < vals.size() && vals.get(i) != null) { node.right = new TreeNode(toInt(vals.get(i))); q.add(node.right); }
+            i++;
+        }
+        return root;
+    }
+    static ListNode toListNode(List<Object> vals) {
+        ListNode dummy = new ListNode(0), tail = dummy;
+        for (Object v : vals) { tail.next = new ListNode(toInt(v)); tail = tail.next; }
+        return dummy.next;
+    }
+    static DoublyNode toDoublyNode(List<Object> vals) {
+        DoublyNode head = null, prev = null;
+        for (Object v : vals) { DoublyNode n = new DoublyNode(toInt(v)); if (head == null) head = n; n.prev = prev; if (prev != null) prev.next = n; prev = n; }
+        return head;
+    }
+    static Node toNary(List<Object> vals) {
+        if (vals.isEmpty() || vals.get(0) == null) return null;
+        Node root = new Node(toInt(vals.get(0))); Queue<Node> q = new LinkedList<>(); q.add(root);
+        int i = vals.size() > 1 && vals.get(1) == null ? 2 : 1;
+        while (!q.isEmpty() && i < vals.size()) {
+            Node p = q.poll();
+            while (i < vals.size() && vals.get(i) != null) { Node c = new Node(toInt(vals.get(i++))); p.children.add(c); q.add(c); }
+            i++;
+        }
+        return root;
+    }
+    static Map<Object,Object> toMap(Object value) {
+        Map<Object,Object> map = new HashMap<>();
+        for (Object row : asList(value)) { List<Object> p = asList(row); if (p.size() >= 2) map.put(p.get(0), p.get(1)); }
+        return map;
+    }
+
+    static String serialize(Object obj) {
         if (obj == null) return "null";
-        if (obj instanceof Boolean) return ((Boolean) obj).toString();
-        if (obj instanceof Number) return obj.toString();
-        if (obj instanceof String) return (String) obj;
-        if (obj instanceof List) {{
-            StringBuilder sb = new StringBuilder();
-            sb.append("[");
-            List<?> list = (List<?>) obj;
-            for (int i = 0; i < list.size(); i++) {{
-                if (i > 0) sb.append(",");
-                sb.append(serialize(list.get(i)));
-            }}
-            sb.append("]");
-            return sb.toString();
-        }}
+        if (obj instanceof Boolean || obj instanceof Number) return obj.toString();
+        if (obj instanceof String || obj instanceof Character) return obj.toString();
+        Class<?> cls = obj.getClass();
+        if (cls.isArray()) { int n = Array.getLength(obj); List<String> parts = new ArrayList<>(); for (int i=0;i<n;i++) parts.add(serialize(Array.get(obj, i))); return "[" + String.join(",", parts) + "]"; }
+        if (obj instanceof List) { List<String> parts = new ArrayList<>(); for (Object v : (List<?>) obj) parts.add(serialize(v)); return "[" + String.join(",", parts) + "]"; }
+        if (obj instanceof TreeNode) return serializeTree((TreeNode) obj);
+        if (obj instanceof ListNode) { List<Integer> vals = new ArrayList<>(); for (ListNode n=(ListNode)obj; n!=null; n=n.next) vals.add(n.val); return serialize(vals); }
+        if (obj instanceof DoublyNode) { List<Integer> vals = new ArrayList<>(); for (DoublyNode n=(DoublyNode)obj; n!=null; n=n.next) vals.add(n.val); return serialize(vals); }
+        if (obj instanceof Node) return serializeNary((Node) obj);
         return obj.toString();
-    }}
-}}
+    }
+    static String serializeTree(TreeNode root) {
+        List<String> vals = new ArrayList<>(); Queue<TreeNode> q = new LinkedList<>(); q.add(root);
+        while (!q.isEmpty()) { TreeNode n = q.poll(); if (n == null) vals.add("null"); else { vals.add(String.valueOf(n.val)); q.add(n.left); q.add(n.right); } }
+        while (!vals.isEmpty() && vals.get(vals.size()-1).equals("null")) vals.remove(vals.size()-1);
+        return "[" + String.join(",", vals) + "]";
+    }
+    static String serializeNary(Node root) {
+        List<String> vals = new ArrayList<>(); Queue<Node> q = new LinkedList<>(); vals.add(String.valueOf(root.val)); vals.add("null"); q.add(root);
+        while (!q.isEmpty()) { Node n = q.poll(); for (Node c : n.children) { vals.add(String.valueOf(c.val)); q.add(c); } vals.add("null"); }
+        while (!vals.isEmpty() && vals.get(vals.size()-1).equals("null")) vals.remove(vals.size()-1);
+        return "[" + String.join(",", vals) + "]";
+    }
+}
 '''.strip()
+    return (
+        template
+        .replace("__STANDARD_DEFS__", "\n".join(standard_defs))
+        .replace("__SOURCE_CODE__", source_code)
+        .replace("__CANDIDATES__", candidate_list_java)
+    )
 
 
 
@@ -940,28 +1019,111 @@ def _generate_cpp_call(func_name: str, sig_match, source_code: str, has_solution
 
     call_prefix = "sol." if has_solution_class else ""
 
-    # Map C++ type strings to J accessor methods and serialize calls
-    TYPE_MAP = {
-        # int-like
-        'int':              ('args[{i}].asInt()',    'serialize'),
-        'long':             ('args[{i}].asLong()',   'serialize'),
-        'long long':        ('args[{i}].asLong()',   'serialize'),
-        'double':           ('args[{i}].asDouble()', 'serialize'),
-        'float':            ('args[{i}].asDouble()', 'serialize'),
-        'bool':             ('args[{i}].asBool()',   'serialize'),
-        'string':           ('args[{i}].asStr()',    'serialize'),
-        'vector<int>':      ('args[{i}].asVecInt()', 'serialize'),
-        'vector<long long>':('args[{i}].asVecLong()','serialize'),
-        'vector<double>':   ('args[{i}].asVecDouble()','serialize'),
-        'vector<string>':   ('args[{i}].asVecStr()', 'serialize'),
-        'vector<vector<int>>': ('args[{i}].asVecVecInt()', 'serialize'),
-    }
-
     def normalize_type(t):
         t = t.strip()
-        t = _re.sub(r'\s+', ' ', t)
+        t = _re.sub(r'\bconst\b', '', t)
         t = t.replace('std::', '')
+        t = _re.sub(r'\s+', ' ', t)
+        t = _re.sub(r'\s*<\s*', '<', t)
+        t = _re.sub(r'\s*>\s*', '>', t)
+        t = _re.sub(r'\s*,\s*', ',', t)
+        t = t.replace('&', '').strip()
+        t = _re.sub(r'\s*\*\s*', '*', t)
         return t
+
+    def split_params(params: str) -> list[str]:
+        result, current, depth = [], [], 0
+        for ch in params:
+            if ch == '<':
+                depth += 1
+            elif ch == '>':
+                depth = max(0, depth - 1)
+            if ch == ',' and depth == 0:
+                part = ''.join(current).strip()
+                if part:
+                    result.append(part)
+                current = []
+            else:
+                current.append(ch)
+        tail = ''.join(current).strip()
+        if tail:
+            result.append(tail)
+        return result
+
+    def param_type(param: str) -> str:
+        param = param.split('=', 1)[0].strip()
+        param = _re.sub(r'\s+', ' ', param)
+        match = _re.match(r'(.+?)(?:\s+[A-Za-z_]\w*)$', param)
+        return normalize_type(match.group(1) if match else param)
+
+    def arg_expr(ptype: str, index: int) -> str:
+        aliases = {
+            'long': 'long long',
+            'long int': 'long long',
+            'long long int': 'long long',
+            'unsigned int': 'int',
+            'size_t': 'int',
+        }
+        ptype = aliases.get(ptype, ptype)
+        if ptype in ('int', 'short'):
+            return f'__c2d_int_arg(args, {index})'
+        if ptype == 'long long':
+            return f'__c2d_long_arg(args, {index})'
+        if ptype in ('double', 'float'):
+            return f'__c2d_double_arg(args, {index})'
+        if ptype == 'bool':
+            return f'__c2d_bool_arg(args, {index})'
+        if ptype == 'char':
+            return f'__c2d_char_arg(args, {index})'
+        if ptype == 'string':
+            return f'__c2d_string_arg(args, {index})'
+        if ptype == 'TreeNode*':
+            return f'__c2d_tree_arg(args, {index})'
+        if ptype == 'ListNode*':
+            return f'__c2d_list_arg(args, {index})'
+        if ptype == 'DoublyNode*':
+            return f'__c2d_doubly_arg(args, {index})'
+        if ptype == 'Node*':
+            return f'__c2d_nary_arg(args, {index})'
+        if ptype == 'vector<int>':
+            return f'__c2d_vec_int(args, {index})'
+        if ptype == 'vector<long long>':
+            return f'__c2d_vec_long(args, {index})'
+        if ptype == 'vector<double>':
+            return f'__c2d_vec_double(args, {index})'
+        if ptype == 'vector<string>':
+            return f'__c2d_vec_string(args, {index})'
+        if ptype == 'vector<char>':
+            return f'__c2d_vec_char(args, {index})'
+        if ptype == 'vector<bool>':
+            return f'__c2d_vec_bool(args, {index})'
+        if ptype == 'vector<vector<int>>':
+            return f'__c2d_matrix_int(args, {index})'
+        if ptype == 'vector<vector<long long>>':
+            return f'__c2d_matrix_long(args, {index})'
+        if ptype == 'vector<vector<double>>':
+            return f'__c2d_matrix_double(args, {index})'
+        if ptype == 'vector<vector<char>>':
+            return f'__c2d_matrix_char(args, {index})'
+        if ptype == 'vector<vector<string>>':
+            return f'__c2d_matrix_string(args, {index})'
+        if ptype == 'pair<int,int>':
+            return f'__c2d_pair_int(args, {index})'
+        if ptype == 'vector<pair<int,int>>':
+            return f'__c2d_intervals(args, {index})'
+        if ptype == 'stack<int>':
+            return f'__c2d_stack_int(args, {index})'
+        if ptype == 'queue<int>':
+            return f'__c2d_queue_int(args, {index})'
+        if ptype == 'deque<int>':
+            return f'__c2d_deque_int(args, {index})'
+        if ptype.startswith('priority_queue<int'):
+            return f'__c2d_priority_queue_int(args, {index})'
+        if ptype == 'unordered_set<int>':
+            return f'__c2d_unordered_set_int(args, {index})'
+        if ptype == 'unordered_map<int,int>':
+            return f'__c2d_unordered_map_int(args, {index})'
+        return f'__c2d_int_arg(args, {index})'
 
     lines = []
 
@@ -972,28 +1134,11 @@ def _generate_cpp_call(func_name: str, sig_match, source_code: str, has_solution
         # Parse parameter types
         param_types = []
         if params_str:
-            for param in params_str.split(','):
-                param = param.strip()
-                # Remove parameter name (last word) to get type
-                parts = param.rsplit(None, 1)
-                if len(parts) == 2:
-                    ptype = normalize_type(parts[0].rstrip('&*'))
-                else:
-                    ptype = normalize_type(parts[0])
-                param_types.append(ptype)
+            for param in split_params(params_str):
+                param_types.append(param_type(param))
 
         # Build argument list
-        call_args = []
-        for i, ptype in enumerate(param_types):
-            accessor = None
-            for key, (acc, _) in TYPE_MAP.items():
-                if ptype == key or ptype.startswith(key):
-                    accessor = acc.format(i=i)
-                    break
-            if accessor is None:
-                # Fallback: try int
-                accessor = f'args[{i}].asInt()'
-            call_args.append(accessor)
+        call_args = [arg_expr(ptype, i) for i, ptype in enumerate(param_types)]
 
         call_str = f'{call_prefix}{func_name}({", ".join(call_args)})'
 
@@ -1004,13 +1149,15 @@ def _generate_cpp_call(func_name: str, sig_match, source_code: str, has_solution
             lines.append('        return "void";')
         elif ret_norm == 'bool':
             lines.append(f'        return serialize((bool)({call_str}));')
-        elif ret_norm in ('int', 'long', 'long long'):
+        elif ret_norm in ('int', 'short', 'long', 'long long'):
             lines.append(f'        return serialize((long long)({call_str}));')
         elif ret_norm in ('double', 'float'):
             lines.append(f'        return serialize((double)({call_str}));')
-        elif ret_norm == 'string':
+        elif ret_norm in ('string', 'char'):
             lines.append(f'        return serialize({call_str});')
-        elif 'vector' in ret_norm:
+        elif any(token in ret_norm for token in ('vector', 'pair', 'tuple', 'deque')):
+            lines.append(f'        return serialize({call_str});')
+        elif ret_norm in ('TreeNode*', 'ListNode*', 'DoublyNode*', 'Node*'):
             lines.append(f'        return serialize({call_str});')
         else:
             # Unknown return type — try to_string
@@ -1019,11 +1166,11 @@ def _generate_cpp_call(func_name: str, sig_match, source_code: str, has_solution
     else:
         # No signature found — try common single-arg patterns as fallback
         lines.append(f'        if (args.size() >= 2) {{')
-        lines.append(f'            auto __r = {call_prefix}{func_name}(args[0].asInt(), args[1].asInt());')
+        lines.append(f'            auto __r = {call_prefix}{func_name}(__c2d_int_arg(args, 0), __c2d_int_arg(args, 1));')
         lines.append(f'            return serialize(__r);')
         lines.append(f'        }}')
         lines.append(f'        if (args.size() == 1) {{')
-        lines.append(f'            auto __r = {call_prefix}{func_name}(args[0].asVecInt());')
+        lines.append(f'            auto __r = {call_prefix}{func_name}(__c2d_vec_int(args, 0));')
         lines.append(f'            return serialize(__r);')
         lines.append(f'        }}')
 
@@ -1069,6 +1216,16 @@ def _build_cpp_wrapper(source_code: str, candidates: list[str]) -> str:
     )
     match = sig_pattern.search(source_code)
     has_solution_class = bool(_re.search(r'\bclass\s+Solution\b', source_code))
+    standard_defs = []
+    if not _re.search(r'\b(?:struct|class)\s+TreeNode\b', source_code):
+        standard_defs.append("struct TreeNode { int val; TreeNode *left; TreeNode *right; TreeNode(int x=0): val(x), left(nullptr), right(nullptr) {} };")
+    if not _re.search(r'\b(?:struct|class)\s+ListNode\b', source_code):
+        standard_defs.append("struct ListNode { int val; ListNode *next; ListNode(int x=0): val(x), next(nullptr) {} };")
+    if not _re.search(r'\b(?:struct|class)\s+DoublyNode\b', source_code):
+        standard_defs.append("struct DoublyNode { int val; DoublyNode *prev; DoublyNode *next; DoublyNode(int x=0): val(x), prev(nullptr), next(nullptr) {} };")
+    if not _re.search(r'\b(?:struct|class)\s+Node\b', source_code):
+        standard_defs.append("class Node { public: int val; vector<Node*> children; Node(): val(0) {} Node(int _val): val(_val) {} Node(int _val, vector<Node*> _children): val(_val), children(_children) {} };")
+    standard_defs_code = "\n".join(standard_defs)
 
     # Build the wrapper
     # We use a robust JSON parser that handles nested arrays, strings, ints, bools
@@ -1177,12 +1334,219 @@ static vector<J> parse_json_args(const string& line) {
     return {parse_value()};
 }
 
+// C2D standard data-structure definitions
+""" + standard_defs_code + """
+
+// User solution
+""" + source_code + """
+
+// Data-structure conversion helpers
+static vector<string> __c2d_split_tokens(const string& s) {
+    vector<string> out; string tok; stringstream ss(s);
+    while (ss >> tok) out.push_back(tok);
+    return out;
+}
+
+static bool __c2d_is_null_token(const string& s) {
+    string t=s; transform(t.begin(), t.end(), t.begin(), ::tolower);
+    return t=="null" || t=="none" || t=="nil" || t=="#";
+}
+
+static long long __c2d_long_value(const J& v) {
+    if (v.type == J::INT) return v.ival;
+    if (v.type == J::DOUBLE) return (long long)v.dval;
+    if (v.type == J::BOOL) return v.bval ? 1 : 0;
+    if (v.type == J::STR) {
+        auto toks = __c2d_split_tokens(v.sval);
+        if (!toks.empty() && !__c2d_is_null_token(toks[0])) return stoll(toks[0]);
+        return 0;
+    }
+    if (v.type == J::ARR && !v.aval.empty()) return __c2d_long_value(v.aval[0]);
+    return 0;
+}
+
+static double __c2d_double_value(const J& v) {
+    if (v.type == J::DOUBLE) return v.dval;
+    if (v.type == J::INT) return (double)v.ival;
+    if (v.type == J::STR) {
+        auto toks = __c2d_split_tokens(v.sval);
+        return toks.empty() ? 0.0 : stod(toks[0]);
+    }
+    if (v.type == J::ARR && !v.aval.empty()) return __c2d_double_value(v.aval[0]);
+    return 0.0;
+}
+
+static string __c2d_string_value(const J& v) {
+    if (v.type == J::STR) return v.sval;
+    if (v.type == J::INT) return to_string(v.ival);
+    if (v.type == J::DOUBLE) { ostringstream os; os << v.dval; return os.str(); }
+    if (v.type == J::BOOL) return v.bval ? "true" : "false";
+    return "";
+}
+
+static bool __c2d_bool_value(const J& v) {
+    if (v.type == J::BOOL) return v.bval;
+    if (v.type == J::INT) return v.ival != 0;
+    if (v.type == J::STR) {
+        string s = v.sval; transform(s.begin(), s.end(), s.begin(), ::tolower);
+        return s == "true" || s == "1" || s == "yes";
+    }
+    return false;
+}
+
+static int __c2d_int_arg(const vector<J>& args, int i) { return i < (int)args.size() ? (int)__c2d_long_value(args[i]) : 0; }
+static long long __c2d_long_arg(const vector<J>& args, int i) { return i < (int)args.size() ? __c2d_long_value(args[i]) : 0; }
+static double __c2d_double_arg(const vector<J>& args, int i) { return i < (int)args.size() ? __c2d_double_value(args[i]) : 0.0; }
+static bool __c2d_bool_arg(const vector<J>& args, int i) { return i < (int)args.size() ? __c2d_bool_value(args[i]) : false; }
+static string __c2d_string_arg(const vector<J>& args, int i) { return i < (int)args.size() ? __c2d_string_value(args[i]) : ""; }
+static char __c2d_char_arg(const vector<J>& args, int i) { string s = __c2d_string_arg(args, i); return s.empty() ? '\0' : s[0]; }
+
+static vector<J> __c2d_slice_or_nested(const vector<J>& args, int start) {
+    if (start >= (int)args.size()) return {};
+    if (args[start].type == J::ARR) return args[start].aval;
+    if (start == 0) return args;
+    return vector<J>(args.begin() + start, args.end());
+}
+
+static vector<int> __c2d_vec_int(const vector<J>& args, int start) {
+    vector<int> out;
+    for (const J& v : __c2d_slice_or_nested(args, start)) {
+        if (v.type == J::STR) {
+            for (auto& tok : __c2d_split_tokens(v.sval)) if (!__c2d_is_null_token(tok)) out.push_back(stoi(tok));
+        } else {
+            out.push_back((int)__c2d_long_value(v));
+        }
+    }
+    return out;
+}
+
+static vector<long long> __c2d_vec_long(const vector<J>& args, int start) {
+    vector<long long> out; for (const J& v : __c2d_slice_or_nested(args, start)) out.push_back(__c2d_long_value(v)); return out;
+}
+static vector<double> __c2d_vec_double(const vector<J>& args, int start) {
+    vector<double> out; for (const J& v : __c2d_slice_or_nested(args, start)) out.push_back(__c2d_double_value(v)); return out;
+}
+static vector<string> __c2d_vec_string(const vector<J>& args, int start) {
+    vector<string> out; for (const J& v : __c2d_slice_or_nested(args, start)) out.push_back(__c2d_string_value(v)); return out;
+}
+static vector<char> __c2d_vec_char(const vector<J>& args, int start) {
+    vector<char> out; for (const string& s : __c2d_vec_string(args, start)) if (!s.empty()) out.push_back(s[0]); return out;
+}
+static vector<bool> __c2d_vec_bool(const vector<J>& args, int start) {
+    vector<bool> out; for (const J& v : __c2d_slice_or_nested(args, start)) out.push_back(__c2d_bool_value(v)); return out;
+}
+
+static vector<vector<J>> __c2d_rows(const vector<J>& args, int start) {
+    vector<vector<J>> rows;
+    if (start >= (int)args.size()) return rows;
+    if (args[start].type == J::ARR && !args[start].aval.empty() && args[start].aval[0].type == J::ARR) {
+        for (const J& row : args[start].aval) rows.push_back(row.aval);
+    } else {
+        for (int i=start; i<(int)args.size(); ++i) {
+            if (args[i].type == J::ARR) rows.push_back(args[i].aval);
+            else rows.push_back({args[i]});
+        }
+    }
+    if (rows.size() >= 2 && rows[0].size() == 2) {
+        int r = (int)__c2d_long_value(rows[0][0]);
+        int c = (int)__c2d_long_value(rows[0][1]);
+        if (r >= 0 && c >= 0 && (int)rows.size() - 1 >= r) {
+            bool dimensions_match = true;
+            for (int i=1; i<=r; ++i) if ((int)rows[i].size() != c) dimensions_match = false;
+            if (dimensions_match) rows.erase(rows.begin());
+        }
+    }
+    return rows;
+}
+
+static vector<vector<int>> __c2d_matrix_int(const vector<J>& args, int start) {
+    vector<vector<int>> out;
+    for (auto& row : __c2d_rows(args, start)) {
+        vector<int> r; for (auto& v : row) r.push_back((int)__c2d_long_value(v)); out.push_back(r);
+    }
+    return out;
+}
+static vector<vector<long long>> __c2d_matrix_long(const vector<J>& args, int start) {
+    vector<vector<long long>> out; for (auto& row : __c2d_rows(args, start)) { vector<long long> r; for (auto& v : row) r.push_back(__c2d_long_value(v)); out.push_back(r); } return out;
+}
+static vector<vector<double>> __c2d_matrix_double(const vector<J>& args, int start) {
+    vector<vector<double>> out; for (auto& row : __c2d_rows(args, start)) { vector<double> r; for (auto& v : row) r.push_back(__c2d_double_value(v)); out.push_back(r); } return out;
+}
+static vector<vector<string>> __c2d_matrix_string(const vector<J>& args, int start) {
+    vector<vector<string>> out; for (auto& row : __c2d_rows(args, start)) { vector<string> r; for (auto& v : row) r.push_back(__c2d_string_value(v)); out.push_back(r); } return out;
+}
+static vector<vector<char>> __c2d_matrix_char(const vector<J>& args, int start) {
+    vector<vector<char>> out; for (auto& row : __c2d_matrix_string(args, start)) { vector<char> r; for (auto& s : row) r.push_back(s.empty()?'\0':s[0]); out.push_back(r); } return out;
+}
+
+static TreeNode* __c2d_tree_arg(const vector<J>& args, int start) {
+    vector<J> vals = __c2d_slice_or_nested(args, start);
+    if (vals.empty() || vals[0].type == J::NUL) return nullptr;
+    TreeNode* root = new TreeNode((int)__c2d_long_value(vals[0]));
+    queue<TreeNode*> q; q.push(root);
+    int i = 1;
+    while (!q.empty() && i < (int)vals.size()) {
+        TreeNode* node = q.front(); q.pop();
+        if (i < (int)vals.size() && vals[i].type != J::NUL) { node->left = new TreeNode((int)__c2d_long_value(vals[i])); q.push(node->left); }
+        ++i;
+        if (i < (int)vals.size() && vals[i].type != J::NUL) { node->right = new TreeNode((int)__c2d_long_value(vals[i])); q.push(node->right); }
+        ++i;
+    }
+    return root;
+}
+
+static ListNode* __c2d_list_arg(const vector<J>& args, int start) {
+    vector<int> vals = __c2d_vec_int(args, start);
+    ListNode dummy(0), *tail = &dummy;
+    for (int v : vals) { tail->next = new ListNode(v); tail = tail->next; }
+    return dummy.next;
+}
+
+static DoublyNode* __c2d_doubly_arg(const vector<J>& args, int start) {
+    vector<int> vals = __c2d_vec_int(args, start);
+    DoublyNode* head = nullptr; DoublyNode* tail = nullptr;
+    for (int v : vals) { auto* node = new DoublyNode(v); if (!head) head = node; node->prev = tail; if (tail) tail->next = node; tail = node; }
+    return head;
+}
+
+static Node* __c2d_nary_arg(const vector<J>& args, int start) {
+    vector<J> vals = __c2d_slice_or_nested(args, start);
+    if (vals.empty() || vals[0].type == J::NUL) return nullptr;
+    Node* root = new Node((int)__c2d_long_value(vals[0]));
+    queue<Node*> q; q.push(root);
+    int i = (vals.size() > 1 && vals[1].type == J::NUL) ? 2 : 1;
+    while (!q.empty() && i < (int)vals.size()) {
+        Node* parent = q.front(); q.pop();
+        while (i < (int)vals.size() && vals[i].type != J::NUL) {
+            Node* child = new Node((int)__c2d_long_value(vals[i++]));
+            parent->children.push_back(child); q.push(child);
+        }
+        ++i;
+    }
+    return root;
+}
+
+static pair<int,int> __c2d_pair_int(const vector<J>& args, int start) {
+    vector<int> v = __c2d_vec_int(args, start);
+    return {v.size() > 0 ? v[0] : 0, v.size() > 1 ? v[1] : 0};
+}
+static vector<pair<int,int>> __c2d_intervals(const vector<J>& args, int start) {
+    vector<pair<int,int>> out; for (auto& row : __c2d_matrix_int(args, start)) if (row.size() >= 2) out.push_back({row[0], row[1]}); return out;
+}
+static stack<int> __c2d_stack_int(const vector<J>& args, int start) { stack<int> s; for (int v : __c2d_vec_int(args, start)) s.push(v); return s; }
+static queue<int> __c2d_queue_int(const vector<J>& args, int start) { queue<int> q; for (int v : __c2d_vec_int(args, start)) q.push(v); return q; }
+static deque<int> __c2d_deque_int(const vector<J>& args, int start) { auto v = __c2d_vec_int(args, start); return deque<int>(v.begin(), v.end()); }
+static priority_queue<int> __c2d_priority_queue_int(const vector<J>& args, int start) { priority_queue<int> pq; for (int v : __c2d_vec_int(args, start)) pq.push(v); return pq; }
+static unordered_set<int> __c2d_unordered_set_int(const vector<J>& args, int start) { unordered_set<int> s; for (int v : __c2d_vec_int(args, start)) s.insert(v); return s; }
+static unordered_map<int,int> __c2d_unordered_map_int(const vector<J>& args, int start) { unordered_map<int,int> m; for (auto& p : __c2d_intervals(args, start)) m[p.first] = p.second; return m; }
+
 // ── Serializer ────────────────────────────────────────────────────────────────
 static string serialize(int v)         { return to_string(v); }
 static string serialize(long long v)   { return to_string(v); }
 static string serialize(double v)      { ostringstream s;s<<v;return s.str(); }
 static string serialize(bool v)        { return v?"true":"false"; }
 static string serialize(const string&v){ return v; }
+static string serialize(char v)        { return string(1, v); }
 static string serialize(const vector<int>&v){
     string s="[";
     for(int i=0;i<(int)v.size();i++){if(i)s+=",";s+=to_string(v[i]);}
@@ -1204,9 +1568,83 @@ static string serialize(const vector<vector<int>>&v){
     return s+"]";
 }
 
-// ── User solution ─────────────────────────────────────────────────────────────
-""" + source_code + """
+template<class A, class B>
+static string serialize(const pair<A,B>& p) {
+    return "[" + serialize(p.first) + "," + serialize(p.second) + "]";
+}
 
+template<class T>
+static string serialize(const vector<T>& v) {
+    string s="[";
+    for(int i=0;i<(int)v.size();i++){if(i)s+=",";s+=serialize(v[i]);}
+    return s+"]";
+}
+
+template<class T>
+static string serialize(const deque<T>& v) {
+    string s="[";
+    for(int i=0;i<(int)v.size();i++){if(i)s+=",";s+=serialize(v[i]);}
+    return s+"]";
+}
+
+static string serialize(TreeNode* root) {
+    if (!root) return "[]";
+    vector<string> vals; queue<TreeNode*> q; q.push(root);
+    while (!q.empty()) {
+        TreeNode* node = q.front(); q.pop();
+        if (!node) { vals.push_back("null"); continue; }
+        vals.push_back(to_string(node->val));
+        q.push(node->left); q.push(node->right);
+    }
+    while (!vals.empty() && vals.back()=="null") vals.pop_back();
+    string s="[";
+    for(int i=0;i<(int)vals.size();++i){ if(i)s+=","; s+=vals[i]; }
+    return s+"]";
+}
+
+static string serialize(ListNode* head) {
+    vector<int> vals;
+    while (head) { vals.push_back(head->val); head = head->next; }
+    return serialize(vals);
+}
+
+static string serialize(DoublyNode* head) {
+    vector<int> vals;
+    while (head) { vals.push_back(head->val); head = head->next; }
+    return serialize(vals);
+}
+
+static string serialize(Node* root) {
+    if (!root) return "[]";
+    vector<string> vals; queue<Node*> q; q.push(root); vals.push_back(to_string(root->val)); vals.push_back("null");
+    while (!q.empty()) {
+        Node* node = q.front(); q.pop();
+        for (Node* child : node->children) { vals.push_back(to_string(child->val)); q.push(child); }
+        vals.push_back("null");
+    }
+    while (!vals.empty() && vals.back()=="null") vals.pop_back();
+    string s="[";
+    for(int i=0;i<(int)vals.size();++i){ if(i)s+=","; s+=vals[i]; }
+    return s+"]";
+}
+
+static string serialize(stack<int> st) {
+    vector<int> vals; while(!st.empty()){ vals.push_back(st.top()); st.pop(); } return serialize(vals);
+}
+static string serialize(queue<int> q) {
+    vector<int> vals; while(!q.empty()){ vals.push_back(q.front()); q.pop(); } return serialize(vals);
+}
+static string serialize(priority_queue<int> pq) {
+    vector<int> vals; while(!pq.empty()){ vals.push_back(pq.top()); pq.pop(); } return serialize(vals);
+}
+static string serialize(const unordered_set<int>& s) {
+    vector<int> vals(s.begin(), s.end()); sort(vals.begin(), vals.end()); return serialize(vals);
+}
+static string serialize(const unordered_map<int,int>& m) {
+    vector<pair<int,int>> vals(m.begin(), m.end()); sort(vals.begin(), vals.end()); return serialize(vals);
+}
+
+// ── User solution ─────────────────────────────────────────────────────────────
 // ── Main: read args, call solution, print result ──────────────────────────────
 int main() {
     ios_base::sync_with_stdio(false);
@@ -1337,6 +1775,16 @@ class ListNode:
         self.val = val; self.next = next
     def __repr__(self): return f"ListNode({{self.val}})"
 
+class DoublyNode:
+    def __init__(self, val=0, prev=None, next=None):
+        self.val = val; self.prev = prev; self.next = next
+    def __repr__(self): return f"DoublyNode({{self.val}})"
+
+class Node:
+    def __init__(self, val=0, children=None):
+        self.val = val; self.children = children or []
+    def __repr__(self): return f"Node({{self.val}})"
+
 def __c2d_to_tree(vals):
     if not vals or vals[0] is None: return None
     from collections import deque as _dq
@@ -1372,6 +1820,39 @@ def __c2d_from_linked(head):
     result = []
     while head: result.append(head.val); head = head.next
     return result
+
+def __c2d_to_doubly(vals):
+    head = prev = None
+    for v in vals or []:
+        node = DoublyNode(v)
+        if not head: head = node
+        node.prev = prev
+        if prev: prev.next = node
+        prev = node
+    return head
+
+def __c2d_to_nary(vals):
+    if not vals or vals[0] is None: return None
+    from collections import deque as _dq
+    root = Node(vals[0]); q = _dq([root]); i = 2 if len(vals) > 1 and vals[1] is None else 1
+    while q and i < len(vals):
+        parent = q.popleft()
+        while i < len(vals) and vals[i] is not None:
+            child = Node(vals[i]); parent.children.append(child); q.append(child); i += 1
+        i += 1
+    return root
+
+def __c2d_from_nary(root):
+    if not root: return []
+    from collections import deque as _dq
+    vals, q = [root.val, None], _dq([root])
+    while q:
+        node = q.popleft()
+        for child in node.children:
+            vals.append(child.val); q.append(child)
+        vals.append(None)
+    while vals and vals[-1] is None: vals.pop()
+    return vals
 
 # ── Solution code ─────────────────────────────────────────────────────────────
 {source_code}
@@ -1423,8 +1904,36 @@ def __code2day_serialize(value):
         return __code2day_json.dumps(__c2d_from_tree(value), separators=(",", ":"))
     if isinstance(value, ListNode):
         return __code2day_json.dumps(__c2d_from_linked(value), separators=(",", ":"))
+    if isinstance(value, DoublyNode):
+        return __code2day_json.dumps(__c2d_from_linked(value), separators=(",", ":"))
+    if isinstance(value, Node):
+        return __code2day_json.dumps(__c2d_from_nary(value), separators=(",", ":"))
     if isinstance(value, str): return value
     return __code2day_json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+
+def __code2day_prepare_args(solver, args):
+    sig = __code2day_inspect.signature(solver)
+    params = [
+        p for p in sig.parameters.values()
+        if p.default is __code2day_inspect.Parameter.empty
+        and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    ]
+    if len(params) == 1:
+        name = params[0].name.lower()
+        annot = str(params[0].annotation).lower()
+        values = args[0] if len(args) == 1 and isinstance(args[0], list) else args
+        if "treenode" in annot or name in {{"root", "tree"}}:
+            return [__c2d_to_tree(values)]
+        if "doubly" in annot or name in {{"dhead", "doublyhead"}}:
+            return [__c2d_to_doubly(values)]
+        if "listnode" in annot or name in {{"head", "list", "linkedlist"}}:
+            return [__c2d_to_linked(values)]
+        if annot.endswith("node") or name in {{"node", "naryroot"}}:
+            return [__c2d_to_nary(values)]
+        return [values] if len(args) > 1 else args
+    if len(params) > 1 and len(args) == 1 and isinstance(args[0], list):
+        return list(args[0])
+    return args
 
 if __name__ == "__main__":
     try:
@@ -1442,12 +1951,7 @@ if __name__ == "__main__":
                 if p.default is __code2day_inspect.Parameter.empty
                 and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
             ])
-            if param_count == 1 and len(args) > 1:
-                result = solver(args)
-            elif param_count > 1 and len(args) == 1 and isinstance(args[0], list):
-                result = solver(*args[0])
-            else:
-                result = solver(*args)
+            result = solver(*__code2day_prepare_args(solver, args))
         except TypeError:
             # Arg count mismatch — try passing the whole list or unpacking
             try:
@@ -2336,7 +2840,11 @@ def _resolve_execution_type(problem, source_code: str, language: str) -> str:
             return EXEC_FUNCTION
 
     elif language in ("C", "C++", "CPP"):
-        if re.search(r'\b(?:int|long|float|double|char|void|bool|vector|string)\s+\w+\s*\(', source_code):
+        if re.search(
+            r'\b(?:int|long|float|double|char|void|bool|auto|string|vector|deque|stack|queue|priority_queue|'
+            r'unordered_map|unordered_set|pair|tuple|[A-Za-z_]\w*\*)\b[^;{}]*\w+\s*\(',
+            source_code,
+        ):
             return EXEC_FUNCTION
 
     else:
