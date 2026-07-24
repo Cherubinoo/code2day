@@ -12581,12 +12581,12 @@ class StudentExerciseSubmitView(APIView):
 
             passed = result["passed_cases"]
             total = result["total_cases"]
-            if total > 0 and (passed / total) < 0.75:
+            if total > 0 and passed < 1:
                 return Response(
                     {
                         "error": (
-                            f"Only {passed}/{total} test case(s) passed ({int(passed * 100 / total)}%). "
-                            f"At least 75% of test cases must pass before this exercise can be submitted."
+                            f"0/{total} test case(s) passed. "
+                            f"At least 1 test case must pass before this exercise can be submitted."
                         ),
                         "test_results": result["test_results"],
                         "passed_cases": passed,
