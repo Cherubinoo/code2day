@@ -1486,12 +1486,7 @@ class CodeRunView(StudentAuthMixin, APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception as exc:
             logger.error("Unexpected execution error: %s", exc, exc_info=True)
-            detail = (
-                f"Unexpected execution error: {exc}"
-                if settings.DEBUG
-                else "Unexpected execution error."
-            )
-            return Response({"detail": detail}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"detail": f"Execution error: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         try:
             ExecutionRecord.objects.create(
@@ -12523,8 +12518,7 @@ class StudentExerciseRunView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception as exc:
             logger.error("Lab exercise run error for exercise %s: %s", exercise_id, exc, exc_info=True)
-            detail = f"Unexpected execution error: {exc}" if settings.DEBUG else "Unexpected execution error."
-            return Response({"detail": detail}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"detail": f"Execution error: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response(result)
 
@@ -12581,8 +12575,7 @@ class StudentExerciseSubmitView(APIView):
                 logger.error(
                     "Lab submit test-case run error for exercise %s: %s", exercise_id, exc, exc_info=True,
                 )
-                detail = f"Unexpected execution error: {exc}" if settings.DEBUG else "Unexpected execution error."
-                return Response({"error": detail}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                return Response({"error": f"Execution error: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             passed = result["passed_cases"]
             total = result["total_cases"]
