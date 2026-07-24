@@ -652,6 +652,8 @@ def execute_lab_test_case_batch(*, source_code, language, language_id, test_case
         tc_result = execute_judge0_submission(
             source_code=source_code, language_id=language_id, stdin=case.stdin,
         )
+        actual_raw = (tc_result["stdout"] or "").strip()
+        expected = case.expected_output.strip()
         from .services.execution_adapter import normalize_comparable_output
 
         passed = (
