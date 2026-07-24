@@ -1171,9 +1171,10 @@ class DailyLeaderboardView(UnifiedAuthMixin, APIView):
 
 class ProblemListView(UnifiedAuthMixin, APIView):
     def get(self, request):
-        profile, profile_type, error = self.get_authenticated_profile(request)
-        if error:
-            return error
+        if request.user and request.user.is_authenticated:
+            profile, profile_type, _ = self.get_authenticated_profile(request)
+        else:
+            profile, profile_type = None, None
 
         difficulty = request.query_params.get("difficulty")
         queryset = Problem.objects.all()

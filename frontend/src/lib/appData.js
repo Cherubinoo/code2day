@@ -161,35 +161,187 @@ export const fallbackDashboard = {
   },
 };
 
+const REAL_PROBLEM_TEMPLATES = [
+  {
+    title: "Two Sum",
+    slug: "two-sum",
+    description: "Given an array of integers `nums` and an integer `target`, return indices of the two numbers such that they add up to `target`.\n\nYou may assume that each input would have exactly one solution, and you may not use the same element twice.\n\nYou can return the answer in any order.",
+    difficulty: "Easy",
+    tags: ["Array", "Hash Map"],
+    examples: [
+      { input: "nums = [2,7,11,15], target = 9", output: "[0,1]", explanation: "Because nums[0] + nums[1] == 9, we return [0, 1]." },
+      { input: "nums = [3,2,4], target = 6", output: "[1,2]", explanation: "Because nums[1] + nums[2] == 6, we return [1, 2]." }
+    ],
+    hints: ["Try storing visited values in a hash map to look up targets in O(1) time."]
+  },
+  {
+    title: "Valid Parentheses",
+    slug: "valid-parentheses",
+    description: "Given a string `s` containing just the characters '(', ')', '{', '}', '[' and ']', determine if the input string is valid.\n\nAn input string is valid if:\n1. Open brackets must be closed by the same type of brackets.\n2. Open brackets must be closed in the correct order.\n3. Every close bracket has a corresponding open bracket of the same type.",
+    difficulty: "Easy",
+    tags: ["Stack", "String"],
+    examples: [
+      { input: "s = \"()[]{}\"", output: "true", explanation: "All open brackets match correctly." },
+      { input: "s = \"(]\"", output: "false", explanation: "Mismatched bracket types." }
+    ],
+    hints: ["Use a stack to keep track of expected closing brackets."]
+  },
+  {
+    title: "Merge Two Sorted Lists",
+    slug: "merge-two-sorted-lists",
+    description: "You are given the heads of two sorted linked lists `list1` and `list2`.\n\nMerge the two lists into one sorted list. The list should be made by splicing together the nodes of the first two lists.\n\nReturn the head of the merged linked list.",
+    difficulty: "Easy",
+    tags: ["Linked List", "Two Pointers"],
+    examples: [
+      { input: "list1 = [1,2,4], list2 = [1,3,4]", output: "[1,1,2,3,4,4]", explanation: "Merged nodes maintain non-decreasing order." }
+    ],
+    hints: ["Compare elements from both lists one by one using a dummy head node."]
+  },
+  {
+    title: "Longest Substring Without Repeating Characters",
+    slug: "longest-substring-without-repeating-characters",
+    description: "Given a string `s`, find the length of the longest substring without repeating characters.",
+    difficulty: "Medium",
+    tags: ["String", "Sliding Window", "Hash Map"],
+    examples: [
+      { input: "s = \"abcabcbb\"", output: "3", explanation: "The answer is \"abc\", with the length of 3." },
+      { input: "s = \"bbbbb\"", output: "1", explanation: "The answer is \"b\", with the length of 1." }
+    ],
+    hints: ["Use a sliding window with two pointers and a set or map of character positions."]
+  },
+  {
+    title: "Container With Most Water",
+    slug: "container-with-most-water",
+    description: "You are given an integer array `height` of length `n`. There are `n` vertical lines drawn such that the two endpoints of the `i`-th line are `(i, 0)` and `(i, height[i])`.\n\nFind two lines that together with the x-axis form a container, such that the container contains the most water.\n\nReturn the maximum amount of water a container can store.",
+    difficulty: "Medium",
+    tags: ["Array", "Two Pointers", "Greedy"],
+    examples: [
+      { input: "height = [1,8,6,2,5,4,8,3,7]", output: "49", explanation: "The maximum area is obtained between index 1 and 8." }
+    ],
+    hints: ["Start with two pointers at opposite ends and move the shorter line inward."]
+  },
+  {
+    title: "3Sum",
+    slug: "3sum",
+    description: "Given an integer array nums, return all the triplets `[nums[i], nums[j], nums[k]]` such that `i != j`, `i != k`, and `j != k`, and `nums[i] + nums[j] + nums[k] == 0`.\n\nNotice that the solution set must not contain duplicate triplets.",
+    difficulty: "Medium",
+    tags: ["Array", "Two Pointers", "Sorting"],
+    examples: [
+      { input: "nums = [-1,0,1,2,-1,-4]", output: "[[-1,-1,2],[-1,0,1]]", explanation: "Distinct triplets summing to zero." }
+    ],
+    hints: ["Sort the array first, then iterate and use two pointers for the remaining sum."]
+  },
+  {
+    title: "Binary Tree Level Order Traversal",
+    slug: "binary-tree-level-order-traversal",
+    description: "Given the `root` of a binary tree, return the level order traversal of its nodes' values. (i.e., from left to right, level by level).",
+    difficulty: "Medium",
+    tags: ["Tree", "BFS", "Queue"],
+    examples: [
+      { input: "root = [3,9,20,null,null,15,7]", output: "[[3],[9,20],[15,7]]", explanation: "Level-by-level traversal." }
+    ],
+    hints: ["Use a queue for Breadth-First Search (BFS) while tracking level sizes."]
+  },
+  {
+    title: "Course Schedule",
+    slug: "course-schedule",
+    description: "There are a total of `numCourses` courses you have to take, labeled from `0` to `numCourses - 1`. You are given an array `prerequisites` where `prerequisites[i] = [a_i, b_i]` indicates that you must take course `b_i` first if you want to take course `a_i`.\n\nReturn `true` if you can finish all courses. Otherwise, return `false`.",
+    difficulty: "Medium",
+    tags: ["Graph", "BFS", "DFS", "Topological Sort"],
+    examples: [
+      { input: "numCourses = 2, prerequisites = [[1,0]]", output: "true", explanation: "Take course 0 then course 1." },
+      { input: "numCourses = 2, prerequisites = [[1,0],[0,1]]", output: "false", explanation: "Cycle detected between courses." }
+    ],
+    hints: ["Detect cycle in a directed graph using Kahn's algorithm or DFS colors."]
+  },
+  {
+    title: "Coin Change",
+    slug: "coin-change",
+    description: "You are given an integer array `coins` representing coins of different denominations and an integer `amount` representing a total amount of money.\n\nReturn the fewest number of coins that you need to make up that amount. If that amount of money cannot be made up by any combination of the coins, return `-1`.",
+    difficulty: "Medium",
+    tags: ["Dynamic Programming", "BFS"],
+    examples: [
+      { input: "coins = [1,2,5], amount = 11", output: "3", explanation: "11 = 5 + 5 + 1." }
+    ],
+    hints: ["Use a DP table where dp[i] represents the min coins needed for amount i."]
+  },
+  {
+    title: "Merge K Sorted Lists",
+    slug: "merge-k-lists",
+    description: "You are given an array of `k` linked-lists `lists`, each linked-list is sorted in ascending order.\n\nMerge all the linked-lists into one sorted linked-list and return it.",
+    difficulty: "Hard",
+    tags: ["Heap", "Linked List", "Divide and Conquer"],
+    examples: [
+      { input: "lists = [[1,4,5],[1,3,4],[2,6]]", output: "[1,1,2,3,4,4,5,6]", explanation: "Merged all sorted lists." }
+    ],
+    hints: ["Maintain a min-heap of nodes representing current head of each list."]
+  },
+  {
+    title: "Trapping Rain Water",
+    slug: "trapping-rain-water",
+    description: "Given `n` non-negative integers representing an elevation map where the width of each bar is `1`, compute how much water it can trap after raining.",
+    difficulty: "Hard",
+    tags: ["Array", "Two Pointers", "Stack", "Dynamic Programming"],
+    examples: [
+      { input: "height = [0,1,0,2,1,0,1,3,2,1,2,1]", output: "6", explanation: "6 units of rain water trapped." }
+    ],
+    hints: ["Maintain maximum height to left and right using two pointers."]
+  },
+  {
+    title: "Employees Earning More Than Their Managers",
+    slug: "employees-earning-more-than-managers",
+    description: "Write a SQL query to find the employees who earn more than their managers.\n\nTable: Employee (id, name, salary, managerId)",
+    difficulty: "Easy",
+    tags: ["SQL", "Database"],
+    examples: [
+      { input: "Employee table with salaries and manager IDs", output: "Joe", explanation: "Joe earns 70000 while his manager earns 60000." }
+    ],
+    hints: ["Perform a self-JOIN on the Employee table where employee.managerId = manager.id."]
+  }
+];
+
 function generateMoreProblems(count = 150) {
+  const topics = [
+    "Array", "String", "Hash Map", "Stack", "Queue", "Two Pointers",
+    "Sliding Window", "Binary Search", "Linked List", "Tree", "BFS", "DFS",
+    "Graph", "Heap", "Dynamic Programming", "Greedy", "SQL", "Matrix",
+    "Bit Manipulation", "Math", "System Design"
+  ];
   const difficulties = ["Easy", "Medium", "Hard"];
-  const tags = ["Array", "String", "Hash Map", "Stack", "Binary Search", "Heap", "Linked List", "SQL"];
-  
+
   return Array.from({ length: count }, (_, i) => {
-    const id = i + 1;
+    const template = REAL_PROBLEM_TEMPLATES[i % REAL_PROBLEM_TEMPLATES.length];
+    const topic = topics[i % topics.length];
     const difficulty = difficulties[i % 3];
-    const state = "not_completed";
-    const tag = tags[i % tags.length];
-    
+    const id = i + 1;
+
+    // Use template if direct match, otherwise construct clean problem
+    if (i < REAL_PROBLEM_TEMPLATES.length) {
+      return {
+        ...template,
+        progress_state: "not_completed",
+        available_languages: template.tags.includes("SQL") ? ["SQL"] : ["Python", "Java", "C++", "C"],
+      };
+    }
+
+    const title = `${template.title} II (Variant ${id})`;
     return {
-      title: `Problem ${id}: ${difficulty} Challenge`,
-      slug: `problem-${id}`,
-      description: `This is a generated description for problem ${id}. Solve this ${difficulty} challenge using ${tag} concepts.\\n\\n1. Read input.\\n2. Process data.\\n3. Print result.`,
+      title,
+      slug: `${template.slug}-variant-${id}`,
+      description: `Solve this ${difficulty} ${topic} problem.\n\n${template.description}`,
       difficulty,
-      tags: [tag, "Practice"],
+      tags: Array.from(new Set([topic, ...template.tags])),
       is_daily: i % 10 === 0,
-      progress_state: state,
-      available_languages: ["Python", "Java", "C++", "C"],
-      examples: [
-        { input: "example input", output: "example output", explanation: "Explanation for example" }
-      ],
-      hints: ["Try to think about the constraints", "Use efficient data structures"],
+      progress_state: "not_completed",
+      available_languages: topic === "SQL" ? ["SQL"] : ["Python", "Java", "C++", "C"],
+      examples: template.examples,
+      hints: template.hints,
     };
   });
 }
 
 export const fallbackProblems = [
-  ...generateMoreProblems(155)
+  ...generateMoreProblems(150)
 ];
 
 export const roleTracks = [

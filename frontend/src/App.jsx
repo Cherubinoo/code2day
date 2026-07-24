@@ -313,11 +313,6 @@ function App() {
   }, [activeRegisterNumber, userType]);
 
   useEffect(() => {
-    if (!isLoggedIn || userType !== "student") {
-      setProblemSet(normalizeProblems(fallbackProblems));
-      return undefined;
-    }
-
     let isMounted = true;
 
     async function loadProblems() {
@@ -325,26 +320,27 @@ function App() {
         const response = await fetch("/api/problems/", {
           credentials: "include",
         });
-        if (response.status === 401) {
+
+        if (response.status === 401 && isLoggedIn) {
           if (isMounted) {
             resetStudentSession();
           }
           return;
         }
 
-        if (!response.ok) {
-          throw new Error("Problem request failed");
-        }
-
-        const payload = await response.json();
-        if (isMounted) {
-          setProblemSet(normalizeProblems(payload));
+        if (response.ok) {
+          const payload = await response.json();
+          if (isMounted && Array.isArray(payload) && payload.length > 0) {
+            setProblemSet(normalizeProblems(payload));
+            return;
+          }
         }
       } catch (error) {
         console.error("Using fallback problem data", error);
-        if (isMounted) {
-          setProblemSet(normalizeProblems(fallbackProblems));
-        }
+      }
+
+      if (isMounted) {
+        setProblemSet(normalizeProblems(fallbackProblems));
       }
     }
 
