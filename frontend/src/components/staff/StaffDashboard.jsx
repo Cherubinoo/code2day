@@ -22,6 +22,28 @@ const StaffDashboard = ({ institutionId }) => {
   const [showContestDetail, setShowContestDetail] = useState(null);
   const [selectedDeptId, setSelectedDeptId] = useState(null);
   const [departments, setDepartments] = useState([]);
+  const [contestsList, setContestsList] = useState([]);
+  const [contestSearch, setContestSearch] = useState('');
+  const [contestDateFilter, setContestDateFilter] = useState('');
+  const [contestLimit, setContestLimit] = useState(10);
+
+  useEffect(() => {
+    if (activeTab === 'contests') {
+      fetchContests();
+    }
+  }, [activeTab]);
+
+  async function fetchContests() {
+    try {
+      const res = await fetch('/api/contests/', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setContestsList(data.contests || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch contests:", err);
+    }
+  }
 
   // Downloads the batch performance report PDF — section-scoped if a
   // section is selected, otherwise the full batch — with an optional
@@ -197,7 +219,8 @@ const StaffDashboard = ({ institutionId }) => {
   const { staff, analytics } = staffDetail;
 
   function handleContestCreated() {
-    loadStaffData(); // Reload data after contest creation
+    loadStaffData();
+    fetchContests();
   }
 
   const sidebarItems = [
@@ -703,14 +726,19 @@ const StaffDashboard = ({ institutionId }) => {
           )}
           {/* Contests Tab */}
           {activeTab === 'contests' && (() => {
-            const filteredContests = (analytics.contests || []).filter(c => {
-              const matchSearch = !contestSearch || 
-                c.title.toLowerCase().includes(contestSearch.toLowerCase()) || 
-                (c.description && c.description.toLowerCase().includes(contestSearch.toLowerCase()));
+            const rawContests = contestsList.length > 0 
+              ? contestsList 
+              : (analytics?.contests || staffDetail?.contests || []);
+
+            const filteredContests = rawContests.filter(c => {
+              if (!c) return false;
+              const titleMatch = c.title ? String(c.title).toLowerCase().includes(contestSearch.toLowerCase()) : false;
+              const descMatch = c.description ? String(c.description).toLowerCase().includes(contestSearch.toLowerCase()) : false;
+              const matchSearch = !contestSearch || titleMatch || descMatch;
               
-              const matchDate = !contestDateFilter || 
-                (c.created_at && c.created_at.startsWith(contestDateFilter)) ||
-                (c.start_time && c.start_time.startsWith(contestDateFilter));
+              const createdDateMatch = c.created_at ? String(c.created_at).startsWith(contestDateFilter) : false;
+              const startDateMatch = c.start_time ? String(c.start_time).startsWith(contestDateFilter) : false;
+              const matchDate = !contestDateFilter || createdDateMatch || startDateMatch;
               
               return matchSearch && matchDate;
             });
@@ -748,7 +776,7 @@ const StaffDashboard = ({ institutionId }) => {
 
                   {visibleContests.length === 0 ? (
                     <div style={{ padding: 40, textAlign: 'center', color: '#64748b' }}>
-                      No contests match your search or date filter.
+                      {rawContests.length === 0 ? 'No contests created yet. Click "New Coding Contest" or "New Aptitude Contest" above to create one!' : 'No contests match your search or date filter.'}
                     </div>
                   ) : (
                     <div style={{ display: 'grid', gap: 16 }}>
@@ -771,18 +799,18 @@ const StaffDashboard = ({ institutionId }) => {
                         >
                           <div style={{ flex: 1 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
-                              <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: 'var(--text-hard)' }}>{contest.title}</h4>
+                              <h4 style={{ margin: 0, fontSize: '16px', fontWeight: '700', color: 'var(--text-hard)' }}>{contest.title || 'Untitled Contest'}</h4>
                               <span style={{ 
                                 padding: '2px 8px', borderRadius: '6px', 
                                 background: contest.status === 'active' ? '#dcfce7' : '#f1f5f9',
                                 color: contest.status === 'active' ? '#166534' : '#475569',
                                 fontSize: '10px', fontWeight: '700', textTransform: 'uppercase'
                               }}>
-                                {contest.status}
+                                {contest.status || 'draft'}
                               </span>
                             </div>
                             <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>
-                              Created on {new Date(contest.created_at).toLocaleDateString()}
+                              Created on {contest.created_at ? new Date(contest.created_at).toLocaleDateString() : 'N/A'}
                             </div>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
