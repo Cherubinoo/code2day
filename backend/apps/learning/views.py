@@ -12569,6 +12569,7 @@ class StudentLabExercisesView(APIView):
                 "id": ex.id,
                 "title": ex.title,
                 "description": ex.description,
+                "explanation": ex.explanation,
                 "order": ex.order,
                 "submitted": sub is not None,
                 "submitted_at": sub.submitted_at.isoformat() if sub else None,
