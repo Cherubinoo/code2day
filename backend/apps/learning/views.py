@@ -652,17 +652,12 @@ def execute_lab_test_case_batch(*, source_code, language, language_id, test_case
         tc_result = execute_judge0_submission(
             source_code=source_code, language_id=language_id, stdin=case.stdin,
         )
-        actual_raw = (tc_result["stdout"] or "").strip()
-        expected = case.expected_output.strip()
-        # Plain exact-match comparison, matching services.lab_report_pdf's
-        # reexecute_test_cases() — deliberately NOT normalize_comparable_output(),
-        # which is tuned for Problems' single-value LeetCode-style returns and
-        # truncates everything at the first newline (via _extract_primary_expected,
-        # meant to strip "2, nums = [1,2]"-style annotations). Lab exercises are
-        # plain stdin/stdout programs that routinely have multi-line expected
-        # output; that truncation made a completely wrong 2nd+ line still count
-        # as Passed, since only line 1 of each side ever got compared.
-        passed = tc_result["status"] == "Accepted" and actual_raw == expected
+        from .services.execution_adapter import normalize_comparable_output
+
+        passed = (
+            tc_result["status"] == "Accepted"
+            and normalize_comparable_output(actual_raw) == normalize_comparable_output(expected)
+        )
 
         latest_time = tc_result["time"] or latest_time
         latest_memory = tc_result["memory"] or latest_memory

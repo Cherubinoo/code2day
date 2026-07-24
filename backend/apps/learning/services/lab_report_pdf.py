@@ -153,9 +153,14 @@ def reexecute_test_cases(exercise, code, language):
                     else "Could not automatically verify this program's output — "
                          "the code execution service was unavailable when this report was generated.")
             return rows, (all(r[3] == "Passed" for r in rows) if rows else None), note
+        from .execution_adapter import normalize_comparable_output
+
         received = (result.get("stdout") or "").strip()
         expected = (tc.expected_output or "").strip()
-        passed = received == expected and result.get("status") == "Accepted"
+        passed = (
+            result.get("status") == "Accepted"
+            and normalize_comparable_output(received) == normalize_comparable_output(expected)
+        )
         # On a failing case with no stdout at all (a crash, timeout, or
         # compile error), show the real reason instead of a blank cell —
         # executor._normalize_result's unified `output` field now includes
