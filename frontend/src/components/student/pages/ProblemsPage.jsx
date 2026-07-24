@@ -133,9 +133,16 @@ function ProblemListView({
   handleFinishContest,
 }) {
   const allProblems = groupedProblems.flatMap((s) => s.items);
-  const totalEasy   = dashboard?.stats?.easy   ?? 0;
-  const totalMedium = dashboard?.stats?.medium ?? 0;
-  const totalHard   = dashboard?.stats?.hard   ?? 0;
+
+  const solvedProblems = allProblems.filter((p) => p.progress_state === "completed");
+  const computedEasy = solvedProblems.filter((p) => p.difficulty === "Easy").length;
+  const computedMedium = solvedProblems.filter((p) => p.difficulty === "Medium").length;
+  const computedHard = solvedProblems.filter((p) => p.difficulty === "Hard").length;
+
+  const totalEasy   = Math.max(dashboard?.stats?.easy   ?? 0, computedEasy);
+  const totalMedium = Math.max(dashboard?.stats?.medium ?? 0, computedMedium);
+  const totalHard   = Math.max(dashboard?.stats?.hard   ?? 0, computedHard);
+  const displayTotalSolved = totalEasy + totalMedium + totalHard;
 
   const [showCompletedOnly, setShowCompletedOnly] = useState(false);
   // Pagination state
@@ -180,7 +187,7 @@ function ProblemListView({
             <span className="stat-chip easy">{totalEasy} Easy</span>
             <span className="stat-chip medium">{totalMedium} Medium</span>
             <span className="stat-chip hard">{totalHard} Hard</span>
-            <span className="stat-chip total">{totalSolved} Total</span>
+            <span className="stat-chip total">{displayTotalSolved} Total</span>
           </div>
           {sessionMode === "contest" && (
             <button type="button" className="primary-button dense-action" onClick={handleFinishContest}>

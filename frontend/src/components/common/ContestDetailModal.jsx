@@ -13,12 +13,36 @@ const ContestDetailModal = ({ contestId, onClose }) => {
   const [submissionsLoading, setSubmissionsLoading] = useState(false);
   const [downloadingReport, setDownloadingReport] = useState(false);
   const [downloadingStudentReport, setDownloadingStudentReport] = useState({});
+  const [unlockingStudent, setUnlockingStudent] = useState({});
   const [batchFilter, setBatchFilter] = useState('');
   const [sectionFilter, setSectionFilter] = useState('');
 
   useEffect(() => {
     loadContestData();
   }, [contestId]);
+
+  async function handleUnlockStudent(participant) {
+    const regNo = participant.register_number;
+    setUnlockingStudent(prev => ({ ...prev, [regNo]: true }));
+    try {
+      const res = await fetch(`/api/contests/${contestId}/student/${regNo}/unlock/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+      });
+      if (res.ok) {
+        alert(`✅ Student ${participant.name} (${regNo}) has been unlocked! They can now re-enter and continue their contest session.`);
+        loadContestData();
+      } else {
+        const err = await res.json();
+        alert(err.detail || 'Failed to unlock student');
+      }
+    } catch (err) {
+      alert(`Unlock error: ${err.message}`);
+    } finally {
+      setUnlockingStudent(prev => ({ ...prev, [regNo]: false }));
+    }
+  }
 
   async function loadContestData() {
     setLoading(true);
@@ -528,6 +552,26 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                           >
                             <Download size={14} />
                             {downloadingStudentReport[participant.register_number] ? '...' : 'Report'}
+                          </button>
+                          <button
+                            onClick={() => handleUnlockStudent(participant)}
+                            disabled={!!unlockingStudent[participant.register_number]}
+                            title="Unlock and re-activate student's contest session without losing work"
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: 6,
+                              border: '1px solid #10b981',
+                              background: unlockingStudent[participant.register_number] ? '#f3f4f6' : '#ecfdf5',
+                              color: '#047857',
+                              cursor: unlockingStudent[participant.register_number] ? 'not-allowed' : 'pointer',
+                              fontSize: 13,
+                              fontWeight: 600,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                            }}
+                          >
+                            🔓 {unlockingStudent[participant.register_number] ? 'Unlocking...' : 'Unlock'}
                           </button>
                         </div>
                       </td>

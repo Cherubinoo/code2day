@@ -1206,9 +1206,10 @@ class ProblemListView(UnifiedAuthMixin, APIView):
 
 class ProblemDetailView(UnifiedAuthMixin, APIView):
     def get(self, request, slug):
-        profile, profile_type, error = self.get_authenticated_profile(request)
-        if error:
-            return error
+        if request.user and request.user.is_authenticated:
+            profile, profile_type, _ = self.get_authenticated_profile(request)
+        else:
+            profile, profile_type = None, None
 
         problem = Problem.objects.filter(slug=slug).first()
         if not problem:
@@ -3662,6 +3663,11 @@ class ContestListCreateView(APIView):
             status=initial_status,
             contest_type=request.data.get('contest_type', 'programming'),
             submitted_for_approval_at=timezone.now() if submit_for_approval else None,
+            # Security & Anti-cheat settings
+            enable_tab_switch_check=request.data.get('enable_tab_switch_check', True),
+            max_tab_switches=request.data.get('max_tab_switches', 3),
+            enable_fullscreen_lock=request.data.get('enable_fullscreen_lock', False),
+            enable_copy_paste_lock=request.data.get('enable_copy_paste_lock', False),
         )
 
         # Add problems by slugs (for programming)
@@ -3690,7 +3696,7 @@ class ContestListCreateView(APIView):
                 department=profile.department,
                 batch__in=assigned_batches
             )
-            contest.assigned_students.add(*batch_students)
+            contest.assigned_students.set(batch_students)
 
         # Assign specific sections (e.g. "23-27::A") within batches
         assigned_sections = request.data.get('assigned_sections', [])
@@ -3700,16 +3706,25 @@ class ContestListCreateView(APIView):
 
             section_filter = Q(pk__in=[])
             for entry in assigned_sections:
-                batch, _, section = str(entry).partition('::')
-                if batch and section:
-                    section_filter |= Q(batch=batch, section=section)
+                if isinstance(entry, str) and '::' in entry:
+                    batch, _, section = entry.partition('::')
+                    if batch and section:
+                        section_filter |= Q(batch=batch, section=section)
+                elif isinstance(entry, dict):
+                    batch = entry.get('batch')
+                    section = entry.get('section')
+                    if batch and section:
+                        section_filter |= Q(batch=batch, section=section)
+                elif isinstance(entry, str):
+                    section_filter |= Q(section=entry)
+
             if section_filter != Q(pk__in=[]):
                 section_students = StudentProfile.objects.filter(
                     section_filter,
                     institution=profile.institution,
-                    department=profile.department,
+                    department=profile.department
                 )
-                contest.assigned_students.add(*section_students)
+                contest.assigned_students.set(section_students)
 
         # Assign individual students
         assigned_student_ids = request.data.get('assigned_student_ids', [])
@@ -3905,6 +3920,50 @@ class ContestAnalyticsView(APIView):
             "problem_stats": problem_stats,
             "top_performers": top_performers,
             "participants": participants_data,
+        })
+
+
+class ContestStudentUnlockView(APIView):
+    """Unlock / re-activate a specific student's contest session"""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk, register_number):
+        is_staff = hasattr(request.user, 'staff_profile')
+        if not is_staff:
+            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        contest = Contest.objects.filter(id=pk).first()
+        if not contest:
+            return Response({"detail": "Contest not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        student = StudentProfile.objects.filter(register_number=register_number).first()
+        if not student:
+            return Response({"detail": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        participation = ContestParticipation.objects.filter(contest=contest, student=student).first()
+        if not participation:
+            participation = ContestParticipation.objects.create(
+                contest=contest,
+                student=student,
+                has_started=True,
+                is_active=True
+            )
+
+        duration = contest.session_duration_minutes or contest.duration_minutes or 60
+        now = timezone.now()
+        
+        # Unlock student and grant active session time from now
+        participation.is_active = True
+        participation.auto_submitted = False
+        participation.manually_stopped = False
+        participation.session_end_time = now + timezone.timedelta(minutes=duration)
+        participation.save()
+
+        return Response({
+            "detail": f"Student {student.name} ({student.register_number}) has been unlocked successfully.",
+            "register_number": student.register_number,
+            "session_end_time": participation.session_end_time,
+            "is_active": participation.is_active,
         })
 
 

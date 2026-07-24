@@ -23,6 +23,13 @@ const ContestContainer = ({ targetContestId, setTargetContestId, onToggleWorkspa
 
   function handleNavigateToContest(contestId) {
     console.log('Navigating to contest workspace:', contestId);
+    try {
+      const el = document.documentElement;
+      if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+      else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    } catch (err) {
+      console.warn("Fullscreen request error:", err);
+    }
     setSelectedContestId(contestId);
     setLoadingType(true);
   }

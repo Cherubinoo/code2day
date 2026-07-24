@@ -1011,6 +1011,23 @@ class Contest(models.Model):
         blank=True,
         help_text="Specific students assigned to this contest"
     )
+    # Security & Anti-Cheat Settings
+    enable_tab_switch_check = models.BooleanField(
+        default=True,
+        help_text="Monitor tab switches and window blur during contest"
+    )
+    max_tab_switches = models.PositiveIntegerField(
+        default=3,
+        help_text="Maximum tab switch warnings before auto-submission"
+    )
+    enable_fullscreen_lock = models.BooleanField(
+        default=False,
+        help_text="Enforce fullscreen mode during contest"
+    )
+    enable_copy_paste_lock = models.BooleanField(
+        default=False,
+        help_text="Disable copy and paste in contest workspace"
+    )
     
     # Analytics
     total_participants = models.PositiveIntegerField(default=0)
@@ -1031,6 +1048,39 @@ class Contest(models.Model):
     
     def __str__(self):
         return f"{self.title} - {self.created_by.faculty_id} ({self.department.code if self.department else 'No Dept'})"
+    
+    def is_student_assigned(self, student):
+        """Strict check if a student is assigned to this contest (batch, section, or individual)"""
+        if self.assigned_students.filter(id=student.id).exists():
+            return True
+
+        if self.department and student.department != self.department:
+            return False
+
+        # If specific sections are assigned, student MUST match one of the assigned sections
+        if self.assigned_sections:
+            student_key = f"{student.batch}::{student.section}"
+            for entry in self.assigned_sections:
+                if isinstance(entry, str):
+                    if entry == student_key or entry == student.section:
+                        return True
+                    if "::" in entry:
+                        b, _, s = entry.partition("::")
+                        if student.batch == b and student.section == s:
+                            return True
+                elif isinstance(entry, dict):
+                    b = entry.get("batch")
+                    s = entry.get("section")
+                    if (not b or b == student.batch) and s == student.section:
+                        return True
+            # Explicit section scoping was set, but student section didn't match any
+            return False
+
+        # Otherwise fallback to batch level check
+        if self.assigned_batches and student.batch in self.assigned_batches:
+            return True
+
+        return False
     
     @property
     def is_active(self):

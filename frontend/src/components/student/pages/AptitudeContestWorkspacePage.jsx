@@ -157,23 +157,31 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
     setConfirmState({ show: true, m1, m2, onConfirm, firstOk: false });
   };
 
+  const maxTabSwitches = contest?.max_tab_switches ?? 3;
+  const enableTabCheck = contest?.enable_tab_switch_check !== false;
+  const enableFullscreenLock = contest?.enable_fullscreen_lock !== false;
+  const enableCopyPasteLock = contest?.enable_copy_paste_lock ?? false;
+
   // ── Violation handler ─────────────────────────────────────────────────────
   const recordViolation = useCallback(async (reason) => {
     if (!isContestActiveRef.current) return;
+    if ((reason.includes('Tab switch') || reason.includes('blur')) && !enableTabCheck) return;
+    if (reason.includes('Fullscreen') && !enableFullscreenLock) return;
+    if (reason.includes('Paste') && !enableCopyPasteLock) return;
     if (violationLockRef.current) return;
     violationLockRef.current = true;
 
     violationCountRef.current += 1;
     const count = violationCountRef.current;
 
-    if (count > MAX_VIOLATIONS) {
+    if (count > maxTabSwitches) {
       violationLockRef.current = false;
       return;
     }
 
     setViolationModal({ count, reason });
 
-    if (count >= MAX_VIOLATIONS) {
+    if (count >= maxTabSwitches) {
       isContestActiveRef.current = false;
       autoSubmittedRef.current = true;
       try {
@@ -187,7 +195,7 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
         onBack();
       }, 4000);
     }
-  }, [contestId, onBack]);
+  }, [contestId, enableCopyPasteLock, enableFullscreenLock, enableTabCheck, maxTabSwitches, onBack]);
 
   const dismissViolationModal = useCallback(() => {
     setViolationModal(null);
@@ -199,6 +207,9 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
 
   // ── Fullscreen + anti-cheat enforcement ──────────────────────────────────
   useEffect(() => {
+    const isFull = !!document.fullscreenElement || !!document.webkitFullscreenElement;
+    setIsFullscreen(isFull);
+
     const el = document.documentElement;
     if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
     else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
@@ -216,6 +227,13 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
+
+    const handleWindowBlur = () => {
+      if (isContestActiveRef.current) {
+        recordViolation('Tab switch or window blur detected — you must stay on this page.');
+      }
+    };
+    window.addEventListener('blur', handleWindowBlur);
 
     const blockKeys = (e) => {
       if (
@@ -253,6 +271,7 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
     return () => {
       document.removeEventListener('paste', blockPaste, true);
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('blur', handleWindowBlur);
       document.removeEventListener('keydown', blockKeys, true);
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
@@ -775,9 +794,48 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
           count={violationModal.count}
           reason={violationModal.reason}
           onReEnterFullscreen={
-            violationModal.count >= MAX_VIOLATIONS ? undefined : dismissViolationModal
+            violationModal.count >= maxTabSwitches ? undefined : dismissViolationModal
           }
         />
+      )}
+
+      {/* Fullscreen Overlay Prompt when not in fullscreen */}
+      {!isFullscreen && isContestActiveRef.current && !violationModal && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 9999,
+          background: 'rgba(15, 23, 42, 0.95)',
+          backdropFilter: 'blur(8px)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          color: 'white', padding: 24, textAlign: 'center',
+        }}>
+          <div style={{ maxWidth: 480, width: '100%', background: '#1e293b', borderRadius: 20, padding: 36, border: '1px solid #334155', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }}>
+            <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#fef3c7', color: '#d97706', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
+              <AlertCircle size={36} />
+            </div>
+            <h2 style={{ fontSize: 22, fontWeight: 800, margin: '0 0 12px', color: '#f8fafc' }}>
+              Fullscreen Mode Required
+            </h2>
+            <p style={{ color: '#94a3b8', fontSize: 14, lineHeight: 1.6, margin: '0 0 24px' }}>
+              This contest is proctored. You must remain in fullscreen mode. Exiting fullscreen or switching tabs will trigger a security violation.
+            </p>
+            <button
+              onClick={() => {
+                const el = document.documentElement;
+                if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+                else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+                setIsFullscreen(true);
+              }}
+              style={{
+                width: '100%', padding: '14px', borderRadius: 12,
+                background: '#4f46e5', color: 'white', border: 'none',
+                fontWeight: 700, fontSize: 15, cursor: 'pointer',
+                boxShadow: '0 10px 25px rgba(79,70,229,0.4)',
+              }}
+            >
+              Click to Enter Fullscreen Mode
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Toast notification */}

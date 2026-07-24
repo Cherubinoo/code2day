@@ -201,12 +201,22 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
 
   const user = dashboard?.user || {};
   const stats = dashboard?.stats || {};
-  const easy = Number(stats.easy) || 0;
-  const medium = Number(stats.medium) || 0;
-  const hard = Number(stats.hard) || 0;
+
+  const computedSolvedFromSet = useMemo(() => {
+    if (!Array.isArray(problemSet)) return { easy: 0, medium: 0, hard: 0, total: 0 };
+    const solved = problemSet.filter(p => p.progress_state === "completed");
+    const e = solved.filter(p => p.difficulty === "Easy").length;
+    const m = solved.filter(p => p.difficulty === "Medium").length;
+    const h = solved.filter(p => p.difficulty === "Hard").length;
+    return { easy: e, medium: m, hard: h, total: e + m + h };
+  }, [problemSet]);
+
+  const easy = Math.max(Number(stats.easy) || 0, computedSolvedFromSet.easy);
+  const medium = Math.max(Number(stats.medium) || 0, computedSolvedFromSet.medium);
+  const hard = Math.max(Number(stats.hard) || 0, computedSolvedFromSet.hard);
   const totalCodingSolved = easy + medium + hard;
   const totalSqlSolved = Number(stats.sql) || 0;
-  const totalCodingInSystem = user.total_problems_count || 1; // Prevent div by 0
+  const totalCodingInSystem = user.total_problems_count || problemSet?.length || 1;
 
 
   // Company Track - uses local state so UI updates instantly on toggle

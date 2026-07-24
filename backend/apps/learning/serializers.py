@@ -292,8 +292,10 @@ class ContestSerializer(serializers.ModelSerializer):
         fields = (
             "id", "title", "description", "created_by", "created_by_name",
             "department", "department_name", "start_time", "end_time",
-            "duration_minutes", "problems", "problem_count", "status",
-            "assigned_batches", "total_participants", "total_submissions",
+            "access_start_time", "access_end_time", "session_duration_minutes",
+            "duration_minutes", "problems", "problem_count", "status", "contest_type",
+            "assigned_batches", "assigned_sections", "total_participants", "total_submissions",
+            "enable_tab_switch_check", "max_tab_switches", "enable_fullscreen_lock", "enable_copy_paste_lock",
             "approved_by", "approved_by_name", "approved_at", "rejection_reason",
             "submitted_for_approval_at", "created_at", "updated_at"
         )

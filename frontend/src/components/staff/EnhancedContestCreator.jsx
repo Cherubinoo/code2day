@@ -627,7 +627,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
           <div>
             <h2 style={{ margin: 0, fontSize: 20 }}>Create New Contest</h2>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: '#666' }}>
-              Step {step} of 3: {step === 1 ? 'Basic Information' : step === 2 ? 'Select Problems' : 'Assign Students'}
+              Step {step} of 4: {step === 1 ? 'Basic Information' : step === 2 ? 'Select Content' : step === 3 ? 'Security & Anti-Cheat Settings' : 'Assign Students'}
             </p>
           </div>
           <button
@@ -651,7 +651,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
           background: '#f9fafb',
           gap: 8,
         }}>
-          {[1, 2, 3].map((s) => (
+          {[1, 2, 3, 4].map((s) => (
             <div
               key={s}
               style={{
@@ -2034,8 +2034,87 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
             </div>
           )}
 
-          {/* Step 3: Assign Students */}
+          {/* Step 3: Security & Anti-Cheating Settings */}
           {step === 3 && (
+            <div style={{ display: 'grid', gap: 20 }}>
+              <div style={{ padding: 20, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                <h3 style={{ margin: '0 0 12px', fontSize: 16, fontWeight: 700, color: '#0f172a' }}>
+                  🛡️ Security & Anti-Cheating Rules
+                </h3>
+                <p style={{ margin: '0 0 20px', color: '#64748b', fontSize: 14 }}>
+                  Configure proctoring and integrity constraints for this contest. These security rules will be enforced during the test.
+                </p>
+
+                {/* Tab Switch Check */}
+                <div style={{ padding: 16, background: 'white', borderRadius: 10, border: '1px solid #cbd5e1', marginBottom: 16 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', fontWeight: 600, fontSize: 15, color: '#1e293b' }}>
+                    <input
+                      type="checkbox"
+                      checked={formData.enable_tab_switch_check}
+                      onChange={(e) => setFormData({ ...formData, enable_tab_switch_check: e.target.checked })}
+                      style={{ width: 18, height: 18, accentColor: '#4f46e5' }}
+                    />
+                    Monitor Tab Switch & Window Blur
+                  </label>
+                  <p style={{ margin: '6px 0 12px 30px', color: '#64748b', fontSize: 13 }}>
+                    Automatically warn or submit when student switches tabs or leaves the browser window.
+                  </p>
+
+                  {formData.enable_tab_switch_check && (
+                    <div style={{ marginLeft: 30, display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <span style={{ fontSize: 14, fontWeight: 500, color: '#334155' }}>Maximum allowed tab switch warnings:</span>
+                      <select
+                        value={formData.max_tab_switches}
+                        onChange={(e) => setFormData({ ...formData, max_tab_switches: parseInt(e.target.value) || 3 })}
+                        style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 14, fontWeight: 600 }}
+                      >
+                        <option value={1}>1 Warning (Strict - Auto submit on 2nd switch)</option>
+                        <option value={2}>2 Warnings</option>
+                        <option value={3}>3 Warnings (Standard)</option>
+                        <option value={5}>5 Warnings</option>
+                        <option value={10}>10 Warnings</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* Fullscreen Lock */}
+                <div style={{ padding: 16, background: 'white', borderRadius: 10, border: '1px solid #cbd5e1', marginBottom: 16 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', fontWeight: 600, fontSize: 15, color: '#1e293b' }}>
+                    <input
+                      type="checkbox"
+                      checked={formData.enable_fullscreen_lock}
+                      onChange={(e) => setFormData({ ...formData, enable_fullscreen_lock: e.target.checked })}
+                      style={{ width: 18, height: 18, accentColor: '#4f46e5' }}
+                    />
+                    Enforce Fullscreen Mode
+                  </label>
+                  <p style={{ margin: '6px 0 0 30px', color: '#64748b', fontSize: 13 }}>
+                    Forces students into fullscreen mode upon starting the test and records violations if exited.
+                  </p>
+                </div>
+
+                {/* Copy / Paste Lock */}
+                <div style={{ padding: 16, background: 'white', borderRadius: 10, border: '1px solid #cbd5e1' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', fontWeight: 600, fontSize: 15, color: '#1e293b' }}>
+                    <input
+                      type="checkbox"
+                      checked={formData.enable_copy_paste_lock}
+                      onChange={(e) => setFormData({ ...formData, enable_copy_paste_lock: e.target.checked })}
+                      style={{ width: 18, height: 18, accentColor: '#4f46e5' }}
+                    />
+                    Disable Copy & Paste in Workspace
+                  </label>
+                  <p style={{ margin: '6px 0 0 30px', color: '#64748b', fontSize: 13 }}>
+                    Prevents pasting external code or text into the editor during the contest session.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Step 4: Assign Students */}
+          {step === 4 && (
             <div>
               {/* Selection Mode Toggle */}
               <div style={{ marginBottom: 20 }}>
@@ -2364,7 +2443,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
               >
                 Cancel
               </button>
-              {step < 3 ? (
+              {step < 4 ? (
                 <button
                   type="button"
                   onClick={() => setStep(step + 1)}

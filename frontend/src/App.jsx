@@ -352,12 +352,12 @@ function App() {
   }, [isLoggedIn, userType]);
 
   useEffect(() => {
-    if (!isLoggedIn || !selectedProblemSlug || userType !== "student") {
+    if (!selectedProblemSlug) {
       return undefined;
     }
 
     const existingProblem = problemSet.find((problem) => problem.slug === selectedProblemSlug);
-    if (existingProblem?.examples?.length || existingProblem?.editorial || existingProblem?.explanation) {
+    if (existingProblem?.examples?.length > 0 || existingProblem?.editorial) {
       return undefined;
     }
 
