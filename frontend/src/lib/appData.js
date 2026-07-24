@@ -24,15 +24,9 @@ function buildFallbackCalendar() {
   const current = new Date(calendarStart);
   
   while (current <= calendarEnd) {
-    // Random activity count (0-4) with higher probability for current month
-    const isCurrentMonth = current.getMonth() === month;
-    const count = isCurrentMonth 
-      ? Math.floor(Math.random() * 5) // 0-4 for current month
-      : Math.floor(Math.random() * 3); // 0-2 for padding days
-    
     calendar.push({
       date: current.toISOString().slice(0, 10),
-      count,
+      count: 0,
       weekday: current.toLocaleDateString("en-US", { weekday: "short" }),
       day: current.getDate(),
     });
@@ -131,11 +125,11 @@ export const fallbackDashboard = {
   user: {
     name: "Student One",
     title: "",
-    streak: 21,
-    loginDays: 58,
-    rank: "Campus Rank #12",
-    registerNumber: "95362324xxxx",
-    email: "student@example.com",
+    streak: 0,
+    loginDays: 0,
+    rank: "",
+    registerNumber: "",
+    email: "",
   },
   dailyProblem: {
     title: "Two Sum Variants",
@@ -145,26 +139,22 @@ export const fallbackDashboard = {
     tags: ["Array", "Hash Map", "Warm-up"],
   },
   stats: {
-    easy: 84,
-    medium: 46,
-    hard: 12,
+    easy: 0,
+    medium: 0,
+    hard: 0,
   },
   weeklyActivity: [
-    { day: "Mon", count: 2 },
-    { day: "Tue", count: 1 },
-    { day: "Wed", count: 3 },
-    { day: "Thu", count: 2 },
-    { day: "Fri", count: 4 },
-    { day: "Sat", count: 1 },
-    { day: "Sun", count: 2 },
+    { day: "Mon", count: 0 },
+    { day: "Tue", count: 0 },
+    { day: "Wed", count: 0 },
+    { day: "Thu", count: 0 },
+    { day: "Fri", count: 0 },
+    { day: "Sat", count: 0 },
+    { day: "Sun", count: 0 },
   ],
   activityCalendar: buildFallbackCalendar(),
   consistencyLabel: "Activity calendar",
-  leaderboard: [
-    { name: "Arun", solved: 146 },
-    { name: "Meera", solved: 132 },
-    { name: "Kavin", solved: 118 },
-  ],
+  leaderboard: [],
   announcements: [],
   editor: {
     starter_code: starterCodeByLanguage.Python,
@@ -174,12 +164,11 @@ export const fallbackDashboard = {
 function generateMoreProblems(count = 150) {
   const difficulties = ["Easy", "Medium", "Hard"];
   const tags = ["Array", "String", "Hash Map", "Stack", "Binary Search", "Heap", "Linked List", "SQL"];
-  const states = ["not_completed", "open", "completed"];
   
   return Array.from({ length: count }, (_, i) => {
     const id = i + 1;
     const difficulty = difficulties[i % 3];
-    const state = i < 45 ? "completed" : i < 60 ? "open" : "not_completed";
+    const state = "not_completed";
     const tag = tags[i % tags.length];
     
     return {

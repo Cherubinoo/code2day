@@ -137,7 +137,7 @@ export function normalizeProblems(problems) {
     const fallback = fallbackProblems.find((item) => item.slug === problem.slug);
     return {
       ...problem,
-      progress_state: problem.progress_state ?? fallback?.progress_state ?? "not_completed",
+      progress_state: problem.progress_state ?? "not_completed",
       available_languages:
         problem.available_languages ?? fallback?.available_languages ?? languageOptions,
       examples: problem.examples ?? fallback?.examples ?? [],
