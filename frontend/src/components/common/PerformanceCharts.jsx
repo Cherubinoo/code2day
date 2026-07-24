@@ -1,4 +1,34 @@
 import { useState, useMemo } from 'react';
+import {
+  Chart as ChartJS,
+  ArcElement,
+  BarElement,
+  CategoryScale,
+  Filler,
+  Legend,
+  LinearScale,
+  LineElement,
+  PointElement,
+  RadialLinearScale,
+  TimeScale,
+  Tooltip,
+} from 'chart.js';
+import 'chartjs-adapter-date-fns';
+import { Bar, Line, Pie, Radar } from 'react-chartjs-2';
+
+ChartJS.register(
+  ArcElement,
+  BarElement,
+  CategoryScale,
+  Filler,
+  Legend,
+  LinearScale,
+  LineElement,
+  PointElement,
+  RadialLinearScale,
+  TimeScale,
+  Tooltip
+);
 
 const DARK_BG = '#0d1117';
 const DARK_CARD = '#161b27';
@@ -277,7 +307,7 @@ export function RankedBarChart({ items, onSelect, selected, color = ACCENT, empt
 }
 
 // ── Combined Performance Dashboard Panel ──────────────────────────────────────
-export function PerformanceDashboard({ scoreHistory, topicAccuracy, testsCompleted, avgScore, peakScore }) {
+export function LegacyPerformanceDashboard({ scoreHistory, topicAccuracy, testsCompleted, avgScore, peakScore }) {
   const isAbovePar = (avgScore || 0) >= 60;
 
   return (
@@ -348,6 +378,326 @@ export function PerformanceDashboard({ scoreHistory, topicAccuracy, testsComplet
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+export function PerformanceDashboard({
+  scoreHistory,
+  topicAccuracy,
+  testsCompleted,
+  solvedCount = 0,
+  aptitude,
+  overallPerformance,
+  profileRadar,
+  dailySolvedTrend,
+  knowledgeDistribution,
+  contestPerformance,
+  summaryCards,
+}) {
+  const contestRows = (contestPerformance || scoreHistory || []).map((item) => ({
+    ...item,
+    solved: item.solved ?? Math.round((Number(item.score_pct) || 0) / 20),
+    total: item.total ?? 5,
+  }));
+
+  const solvedSummary = {
+    programming_solved: summaryCards?.programming_solved ?? solvedCount ?? 0,
+    aptitude_solved: summaryCards?.aptitude_solved ?? aptitude?.solved ?? 0,
+    contest_solved: summaryCards?.contest_solved ?? contestRows.reduce((sum, c) => sum + (Number(c.solved) || 0), 0),
+    active_days: summaryCards?.active_days ?? 0,
+  };
+
+  const pieRows = (overallPerformance?.length ? overallPerformance : [
+    { label: 'Programming', value: solvedSummary.programming_solved },
+    { label: 'Aptitude', value: solvedSummary.aptitude_solved },
+    { label: 'Contest', value: solvedSummary.contest_solved },
+  ]).filter((row) => Number(row.value) > 0);
+
+  const trendRows = dailySolvedTrend || [];
+  const topicLabels = knowledgeDistribution?.labels || (topicAccuracy || []).slice(0, 8).map((t) => t.topic);
+  const topicProgramming = knowledgeDistribution?.programming || topicLabels.map(() => 0);
+  const topicAptitude = knowledgeDistribution?.aptitude || (topicAccuracy || []).slice(0, 8).map((t) => t.correct || t.accuracy || 0);
+  const profileLabels = profileRadar?.labels || ['Programming', 'Aptitude', 'Contest', 'Daily', 'Overall'];
+  const profileDaily = profileRadar?.daily || [0, 0, 0, 0, 0];
+  const profileOverall = profileRadar?.overall || [0, aptitude?.percentage || 0, 0, 0, 0];
+
+  const chartText = '#cbd5e1';
+  const grid = 'rgba(255,255,255,0.08)';
+  const plugins = {
+    legend: {
+      position: 'bottom',
+      labels: { color: chartText, boxWidth: 10, boxHeight: 10, usePointStyle: true, font: { size: 11, weight: '700' } },
+    },
+    tooltip: {
+      backgroundColor: '#0f172a',
+      borderColor: 'rgba(255,255,255,0.14)',
+      borderWidth: 1,
+      titleColor: '#fff',
+      bodyColor: '#dbeafe',
+    },
+  };
+  const animation = { duration: 900, easing: 'easeOutQuart' };
+
+  return (
+    <div style={{ background: '#111827', borderRadius: 20, padding: '24px 28px', marginBottom: 28 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 14, marginBottom: 22 }}>
+        <StatCard
+          label="PROGRAMMING"
+          value={solvedSummary.programming_solved}
+          sub="Problems solved"
+          subColor="rgba(255,255,255,0.45)"
+          valueColor="#4ade80"
+          icon={<BookIcon />}
+        />
+        <StatCard
+          label="APTITUDE"
+          value={solvedSummary.aptitude_solved}
+          sub={`${(aptitude?.percentage || 0).toFixed(1)}% bank progress`}
+          subColor="#93c5fd"
+          valueColor="#60a5fa"
+          icon={<PctIcon />}
+        />
+        <StatCard
+          label="CONTEST"
+          value={solvedSummary.contest_solved}
+          sub={`${contestRows.length || testsCompleted || 0} participations`}
+          subColor="rgba(255,255,255,0.45)"
+          valueColor="#fbbf24"
+          icon={<TrophyIcon />}
+        />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20, marginBottom: 20 }}>
+        <ChartPanel kicker="OVERALL PERFORMANCE" title="Programming, Aptitude, Contest">
+          {pieRows.length ? (
+            <Pie
+              data={{
+                labels: pieRows.map((row) => row.label),
+                datasets: [{
+                  data: pieRows.map((row) => row.value),
+                  backgroundColor: ['#4ade80', '#60a5fa', '#fbbf24'],
+                  borderColor: '#111827',
+                  borderWidth: 2,
+                  hoverOffset: 10,
+                }],
+              }}
+              options={{ responsive: true, maintainAspectRatio: false, animation, plugins }}
+            />
+          ) : <EmptyChart text="No solved data yet" />}
+        </ChartPanel>
+
+        <ChartPanel kicker="PROFILE RADAR" title="Daily vs Overall Performance">
+          <Radar
+            data={{
+              labels: profileLabels,
+              datasets: [
+                {
+                  label: 'Daily',
+                  data: profileDaily,
+                  borderColor: '#f97316',
+                  backgroundColor: 'rgba(249,115,22,0.18)',
+                  pointBackgroundColor: '#f97316',
+                  borderWidth: 2,
+                  fill: true,
+                },
+                {
+                  label: 'Overall',
+                  data: profileOverall,
+                  borderColor: '#22c55e',
+                  backgroundColor: 'rgba(34,197,94,0.16)',
+                  pointBackgroundColor: '#22c55e',
+                  borderWidth: 2,
+                  fill: true,
+                },
+              ],
+            }}
+            options={{
+              responsive: true,
+              maintainAspectRatio: false,
+              animation,
+              scales: {
+                r: {
+                  min: 0,
+                  max: 100,
+                  angleLines: { color: grid },
+                  grid: { color: grid },
+                  pointLabels: { color: chartText, font: { size: 11, weight: '700' } },
+                  ticks: { display: false, stepSize: 25 },
+                },
+              },
+              plugins,
+            }}
+          />
+        </ChartPanel>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
+        <ChartPanel kicker="SOLVED TIME SCALE" title="Daily and Overall Solved">
+          {trendRows.length ? (
+            <Line
+              data={{
+                datasets: [
+                  {
+                    label: 'Programming',
+                    data: trendRows.map((row) => ({ x: row.date, y: row.programming })),
+                    borderColor: '#4ade80',
+                    backgroundColor: 'rgba(74,222,128,0.16)',
+                    tension: 0.35,
+                    fill: true,
+                  },
+                  {
+                    label: 'Aptitude',
+                    data: trendRows.map((row) => ({ x: row.date, y: row.aptitude })),
+                    borderColor: '#60a5fa',
+                    backgroundColor: 'rgba(96,165,250,0.12)',
+                    tension: 0.35,
+                  },
+                  {
+                    label: 'Overall',
+                    data: trendRows.map((row) => ({ x: row.date, y: row.overall_total })),
+                    borderColor: '#fbbf24',
+                    backgroundColor: 'rgba(251,191,36,0.1)',
+                    borderDash: [5, 5],
+                    tension: 0.3,
+                    yAxisID: 'y1',
+                  },
+                ],
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                animation,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                  x: {
+                    type: 'time',
+                    time: { unit: 'day', tooltipFormat: 'PP' },
+                    ticks: { color: chartText, maxRotation: 0, autoSkip: true, maxTicksLimit: 7 },
+                    grid: { color: grid },
+                  },
+                  y: {
+                    beginAtZero: true,
+                    ticks: { color: chartText, precision: 0 },
+                    grid: { color: grid },
+                  },
+                  y1: {
+                    beginAtZero: true,
+                    position: 'right',
+                    ticks: { color: '#fbbf24', precision: 0 },
+                    grid: { drawOnChartArea: false },
+                  },
+                },
+                plugins,
+              }}
+            />
+          ) : <EmptyChart text="No daily solving history yet" />}
+        </ChartPanel>
+
+        <ChartPanel kicker="KNOWLEDGE DISTRIBUTION" title="Programming and Aptitude Topics">
+          {topicLabels.length ? (
+            <Bar
+              data={{
+                labels: topicLabels,
+                datasets: [
+                  {
+                    label: 'Programming',
+                    data: topicProgramming,
+                    backgroundColor: '#2dd4bf',
+                    borderRadius: 8,
+                    borderSkipped: false,
+                  },
+                  {
+                    label: 'Aptitude',
+                    data: topicAptitude,
+                    backgroundColor: '#818cf8',
+                    borderRadius: 8,
+                    borderSkipped: false,
+                  },
+                ],
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                animation,
+                scales: {
+                  x: { stacked: true, ticks: { color: chartText, maxRotation: 35 }, grid: { display: false } },
+                  y: { stacked: true, beginAtZero: true, ticks: { color: chartText, precision: 0 }, grid: { color: grid } },
+                },
+                plugins,
+              }}
+            />
+          ) : <EmptyChart text="No topic solving data yet" />}
+        </ChartPanel>
+      </div>
+
+      <div style={{ marginTop: 20 }}>
+        <ChartPanel kicker="CONTEST PERFORMANCE" title="Contest Solved Trend" height={220}>
+          {contestRows.length ? (
+            <Bar
+              data={{
+                labels: contestRows.map((row) => row.label || row.title),
+                datasets: [
+                  {
+                    label: 'Solved',
+                    data: contestRows.map((row) => row.solved || 0),
+                    backgroundColor: '#f59e0b',
+                    borderRadius: 8,
+                    borderSkipped: false,
+                  },
+                  {
+                    label: 'Total',
+                    data: contestRows.map((row) => row.total || 0),
+                    backgroundColor: 'rgba(148,163,184,0.35)',
+                    borderRadius: 8,
+                    borderSkipped: false,
+                  },
+                ],
+              }}
+              options={{
+                responsive: true,
+                maintainAspectRatio: false,
+                animation,
+                scales: {
+                  x: { ticks: { color: chartText }, grid: { display: false } },
+                  y: { beginAtZero: true, ticks: { color: chartText, precision: 0 }, grid: { color: grid } },
+                },
+                plugins,
+              }}
+            />
+          ) : <EmptyChart text="No contest performance yet" />}
+        </ChartPanel>
+      </div>
+    </div>
+  );
+}
+
+function ChartPanel({ kicker, title, children, height = 260 }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ marginBottom: 10 }}>
+        <div style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.38)', textTransform: 'uppercase', letterSpacing: '0.09em' }}>
+          {kicker}
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 900, color: 'white', marginTop: 2 }}>{title}</div>
+      </div>
+      <div style={{
+        height,
+        padding: 12,
+        borderRadius: 14,
+        background: 'rgba(255,255,255,0.035)',
+        border: '1px solid rgba(255,255,255,0.07)',
+      }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function EmptyChart({ text }) {
+  return (
+    <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.28)', fontSize: 13, fontStyle: 'italic' }}>
+      {text}
     </div>
   );
 }

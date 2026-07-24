@@ -131,7 +131,7 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
       <div style={{
         background: 'white',
         borderRadius: '24px',
-        maxWidth: 1000,
+        maxWidth: 1180,
         width: '100%',
         maxHeight: '90vh',
         overflow: 'auto',
@@ -225,6 +225,14 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
             testsCompleted={data.tests_completed || 0}
             avgScore={data.avg_score || 0}
             peakScore={data.peak_score || 0}
+            solvedCount={data.solved_count || 0}
+            aptitude={data.aptitude}
+            overallPerformance={data.overall_performance || []}
+            profileRadar={data.profile_radar}
+            dailySolvedTrend={data.daily_solved_trend || []}
+            knowledgeDistribution={data.knowledge_distribution}
+            contestPerformance={data.contest_performance || []}
+            summaryCards={data.summary_cards}
           />
 
           {/* Stats Grid */}

@@ -350,6 +350,57 @@ def build_weekly_activity(activity_calendar):
     return [{"day": day, "count": grouped.get(day, 0)} for day in order]
 
 
+def _contest_live_summary(contest, limit=5):
+    """Return contest counts/top performers for both programming and aptitude contests."""
+    if contest.contest_type == 'aptitude':
+        submissions = AptitudeContestSubmission.objects.filter(contest=contest)
+        leaders = (
+            submissions
+            .values('student')
+            .annotate(
+                solved_count=Count('id', filter=Q(is_correct=True)),
+                total_score=Sum('score'),
+            )
+            .filter(solved_count__gt=0)
+            .order_by('-solved_count', '-total_score')[:limit]
+        )
+    else:
+        submissions = ContestSubmission.objects.filter(contest=contest)
+        leaders = (
+            submissions
+            .values('student')
+            .annotate(
+                solved_count=Count('problem', filter=Q(status='Accepted'), distinct=True),
+                total_score=Sum('score'),
+            )
+            .filter(solved_count__gt=0)
+            .order_by('-solved_count', '-total_score')[:limit]
+        )
+
+    top_performers = []
+    for leader in leaders:
+        student = StudentProfile.objects.filter(id=leader['student']).first()
+        if student:
+            top_performers.append({
+                "register_number": student.register_number,
+                "name": student.name,
+                "batch": student.batch,
+                "solved_in_contest": leader['solved_count'],
+                "score": leader['total_score'] or 0,
+            })
+
+    live_participants = max(
+        ContestParticipation.objects.filter(contest=contest).count(),
+        submissions.values('student').distinct().count(),
+    )
+
+    return {
+        "total_participants": live_participants,
+        "total_submissions": submissions.count(),
+        "top_performers": top_performers,
+    }
+
+
 def build_topic_stats(profile):
     """Return count of problems solved by topic"""
     solutions = profile.solutions.filter(all_tests_passed=True).select_related("problem")
@@ -3038,34 +3089,16 @@ class StaffPerformanceView(APIView):
             ).order_by('-created_at')[:5]  # Last 5 contests
 
             for contest in contests_qs:
-                # Get top performers for this contest (students with most accepted submissions)
-                top_performers = []
-                contest_leaders = ContestSubmission.objects.filter(
-                    contest=contest,
-                    status='Accepted'
-                ).values('student').annotate(
-                    solved_count=Count('id'),
-                    total_score=Sum('score')
-                ).order_by('-solved_count', '-total_score')[:5]
-
-                for leader in contest_leaders:
-                    student = StudentProfile.objects.filter(id=leader['student']).first()
-                    if student:
-                        top_performers.append({
-                            "register_number": student.register_number,
-                            "name": student.name,
-                            "solved_in_contest": leader['solved_count'],
-                            "score": leader['total_score'] or 0,
-                        })
+                contest_summary = _contest_live_summary(contest)
 
                 staff_contests.append({
                     "id": contest.id,
                     "title": contest.title,
                     "status": contest.status,
                     "created_at": contest.created_at,
-                    "total_participants": contest.total_participants,
-                    "total_submissions": contest.total_submissions,
-                    "top_performers": top_performers,
+                    "total_participants": contest_summary["total_participants"],
+                    "total_submissions": contest_summary["total_submissions"],
+                    "top_performers": contest_summary["top_performers"],
                 })
 
             contests_created = staff.contests.filter(institution=institution).count()
@@ -3156,35 +3189,16 @@ class StaffDetailView(APIView):
         ).order_by('-created_at')[:10]
 
         for contest in staff_contests_qs:
-            # Get top performers for this contest
-            contest_top_performers = []
-            contest_leaders = ContestSubmission.objects.filter(
-                contest=contest,
-                status='Accepted'
-            ).values('student').annotate(
-                solved_count=Count('id'),
-                total_score=Sum('score')
-            ).order_by('-solved_count', '-total_score')[:5]
-
-            for leader in contest_leaders:
-                student = StudentProfile.objects.filter(id=leader['student']).first()
-                if student:
-                    contest_top_performers.append({
-                        "register_number": student.register_number,
-                        "name": student.name,
-                        "batch": student.batch,
-                        "solved_in_contest": leader['solved_count'],
-                        "score": leader['total_score'] or 0,
-                    })
+            contest_summary = _contest_live_summary(contest)
 
             recent_contests.append({
                 "id": contest.id,
                 "title": contest.title,
                 "status": contest.status,
                 "created_at": contest.created_at,
-                "total_participants": contest.total_participants,
-                "total_submissions": contest.total_submissions,
-                "top_performers": contest_top_performers,
+                "total_participants": contest_summary["total_participants"],
+                "total_submissions": contest_summary["total_submissions"],
+                "top_performers": contest_summary["top_performers"],
             })
 
         # Batch-wise grouping with top performers per batch
@@ -3377,35 +3391,16 @@ class DepartmentDetailView(APIView):
         ).order_by('-created_at')[:10]
 
         for contest in dept_contests_qs:
-            # Get top performers for this contest
-            contest_top_performers = []
-            contest_leaders = ContestSubmission.objects.filter(
-                contest=contest,
-                status='Accepted'
-            ).values('student').annotate(
-                solved_count=Count('id'),
-                total_score=Sum('score')
-            ).order_by('-solved_count', '-total_score')[:5]
-
-            for leader in contest_leaders:
-                student = StudentProfile.objects.filter(id=leader['student']).first()
-                if student:
-                    contest_top_performers.append({
-                        "register_number": student.register_number,
-                        "name": student.name,
-                        "batch": student.batch,
-                        "solved_in_contest": leader['solved_count'],
-                        "score": leader['total_score'] or 0,
-                    })
+            contest_summary = _contest_live_summary(contest)
 
             recent_contests.append({
                 "id": contest.id,
                 "title": contest.title,
                 "status": contest.status,
                 "created_at": contest.created_at,
-                "total_participants": contest.total_participants,
-                "total_submissions": contest.total_submissions,
-                "top_performers": contest_top_performers,
+                "total_participants": contest_summary["total_participants"],
+                "total_submissions": contest_summary["total_submissions"],
+                "top_performers": contest_summary["top_performers"],
             })
 
         # Batch-wise grouping
@@ -3542,7 +3537,13 @@ class ContestListCreateView(APIView):
         for contest in contests:
             # Compute live counts — stored fields may be stale
             live_participants = ContestParticipation.objects.filter(contest=contest).count()
-            live_submissions = ContestSubmission.objects.filter(contest=contest).count()
+            if contest.contest_type == 'aptitude':
+                submitted_student_count = AptitudeContestSubmission.objects.filter(contest=contest).values('student').distinct().count()
+                live_submissions = AptitudeContestSubmission.objects.filter(contest=contest).count()
+            else:
+                submitted_student_count = ContestSubmission.objects.filter(contest=contest).values('student').distinct().count()
+                live_submissions = ContestSubmission.objects.filter(contest=contest).count()
+            live_participants = max(live_participants, submitted_student_count)
             data.append({
                 "id": contest.id,
                 "title": contest.title,
@@ -5118,6 +5119,156 @@ def _compute_skill_insights(solved_problems):
     return company_insights, project_insights
 
 
+def _build_student_performance_charts(student, solved_problems=None, topic_accuracy=None, days=30):
+    """Chart-ready solved-first analytics for student/staff/HOD report views."""
+    solved_problems = solved_problems if solved_problems is not None else SolvedProblem.objects.filter(student=student).select_related('problem')
+    topic_accuracy = topic_accuracy or []
+
+    total_programming = Problem.objects.count()
+    total_aptitude = AptitudeQuestion.objects.count()
+    programming_solved = solved_problems.count()
+    aptitude_solved = SolvedAptitude.objects.filter(student=student).count()
+
+    accepted_contest_solved = (
+        ContestSubmission.objects
+        .filter(student=student, status='Accepted')
+        .values('contest_id', 'problem_id')
+        .distinct()
+        .count()
+    )
+    aptitude_contest_solved = AptitudeContestSubmission.objects.filter(student=student, is_correct=True).count()
+    contest_solved = accepted_contest_solved + aptitude_contest_solved
+
+    start_day = timezone.localdate() - timedelta(days=days - 1)
+    date_labels = [(start_day + timedelta(days=i)) for i in range(days)]
+
+    def counts_by_date(qs, date_field):
+        key = f'{date_field}__date'
+        rows = qs.filter(**{f'{date_field}__date__gte': start_day}).values(key).annotate(count=Count('id'))
+        return {row[key]: row['count'] for row in rows}
+
+    programming_by_day = counts_by_date(SolvedProblem.objects.filter(student=student), 'solved_at')
+    aptitude_by_day = counts_by_date(SolvedAptitude.objects.filter(student=student), 'solved_at')
+    contest_code_by_day = counts_by_date(ContestSubmission.objects.filter(student=student, status='Accepted'), 'submitted_at')
+    contest_apt_by_day = counts_by_date(AptitudeContestSubmission.objects.filter(student=student, is_correct=True), 'submitted_at')
+
+    cumulative = 0
+    daily_solved_trend = []
+    for day in date_labels:
+        programming_count = programming_by_day.get(day, 0)
+        aptitude_count = aptitude_by_day.get(day, 0)
+        contest_count = contest_code_by_day.get(day, 0) + contest_apt_by_day.get(day, 0)
+        cumulative += programming_count + aptitude_count
+        daily_solved_trend.append({
+            'date': day.isoformat(),
+            'programming': programming_count,
+            'aptitude': aptitude_count,
+            'contest': contest_count,
+            'daily_total': programming_count + aptitude_count,
+            'overall_total': cumulative,
+        })
+
+    active_days = sum(1 for row in daily_solved_trend if row['daily_total'] > 0)
+    overall_possible = max(1, total_programming + total_aptitude)
+    overall_solved = programming_solved + aptitude_solved
+    contest_attempts = ContestParticipation.objects.filter(student=student, is_active=False).count()
+    contest_perf_pct = min(100, round((contest_solved / max(1, contest_attempts)) * 20, 1)) if contest_attempts else 0
+
+    programming_tags = defaultdict(int)
+    for sp in solved_problems:
+        tags = sp.problem.tags or []
+        if isinstance(tags, str):
+            tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
+        if tags:
+            for tag in list(tags)[:4]:
+                programming_tags[str(tag).strip().title()] += 1
+        else:
+            programming_tags[sp.problem.difficulty or 'Programming'] += 1
+
+    aptitude_topics = defaultdict(int)
+    for row in SolvedAptitude.objects.filter(student=student).values('question__topic__title').annotate(count=Count('id')).order_by('-count')[:10]:
+        topic = row['question__topic__title'] or 'Aptitude'
+        aptitude_topics[topic] += row['count']
+
+    topic_labels = []
+    for label, _ in sorted(programming_tags.items(), key=lambda item: item[1], reverse=True)[:6]:
+        if label not in topic_labels:
+            topic_labels.append(label)
+    for label, _ in sorted(aptitude_topics.items(), key=lambda item: item[1], reverse=True)[:6]:
+        if label not in topic_labels:
+            topic_labels.append(label)
+    topic_labels = topic_labels[:8]
+
+    knowledge_distribution = {
+        'labels': topic_labels,
+        'programming': [programming_tags.get(label, 0) for label in topic_labels],
+        'aptitude': [aptitude_topics.get(label, 0) for label in topic_labels],
+    }
+
+    contest_performance = []
+    cp_qs = (
+        ContestParticipation.objects
+        .filter(student=student, is_active=False)
+        .select_related('contest')
+        .order_by('started_at')[:25]
+    )
+    for cp in cp_qs:
+        contest = cp.contest
+        if contest.contest_type == 'aptitude':
+            total_items = contest.aptitude_questions.count()
+            solved_items = AptitudeContestSubmission.objects.filter(
+                contest=contest, student=student, is_correct=True
+            ).count()
+        else:
+            total_items = contest.problems.count()
+            solved_items = ContestSubmission.objects.filter(
+                contest=contest, student=student, status='Accepted'
+            ).values('problem').distinct().count()
+        contest_performance.append({
+            'label': contest.title[:18],
+            'title': contest.title,
+            'date': cp.started_at.date().isoformat(),
+            'contest_type': contest.contest_type,
+            'solved': solved_items,
+            'total': total_items,
+            'score_pct': round(solved_items / max(1, total_items) * 100, 1),
+        })
+
+    return {
+        'overall_performance': [
+            {'label': 'Programming', 'value': programming_solved},
+            {'label': 'Aptitude', 'value': aptitude_solved},
+            {'label': 'Contest', 'value': contest_solved},
+        ],
+        'profile_radar': {
+            'labels': ['Programming', 'Aptitude', 'Contest', 'Daily', 'Overall'],
+            'daily': [
+                round(programming_by_day.get(timezone.localdate(), 0) / max(1, programming_solved) * 100, 1),
+                round(aptitude_by_day.get(timezone.localdate(), 0) / max(1, aptitude_solved) * 100, 1),
+                round((contest_code_by_day.get(timezone.localdate(), 0) + contest_apt_by_day.get(timezone.localdate(), 0)) / max(1, contest_solved) * 100, 1),
+                round(active_days / days * 100, 1),
+                round((programming_by_day.get(timezone.localdate(), 0) + aptitude_by_day.get(timezone.localdate(), 0)) / max(1, overall_solved) * 100, 1),
+            ],
+            'overall': [
+                round(programming_solved / max(1, total_programming) * 100, 1),
+                round(aptitude_solved / max(1, total_aptitude) * 100, 1),
+                contest_perf_pct,
+                round(active_days / days * 100, 1),
+                round(overall_solved / overall_possible * 100, 1),
+            ],
+        },
+        'knowledge_distribution': knowledge_distribution,
+        'daily_solved_trend': daily_solved_trend,
+        'contest_performance': contest_performance,
+        'summary_cards': {
+            'programming_solved': programming_solved,
+            'aptitude_solved': aptitude_solved,
+            'contest_solved': contest_solved,
+            'active_days': active_days,
+        },
+    }
+
+
 class StudentIndividualAnalyticsView(APIView):
     """Get detailed analytics for an individual student."""
     permission_classes = [IsAuthenticated]
@@ -5203,7 +5354,7 @@ class StudentIndividualAnalyticsView(APIView):
         ).select_related('contest').order_by('started_at')[:25]
 
         score_history = []
-        for idx, cp in enumerate(cp_qs, 1):
+        for cp in cp_qs:
             contest = cp.contest
             if contest.contest_type == 'aptitude':
                 total_q = contest.aptitude_questions.count()
@@ -5215,7 +5366,7 @@ class StudentIndividualAnalyticsView(APIView):
                 total_p = contest.problems.count()
                 score_pct = round(cp.problems_solved / max(1, total_p) * 100, 1)
             score_history.append({
-                'label': f'Test {idx}',
+                'label': contest.title[:18],
                 'title': contest.title,
                 'score_pct': score_pct,
                 'date': cp.started_at.strftime('%Y-%m-%d'),
@@ -5251,6 +5402,8 @@ class StudentIndividualAnalyticsView(APIView):
             logger.exception("Failed to compute topic_accuracy for student %s (individual analytics)", register_number)
             topic_accuracy = []
 
+        performance_charts = _build_student_performance_charts(student, solved_problems, topic_accuracy)
+
         try:
             return Response({
                 "student": {
@@ -5281,6 +5434,7 @@ class StudentIndividualAnalyticsView(APIView):
                 "tests_completed": tests_completed,
                 "avg_score": avg_score,
                 "peak_score": peak_score,
+                **performance_charts,
             }
         })
         except Exception:
@@ -5336,7 +5490,7 @@ class StudentSelfAnalyticsView(APIView):
         ).select_related('contest').order_by('started_at')[:25]
 
         score_history = []
-        for idx, cp in enumerate(cp_qs, 1):
+        for cp in cp_qs:
             contest = cp.contest
             if contest.contest_type == 'aptitude':
                 total_q = contest.aptitude_questions.count()
@@ -5348,7 +5502,7 @@ class StudentSelfAnalyticsView(APIView):
                 total_p = contest.problems.count()
                 score_pct = round(cp.problems_solved / max(1, total_p) * 100, 1)
             score_history.append({
-                'label': f'Test {idx}',
+                'label': contest.title[:18],
                 'title': contest.title,
                 'score_pct': score_pct,
                 'date': cp.started_at.strftime('%Y-%m-%d'),
@@ -5412,6 +5566,8 @@ class StudentSelfAnalyticsView(APIView):
             logger.exception("Failed to compute topic_accuracy_practice for self-analytics (student %s)", getattr(student, 'register_number', '?'))
             topic_accuracy_practice = []
 
+        performance_charts = _build_student_performance_charts(student, solved_problems, topic_accuracy)
+
         try:
             return Response({
                 "analytics": {
@@ -5432,6 +5588,7 @@ class StudentSelfAnalyticsView(APIView):
                     "tests_completed": tests_completed,
                     "avg_score": avg_score,
                     "peak_score": peak_score,
+                    **performance_charts,
                 }
             })
         except Exception:
@@ -6943,7 +7100,7 @@ class StudentReportPDFView(APIView):
         # Create PDF with the shared branded header (logo + name + subheading +
         # address + department, drawn once on page 1 only) instead of the
         # plain-text-only title block this view used to build by hand.
-        from .pdf_reports import create_watermarked_pdf_contest
+        from .pdf_reports import create_watermarked_pdf_contest, _bar_chart, _pie_chart
         buffer = BytesIO()
         doc = create_watermarked_pdf_contest(
             buffer,
@@ -7059,6 +7216,53 @@ class StudentReportPDFView(APIView):
         ]))
         elements.append(metrics_table)
         elements.append(Spacer(1, 0.3 * inch))
+
+        # Performance Graphs
+        chart_data = report_data.get('performance_charts', {})
+        elements.append(Paragraph("Performance Graphs", header_style))
+
+        overall_rows = chart_data.get('overall_performance', [])
+        overall_values = [row.get('value', 0) for row in overall_rows]
+        overall_labels = [row.get('label', '') for row in overall_rows]
+        if not sum(overall_values):
+            overall_values = [1]
+            overall_labels = ["No data"]
+
+        trend_rows = chart_data.get('daily_solved_trend', [])[-14:]
+        trend_values = [row.get('daily_total', 0) for row in trend_rows]
+        trend_labels = [row.get('date', '')[5:] for row in trend_rows]
+
+        overall_pie = _pie_chart(overall_values, overall_labels, ['#22c55e', '#3b82f6', '#f59e0b'], size=130)
+        trend_bar = _bar_chart(trend_values, trend_labels, bar_color='#0f766e', w=320, h=140)
+        charts_table = Table([[overall_pie, trend_bar]], colWidths=[2.2*inch, 4.2*inch])
+        charts_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#d0d9c2')),
+            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8f9f7')),
+        ]))
+        elements.append(charts_table)
+        elements.append(Spacer(1, 0.08 * inch))
+
+        chart_labels = Table([[
+            Paragraph("Overall Performance", styles['Normal']),
+            Paragraph("Daily Problems Solved", styles['Normal']),
+        ]], colWidths=[2.2*inch, 4.2*inch])
+        chart_labels.setStyle(TableStyle([('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTSIZE', (0, 0), (-1, -1), 8)]))
+        elements.append(chart_labels)
+        elements.append(Spacer(1, 0.25 * inch))
+
+        knowledge = chart_data.get('knowledge_distribution') or {}
+        knowledge_labels = knowledge.get('labels', [])[:10]
+        knowledge_values = [
+            (knowledge.get('programming', [0] * len(knowledge_labels))[idx] if idx < len(knowledge.get('programming', [])) else 0)
+            + (knowledge.get('aptitude', [0] * len(knowledge_labels))[idx] if idx < len(knowledge.get('aptitude', [])) else 0)
+            for idx, _ in enumerate(knowledge_labels)
+        ]
+        if knowledge_labels:
+            elements.append(Paragraph("Knowledge Distribution", header_style))
+            elements.append(_bar_chart(knowledge_values, [label[:10] for label in knowledge_labels], bar_color='#4f46e5', w=520, h=150))
+            elements.append(Spacer(1, 0.3 * inch))
 
         # Skills & Topics Analysis
         if report_data['top_skills']:
@@ -7325,6 +7529,7 @@ class StudentReportPDFView(APIView):
             'top_skills': top_skills,
             'top_companies': top_companies,
             'recent_activities': recent_activities,
+            'performance_charts': _build_student_performance_charts(student, solved_problems.select_related('problem')),
         }
 
 
@@ -7356,7 +7561,7 @@ class StaffReportPDFView(APIView):
         # Create PDF with the shared branded header (logo + name + subheading +
         # address + department, drawn once on page 1 only) instead of the
         # plain-text-only title block this view used to build by hand.
-        from .pdf_reports import create_watermarked_pdf_contest
+        from .pdf_reports import create_watermarked_pdf_contest, _bar_chart, _pie_chart
         buffer = BytesIO()
         doc = create_watermarked_pdf_contest(
             buffer,
@@ -7471,6 +7676,50 @@ class StaffReportPDFView(APIView):
         ]))
         elements.append(metrics_table)
         elements.append(Spacer(1, 0.3 * inch))
+
+        # Aggregate Performance Graphs
+        chart_data = report_data.get('performance_charts', {})
+        if chart_data:
+            elements.append(Paragraph("Performance Graphs", header_style))
+            overall = chart_data.get('overall', {})
+            overall_values = [
+                overall.get('programming', 0),
+                overall.get('aptitude', 0),
+                overall.get('contest', 0),
+            ]
+            if not sum(overall_values):
+                overall_values = [1]
+                overall_labels = ["No data"]
+            else:
+                overall_labels = ["Programming", "Aptitude", "Contest"]
+
+            daily = chart_data.get('daily_solved', [])[-14:]
+            daily_values = [row.get('count', 0) for row in daily]
+            daily_labels = [row.get('date', '')[5:] for row in daily]
+
+            pie = _pie_chart(overall_values, overall_labels, ['#22c55e', '#3b82f6', '#f59e0b'], size=130)
+            daily_bar = _bar_chart(daily_values, daily_labels, bar_color='#0f766e', w=320, h=140)
+            chart_table = Table([[pie, daily_bar]], colWidths=[2.2*inch, 4.2*inch])
+            chart_table.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#d0d9c2')),
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f8f9f7')),
+            ]))
+            elements.append(chart_table)
+            elements.append(Spacer(1, 0.25 * inch))
+
+            topics = chart_data.get('topics', [])[:10]
+            if topics:
+                elements.append(Paragraph("Solving Topics", header_style))
+                elements.append(_bar_chart(
+                    [row.get('count', 0) for row in topics],
+                    [row.get('label', '')[:10] for row in topics],
+                    bar_color='#4f46e5',
+                    w=520,
+                    h=150,
+                ))
+                elements.append(Spacer(1, 0.3 * inch))
 
         # Batch-wise Performance (if applicable)
         if report_data['batch_performance']:
@@ -7639,7 +7888,7 @@ class StaffReportPDFView(APIView):
         aptitude_data = {'aptitude_tests': 0, 'aptitude_participants': 0, 'avg_aptitude_score': 0, 'best_aptitude_score': 0}
         if report_type in ['aptitude', 'overall']:
             aptitude_contests = contests_qs.filter(contest_type='aptitude')
-            aptitude_submissions = ContestSubmission.objects.filter(
+            aptitude_submissions = AptitudeContestSubmission.objects.filter(
                 contest__in=aptitude_contests,
                 student__in=students_qs
             )
@@ -7667,6 +7916,45 @@ class StaffReportPDFView(APIView):
                 'avg_aptitude_score': aptitude_submissions.aggregate(avg=Avg('score'))['avg'] or 0,
                 'best_aptitude_score': aptitude_submissions.aggregate(max=Max('score'))['max'] or 0,
             })
+
+        # Aggregate chart data for staff/HOD report generation.
+        start_day = timezone.localdate() - timedelta(days=29)
+        daily_rows = (
+            SolvedProblem.objects
+            .filter(student__in=students_qs, solved_at__date__gte=start_day)
+            .values('solved_at__date')
+            .annotate(count=Count('id'))
+            .order_by('solved_at__date')
+        )
+        topic_counts = defaultdict(int)
+        for tags in solved_problems.select_related('problem').values_list('problem__tags', flat=True):
+            if isinstance(tags, list):
+                for tag in tags[:4]:
+                    topic_counts[str(tag).strip().title()] += 1
+        aptitude_solved_count = SolvedAptitude.objects.filter(student__in=students_qs).count()
+        contest_solved_count = (
+            ContestSubmission.objects
+            .filter(student__in=students_qs, status='Accepted')
+            .values('contest_id', 'problem_id', 'student_id')
+            .distinct()
+            .count()
+            + AptitudeContestSubmission.objects.filter(student__in=students_qs, is_correct=True).count()
+        )
+        performance_charts = {
+            'overall': {
+                'programming': total_problems_solved,
+                'aptitude': aptitude_solved_count,
+                'contest': contest_solved_count,
+            },
+            'daily_solved': [
+                {'date': row['solved_at__date'].isoformat(), 'count': row['count']}
+                for row in daily_rows
+            ],
+            'topics': [
+                {'label': label, 'count': count}
+                for label, count in sorted(topic_counts.items(), key=lambda item: item[1], reverse=True)[:10]
+            ],
+        }
 
         # Batch-wise performance
         batch_performance = []
@@ -7726,6 +8014,7 @@ class StaffReportPDFView(APIView):
             'total_problems_solved': total_problems_solved,
             'batch_performance': batch_performance,
             'recent_activities': recent_activities,
+            'performance_charts': performance_charts,
             **aptitude_data
         }
 

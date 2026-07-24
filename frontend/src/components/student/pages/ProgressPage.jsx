@@ -603,6 +603,14 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
           testsCompleted={testsCompleted}
           avgScore={avgScore}
           peakScore={peakScore}
+          solvedCount={selfAnalytics?.solved_count || totalCodingSolved}
+          aptitude={selfAnalytics?.aptitude}
+          overallPerformance={selfAnalytics?.overall_performance || []}
+          profileRadar={selfAnalytics?.profile_radar}
+          dailySolvedTrend={selfAnalytics?.daily_solved_trend || []}
+          knowledgeDistribution={selfAnalytics?.knowledge_distribution}
+          contestPerformance={selfAnalytics?.contest_performance || []}
+          summaryCards={selfAnalytics?.summary_cards}
         />
 
         <div className="tab-fade" style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 40 }}>
@@ -996,9 +1004,9 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
               <h4 style={{ margin: '0 0 20px 0', fontSize: '1.1rem', fontWeight: 800, color: '#166534' }}>Contest Performance</h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {[
-                  ['Tests Taken', testsCompleted],
-                  ['Avg Score', `${(avgScore || 0).toFixed(1)}%`],
-                  ['Peak Score', `${(peakScore || 0).toFixed(1)}%`],
+                  ['Contests Attempted', testsCompleted],
+                  ['Contest Solved', selfAnalytics?.summary_cards?.contest_solved || 0],
+                  ['Avg Completion', `${(avgScore || 0).toFixed(1)}%`],
                   ['Topics Explored', topicAccuracy.length],
                 ].map(([label, val]) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid rgba(134,239,172,0.15)' }}>
