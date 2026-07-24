@@ -514,8 +514,23 @@ function ContestWorkspacePage({ contestId, onBack }) {
         problemSlug: selectedProblem.slug,
         isSubmit: false,
       });
+      let displayOutput = result.output || "No output";
 
-      setOutputLog(result.output || "No output");
+      // Append test-case breakdown if the backend returned it
+      if (result.test_results && result.test_results.length > 0) {
+        const tcLines = [`\n─── Test Cases (${result.passed_cases ?? '?'}/${result.total_cases ?? result.test_results.length} passed) ───`];
+        result.test_results.forEach((tc, i) => {
+          tcLines.push('');
+          tcLines.push(`Case ${tc.case ?? i + 1}: ${tc.passed ? '✓ Passed' : '✗ Failed'} [${tc.status || (tc.passed ? 'Accepted' : 'Wrong Answer')}]${tc.time ? ` · ${tc.time}s` : ''}`);
+          if (tc.stdin) tcLines.push(`  Input:    ${tc.stdin}`);
+          tcLines.push(`  Expected: ${tc.expected || '(empty)'}`);
+          tcLines.push(`  Got:      ${tc.actual || '(no output)'}`);
+          if (tc.stderr) tcLines.push(`  Error:    ${tc.stderr}`);
+        });
+        displayOutput += tcLines.join('\n');
+      }
+
+      setOutputLog(displayOutput);
       setExecutionMeta({
         status: result.status || "Completed",
         time: result.time || null,

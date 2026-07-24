@@ -21,7 +21,6 @@ const PARTICLE_COUNT = 8;
 const MAX_CONCURRENT_BURSTS = 6;
 const ANIMATION_MS = 500;
 const COLORS = ['#c49743', '#61734c', '#9daa8b', '#39482a'];
-const CLICKABLE_SELECTOR = 'button, [role="button"], .primary-button, .secondary-button, .ghost-button, .nav-link, .switch-pill';
 
 export default function ClickBurstEffect() {
   const activeBurstsRef = useRef(0);
@@ -61,8 +60,6 @@ export default function ClickBurstEffect() {
 
     function onClick(e) {
       if (activeBurstsRef.current >= MAX_CONCURRENT_BURSTS) return;
-      const target = e.target.closest(CLICKABLE_SELECTOR);
-      if (!target || target.disabled || target.getAttribute('aria-disabled') === 'true') return;
       spawnBurst(e.clientX, e.clientY);
     }
 
