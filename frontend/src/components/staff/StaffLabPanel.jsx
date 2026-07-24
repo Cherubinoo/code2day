@@ -95,7 +95,7 @@ function compileDescription(f) {
     exs.forEach((e) => {
       if (e.input.trim()) parts.push(`  Input:  ${e.input.trim()}`);
       if (e.output.trim()) parts.push(`  Output: ${e.output.trim()}`);
-      if (e.explanation.trim()) parts.push(`  Explanation: ${e.explanation.trim()}`);
+      if (e.explanation.trim()) parts.push(`  Explanation: ${e.explanation.trim().replace(/\s+/g, " ")}`);
     });
   }
   if (f.difficulty) parts.push(`\nDifficulty: ${f.difficulty}`);

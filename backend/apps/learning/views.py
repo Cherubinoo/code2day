@@ -12056,7 +12056,8 @@ def _compile_lab_description(parsed):
             if e.get("output", "").strip():
                 parts.append(f"  Output: {e['output'].strip()}")
             if e.get("explanation", "").strip():
-                parts.append(f"  Explanation: {e['explanation'].strip()}")
+                explanation = re.sub(r"\s+", " ", e["explanation"].strip())
+                parts.append(f"  Explanation: {explanation}")
 
     if parsed.get("difficulty"):
         parts.append(f"\nDifficulty: {parsed['difficulty']}")
@@ -12064,6 +12065,10 @@ def _compile_lab_description(parsed):
         parts.append(f"\nHint: {parsed['hint'].strip()}")
 
     return "\n".join(parts)
+
+
+def _is_auto_placeholder(value):
+    return (value or "").strip().lower() in {"", "auto", "generate", "generated"}
 
 
 def _run_and_close_connections(fn, **kwargs):
@@ -12082,11 +12087,10 @@ def _run_and_close_connections(fn, **kwargs):
 
 def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False, replace_existing=False):
     """LLM test case generation for a LabExercise, plus a best-effort
-    backfill of the description's Hint: line and Examples: section when
-    they're missing — examples are derived from the generated test cases,
-    and the hint is a separate LLM call made concurrently with the test
-    case generation (the two are independent, so there's no reason to
-    serialize them). Existing Hint/Examples content is never overwritten.
+    backfill of the description's Hint: line and Examples: section. Examples
+    are derived from generated test cases; when replace_existing=True the
+    staff Generate button intentionally replaces old examples. The hint is a
+    separate LLM call made concurrently with test case generation.
 
     By default best-effort — a generation failure shouldn't block exercise
     creation. Pass raise_on_error=True for manual/on-demand triggers where
@@ -12101,13 +12105,20 @@ def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False
     )
 
     parsed = _parse_lab_description(exercise.description)
-    needs_hint = not parsed["hint"]
-    needs_examples = not parsed["examples"]
+    needs_hint = _is_auto_placeholder(parsed["hint"])
+    needs_examples = replace_existing or not parsed["examples"]
+    generation_description = exercise.description
+    if replace_existing:
+        generation_description = _compile_lab_description({
+            **parsed,
+            "examples": [],
+            "hint": "" if needs_hint else parsed["hint"],
+        })
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         tc_future = pool.submit(
             _run_and_close_connections, generate_test_cases,
-            title=exercise.title, description=exercise.description,
+            title=exercise.title, description=generation_description,
             num_cases=num_cases, difficulty=extract_difficulty(exercise.description),
         )
         hint_future = (
@@ -12147,7 +12158,7 @@ def _auto_generate_lab_test_cases(exercise, num_cases=None, raise_on_error=False
 
     if needs_examples or hint_text:
         if needs_examples:
-            parsed["examples"] = derive_examples(generated)
+            parsed["examples"] = derive_examples(generated)[:1]
         if hint_text:
             parsed["hint"] = hint_text
         exercise.description = _compile_lab_description(parsed)
@@ -12460,16 +12471,11 @@ class StaffExerciseGenerateExplanationView(APIView):
         except LabExercise.DoesNotExist:
             return Response({"error": "Not found"}, status=404)
 
-        force = bool(request.data.get("force"))
-        if ex.explanation and not force:
-            return Response(
-                {"error": "This exercise already has an explanation. Pass force=true to replace it."},
-                status=400,
-            )
-
         from .services.testcase_generator import generate_explanation, TestCaseGenError
         try:
-            explanation = generate_explanation(title=ex.title, description=ex.description)
+            parsed = _parse_lab_description(ex.description)
+            clean_description = _compile_lab_description({**parsed, "examples": []})
+            explanation = generate_explanation(title=ex.title, description=clean_description)
         except TestCaseGenError as exc:
             return Response({"error": f"Generation failed: {exc}"}, status=502)
 

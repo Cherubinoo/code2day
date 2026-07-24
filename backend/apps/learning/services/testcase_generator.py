@@ -359,9 +359,9 @@ Write a detailed, pedagogical explanation covering:
 2. Step-by-Step Approach & Key Insights: Explain the algorithmic approach, key insights, and edge cases to handle.
 3. Visualization: For Tree or Graph problems, include an ASCII diagram of a sample tree and trace its step-by-step traversal so the student can visually understand the process.
 
-Respond with ONLY the explanation text — clear, educational, and structured.
+Write at least 3 short paragraphs. Do not return a one-line explanation.
+Respond with ONLY the explanation text, clear, educational, and structured.
 """
-
 HINT_PROMPT_TEMPLATE = """You are writing a single short hint for a student who is stuck on the
 following problem.
 
