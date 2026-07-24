@@ -312,3 +312,105 @@ def build_lab_report_pdf(buffer: BytesIO, *, report, test_case_rows=None, test_c
     story.append(footer)
 
     doc.build(story)
+
+
+def build_full_lab_summary_pdf(buffer, *, lab):
+    from apps.accounts.models import StudentProfile
+    from apps.learning.models import LabExerciseSubmission, LabStudentSession
+
+    doc = BaseDocTemplate(
+        buffer, pagesize=A4,
+        leftMargin=0.5 * inch, rightMargin=0.5 * inch,
+        topMargin=0.5 * inch, bottomMargin=0.5 * inch,
+    )
+    frame = Frame(
+        doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="normal",
+        topPadding=0, bottomPadding=0, leftPadding=0, rightPadding=0,
+    )
+    template = PageTemplate(id="LabSummary", frames=frame)
+    doc.addPageTemplates([template])
+
+    story = []
+    inst_name = lab.department.institution.name.upper() if (lab.department and getattr(lab.department, "institution", None)) else "RAMCO INSTITUTE OF TECHNOLOGY"
+    dept_name = f"DEPARTMENT OF {lab.department.name.upper()}" if lab.department else "DEPARTMENT OF COMPUTER SCIENCE & ENGINEERING"
+    story.append(Paragraph(inst_name, _INSTITUTION_STYLE))
+    story.append(Paragraph(dept_name, _DEPARTMENT_STYLE))
+    lab_type_title = "UNIVERSITY LAB PRACTICAL PERFORMANCE REPORT" if lab.lab_type == "university" else "LAB PRACTICAL RECORD REPORT"
+    story.append(Paragraph(f"<b>{lab_type_title}</b>", _TITLE_STYLE))
+    story.append(Spacer(1, 10))
+
+    sic_name = lab.staff_in_charge.name if lab.staff_in_charge else "Faculty in Charge"
+    meta_data = [
+        [Paragraph(f"<b>Lab Name:</b> {lab.name}", _BODY_STYLE), Paragraph(f"<b>Batch:</b> {lab.batch} ({lab.section or 'All Sections'})", _BODY_STYLE)],
+        [Paragraph(f"<b>Staff in Charge:</b> {sic_name}", _BODY_STYLE), Paragraph(f"<b>Type:</b> {lab.get_lab_type_display()}", _BODY_STYLE)],
+        [Paragraph(f"<b>Start Date:</b> {lab.start_date.strftime('%Y-%m-%d') if lab.start_date else '—'}", _BODY_STYLE),
+         Paragraph(f"<b>End Date:</b> {lab.end_date.strftime('%Y-%m-%d') if lab.end_date else '—'}", _BODY_STYLE)],
+    ]
+    t_meta = Table(meta_data, colWidths=[3.5 * inch, 3.5 * inch])
+    t_meta.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
+        ('BOX', (0,0), (-1,-1), 1, _BORDER),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, _BORDER),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(t_meta)
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("<b>Assigned Lab Exercises</b>", _HEADING_STYLE))
+    exercises = list(lab.exercises.all().order_by("order", "created_at"))
+    ex_rows = [[Paragraph("<b>Exp No</b>", _BODY_STYLE), Paragraph("<b>Exercise Title</b>", _BODY_STYLE)]]
+    for idx, ex in enumerate(exercises, start=1):
+        ex_rows.append([Paragraph(str(idx), _BODY_STYLE), Paragraph(ex.title, _BODY_STYLE)])
+    t_ex = Table(ex_rows, colWidths=[1.0 * inch, 6.0 * inch])
+    t_ex.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#e2e8f0')),
+        ('BOX', (0,0), (-1,-1), 1, _BORDER),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, _BORDER),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+    ]))
+    story.append(t_ex)
+    story.append(Spacer(1, 12))
+
+    header_style = ParagraphStyle("THeader", parent=_BODY_STYLE, fontName="Helvetica-Bold", textColor=colors.white)
+    story.append(Paragraph("<b>Student Practical Performance & Progress</b>", _HEADING_STYLE))
+    students = StudentProfile.objects.filter(department=lab.department, batch=lab.batch)
+    if lab.section:
+        students = students.filter(section=lab.section)
+    students = students.order_by("register_number")
+
+    total_ex = len(exercises)
+    st_rows = [[
+        Paragraph("Reg No", header_style),
+        Paragraph("Student Name", header_style),
+        Paragraph("Sec", header_style),
+        Paragraph("Completed", header_style),
+        Paragraph("Progress", header_style),
+        Paragraph("Status", header_style),
+    ]]
+
+    for st in students:
+        completed = LabExerciseSubmission.objects.filter(exercise__lab=lab, student=st).values('exercise').distinct().count()
+        session = LabStudentSession.objects.filter(lab=lab, student=st).first()
+        status_txt = "Locked" if (session and session.is_locked) else ("Completed" if (completed >= total_ex and total_ex > 0) else "In Progress")
+        pct = f"{round((completed / total_ex) * 100)}%" if total_ex > 0 else "0%"
+        st_rows.append([
+            Paragraph(st.register_number, _BODY_STYLE),
+            Paragraph(st.name, _BODY_STYLE),
+            Paragraph(st.section or "—", _BODY_STYLE),
+            Paragraph(f"{completed} / {total_ex}", _BODY_STYLE),
+            Paragraph(pct, _BODY_STYLE),
+            Paragraph(status_txt, _BODY_STYLE),
+        ])
+
+    t_st = Table(st_rows, colWidths=[1.5 * inch, 2.2 * inch, 0.6 * inch, 1.0 * inch, 0.8 * inch, 0.9 * inch])
+    t_st.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#005696')),
+        ('BOX', (0,0), (-1,-1), 1, _BORDER),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, _BORDER),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+    ]))
+    story.append(t_st)
+    doc.build(story)

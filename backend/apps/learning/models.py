@@ -1590,6 +1590,7 @@ class Lab(models.Model):
     LAB_TYPE_CHOICES = (
         ("practical", "Lab Practical"),
         ("company", "Company Based Lab Practical"),
+        ("university", "University Lab Practical"),
     )
 
     name            = models.CharField(max_length=200)
@@ -1609,6 +1610,12 @@ class Lab(models.Model):
         related_name="created_labs"
     )
     is_active       = models.BooleanField(default=True)
+    approval_status = models.CharField(max_length=20, default="approved") # pending_approval, approved, rejected
+    is_published    = models.BooleanField(default=True)
+    enable_tab_switch_check = models.BooleanField(default=False)
+    max_tab_switches       = models.IntegerField(default=3)
+    enable_fullscreen_lock = models.BooleanField(default=False)
+    enable_copy_paste_lock = models.BooleanField(default=False)
     created_at      = models.DateTimeField(auto_now_add=True)
     lab_type        = models.CharField(max_length=20, choices=LAB_TYPE_CHOICES, default="practical")
     company         = models.OneToOneField(
@@ -1749,9 +1756,23 @@ class LabExerciseReport(models.Model):
     generated_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+
+class LabStudentSession(models.Model):
+    """Tracks anti-cheat security status, violations, and locking for a student in a Lab."""
+    lab              = models.ForeignKey(Lab, on_delete=models.CASCADE, related_name="student_sessions")
+    student          = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name="lab_sessions")
+    is_locked        = models.BooleanField(default=False)
+    tab_switch_count = models.IntegerField(default=0)
+    lock_reason      = models.CharField(max_length=255, blank=True, default="")
+    locked_at        = models.DateTimeField(null=True, blank=True)
+    updated_at       = models.DateTimeField(auto_now=True)
+
     class Meta:
-        db_table = "lab_exercise_reports"
-        ordering = ("-generated_at",)
+        db_table = "lab_student_sessions"
+        unique_together = (("lab", "student"),)
+
+    def __str__(self):
+        return f"{self.student.register_number} - {self.lab.name} ({'Locked' if self.is_locked else 'Active'})"
 
     def __str__(self):
         return f"Report for {self.submission}"

@@ -11812,14 +11812,12 @@ class HODCompanyDetailView(APIView):
 
 
 class HODLabListView(APIView):
-    """HOD: list/create plain "Lab Practical" entries. Company Based Lab Practicals
-    are owned exclusively by HODCompanyListView/HODCompanyDetailView (one company =
-    one practical), so this view only ever deals with lab_type="practical"."""
+    """HOD: list/create plain "Lab Practical" and "University Lab" entries."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         staff = _staff_from_request(request)
-        labs = Lab.objects.filter(department=staff.department, lab_type="practical").select_related(
+        labs = Lab.objects.filter(department=staff.department).select_related(
             "staff_in_charge", "created_by"
         ).prefetch_related("exercises")
         return Response([_serialize_lab_v2(lab) for lab in labs])
@@ -11846,6 +11844,7 @@ class HODLabListView(APIView):
                 {"error": f"allowed_languages must be a non-empty list from {LAB_LANGUAGE_CHOICES}"}, status=400
             )
 
+        lab_type = data.get("lab_type", "practical")
         lab = Lab.objects.create(
             name=data["name"],
             department=staff.department,
@@ -11853,9 +11852,15 @@ class HODLabListView(APIView):
             section=data.get("section", ""),
             start_date=start,
             end_date=end,
-            staff_in_charge=staff_in_charge,
+            staff_in_charge=staff_in_charge or staff,
             created_by=staff,
-            lab_type="practical",
+            lab_type=lab_type,
+            approval_status="approved",
+            is_published=data.get("is_published", True),
+            enable_tab_switch_check=bool(data.get("enable_tab_switch_check", False)),
+            max_tab_switches=int(data.get("max_tab_switches", 3)),
+            enable_fullscreen_lock=bool(data.get("enable_fullscreen_lock", False)),
+            enable_copy_paste_lock=bool(data.get("enable_copy_paste_lock", False)),
             allowed_languages=allowed_languages,
         )
         lab.refresh_from_db()
@@ -11922,10 +11927,43 @@ class StaffLabListView(APIView):
 
     def get(self, request):
         staff = _staff_from_request(request)
-        labs = Lab.objects.filter(staff_in_charge=staff).select_related(
+        labs = Lab.objects.filter(Q(staff_in_charge=staff) | Q(created_by=staff)).distinct().select_related(
             "created_by"
         ).prefetch_related("exercises")
         return Response([_serialize_lab_v2(lab) for lab in labs])
+
+    def post(self, request):
+        staff = _staff_from_request(request)
+        data = request.data
+        start = _parse_dt(data.get("start_date"))
+        end = _parse_dt(data.get("end_date"))
+        if not start or not end:
+            return Response({"error": "Valid start_date and end_date are required"}, status=400)
+
+        allowed_languages = data.get("allowed_languages", list(LAB_LANGUAGE_CHOICES))
+        lab_type = data.get("lab_type", "practical")
+        approval_status = "pending_approval" if (lab_type == "university" and not getattr(staff, "is_hod", False)) else "approved"
+
+        lab = Lab.objects.create(
+            name=data["name"],
+            department=staff.department,
+            batch=data.get("batch", ""),
+            section=data.get("section", ""),
+            start_date=start,
+            end_date=end,
+            staff_in_charge=staff,
+            created_by=staff,
+            lab_type=lab_type,
+            approval_status=approval_status,
+            is_published=False if lab_type == "university" else True,
+            enable_tab_switch_check=bool(data.get("enable_tab_switch_check", False)),
+            max_tab_switches=int(data.get("max_tab_switches", 3)),
+            enable_fullscreen_lock=bool(data.get("enable_fullscreen_lock", False)),
+            enable_copy_paste_lock=bool(data.get("enable_copy_paste_lock", False)),
+            allowed_languages=allowed_languages,
+        )
+        lab.refresh_from_db()
+        return Response(_serialize_lab_v2(lab), status=201)
 
 
 def _parse_lab_description(text):
@@ -12551,16 +12589,18 @@ class StudentExerciseSubmitView(APIView):
                 detail = f"Unexpected execution error: {exc}" if settings.DEBUG else "Unexpected execution error."
                 return Response({"error": detail}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            if result["passed_cases"] != result["total_cases"]:
+            passed = result["passed_cases"]
+            total = result["total_cases"]
+            if total > 0 and (passed / total) < 0.75:
                 return Response(
                     {
                         "error": (
-                            f"Only {result['passed_cases']}/{result['total_cases']} test case(s) passed. "
-                            f"All test cases must pass before this exercise can be submitted."
+                            f"Only {passed}/{total} test case(s) passed ({int(passed * 100 / total)}%). "
+                            f"At least 75% of test cases must pass before this exercise can be submitted."
                         ),
                         "test_results": result["test_results"],
-                        "passed_cases": result["passed_cases"],
-                        "total_cases": result["total_cases"],
+                        "passed_cases": passed,
+                        "total_cases": total,
                     },
                     status=400,
                 )
@@ -12750,6 +12790,128 @@ class StaffLabExerciseStudentReportView(APIView):
 
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
+        return response
+
+
+class HODLabApproveView(APIView):
+    """HOD: Approve a pending University Lab practical."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id):
+        staff = _staff_from_request(request)
+        if not staff or not getattr(staff, 'is_hod', False):
+            return Response({"error": "HOD access required"}, status=403)
+        try:
+            lab = Lab.objects.get(id=lab_id, department=staff.department)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        lab.approval_status = "approved"
+        lab.is_published = True
+        lab.save(update_fields=["approval_status", "is_published"])
+        return Response({"detail": "University Lab approved successfully!", "lab": _serialize_lab_v2(lab)})
+
+
+class StaffLabPublishView(APIView):
+    """Staff: Publish / Activate an approved University Lab for students."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id):
+        staff = _staff_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id, staff_in_charge=staff)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        if lab.approval_status != "approved":
+            return Response({"error": "Cannot publish a lab that has not been approved by the HOD."}, status=400)
+
+        lab.is_published = True
+        lab.is_active = True
+        lab.save(update_fields=["is_published", "is_active"])
+        return Response({"detail": "Lab published to students successfully!", "lab": _serialize_lab_v2(lab)})
+
+
+class StudentLabViolationView(APIView):
+    """Student: Record security violation (tab switch or fullscreen exit) for a Lab."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id):
+        student = _student_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id, department=student.department, batch=student.batch)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
+        action = request.data.get("action", "tab_switch")
+        reason = request.data.get("reason", "Tab switch detected")
+
+        if action == "fullscreen_exit" and lab.enable_fullscreen_lock:
+            session.is_locked = True
+            session.lock_reason = "Fullscreen exit detected during University Lab session"
+            session.locked_at = timezone.now()
+        else:
+            session.tab_switch_count += 1
+            if lab.enable_tab_switch_check and session.tab_switch_count >= lab.max_tab_switches:
+                session.is_locked = True
+                session.lock_reason = f"Exceeded tab switch limit ({session.tab_switch_count}/{lab.max_tab_switches})"
+                session.locked_at = timezone.now()
+
+        session.save()
+        return Response({
+            "is_locked": session.is_locked,
+            "tab_switch_count": session.tab_switch_count,
+            "lock_reason": session.lock_reason,
+            "max_tab_switches": lab.max_tab_switches,
+        })
+
+
+class StaffLabUnlockStudentView(APIView):
+    """Staff: Unlock a locked student session in a Lab."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id, register_number):
+        staff = _staff_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id, department=staff.department)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        student = StudentProfile.objects.filter(register_number=register_number, department=lab.department).first()
+        if not student:
+            return Response({"error": "Student not found"}, status=404)
+
+        session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
+        session.is_locked = False
+        session.tab_switch_count = 0
+        session.lock_reason = ""
+        session.locked_at = None
+        session.save()
+
+        return Response({"detail": f"Student {student.name} ({register_number}) unlocked successfully!"})
+
+
+class StaffLabFullReportView(APIView):
+    """Staff: Download full PDF report summarizing all student performances in the Lab."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, lab_id):
+        staff = _staff_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id, department=staff.department)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        from .services.lab_report_pdf import build_full_lab_summary_pdf
+        buffer = BytesIO()
+        build_full_lab_summary_pdf(buffer, lab=lab)
+        buffer.seek(0)
+        pdf_bytes = buffer.getvalue()
+
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        safe_name = lab.name.replace(" ", "_")
+        response["Content-Disposition"] = f'attachment; filename="Full_Lab_Report_{safe_name}.pdf"'
         return response
 
 

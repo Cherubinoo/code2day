@@ -392,6 +392,11 @@ urlpatterns = [
     path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/submit/",          StudentExerciseSubmitView.as_view(),name="student-exercise-submit"),
     path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/report/",          StudentExerciseReportView.as_view(), name="student-exercise-report"),
     path("lab/v2/<int:lab_id>/exercises/<int:exercise_id>/students/<str:register_number>/report/", StaffLabExerciseStudentReportView.as_view(), name="staff-lab-exercise-student-report"),
+    path("lab/v2/hod/<int:lab_id>/approve/", HODLabApproveView.as_view(), name="hod-lab-approve"),
+    path("lab/v2/staff/labs/<int:lab_id>/publish/", StaffLabPublishView.as_view(), name="staff-lab-publish"),
+    path("lab/v2/student/labs/<int:lab_id>/violation/", StudentLabViolationView.as_view(), name="student-lab-violation"),
+    path("lab/v2/staff/labs/<int:lab_id>/student/<str:register_number>/unlock/", StaffLabUnlockStudentView.as_view(), name="staff-lab-student-unlock"),
+    path("lab/v2/staff/labs/<int:lab_id>/full-report/", StaffLabFullReportView.as_view(), name="staff-lab-full-report"),
 
     # ── HOD Staff Management ─────────────────────────────────────────────────
     path("hod/staff/",                  HODManageStaffView.as_view(),       name="hod-manage-staff"),

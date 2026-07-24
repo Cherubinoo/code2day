@@ -409,6 +409,15 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
   const [genCount, setGenCount] = useState(exercise?.test_case_count ?? null);
   const [explanation, setExplanation] = useState(exercise?.explanation ?? "");
 
+  useEffect(() => {
+    if (exercise) {
+      setTitle(exercise.title ?? "");
+      setFields(parseDescription(exercise.description ?? ""));
+      setGenCount(exercise.test_case_count ?? null);
+      setExplanation(exercise.explanation ?? "");
+    }
+  }, [exercise]);
+
   async function generateTestCases(force) {
     setGenBusy(true); setGenMsg("");
     const body = force ? { force: true } : {};
@@ -861,6 +870,23 @@ function StudentTable({ students, exercises, activeExIdx, labId }) {
   const doneCount = rows.filter((r) => r.completed).length;
   const pct = rows.length ? Math.round((doneCount / rows.length) * 100) : 0;
 
+  const [unlocking, setUnlocking] = useState({});
+
+  async function handleUnlockStudent(regNo) {
+    setUnlocking((prev) => ({ ...prev, [regNo]: true }));
+    try {
+      const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/student/${regNo}/unlock/`, "POST");
+      if (res.ok) {
+        alert(`✅ Student ${regNo} unlocked successfully!`);
+        window.location.reload();
+      }
+    } catch {
+      alert("Failed to unlock student");
+    } finally {
+      setUnlocking((prev) => ({ ...prev, [regNo]: false }));
+    }
+  }
+
   return (
     <div className="slp2-student-section">
       {/* Stats bar */}
@@ -907,7 +933,7 @@ function StudentTable({ students, exercises, activeExIdx, labId }) {
               <th>Student</th>
               <th>Reg. No.</th>
               <th>Section</th>
-              <th>Status</th>
+              <th>Status / Security</th>
               <th>Language</th>
               <th>Submitted At</th>
               <th>Report</th>
@@ -921,9 +947,20 @@ function StudentTable({ students, exercises, activeExIdx, labId }) {
                 <td className="slp2-td-reg">{r.register_number || "—"}</td>
                 <td>{r.section || "—"}</td>
                 <td>
-                  {r.completed
-                    ? <span className="slp2-done-badge"><CheckCircle2 size={11} /> Done</span>
-                    : <span className="slp2-pending-badge"><Circle size={11} /> Pending</span>}
+                  {r.is_locked ? (
+                    <button
+                      type="button"
+                      style={{ padding: "4px 10px", fontSize: 12, background: "#fee2e2", color: "#991b1b", border: "1px solid #f87171", borderRadius: 6, cursor: "pointer", fontWeight: 700 }}
+                      disabled={!!unlocking[r.register_number]}
+                      onClick={() => handleUnlockStudent(r.register_number)}
+                    >
+                      🔓 {unlocking[r.register_number] ? "Unlocking…" : "Unlock Student"}
+                    </button>
+                  ) : r.completed ? (
+                    <span className="slp2-done-badge"><CheckCircle2 size={11} /> Done</span>
+                  ) : (
+                    <span className="slp2-pending-badge"><Circle size={11} /> Pending</span>
+                  )}
                 </td>
                 <td className="slp2-td-mono">{r.language || "—"}</td>
                 <td className="slp2-td-time">{r.submitted_at ? fmtDT(r.submitted_at) : "—"}</td>
@@ -1006,6 +1043,7 @@ function LabDetail({ lab: initLab, onBack }) {
     }
 
     setExercises((prev) => prev.map((e) => (e.id === ex.id ? { ...e, ...update } : e)));
+    await fetchExercises();
     setGenState((s) => ({ ...s, [ex.id]: { busy: false, msg: messages.join(" ") } }));
   }
 
@@ -1057,15 +1095,75 @@ function LabDetail({ lab: initLab, onBack }) {
       <button type="button" className="slp2-back" onClick={onBack}><ChevronLeft size={15} /> All Labs</button>
 
       {/* Header */}
-      <div className="slp2-detail-hdr">
+      <div className="slp2-detail-hdr" style={{ flexWrap: "wrap", gap: 16 }}>
         <div>
-          <h2 className="slp2-detail-title">{lab.name}</h2>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+            <h2 className="slp2-detail-title" style={{ margin: 0 }}>{lab.name}</h2>
+            {lab.lab_type === "university" && (
+              <span style={{ padding: "3px 10px", borderRadius: 8, background: "#ede9fe", color: "#6d28d9", fontSize: 11, fontWeight: 700 }}>
+                🏛️ University Lab
+              </span>
+            )}
+            {lab.approval_status === "pending_approval" && (
+              <span style={{ padding: "3px 10px", borderRadius: 8, background: "#fef3c7", color: "#92400e", fontSize: 11, fontWeight: 700 }}>
+                ⏳ Pending HOD Approval
+              </span>
+            )}
+            {lab.approval_status === "approved" && (
+              <span style={{ padding: "3px 10px", borderRadius: 8, background: "#dcfce7", color: "#166534", fontSize: 11, fontWeight: 700 }}>
+                ✅ HOD Approved
+              </span>
+            )}
+          </div>
           <p className="slp2-detail-meta">
             Batch {lab.batch}{lab.section ? ` · §${lab.section}` : ""}
             {" · "}{fmt(lab.start_date)} → {fmt(lab.end_date)}
           </p>
         </div>
-        <div className="slp2-detail-stats">
+        <div className="slp2-detail-stats" style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          {lab.approval_status === "pending_approval" && (
+            <button
+              type="button"
+              style={{ background: "#10b981", color: "white", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              onClick={async () => {
+                const res = await apiFetch(`/api/lab/v2/hod/${lab.id}/approve/`, "POST");
+                if (res.ok) {
+                  alert("✅ University Lab approved successfully!");
+                  const data = await res.json();
+                  setLab(data.lab);
+                } else {
+                  alert("Only HOD can approve University Labs");
+                }
+              }}
+            >
+              ✅ Approve University Lab
+            </button>
+          )}
+
+          {lab.approval_status === "approved" && !lab.is_published && (
+            <button
+              type="button"
+              style={{ background: "#2563eb", color: "white", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              onClick={async () => {
+                const res = await apiFetch(`/api/lab/v2/staff/labs/${lab.id}/publish/`, "POST");
+                if (res.ok) {
+                  alert("🟢 Lab published & activated for students!");
+                  const data = await res.json();
+                  setLab(data.lab);
+                }
+              }}
+            >
+              🟢 Publish to Students
+            </button>
+          )}
+
+          <button
+            type="button"
+            style={{ background: "#005696", color: "white", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
+            onClick={() => window.open(`/api/lab/v2/staff/labs/${lab.id}/full-report/`, '_blank')}
+          >
+            <Download size={14} /> Download Full Lab Report (PDF)
+          </button>
           <span className="slp2-chip"><BookOpen size={10} /> {exercises.length} exercises</span>
           <span className="slp2-chip"><Users size={10} /> {students.length} students</span>
         </div>
@@ -1156,7 +1254,11 @@ function LabDetail({ lab: initLab, onBack }) {
                       {gen.busy ? <Loader2 size={13} className="spin" /> : <FlaskConical size={13} />}
                     </button>
                     <button type="button" className="slp2-icon-btn"
-                      onClick={() => { setEditExercise(ex); setShowAddForm(false); }}>
+                      onClick={() => {
+                        setShowAddForm(false);
+                        setEditExercise(null);
+                        setTimeout(() => setEditExercise(ex), 0);
+                      }}>
                       <Pencil size={13} />
                     </button>
                     <button type="button" className="slp2-icon-btn danger" onClick={() => setDelEx(ex)}>
@@ -1223,6 +1325,7 @@ export default function StaffLabPanel() {
   const [labs, setLabs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
+  const [labTypeTab, setLabTypeTab] = useState("all"); // "all" | "practical" | "university"
 
   useEffect(() => {
     fetch("/api/lab/v2/staff/", { credentials: "include" })
@@ -1235,24 +1338,71 @@ export default function StaffLabPanel() {
 
   if (loading) return <div className="slp2-loading-page">Loading labs…</div>;
 
-  const active = labs.filter((l) => !l.is_expired);
-  const expired = labs.filter((l) => l.is_expired);
+  const filteredLabs = labs.filter((l) => {
+    if (labTypeTab === "practical") return l.lab_type !== "university";
+    if (labTypeTab === "university") return l.lab_type === "university";
+    return true;
+  });
+
+  const active = filteredLabs.filter((l) => !l.is_expired);
+  const expired = filteredLabs.filter((l) => l.is_expired);
 
   return (
     <div className="slp2-root">
-      <div className="slp2-page-head">
-        <div className="slp2-page-title"><FlaskConical size={20} /> Lab</div>
+      <div className="slp2-page-head" style={{ flexWrap: "wrap", gap: 16 }}>
+        <div className="slp2-page-title"><FlaskConical size={20} /> Lab Practical Center</div>
         <div className="slp2-head-stats">
           <span className="slp2-hstat"><TrendingUp size={13} /> {active.length} active</span>
           <span className="slp2-hstat"><BookOpen size={13} /> {labs.length} total</span>
         </div>
       </div>
 
-      {labs.length === 0 ? (
+      {/* Category Tab Bar */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 20, borderBottom: "1px solid #e2e8f0", paddingBottom: 10, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          onClick={() => setLabTypeTab("all")}
+          style={{
+            padding: "8px 16px", borderRadius: 8, border: "none",
+            background: labTypeTab === "all" ? "#005696" : "#f1f5f9",
+            color: labTypeTab === "all" ? "white" : "#475569",
+            fontWeight: 700, fontSize: 13, cursor: "pointer"
+          }}
+        >
+          🧪 All Labs ({labs.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setLabTypeTab("practical")}
+          style={{
+            padding: "8px 16px", borderRadius: 8, border: "none",
+            background: labTypeTab === "practical" ? "#005696" : "#f1f5f9",
+            color: labTypeTab === "practical" ? "white" : "#475569",
+            fontWeight: 700, fontSize: 13, cursor: "pointer"
+          }}
+        >
+          💻 Curriculum / Practice Labs ({labs.filter(l => l.lab_type !== "university").length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setLabTypeTab("university")}
+          style={{
+            padding: "8px 16px", borderRadius: 8, border: "none",
+            background: labTypeTab === "university" ? "#6d28d9" : "#f1f5f9",
+            color: labTypeTab === "university" ? "white" : "#475569",
+            fontWeight: 700, fontSize: 13, cursor: "pointer",
+            display: "flex", alignItems: "center", gap: 6
+          }}
+        >
+          🏛️ University Labs ({labs.filter(l => l.lab_type === "university").length})
+        </button>
+      </div>
+
+      {filteredLabs.length === 0 ? (
         <div className="slp2-empty-page">
           <FlaskConical size={48} />
-          <h3>No labs assigned</h3>
-          <p>Labs assigned to you by the HOD will appear here.</p>
+          <h3>No labs found</h3>
+          <p>{labTypeTab === "university" ? "No University Practical Labs assigned yet." : "No labs assigned to you by the HOD will appear here."}</p>
         </div>
       ) : (
         <>

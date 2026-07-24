@@ -60,6 +60,11 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
   const blank = {
     name: "", batch: "", section: "", start_date: "", end_date: "", staff_in_charge_id: "",
     allowed_languages: [...LAB_LANGUAGES],
+    lab_type: "practical",
+    enable_tab_switch_check: true,
+    max_tab_switches: 3,
+    enable_fullscreen_lock: true,
+    enable_copy_paste_lock: true,
   };
   const [form, setForm] = useState(blank);
   const [busy, setBusy] = useState(false);
@@ -76,6 +81,11 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
         end_date: editLab.end_date ? editLab.end_date.slice(0, 16) : "",
         staff_in_charge_id: editLab.staff_in_charge?.id ?? "",
         allowed_languages: editLab.allowed_languages?.length ? editLab.allowed_languages : [...LAB_LANGUAGES],
+        lab_type: editLab.lab_type || "practical",
+        enable_tab_switch_check: editLab.enable_tab_switch_check ?? true,
+        max_tab_switches: editLab.max_tab_switches ?? 3,
+        enable_fullscreen_lock: editLab.enable_fullscreen_lock ?? true,
+        enable_copy_paste_lock: editLab.enable_copy_paste_lock ?? true,
       });
     } else {
       setForm(blank);
@@ -117,6 +127,25 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
           <button type="button" className="hlc2-icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
         <form className="hlc2-form" onSubmit={submit}>
+          <div className="hlc2-field">
+            <label className="hlc2-label">Lab Type *</label>
+            <div style={{ display: "flex", gap: 10, marginTop: 4 }}>
+              <button
+                type="button"
+                className={`hlc2-pill${form.lab_type !== "university" ? " active" : ""}`}
+                onClick={() => setForm((f) => ({ ...f, lab_type: "practical" }))}
+              >
+                💻 Curriculum / Practice Lab
+              </button>
+              <button
+                type="button"
+                className={`hlc2-pill${form.lab_type === "university" ? " active" : ""}`}
+                onClick={() => setForm((f) => ({ ...f, lab_type: "university" }))}
+              >
+                🏛️ University Practical Lab
+              </button>
+            </div>
+          </div>
           <div className="hlc2-field">
             <label className="hlc2-label">Lab Name *</label>
             <input className="hlc2-input" placeholder="e.g. Arrays & Strings Lab – Sem 3"
