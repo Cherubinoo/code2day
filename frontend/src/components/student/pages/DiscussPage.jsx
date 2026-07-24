@@ -7,6 +7,7 @@ import {
   BarChart2, Plus, X as CloseIcon
 } from "lucide-react";
 import { buildJsonPostOptions } from "../../../lib/appUtils";
+import { useTabNav } from '../../../lib/useTabNav';
 
 function DiscussPage({ userType, studentProfile, staffProfile }) {
   // Initialize recipient from URL query parameters if provided
@@ -23,7 +24,7 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
 
   const profile = studentProfile || staffProfile;
 
-  const [activeTab, setActiveTab] = useState("general");
+  const [activeTab, setActiveTab] = useTabNav("general");
   const [activeThreadId, setActiveThreadId] = useState("general");
   const [activeBatch, setActiveBatch] = useState(studentProfile?.batch || "");
   const [activeRecipientReg, setActiveRecipientReg] = useState("");

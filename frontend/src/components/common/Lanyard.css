@@ -1,0 +1,29 @@
+.lanyard-wrapper {
+  position: relative;
+  z-index: 0;
+  width: 100%;
+  min-height: 520px;
+  height: clamp(520px, 62vh, 720px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: visible;
+}
+
+.lanyard-wrapper canvas {
+  display: block;
+}
+
+@media (max-width: 900px) {
+  .lanyard-wrapper {
+    min-height: 430px;
+    height: 52vh;
+  }
+}
+
+@media (max-width: 560px) {
+  .lanyard-wrapper {
+    min-height: 360px;
+    height: 46vh;
+  }
+}

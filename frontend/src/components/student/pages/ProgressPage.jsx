@@ -26,8 +26,10 @@ import {
 } from 'lucide-react';
 import ContestDashboardWidget from '../ContestDashboardWidget';
 import { PerformanceDashboard, AptitudeProgressRadar, TopicRadarChart, DifficultyDistributionChart, RankedBarChart } from '../../common/PerformanceCharts';
+import AnimatedNumber from '../../common/AnimatedNumber';
 import { getCsrfToken, extractApiError } from '../../../lib/appUtils';
 import { appUrlForPage } from '../../../lib/useHistoryNav';
+import { useTabNav } from '../../../lib/useTabNav';
 
 const shimmerStyles = `
   @keyframes shimmer {
@@ -168,7 +170,7 @@ function MentorAdvisorCard() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, onNavigateToContest, problemSet }) {
-  const [activeTab, setActiveTab] = useState("overall");
+  const [activeTab, setActiveTab] = useTabNav('overall');
   const [selectedBadge, setSelectedBadge] = useState(null);
   const [selectedCompanyDetail, setSelectedCompanyDetail] = useState(null);
   const [selectedTopicDetail, setSelectedTopicDetail] = useState(null);
@@ -441,8 +443,6 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
   const testsCompleted = selfAnalytics?.tests_completed || 0;
   const avgScore = selfAnalytics?.avg_score || 0;
   const peakScore = selfAnalytics?.peak_score || 0;
-  const companyInsights = selfAnalytics?.company_insights || [];
-  const skillInsights = selfAnalytics?.project_insights || [];
 
   const tabs = [
     { id: "overall", label: "Dashboard", icon: <TrendingUp size={18} /> },
@@ -482,15 +482,15 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
               <div style={{ display: 'flex', gap: 40 }}>
                 <div style={{ textAlign: 'left' }}>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Coding Solved</span>
-                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}>{totalCodingSolved}</div>
+                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}><AnimatedNumber value={totalCodingSolved} duration={1} /></div>
                 </div>
                 <div style={{ textAlign: 'left' }}>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Aptitude Solved</span>
-                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}>{totalAptitudeSolved}</div>
+                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}><AnimatedNumber value={totalAptitudeSolved} duration={1} /></div>
                 </div>
                 <div style={{ textAlign: 'left' }}>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Companies Tracked</span>
-                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}>{companyProgress.length}</div>
+                  <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}><AnimatedNumber value={companyProgress.length} duration={1} /></div>
                 </div>
               </div>
             </div>
@@ -541,7 +541,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                   textAlign: 'center'
                 }}>
                   <span style={{ fontSize: '3rem', fontWeight: 950, color: 'var(--olive-950)', lineHeight: 1 }}>
-                    {Math.round((codingRate * 0.75) + (aptitudeRate * 0.25))}%
+                    <AnimatedNumber value={`${Math.round((codingRate * 0.75) + (aptitudeRate * 0.25))}%`} duration={1} />
                   </span>
                   <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginTop: 4 }}>
                     Ready
@@ -633,7 +633,9 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                   <div style={{ height: 10, width: '100%', background: '#fef3c7', borderRadius: 5, overflow: 'hidden' }}>
                     <div style={{ width: `${codingRate}%`, background: 'var(--accent)', height: '100%' }} />
                   </div>
-                  <p style={{ margin: '16px 0 0 0', fontSize: '0.85rem', color: '#b45309', fontWeight: 700 }}>{totalCodingSolved} solved / {totalCodingInSystem} total</p>
+                  <p style={{ margin: '16px 0 0 0', fontSize: '0.85rem', color: '#b45309', fontWeight: 700 }}>
+                    <AnimatedNumber value={totalCodingSolved} duration={0.9} /> solved / <AnimatedNumber value={totalCodingInSystem} duration={0.9} /> total
+                  </p>
                 </div>
 
                 <div style={{ padding: 32, borderRadius: 24, background: '#f0f9ff', border: '2px solid #e0f2fe' }}>
@@ -647,7 +649,9 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                   <div style={{ height: 10, width: '100%', background: '#e0f2fe', borderRadius: 5, overflow: 'hidden' }}>
                     <div style={{ width: `${aptitudeRate}%`, background: '#0ea5e9', height: '100%' }} />
                   </div>
-                  <p style={{ margin: '16px 0 0 0', fontSize: '0.85rem', color: '#0369a1', fontWeight: 700 }}>{totalAptitudeSolved} solved / {totalAptitudeInSystem} total</p>
+                  <p style={{ margin: '16px 0 0 0', fontSize: '0.85rem', color: '#0369a1', fontWeight: 700 }}>
+                    <AnimatedNumber value={totalAptitudeSolved} duration={0.9} /> solved / <AnimatedNumber value={totalAptitudeInSystem} duration={0.9} /> total
+                  </p>
                 </div>
               </div>
             </div>
@@ -697,7 +701,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
         <div className="tab-fade surface-card" style={{ background: 'white', borderRadius: 32, padding: 48, boxShadow: '0 15px 35px rgba(0,0,0,0.03)' }}>
           <div className="section-head">
             <h2 style={{ fontSize: '1.8rem', fontWeight: 950 }}>Detailed Coding Analytics</h2>
-            <span>Solved {totalCodingSolved} out of {totalCodingInSystem} problems</span>
+            <span>Solved <AnimatedNumber value={totalCodingSolved} duration={0.9} /> out of <AnimatedNumber value={totalCodingInSystem} duration={0.9} /> problems</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 32, marginBottom: 48, marginTop: 32 }}>
             {['Easy', 'Medium', 'Hard'].map((diff, i) => {
@@ -732,46 +736,6 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
               </div>
             </div>
           </div>
-
-          {(companyInsights.length > 0 || skillInsights.length > 0) && (
-            <>
-              <div className="section-head">
-                <h3 style={{ fontSize: '1.4rem', fontWeight: 900 }}>Skill Profile</h3>
-                <span>Built from the companies and topics behind the problems you've solved</span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginTop: 24, marginBottom: 48 }}>
-                <div style={{ padding: 28, borderRadius: 24, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
-                  <h4 style={{ margin: '0 0 16px 0', fontSize: '1rem', fontWeight: 900, color: 'var(--olive-900)' }}>Companies You've Practiced For</h4>
-                  {companyInsights.length > 0 ? (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                      {companyInsights.map(c => (
-                        <span key={c.name} style={{ padding: '8px 16px', borderRadius: 999, background: 'linear-gradient(135deg, #fef9c3, #fef3c7)', color: '#92400e', fontWeight: 800, fontSize: '0.85rem' }}>
-                          {c.name} <span style={{ opacity: 0.7 }}>· {c.count}</span>
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem', margin: 0 }}>Solve problems tagged with a company to build this up.</p>
-                  )}
-                </div>
-                <div style={{ padding: 28, borderRadius: 24, background: '#f8fafc', border: '1px solid #e2e8f0' }}>
-                  <h4 style={{ margin: '0 0 16px 0', fontSize: '1rem', fontWeight: 900, color: 'var(--olive-900)' }}>Key Skills Demonstrated</h4>
-                  {skillInsights.length > 0 ? (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                      {skillInsights.map(s => (
-                        <span key={s.skill} style={{ padding: '8px 16px', borderRadius: 999, background: '#e0e7ff', color: '#3730a3', fontWeight: 800, fontSize: '0.85rem', textTransform: 'capitalize' }}>
-                          {s.skill} <span style={{ opacity: 0.7 }}>· {s.count}</span>
-                        </span>
-                      ))}
-                    </div>
-                  ) : (
-                    <p style={{ color: 'var(--text-soft)', fontSize: '0.9rem', margin: 0 }}>Solve project/system-design style problems to build this up.</p>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-
           <div className="section-head">
             <h3 style={{ fontSize: '1.4rem', fontWeight: 900 }}>Coding Badges</h3>
           </div>
@@ -980,7 +944,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
         <div className="tab-fade surface-card" style={{ background: 'white', borderRadius: 32, padding: 48, boxShadow: '0 15px 35px rgba(0,0,0,0.03)' }}>
           <div className="section-head">
             <h2 style={{ fontSize: '1.8rem', fontWeight: 950 }}>Aptitude Mastery Track</h2>
-            <span>Solved {totalAptitudeSolved} out of {totalAptitudeInSystem} questions</span>
+            <span>Solved <AnimatedNumber value={totalAptitudeSolved} duration={0.9} /> out of <AnimatedNumber value={totalAptitudeInSystem} duration={0.9} /> questions</span>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 32, marginTop: 32 }}>
@@ -996,7 +960,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                 <div style={{ width: `${aptitudeRate}%`, background: '#0ea5e9', height: '100%' }} />
               </div>
               <p style={{ margin: '20px 0 0 0', fontSize: '0.9rem', color: '#0369a1', fontWeight: 700 }}>
-                {totalAptitudeSolved} units completed / {totalAptitudeInSystem} available
+                <AnimatedNumber value={totalAptitudeSolved} duration={0.9} /> units completed / <AnimatedNumber value={totalAptitudeInSystem} duration={0.9} /> available
               </p>
             </div>
 

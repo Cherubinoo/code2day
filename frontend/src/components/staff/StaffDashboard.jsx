@@ -6,9 +6,10 @@ import StudentAnalyticsModal from './StudentAnalyticsModal';
 import ContestDetailModal from '../common/ContestDetailModal';
 import DiscussPage from '../student/pages/DiscussPage';
 import StaffLabPanel from './StaffLabPanel';
+import { useTabNav } from '../../lib/useTabNav';
 
 const StaffDashboard = ({ institutionId }) => {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useTabNav('overview');
   const [staffDetail, setStaffDetail] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1148,6 +1149,90 @@ const StaffDashboard = ({ institutionId }) => {
           {/* Batches Tab */}
           {activeTab === 'batches' && (
             <div className="batches-tab">
+
+              {/* ── Default-visible graphs: Weekly Solving Activity + Project Builders ── */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 28 }}>
+                {/* Weekly Solving Activity */}
+                <div className="premium-card">
+                  <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-hard)' }}>
+                    📈 Weekly Solving Activity
+                  </h3>
+                  <p style={{ margin: '0 0 20px', color: 'var(--text-soft)', fontSize: '13px' }}>
+                    Submissions per day this week
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 160, padding: '0 4px' }}>
+                    {(analytics.weekly_progress || []).map((day, i) => {
+                      const maxCount = Math.max(...(analytics.weekly_progress?.map(d => d.count) || [1]), 1);
+                      const heightPct = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
+                      return (
+                        <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                          <div style={{ fontSize: '10px', fontWeight: '700', color: 'var(--olive-700)' }}>{day.count > 0 ? day.count : ''}</div>
+                          <div
+                            style={{
+                              width: '100%',
+                              height: `${Math.max(heightPct, 4)}%`,
+                              background: heightPct > 70 ? 'linear-gradient(180deg,#4f7942,#2d5016)' : heightPct > 30 ? 'linear-gradient(180deg,#7ca370,#4f7942)' : 'var(--sage-200)',
+                              borderRadius: '6px 6px 0 0',
+                              transition: 'height 0.8s cubic-bezier(0.34,1.56,0.64,1)',
+                            }}
+                            title={`${day.count} submissions`}
+                          />
+                          <div style={{ fontSize: '11px', color: 'var(--text-soft)', fontWeight: '600' }}>{day.day}</div>
+                        </div>
+                      );
+                    })}
+                    {(!analytics.weekly_progress || analytics.weekly_progress.length === 0) && (
+                      <div style={{ flex: 1, textAlign: 'center', color: 'var(--text-soft)', fontSize: '13px', paddingTop: 60 }}>No activity data yet.</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Project Builders */}
+                <div className="premium-card">
+                  <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-hard)' }}>
+                    🏗️ Project Builders
+                  </h3>
+                  <p style={{ margin: '0 0 20px', color: 'var(--text-soft)', fontSize: '13px' }}>
+                    Top students by problems solved — click to view profile
+                  </p>
+                  {(() => {
+                    const builders = (analytics.top_performers || []).slice(0, 8);
+                    const maxSolved = Math.max(...builders.map(s => s.solved_count || 0), 1);
+                    const colors = ['#2563eb','#7c3aed','#059669','#d97706','#dc2626','#0891b2','#4f46e5','#be185d'];
+                    return builders.length > 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {builders.map((student, i) => {
+                          const pct = ((student.solved_count || 0) / maxSolved) * 100;
+                          return (
+                            <div
+                              key={student.id || i}
+                              onClick={() => setSelectedStudentForAnalytics(student.register_number || student.id)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '2px 4px', borderRadius: 6, transition: 'background 0.15s' }}
+                              onMouseOver={e => e.currentTarget.style.background = 'var(--sage-50)'}
+                              onMouseOut={e => e.currentTarget.style.background = 'transparent'}
+                              title={`View ${student.name}'s profile`}
+                            >
+                              <div style={{ width: 24, fontSize: '11px', fontWeight: '800', color: 'var(--text-soft)', textAlign: 'right' }}>#{i+1}</div>
+                              <div style={{ width: 76, fontSize: '12px', fontWeight: '600', color: 'var(--text-hard)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {student.name?.split(' ')[0] || 'Student'}
+                              </div>
+                              <div style={{ flex: 1, height: 14, background: '#f1f5f9', borderRadius: 8, overflow: 'hidden' }}>
+                                <div style={{ height: '100%', width: `${pct}%`, background: colors[i % colors.length], borderRadius: 8, transition: 'width 0.8s cubic-bezier(0.34,1.56,0.64,1)' }} />
+                              </div>
+                              <div style={{ width: 30, fontSize: '12px', fontWeight: '800', color: 'var(--olive-700)', textAlign: 'right' }}>
+                                {student.solved_count || 0}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ textAlign: 'center', color: 'var(--text-soft)', fontSize: '13px', paddingTop: 40 }}>No performance data yet.</div>
+                    );
+                  })()}
+                </div>
+              </div>
+
               <div className="premium-card" style={{ marginBottom: 24 }}>
                 <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Batch Insights</h3>
                 <p style={{ margin: '4px 0 24px', color: 'var(--text-soft)', fontSize: '14px' }}>Analyze performance across different student groups.</p>

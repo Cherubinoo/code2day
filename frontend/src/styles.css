@@ -9674,3 +9674,339 @@ html.discuss-page {
   .slab-ws-right { height: 70vh; }
 }
 
+/* Compact dashboard pass */
+@media (min-width: 901px) {
+  .topbar {
+    padding: 12px 16px;
+    border-radius: 18px;
+    margin-bottom: 14px;
+  }
+
+  .brand-badge {
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+  }
+
+  .brand-block {
+    gap: 10px;
+  }
+
+  .brand-block h1,
+  .account-info strong {
+    font-size: 1rem;
+  }
+
+  .brand-block p,
+  .account-block p {
+    font-size: 0.84rem;
+  }
+
+  .nav-link,
+  .switch-pill {
+    padding: 9px 12px;
+    font-size: 0.84rem;
+  }
+
+  .admin-header {
+    margin-bottom: 24px;
+  }
+
+  .admin-header h1 {
+    font-size: clamp(1.35rem, 1.8vw, 1.9rem);
+    letter-spacing: 0;
+  }
+
+  .admin-header p {
+    font-size: 0.95rem;
+  }
+
+  .premium-card,
+  .surface-card {
+    border-radius: 18px;
+  }
+
+  .premium-card {
+    padding: 24px;
+  }
+
+  .metric-grid,
+  .admin-stats-grid {
+    gap: 16px;
+  }
+
+  .metric-card {
+    gap: 16px;
+  }
+
+  .metric-card .icon-box {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+  }
+
+  .hod-main-content {
+    padding: clamp(20px, 2vw, 32px);
+  }
+}
+
+/* Developers profile */
+.developers-page {
+  width: min(1180px, calc(100% - 32px));
+  margin: 28px auto;
+  padding: 24px;
+  color: var(--text-hard);
+}
+
+.developers-hero {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 22px;
+  align-items: start;
+  margin-bottom: 28px;
+}
+
+.developers-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: white;
+  color: var(--olive-900);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.developers-kicker {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  font-weight: 900;
+  color: var(--olive-700);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.developers-hero h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 4.2rem);
+  line-height: 0.95;
+  font-weight: 950;
+  letter-spacing: 0;
+  color: var(--olive-950);
+}
+
+.developers-hero p:last-child {
+  max-width: 720px;
+  margin: 14px 0 0;
+  color: var(--text-soft);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.developers-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.developers-showcase {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.95fr) minmax(360px, 1.05fr);
+  gap: 24px;
+  align-items: stretch;
+  min-height: clamp(560px, 68vh, 760px);
+}
+
+.developers-lanyard-panel,
+.developers-info-stack {
+  min-width: 0;
+}
+
+.developers-lanyard-panel {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-soft);
+  border-radius: 22px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.72), rgba(244, 247, 237, 0.88)),
+    radial-gradient(circle at 40% 20%, rgba(196, 151, 67, 0.22), transparent 42%);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+}
+
+.developers-lanyard-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(45, 80, 22, 0.06) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(45, 80, 22, 0.06) 1px, transparent 1px);
+  background-size: 34px 34px;
+  pointer-events: none;
+}
+
+.developers-info-stack {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.developer-info-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(22px, 3vw, 34px);
+  border: 1px solid var(--border-soft);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--shadow-soft);
+}
+
+.developer-shell {
+  display: grid;
+  grid-template-columns: minmax(230px, 315px) 1fr;
+  gap: 22px;
+  align-items: center;
+  padding: 18px;
+  border: 1px solid var(--border-soft);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: var(--shadow-soft);
+}
+
+.developer-details {
+  min-width: 0;
+}
+
+.developer-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: var(--sage-100);
+  color: var(--olive-800);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.developer-details h2 {
+  margin: 16px 0 8px;
+  font-size: clamp(1.35rem, 2vw, 2rem);
+  color: var(--olive-950);
+}
+
+.developer-info-card h2 {
+  margin: 16px 0 8px;
+  font-size: clamp(1.45rem, 2.2vw, 2.15rem);
+  color: var(--olive-950);
+}
+
+.developer-details p {
+  margin: 0 0 18px;
+  color: var(--text-soft);
+  line-height: 1.65;
+  font-weight: 600;
+}
+
+.developer-info-card p {
+  margin: 0 0 18px;
+  color: var(--text-soft);
+  line-height: 1.68;
+  font-weight: 600;
+}
+
+.developer-contact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.developer-contact-list a,
+.developer-contact-list span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-hard);
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-decoration: none;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.developer-contact-list a:hover {
+  color: var(--olive-700);
+}
+
+.developers-thanks {
+  margin-top: 24px;
+  padding: 18px 22px;
+  border-radius: 16px;
+  border: 1px solid #fed7aa;
+  background: #fff7ed;
+  text-align: center;
+}
+
+.developers-thanks p {
+  margin: 0 0 6px;
+  font-size: 0.78rem;
+  font-weight: 900;
+  color: #c2410c;
+  text-transform: uppercase;
+}
+
+.developers-thanks h3 {
+  margin: 0;
+  color: #9a3412;
+}
+
+.developers-thanks span {
+  display: block;
+  margin-top: 6px;
+  color: #c2410c;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 1120px) {
+  .developers-showcase {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .developers-info-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+  }
+
+  .developers-grid,
+  .developer-shell {
+    grid-template-columns: 1fr;
+  }
+
+}
+
+@media (max-width: 640px) {
+  .developers-page {
+    width: min(100%, calc(100% - 16px));
+    padding: 14px;
+    margin: 12px auto;
+  }
+
+  .developers-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .developers-info-stack {
+    grid-template-columns: 1fr;
+  }
+
+  .developer-info-card {
+    padding: 20px;
+  }
+}
+

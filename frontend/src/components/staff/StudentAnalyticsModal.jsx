@@ -1,8 +1,9 @@
 // Student Analytics Modal - Detailed view of individual student performance
 import { useState, useEffect } from 'react';
-import { X, TrendingUp, Award, Activity, FileText, Briefcase, Layout } from 'lucide-react';
+import { X, TrendingUp, Award, Activity, FileText } from 'lucide-react';
 import ReportFilterModal from '../common/ReportFilterModal';
 import { PerformanceDashboard } from '../common/PerformanceCharts';
+import AnimatedNumber from '../common/AnimatedNumber';
 
 const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
   const [analytics, setAnalytics] = useState(null);
@@ -51,11 +52,8 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
     return (
       <div style={{
         position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
+        top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.6)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -77,11 +75,8 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
     return (
       <div style={{
         position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        background: 'rgba(0,0,0,0.5)',
+        top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.6)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -117,39 +112,37 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
   return (
     <div style={{
       position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: 'rgba(0,0,0,0.5)',
+      top: 0, left: 0, right: 0, bottom: 0,
+      background: 'rgba(0,0,0,0.65)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       zIndex: 1000,
-      padding: 20,
+      padding: '16px',
     }}>
+      {/* Fully expanded modal — 95vw × 92vh, no max-height clamping */}
       <div style={{
         background: 'white',
         borderRadius: '24px',
-        maxWidth: 1180,
-        width: '100%',
-        maxHeight: '90vh',
-        overflow: 'auto',
-        boxShadow: '0 32px 64px rgba(0,0,0,0.2)',
+        width: '95vw',
+        maxWidth: 1500,
+        height: '92vh',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        boxShadow: '0 32px 64px rgba(0,0,0,0.25)',
         border: '1px solid var(--border-soft)',
       }}>
-        {/* Header */}
+        {/* Sticky Header */}
         <div style={{
-          padding: '32px',
+          padding: '28px 32px',
           borderBottom: '1px solid var(--border-soft)',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
-          position: 'sticky',
-          top: 0,
-          background: 'rgba(255, 255, 255, 0.9)',
+          background: 'rgba(255,255,255,0.97)',
           backdropFilter: 'blur(10px)',
-          zIndex: 10,
+          flexShrink: 0,
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
             <div style={{ 
@@ -187,12 +180,12 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
                 transition: 'all 0.2s ease'
               }}
               onMouseOver={(e) => {
-                e.target.style.background = '#1f3a0f';
-                e.target.style.transform = 'translateY(-1px)';
+                e.currentTarget.style.background = '#1f3a0f';
+                e.currentTarget.style.transform = 'translateY(-1px)';
               }}
               onMouseOut={(e) => {
-                e.target.style.background = '#2d5016';
-                e.target.style.transform = 'translateY(0)';
+                e.currentTarget.style.background = '#2d5016';
+                e.currentTarget.style.transform = 'translateY(0)';
               }}
             >
               <FileText size={18} /> Download Report
@@ -216,9 +209,9 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
           </div>
         </div>
 
-        {/* Content */}
-        <div style={{ padding: 24 }}>
-          {/* Performance Charts */}
+        {/* Scrollable content area — fully expanded, no maxHeight clamping */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px' }}>
+          {/* ── Performance Charts FIRST (graph visible immediately) ── */}
           <PerformanceDashboard
             scoreHistory={data.score_history || []}
             topicAccuracy={data.topic_accuracy || []}
@@ -242,102 +235,44 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
             gap: 16,
             marginBottom: 32,
           }}>
-            <div style={{
-              padding: 16,
-              background: '#f0fdf4',
-              borderRadius: 10,
-              border: '1px solid #bbf7d0',
-            }}>
+            <div style={{ padding: 16, background: '#f0fdf4', borderRadius: 10, border: '1px solid #bbf7d0' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <Award size={18} style={{ color: '#059669' }} />
                 <span style={{ fontSize: 12, color: '#666', fontWeight: 500 }}>Total Solved</span>
               </div>
               <div style={{ fontSize: 28, fontWeight: 'bold', color: '#059669' }}>
-                {data.solved_count}
+                <AnimatedNumber value={data.solved_count || 0} duration={0.9} />
               </div>
             </div>
 
-            <div style={{
-              padding: 16,
-              background: '#fef3c7',
-              borderRadius: 10,
-              border: '1px solid #fde68a',
-            }}>
+            <div style={{ padding: 16, background: '#fef3c7', borderRadius: 10, border: '1px solid #fde68a' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <TrendingUp size={18} style={{ color: '#d97706' }} />
                 <span style={{ fontSize: 12, color: '#666', fontWeight: 500 }}>Current Streak</span>
               </div>
               <div style={{ fontSize: 28, fontWeight: 'bold', color: '#d97706' }}>
-                {student.current_streak} 🔥
+                <AnimatedNumber value={student.current_streak || 0} duration={0.9} /> 🔥
               </div>
             </div>
 
-            <div style={{
-              padding: 16,
-              background: '#e0e7ff',
-              borderRadius: 10,
-              border: '1px solid #c7d2fe',
-            }}>
+            <div style={{ padding: 16, background: '#e0e7ff', borderRadius: 10, border: '1px solid #c7d2fe' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <Activity size={18} style={{ color: '#4f46e5' }} />
                 <span style={{ fontSize: 12, color: '#666', fontWeight: 500 }}>Aptitude Score</span>
               </div>
               <div style={{ fontSize: 28, fontWeight: 'bold', color: '#4f46e5' }}>
-                {data.aptitude?.percentage || 0}%
+                <AnimatedNumber value={`${data.aptitude?.percentage || 0}%`} duration={0.9} />
               </div>
             </div>
 
-            <div style={{
-              padding: 16,
-              background: '#fce7f3',
-              borderRadius: 10,
-              border: '1px solid #fbcfe8',
-            }}>
+            <div style={{ padding: 16, background: '#fce7f3', borderRadius: 10, border: '1px solid #fbcfe8' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                 <Activity size={18} style={{ color: '#db2777' }} />
                 <span style={{ fontSize: 12, color: '#666', fontWeight: 500 }}>Campus Rank</span>
               </div>
               <div style={{ fontSize: 28, fontWeight: 'bold', color: '#db2777' }}>
-                {student.campus_rank || 'N/A'}
+                <AnimatedNumber value={student.campus_rank || 'N/A'} duration={0.9} />
               </div>
-            </div>
-          </div>
-
-          {/* Professional Insights Row */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 32 }}>
-            <div style={{ padding: 20, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
-               <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#475569', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Briefcase size={16} /> Targeted Companies
-               </h4>
-               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {data.company_insights?.length > 0 ? (
-                    data.company_insights.map((comp, idx) => (
-                      <div key={idx} style={{ padding: '6px 12px', background: 'white', borderRadius: 8, fontSize: 12, border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: 6 }}>
-                         <strong>{comp.name}</strong>
-                         <span style={{ color: '#94a3b8' }}>{comp.count}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <span style={{ fontSize: 13, color: '#94a3b8' }}>No data available.</span>
-                  )}
-               </div>
-            </div>
-
-            <div style={{ padding: 20, background: '#fdf2f8', borderRadius: 12, border: '1px solid #fce7f3' }}>
-               <h4 style={{ margin: '0 0 12px', fontSize: 14, color: '#be185d', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Layout size={16} /> Skill Focus
-               </h4>
-               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {data.project_insights?.length > 0 ? (
-                    data.project_insights.map((proj, idx) => (
-                      <div key={idx} style={{ padding: '6px 12px', background: 'white', borderRadius: 8, fontSize: 12, border: '1px solid #fce7f3', color: '#db2777', fontWeight: 600 }}>
-                         {proj.skill.toUpperCase()}
-                      </div>
-                    ))
-                  ) : (
-                    <span style={{ fontSize: 13, color: '#be185d', opacity: 0.6 }}>No data available.</span>
-                  )}
-               </div>
             </div>
           </div>
 
@@ -345,39 +280,21 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
           <div style={{ marginBottom: 32 }}>
             <h3 style={{ fontSize: 16, marginBottom: 16 }}>Problems by Difficulty</h3>
             <div style={{ display: 'flex', gap: 12 }}>
-              <div style={{
-                flex: 1,
-                padding: 16,
-                background: '#d1fae5',
-                borderRadius: 10,
-                textAlign: 'center',
-              }}>
+              <div style={{ flex: 1, padding: 16, background: '#d1fae5', borderRadius: 10, textAlign: 'center' }}>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: '#059669' }}>
-                  {data.difficulty_breakdown.Easy || 0}
+                  {data.difficulty_breakdown?.Easy || 0}
                 </div>
                 <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>Easy</div>
               </div>
-              <div style={{
-                flex: 1,
-                padding: 16,
-                background: '#fef3c7',
-                borderRadius: 10,
-                textAlign: 'center',
-              }}>
+              <div style={{ flex: 1, padding: 16, background: '#fef3c7', borderRadius: 10, textAlign: 'center' }}>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: '#d97706' }}>
-                  {data.difficulty_breakdown.Medium || 0}
+                  {data.difficulty_breakdown?.Medium || 0}
                 </div>
                 <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>Medium</div>
               </div>
-              <div style={{
-                flex: 1,
-                padding: 16,
-                background: '#fee2e2',
-                borderRadius: 10,
-                textAlign: 'center',
-              }}>
+              <div style={{ flex: 1, padding: 16, background: '#fee2e2', borderRadius: 10, textAlign: 'center' }}>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: '#dc2626' }}>
-                  {data.difficulty_breakdown.Hard || 0}
+                  {data.difficulty_breakdown?.Hard || 0}
                 </div>
                 <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>Hard</div>
               </div>
@@ -388,12 +305,7 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
           <div style={{ marginBottom: 32 }}>
             <h3 style={{ fontSize: 16, marginBottom: 16 }}>Recent Activity (Last 30 Days)</h3>
             {data.recent_activity && data.recent_activity.length > 0 ? (
-              <div style={{
-                maxHeight: 300,
-                overflow: 'auto',
-                border: '1px solid #e5e7eb',
-                borderRadius: 10,
-              }}>
+              <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                   <thead>
                     <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
@@ -413,22 +325,16 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
                         <td style={{ padding: '10px 12px' }}>{activity.problem}</td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <span style={{
-                            padding: '2px 8px',
-                            borderRadius: 12,
-                            fontSize: 11,
-                            background: activity.difficulty === 'Easy' ? '#d1fae5' :
-                                       activity.difficulty === 'Medium' ? '#fef3c7' : '#fee2e2',
-                            color: activity.difficulty === 'Easy' ? '#059669' :
-                                   activity.difficulty === 'Medium' ? '#d97706' : '#dc2626',
+                            padding: '2px 8px', borderRadius: 12, fontSize: 11,
+                            background: activity.difficulty === 'Easy' ? '#d1fae5' : activity.difficulty === 'Medium' ? '#fef3c7' : '#fee2e2',
+                            color: activity.difficulty === 'Easy' ? '#059669' : activity.difficulty === 'Medium' ? '#d97706' : '#dc2626',
                           }}>
                             {activity.difficulty}
                           </span>
                         </td>
                         <td style={{ padding: '10px 12px', textAlign: 'center' }}>
                           <span style={{
-                            padding: '2px 8px',
-                            borderRadius: 12,
-                            fontSize: 11,
+                            padding: '2px 8px', borderRadius: 12, fontSize: 11,
                             background: activity.status === 'Accepted' ? '#d1fae5' : '#fee2e2',
                             color: activity.status === 'Accepted' ? '#059669' : '#dc2626',
                           }}>
@@ -444,13 +350,7 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
                 </table>
               </div>
             ) : (
-              <div style={{
-                padding: 40,
-                textAlign: 'center',
-                color: '#999',
-                background: '#f9fafb',
-                borderRadius: 10,
-              }}>
+              <div style={{ padding: 40, textAlign: 'center', color: '#999', background: '#f9fafb', borderRadius: 10 }}>
                 No recent activity
               </div>
             )}
@@ -463,13 +363,8 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {data.contest_participations.map((contest, idx) => (
                   <div key={idx} style={{
-                    padding: 16,
-                    background: '#f9fafb',
-                    borderRadius: 10,
-                    border: '1px solid #e5e7eb',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
+                    padding: 16, background: '#f9fafb', borderRadius: 10, border: '1px solid #e5e7eb',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                   }}>
                     <div>
                       <div style={{ fontWeight: 500, marginBottom: 4 }}>{contest.contest__title}</div>
@@ -481,9 +376,7 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
                       padding: '6px 12px',
                       background: contest.solved > 0 ? '#d1fae5' : '#f3f4f6',
                       color: contest.solved > 0 ? '#059669' : '#666',
-                      borderRadius: 8,
-                      fontSize: 13,
-                      fontWeight: 600,
+                      borderRadius: 8, fontSize: 13, fontWeight: 600,
                     }}>
                       {contest.solved}/{contest.submissions}
                     </div>
@@ -502,7 +395,7 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
         onGenerate={handleGenerateReport}
         title={`Generate Report for ${analytics?.student?.name || 'Student'}`}
         batches={analytics?.student?.batch ? [analytics.student.batch] : []}
-        showBatchFilter={false} // Hide batch filter for individual student
+        showBatchFilter={false}
         showReportTypeFilter={true}
         showTopicFilter={true}
       />

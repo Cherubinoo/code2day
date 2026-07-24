@@ -1,6 +1,7 @@
 // Contest Dashboard Widget - Shows upcoming, active, and completed contests
 import { useState, useEffect } from 'react';
 import { Trophy, Clock, Calendar, CheckCircle, Play, TrendingUp, Award, Target } from 'lucide-react';
+import AnimatedNumber from '../common/AnimatedNumber';
 
 const ContestDashboardWidget = ({ onNavigateToContest }) => {
   const [contests, setContests] = useState([]);
@@ -124,7 +125,7 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
             <Trophy size={24} />
             <span style={{ fontSize: '0.875rem', opacity: 0.9 }}>Total Contests</span>
           </div>
-          <div style={{ fontSize: '2.5rem', fontWeight: 700 }}>{totalContests}</div>
+          <div style={{ fontSize: '2.5rem', fontWeight: 700 }}><AnimatedNumber value={totalContests} duration={0.9} /></div>
         </div>
 
         <div style={{
@@ -137,7 +138,7 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
             <Play size={24} />
             <span style={{ fontSize: '0.875rem', opacity: 0.9 }}>Participated</span>
           </div>
-          <div style={{ fontSize: '2.5rem', fontWeight: 700 }}>{totalParticipated}</div>
+          <div style={{ fontSize: '2.5rem', fontWeight: 700 }}><AnimatedNumber value={totalParticipated} duration={0.9} /></div>
         </div>
 
         <div style={{
@@ -150,7 +151,7 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
             <CheckCircle size={24} />
             <span style={{ fontSize: '0.875rem', opacity: 0.9 }}>Completed</span>
           </div>
-          <div style={{ fontSize: '2.5rem', fontWeight: 700 }}>{totalCompleted}</div>
+          <div style={{ fontSize: '2.5rem', fontWeight: 700 }}><AnimatedNumber value={totalCompleted} duration={0.9} /></div>
         </div>
 
         <div style={{
@@ -163,7 +164,7 @@ const ContestDashboardWidget = ({ onNavigateToContest }) => {
             <Target size={24} />
             <span style={{ fontSize: '0.875rem', opacity: 0.9 }}>Problems Solved</span>
           </div>
-          <div style={{ fontSize: '2.5rem', fontWeight: 700 }}>{totalProblemsAttempted}</div>
+          <div style={{ fontSize: '2.5rem', fontWeight: 700 }}><AnimatedNumber value={totalProblemsAttempted} duration={0.9} /></div>
         </div>
       </div>
 

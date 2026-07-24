@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Trophy, Clock, Target, Award, Users, ChevronRight, X, MessageSquare } from 'lucide-react';
+import MagicBento from '../../common/MagicBento';
 
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -239,6 +240,48 @@ function ExplorePage({
             </div>
           </div>
         </article>
+      </section>
+
+      {/* MagicBento animated feature grid */}
+      <section style={{ padding: '0 0 0', background: 'var(--bg-1)' }}>
+        <div style={{ textAlign: 'center', paddingTop: '2.5rem', paddingBottom: '0.5rem' }}>
+          <span style={{
+            display: 'inline-block',
+            background: 'linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%)',
+            color: '#fff',
+            fontSize: '11px',
+            fontWeight: '800',
+            letterSpacing: '0.12em',
+            textTransform: 'uppercase',
+            padding: '4px 14px',
+            borderRadius: '20px',
+            marginBottom: '12px'
+          }}>Platform</span>
+          <h2 style={{
+            margin: '0 0 6px',
+            fontSize: 'clamp(1.4rem, 2.5vw, 2rem)',
+            fontWeight: '900',
+            color: 'var(--text-hard)',
+            letterSpacing: '-0.02em'
+          }}>Everything you need to grow</h2>
+          <p style={{ margin: 0, color: 'var(--text-soft)', fontSize: '0.95rem' }}>
+            Six pillars of your placement preparation — all in one place.
+          </p>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          <MagicBento
+            textAutoHide={true}
+            enableStars={false}
+            enableSpotlight={false}
+            enableBorderGlow={true}
+            enableTilt
+            enableMagnetism
+            clickEffect={true}
+            spotlightRadius={150}
+            particleCount={12}
+            glowColor="132, 0, 255"
+          />
+        </div>
       </section>
 
       <section className="surface-card explore-company-strip">

@@ -15,6 +15,7 @@ import {
 } from 'chart.js';
 import 'chartjs-adapter-date-fns';
 import { Bar, Line, Pie, Radar } from 'react-chartjs-2';
+import AnimatedNumber from './AnimatedNumber';
 
 ChartJS.register(
   ArcElement,
@@ -934,7 +935,9 @@ function StatCard({ label, value, sub, subColor, valueColor, icon, note }) {
           <div style={{ fontSize: 10, fontWeight: 800, color: 'rgba(255,255,255,0.38)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
             {label}
           </div>
-          <div style={{ fontSize: 28, fontWeight: 900, color: valueColor, lineHeight: 1 }}>{value}</div>
+          <div style={{ fontSize: 28, fontWeight: 900, color: valueColor, lineHeight: 1 }}>
+            <AnimatedNumber value={value} duration={0.9} />
+          </div>
           <div style={{ marginTop: 6, fontSize: 11, fontWeight: 700, color: subColor }}>{sub}</div>
           {note && <div style={{ marginTop: 4, fontSize: 10, color: 'rgba(255,255,255,0.25)' }}>{note}</div>}
         </div>

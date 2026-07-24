@@ -14,6 +14,8 @@ import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import ProblemBankView from './ProblemBankView';
 import AptitudeBankView from './AptitudeBankView';
 import LLMProviderView from './LLMProviderView';
+import AnimatedNumber from '../common/AnimatedNumber';
+import { useTabNav } from '../../lib/useTabNav';
 
 const AdminDashboard = () => {
   const [loading, setLoading] = useState(true);
@@ -21,7 +23,7 @@ const AdminDashboard = () => {
   const [showProblemBank, setShowProblemBank] = useState(false);
   const [showAptitudeBank, setShowAptitudeBank] = useState(false);
   const [showLLMProviders, setShowLLMProviders] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useTabNav('dashboard');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
   
@@ -375,7 +377,9 @@ const AdminDashboard = () => {
                   <div style={{ width: 48, height: 48, borderRadius: 12, background: `${m.color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: m.color, marginBottom: 20 }}>
                     <m.icon size={24} />
                   </div>
-                  <div style={{ fontSize: '2.2rem', fontWeight: 950, color: 'var(--olive-950)', marginBottom: 8 }}>{m.value}</div>
+                  <div style={{ fontSize: '2.2rem', fontWeight: 950, color: 'var(--olive-950)', marginBottom: 8 }}>
+                    <AnimatedNumber value={m.value} duration={0.9} />
+                  </div>
                   <div style={{ fontSize: '0.9rem', color: 'var(--text-soft)', fontWeight: 600 }}>{m.label}{m.onClick ? ' →' : ''}</div>
                 </div>
               ))}
@@ -396,7 +400,7 @@ const AdminDashboard = () => {
                   <div style={{ padding: '8px 16px', background: 'var(--sage-100)', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
                     <span style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--olive-700)' }}>
-                      {institutions.filter(i => i.is_active).length} Active
+                      <AnimatedNumber value={institutions.filter(i => i.is_active).length} duration={0.8} /> Active
                     </span>
                   </div>
                   <button onClick={() => setShowCreateModal(true)} className="primary-button" style={{ borderRadius: 12, padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', width: 'fit-content' }}>

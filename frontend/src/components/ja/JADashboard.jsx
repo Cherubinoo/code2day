@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { getCsrfToken } from '../../lib/appUtils';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
+import AnimatedNumber from '../common/AnimatedNumber';
+import { useTabNav } from '../../lib/useTabNav';
 
 const SECTIONS = ['A', 'B', 'C'];
 
@@ -48,7 +50,9 @@ function StatCard({ icon: Icon, label, value, color = '#2D6A4F' }) {
         <Icon size={22} color={color} />
       </div>
       <div>
-        <div style={{ fontSize: 26, fontWeight: 900, color: '#111827' }}>{value}</div>
+        <div style={{ fontSize: 26, fontWeight: 900, color: '#111827' }}>
+          <AnimatedNumber value={value} duration={0.9} />
+        </div>
         <div style={{ fontSize: 13, color: '#6b7280', fontWeight: 500 }}>{label}</div>
       </div>
     </div>
@@ -2210,7 +2214,7 @@ function SidebarContent({ activeTab, setActiveTab, jaInfo, onClearBatch }) {
 }
 
 function JADashboard() {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useTabNav('overview');
   const [jaInfo, setJaInfo] = useState(null);
   const [stats, setStats] = useState({ total_students: 0, total_batches: 0 });
   const [batches, setBatches] = useState([]);

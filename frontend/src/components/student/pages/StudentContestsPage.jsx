@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { Trophy, Clock, CheckCircle, AlertCircle, Calendar, Play, Award, Users, Target } from 'lucide-react';
 import { getCsrfToken } from '../../../lib/appUtils';
+import AnimatedNumber from '../../common/AnimatedNumber';
 
 const StudentContestsPage = ({ onNavigateToContest, autoOpenContestId, onResetAutoOpen }) => {
   const [contests, setContests] = useState([]);
@@ -694,13 +695,13 @@ function CompletedContestCard({ contest, onViewWinners }) {
         }}>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: '#059669' }}>
-              {contest.participation.problems_solved}
+              <AnimatedNumber value={contest.participation.problems_solved || 0} duration={0.8} />
             </div>
             <div style={{ fontSize: 10, color: '#666' }}>Solved</div>
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: '#dc2626' }}>
-              {contest.participation.total_score}
+              <AnimatedNumber value={contest.participation.total_score || 0} duration={0.8} />
             </div>
             <div style={{ fontSize: 10, color: '#666' }}>Score</div>
           </div>
@@ -806,13 +807,13 @@ function ContestCard({ contest, isUpcoming, isCompleted, onStart }) {
             {contest.contest_type === 'aptitude' ? 'Questions' : 'Problems'}
           </div>
           <div style={{ fontSize: 16, fontWeight: 600, color: '#4f46e5' }}>
-            {contest.contest_type === 'aptitude' ? contest.aptitude_question_count : contest.problem_count}
+            <AnimatedNumber value={contest.contest_type === 'aptitude' ? contest.aptitude_question_count : contest.problem_count} duration={0.8} />
           </div>
         </div>
         <div>
           <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Session Duration</div>
           <div style={{ fontSize: 16, fontWeight: 600, color: '#d97706' }}>
-            {contest.session_duration_minutes || contest.duration_minutes} min
+            <AnimatedNumber value={contest.session_duration_minutes || contest.duration_minutes || 0} duration={0.8} /> min
           </div>
         </div>
         {contest.participation && (
@@ -820,13 +821,13 @@ function ContestCard({ contest, isUpcoming, isCompleted, onStart }) {
             <div>
               <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Solved</div>
               <div style={{ fontSize: 16, fontWeight: 600, color: '#059669' }}>
-                {contest.participation.problems_solved}
+                <AnimatedNumber value={contest.participation.problems_solved || 0} duration={0.8} />
               </div>
             </div>
             <div>
               <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Score</div>
               <div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626' }}>
-                {contest.participation.total_score}
+                <AnimatedNumber value={contest.participation.total_score || 0} duration={0.8} />
               </div>
             </div>
           </>

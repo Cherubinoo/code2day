@@ -4839,6 +4839,8 @@ class StudentDetailView(APIView):
                 'earned': True, 'type': 'difficulty',
             })
 
+        performance_charts = _build_student_performance_charts(student, solved_problems, [])
+
         return Response({
             'student': {
                 'register_number': student.register_number,
@@ -4866,6 +4868,7 @@ class StudentDetailView(APIView):
                 },
                 'company_insights': company_insights,
                 'project_insights': project_insights,
+                **performance_charts,
             },
             'achievements': achievements,
         })

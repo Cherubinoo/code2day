@@ -1,88 +1,102 @@
-import React from 'react';
+import { ArrowLeft, Code2, GraduationCap, Globe, Mail, Phone } from 'lucide-react';
+import Lanyard from './Lanyard';
+
+const avatarUrl = '/images/dev.png';
+
+const developers = [
+  {
+    name: 'Delight Cherubino',
+    title: 'Lead Developer',
+    handle: 'delightcherubino',
+    contact: '+91 8220789878',
+    mail: 'delightcherubino@gmail.com',
+    domain: 'https://delightcherubino.com/',
+    domainLabel: 'delightcherubino.com',
+    batch: '2023 - 2027',
+    focus: 'Full project architecture, Django backend services, API design, authentication flows, execution pipeline, and the main frontend application experience.',
+  },
+  {
+    name: 'Sanjay R',
+    title: 'Lead Developer',
+    handle: 'sanjay-r',
+    contact: '+91 8523999020',
+    mail: 'sanjaydharsaan007@gmail.com',
+    batch: '2023 - 2027',
+    focus: 'Aptitude question generation, validation modules, analytics support, and quality checks across the learning and assessment flow.',
+  },
+];
 
 const DevelopersProfile = ({ onBack, isLoggedIn }) => {
   return (
-    <div style={{
-      maxWidth: '800px',
-      margin: '40px auto',
-      padding: '30px',
-      background: 'white',
-      borderRadius: '20px',
-      boxShadow: '0 10px 25px rgba(0,0,0,0.05)',
-      fontFamily: '"Segoe UI", Tahoma, Geneva, Verdana, sans-serif'
-    }}>
-      <div style={{ textAlign: 'center', marginBottom: '40px' }}>
-        <h1 style={{ color: '#1f2937', fontSize: '32px', marginBottom: '10px' }}>Developers Profile</h1>
-        <div style={{ height: '4px', width: '60px', background: '#3b82f6', margin: '0 auto', borderRadius: '2px' }}></div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
-        {/* Delight Cherubino */}
-        <div style={{ padding: '20px', border: '1px solid #e5e7eb', borderRadius: '16px', background: '#f8fafc' }}>
-          <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#3b82f6', textTransform: 'uppercase', marginBottom: '8px' }}>Lead Developer</div>
-          <h2 style={{ fontSize: '22px', color: '#1e293b', margin: '0 0 10px 0' }}>Delight Cherubino</h2>
-          <p style={{ fontSize: '14px', color: '#64748b', lineHeight: '1.6', marginBottom: '20px' }}>
-            Developed the full project architecture, backend services, and main frontend application features.
-          </p>
-          <div style={{ fontSize: '14px', color: '#334155' }}>
-            <div style={{ marginBottom: '6px' }}><strong>📞 Contact:</strong> +91 8220789878</div>
-            <div style={{ marginBottom: '6px' }}><strong>📧 Mail:</strong> delightcherubino@gmail.com</div>
-            <div style={{ marginBottom: '6px' }}><strong>🌐 Domain:</strong> <a href="https://delightcherubino.com" target="_blank" rel="noopener noreferrer" style={{ color: '#3b82f6', textDecoration: 'none', fontWeight: '600' }}>delightcherubino.com</a></div>
-            <div style={{ marginBottom: '6px' }}><strong>🎓 Batch:</strong> 2023 - 2027</div>
-          </div>
-        </div>
-
-        {/* Sanjay R */}
-        <div style={{ padding: '20px', border: '1px solid #e5e7eb', borderRadius: '16px', background: '#f8fafc' }}>
-          <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#8b5cf6', textTransform: 'uppercase', marginBottom: '8px' }}>Module Developer</div>
-          <h2 style={{ fontSize: '22px', color: '#1e293b', margin: '0 0 10px 0' }}>Sanjay R</h2>
-          <p style={{ fontSize: '14px', color: '#64748b', lineHeight: '1.6', marginBottom: '20px' }}>
-            Developed aptitude questions generation, question validation modules, and related analytics.
-          </p>
-          <div style={{ fontSize: '14px', color: '#334155' }}>
-            <div style={{ marginBottom: '6px' }}><strong>📞 Contact:</strong> +91 8523999020</div>
-            <div style={{ marginBottom: '6px' }}><strong>📧 Mail:</strong> sanjaydharsaan007@gmail.com</div>
-            <div style={{ marginBottom: '6px' }}><strong>🎓 Batch:</strong> 2023 - 2027</div>
-          </div>
-        </div>
-      </div>
-
-      <div style={{ 
-        marginTop: '40px', 
-        padding: '20px', 
-        textAlign: 'center', 
-        borderTop: '1px solid #eee',
-        background: '#fff7ed',
-        borderRadius: '12px'
-      }}>
-        <h3 style={{ color: '#9a3412', margin: '0 0 8px 0' }}>Special Thanks</h3>
-        <p style={{ fontSize: '16px', color: '#c2410c', fontWeight: '600', margin: 0 }}>
-          Dr. M. Kaliappan, Professor and Head
-        </p>
-        <p style={{ fontSize: '12px', color: '#ea580c', marginTop: '4px' }}>
-          For guidance and support throughout the development process.
-        </p>
-      </div>
-
-      <div style={{ textAlign: 'center', marginTop: '30px' }}>
-        <button 
-          onClick={onBack}
-          style={{
-            padding: '10px 24px',
-            background: '#1f2937',
-            color: 'white',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: 'pointer',
-            fontWeight: '600',
-            transition: 'all 0.2s ease'
-          }}
-          onMouseOver={(e) => e.currentTarget.style.background = '#374151'}
-          onMouseOut={(e) => e.currentTarget.style.background = '#1f2937'}
-        >
-          ← {isLoggedIn ? 'Back to Dashboard' : 'Back to Login'}
+    <div className="developers-page">
+      <div className="developers-hero">
+        <button className="developers-back-btn" type="button" onClick={onBack}>
+          <ArrowLeft size={18} />
+          {isLoggedIn ? 'Back to Dashboard' : 'Back to Login'}
         </button>
+        <div>
+          <p className="developers-kicker">Project Builders</p>
+          <h1>Lead Developers</h1>
+          <p>
+            Code2Day was built through full-stack engineering, execution-system work, question generation,
+            analytics, reports, and the student/staff/HOD learning workflows that connect them.
+          </p>
+        </div>
       </div>
+
+      <div className="developers-showcase">
+        <section className="developers-lanyard-panel" aria-label="Lead developers photo">
+          <Lanyard
+            position={[0, 0, 22]}
+            gravity={[0, -38, 0]}
+            frontImage={avatarUrl}
+            backImage={avatarUrl}
+            imageFit="cover"
+            imagePosition="top"
+            lanyardWidth={0.72}
+          />
+        </section>
+
+        <div className="developers-info-stack">
+          {developers.map((developer) => (
+            <article className="developer-info-card" key={developer.mail}>
+              <div className="developer-role">
+                <Code2 size={18} />
+                <span>{developer.title}</span>
+              </div>
+              <h2>{developer.name}</h2>
+              <p>{developer.focus}</p>
+
+              <div className="developer-contact-list">
+                <a href={`tel:${developer.contact.replace(/\s/g, '')}`}>
+                  <Phone size={15} />
+                  {developer.contact}
+                </a>
+                <a href={`mailto:${developer.mail}`}>
+                  <Mail size={15} />
+                  {developer.mail}
+                </a>
+                {developer.domain && (
+                  <a href={developer.domain} target="_blank" rel="noopener noreferrer">
+                    <Globe size={15} />
+                    {developer.domainLabel}
+                  </a>
+                )}
+                <span>
+                  <GraduationCap size={15} />
+                  Batch {developer.batch}
+                </span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+
+      <section className="developers-thanks">
+        <p>Special Thanks</p>
+        <h3>Dr. M. Kaliappan, Professor and Head</h3>
+        <span>For guidance and support throughout the development process.</span>
+      </section>
     </div>
   );
 };

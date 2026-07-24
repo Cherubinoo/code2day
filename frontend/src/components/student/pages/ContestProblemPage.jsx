@@ -7,6 +7,7 @@ import * as monaco from "monaco-editor";
 import { runCodeExecution, getLanguageIdForChoice } from '../../../lib/codeExecution';
 import { getCsrfToken, formatDuration } from '../../../lib/appUtils';
 import { starterCodeByLanguage } from '../../../lib/appData';
+import { useTabNav } from '../../../lib/useTabNav';
 
 // Use the bundled ESM Monaco build instead of the AMD loader path.
 loader.config({ monaco });
@@ -29,7 +30,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testResults, setTestResults] = useState(null);
   const [customInput, setCustomInput] = useState('');
-  const [activeTab, setActiveTab] = useState('current');
+  const [activeTab, setActiveTab] = useTabNav('current');
   const [timeRemaining, setTimeRemaining] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);

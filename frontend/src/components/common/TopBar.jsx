@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { LayoutGrid, Bell, X, MessageSquare, ExternalLink, Mail, Menu } from "lucide-react";
 import { buildJsonPostOptions } from "../../lib/appUtils";
 import { PAGE_PATHS, appUrlForPage } from "../../lib/useHistoryNav";
+import AnimatedNumber from "./AnimatedNumber";
 
 function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, userType, hideNav }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -248,14 +249,14 @@ function NotificationInbox() {
         onClick={() => setIsOpen(!isOpen)}
       >
         <Bell size={20} />
-        {unreadCount > 0 && <span className="unread-dot">{unreadCount}</span>}
+        {unreadCount > 0 && <span className="unread-dot"><AnimatedNumber value={unreadCount} duration={0.7} /></span>}
       </button>
 
       {isOpen && (
         <div className="inbox-dropdown surface-card">
           <div className="inbox-header">
             <h3>Notifications</h3>
-            {unreadCount > 0 && <span className="unread-label">{unreadCount} new</span>}
+            {unreadCount > 0 && <span className="unread-label"><AnimatedNumber value={unreadCount} duration={0.7} /> new</span>}
           </div>
 
           <div className="inbox-list scroll-column">
