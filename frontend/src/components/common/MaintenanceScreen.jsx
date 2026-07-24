@@ -1,5 +1,8 @@
 import React from 'react';
-import { HardHat, RefreshCw, AlertTriangle } from 'lucide-react';
+import { RefreshCw, AlertTriangle } from 'lucide-react';
+import { DotLottieReact } from '@lottiefiles/dotlottie-react';
+
+const MAINTENANCE_LOTTIE_SRC = 'https://lottie.host/37f684f8-5d6f-4da0-860a-27e0c64dfd93/6y2XxeFYUC.lottie';
 
 const MaintenanceScreen = ({ message, onRetry, onBack }) => {
   return (
@@ -49,20 +52,10 @@ const MaintenanceScreen = ({ message, onRetry, onBack }) => {
         }} />
 
         <div style={{ position: 'relative', zIndex: 1 }}>
-          <div style={{
-            width: '96px',
-            height: '96px',
-            background: 'var(--warning-light, #fef3c7)',
-            borderRadius: '28px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            margin: '0 auto 32px',
-            boxShadow: '0 10px 25px -5px rgba(245, 158, 11, 0.2)'
-          }}>
-            <HardHat size={48} color="var(--warning-dark, #d97706)" />
+          <div style={{ width: '180px', height: '180px', margin: '0 auto 16px' }}>
+            <DotLottieReact src={MAINTENANCE_LOTTIE_SRC} loop autoplay />
           </div>
-          
+
           <h1 style={{
             fontSize: '2.5rem',
             fontWeight: 850,

@@ -280,18 +280,41 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
     setMessages(prev => [...prev, tempMsg]);
     setDraft("");
 
+    // Hard timeout so a stalled network request can never leave `busy`
+    // stuck true forever — without this, a single hung fetch (dropped
+    // connection, sleeping tab) silently blocks every future send since
+    // sendMessage's own guard clause returns early while busy is true.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+
     try {
-      const res = await fetch("/api/discussions/", buildJsonPostOptions(payload));
+      const res = await fetch("/api/discussions/", {
+        ...buildJsonPostOptions(payload),
+        signal: controller.signal,
+      });
       if (res.ok) {
         // Sync with server after a short delay to ensure DB persistence/indexing
         setTimeout(loadMessages, 500);
       } else {
-        // If send failed, remove the optimistic message
+        // If send failed, remove the optimistic message and surface why —
+        // silently dropping it made real failures look like an artificial
+        // posting limit.
         setMessages(prev => prev.filter(m => m.id !== tempMsg.id));
+        setDraft(tempMsg.body);
+        const errBody = await res.json().catch(() => ({}));
+        alert(errBody.detail || "Failed to send message. Please try again.");
       }
     } catch (err) {
       console.error("Failed to send message", err);
+      setMessages(prev => prev.filter(m => m.id !== tempMsg.id));
+      setDraft(tempMsg.body);
+      alert(
+        err.name === "AbortError"
+          ? "Sending timed out. Check your connection and try again."
+          : "Failed to send message. Please try again."
+      );
     } finally {
+      clearTimeout(timeoutId);
       setBusy(false);
     }
   }

@@ -5,6 +5,7 @@ import * as monaco from "monaco-editor";
 import { getCsrfToken } from "../../../lib/appUtils";
 import { editorLanguageMap } from "../../../lib/codeExecution";
 import { starterCodeByLanguage, LAB_LANGUAGES } from "../../../lib/appData";
+import SuccessAnimation from "../../common/SuccessAnimation";
 import {
   FlaskConical, ChevronLeft, BookOpen, CheckCircle2,
   Circle, Clock, Calendar, UserCheck,
@@ -221,6 +222,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
   const [submitted, setSubmitted] = useState(exercise.submitted);
   const [submittedAt, setSubmittedAt] = useState(exercise.submitted_at);
   const [submitErr, setSubmitErr] = useState("");
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [reportErr, setReportErr] = useState("");
   const [customInput, setCustomInput] = useState("");
@@ -336,6 +338,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
       if (res.ok) {
         setSubmitted(true);
         setSubmittedAt(d.submitted_at);
+        setShowSuccessAnimation(true);
         onSubmitted(exercise.id, { code, language: lang, submitted_at: d.submitted_at });
       } else {
         setSubmitErr(d.error || "Submission failed. Please try again.");
@@ -390,6 +393,9 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
 
   return (
     <div className="page-stack problem-page">
+      {showSuccessAnimation && (
+        <SuccessAnimation onDone={() => setShowSuccessAnimation(false)} />
+      )}
       {/* ── Workspace Header ── */}
       <section className="page-header compact-header problem-page-header">
         <div className="workspace-title-row">

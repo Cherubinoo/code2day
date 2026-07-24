@@ -1,0 +1,41 @@
+.click-burst {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+.click-burst-particle {
+  --dx: 0px;
+  --dy: 0px;
+  position: absolute;
+  top: -4px;
+  left: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: click-burst-particle 0.5s ease-out forwards;
+}
+
+@keyframes click-burst-particle {
+  0% {
+    transform: translate(0, 0) scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(var(--dx), var(--dy)) scale(0.2);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .click-burst-particle {
+    animation: none;
+    display: none;
+  }
+}

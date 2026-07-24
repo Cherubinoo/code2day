@@ -1,0 +1,54 @@
+.loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-1, #ffffff);
+  transition: opacity 0.35s ease;
+  opacity: 1;
+}
+
+.loading-screen.is-exiting {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loading-screen-lottie {
+  width: 240px;
+  height: 240px;
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+
+.loading-screen-lottie.is-hidden {
+  opacity: 0;
+  transform: scale(0.85);
+}
+
+.loading-screen-wordmark {
+  position: absolute;
+  margin: 0;
+  font-size: 1.8rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: #dc2626;
+  text-transform: uppercase;
+  opacity: 0;
+  transform: scale(0.7);
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+
+.loading-screen-wordmark.is-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-screen,
+  .loading-screen-lottie,
+  .loading-screen-wordmark {
+    transition: none;
+  }
+}

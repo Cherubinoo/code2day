@@ -419,10 +419,18 @@ def calculate_campus_rank_helper(student):
 def get_discussion_messages(user, profile, profile_type, thread_type="general", other_user_reg=None, batch_name=None, problem_slug=None, section=None, mentor_id=None):
     """
     Fetch and cleanup messages based on access rules.
-    Messages older than 24h are deleted on every request for this view.
+    Messages older than 24h are excluded from every response; the actual
+    DELETE only runs on a small random fraction of requests rather than
+    every single poll (clients re-poll this endpoint every few seconds), so
+    concurrent posts aren't competing with a delete on the same table on
+    every request — on SQLite that write contention can make a POST time
+    out or fail silently right when a poll's cleanup delete is running.
     """
+    import random
+
     cutoff = timezone.now() - timedelta(hours=24)
-    DiscussionMessage.objects.filter(created_at__lt=cutoff).delete()
+    if random.randint(1, 20) == 1:
+        DiscussionMessage.objects.filter(created_at__lt=cutoff).delete()
 
     qs = DiscussionMessage.objects.filter(created_at__gte=cutoff).select_related(
         "sender", "recipient", "student", "problem",
@@ -1674,8 +1682,8 @@ class AdminStatsView(APIView):
         aws_pricing = 0.0
 
         # Recent activity (last 7 days)
-        from datetime import datetime, timedelta
-        last_week = datetime.now() - timedelta(days=7)
+        from datetime import timedelta
+        last_week = timezone.localtime(timezone.now()) - timedelta(days=7)
         recent_logins = StudentProfile.objects.filter(last_login_on__gte=last_week.date()).count()
 
         return Response({
@@ -7090,19 +7098,22 @@ class StudentReportPDFView(APIView):
         from datetime import datetime, timedelta
         from django.db.models import Q, Count
         
-        # Date filtering
+        # Date filtering (compare via __date__ so an aware solved_at is
+        # bucketed by its local calendar day rather than cast to a
+        # midnight-UTC datetime, which would shift the boundary by the
+        # UTC/IST offset and silently drop or add records at the edges)
         date_filter = Q()
         if date_from:
             try:
                 date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
-                date_filter &= Q(solved_at__gte=date_from_obj)
+                date_filter &= Q(solved_at__date__gte=date_from_obj)
             except ValueError:
                 pass
-                
+
         if date_to:
             try:
                 date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
-                date_filter &= Q(solved_at__lte=date_to_obj)
+                date_filter &= Q(solved_at__date__lte=date_to_obj)
             except ValueError:
                 pass
 
@@ -7667,24 +7678,27 @@ class StaffReportPDFView(APIView):
 # ---------------------------------------------------------------------------
 
 class SystemAdminDashboardView(APIView):
-    permission_classes = [AllowAny]  # In production, restrict to system admins
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         try:
             total_students = StudentProfile.objects.count()
             total_staff = StaffProfile.objects.count()
             total_problems = Problem.objects.count()
             total_aptitude = AptitudeQuestion.objects.count()
-            
+
             # Fetch all institutions for the management table
             institutions = Institution.objects.all().values(
                 'id', 'institution_id', 'name', 'short_code', 'is_active',
-                'maintenance_staff', 'maintenance_students', 'maintenance_hod'
+                'maintenance_staff', 'maintenance_students', 'maintenance_hod',
+                'maintenance_inst_admin', 'maintenance_ja', 'maintenance_tpu', 'maintenance_director'
             )
 
             # Global maintenance config
             config, _ = SystemConfiguration.objects.get_or_create(id=1)
-            
+
             return Response({
                 "metrics": {
                     "total_users": total_students + total_staff,
@@ -7696,7 +7710,11 @@ class SystemAdminDashboardView(APIView):
                 "global_config": {
                     "staff": config.global_maintenance_staff,
                     "student": config.global_maintenance_students,
-                    "hod": config.global_maintenance_hod
+                    "hod": config.global_maintenance_hod,
+                    "tpu": config.global_maintenance_tpu,
+                    "director": config.global_maintenance_director,
+                    "ja": config.global_maintenance_ja,
+                    "admin": config.global_maintenance_admin
                 }
             })
         except Exception as e:
@@ -7803,7 +7821,9 @@ class InstitutionDetailManagementView(APIView):
                 "student": institution.maintenance_students,
                 "hod": institution.maintenance_hod,
                 "inst_admin": institution.maintenance_inst_admin,
-                "ja": institution.maintenance_ja
+                "ja": institution.maintenance_ja,
+                "tpu": institution.maintenance_tpu,
+                "director": institution.maintenance_director
             },
             "branding": {
                 "display_name": institution.display_name,
@@ -7836,6 +7856,8 @@ class InstitutionDetailManagementView(APIView):
             elif role == 'hod': institution.maintenance_hod = value
             elif role == 'inst_admin': institution.maintenance_inst_admin = value
             elif role == 'ja': institution.maintenance_ja = value
+            elif role == 'tpu': institution.maintenance_tpu = value
+            elif role == 'director': institution.maintenance_director = value
             institution.save()
             return Response({"message": "Maintenance updated"})
             
@@ -7932,19 +7954,38 @@ class InstitutionDetailManagementView(APIView):
         return Response({"error": "Invalid action"}, status=400)
 
 class GlobalMaintenanceControlView(APIView):
-    permission_classes = [AllowAny]
+    """System Admin: toggle system-wide maintenance mode, per role. Covers
+    every StudentProfile/StaffProfile role (student, staff, hod, tpu,
+    director, ja, admin) — admin endpoints are already exempt from the
+    maintenance check itself (see MaintenanceMiddleware), so a global admin
+    flag can't lock system admins out of the one place that could undo it."""
+    permission_classes = [IsAuthenticated]
+
+    ROLE_FIELDS = {
+        'student': 'global_maintenance_students',
+        'staff': 'global_maintenance_staff',
+        'hod': 'global_maintenance_hod',
+        'tpu': 'global_maintenance_tpu',
+        'director': 'global_maintenance_director',
+        'ja': 'global_maintenance_ja',
+        'admin': 'global_maintenance_admin',
+    }
 
     def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
         config, _ = SystemConfiguration.objects.get_or_create(id=1)
         role = request.data.get('role')
-        value = request.data.get('value')
-        
-        if role == 'staff': config.global_maintenance_staff = value
-        elif role == 'student': config.global_maintenance_students = value
-        elif role == 'hod': config.global_maintenance_hod = value
-        
+        value = bool(request.data.get('value'))
+
+        field = self.ROLE_FIELDS.get(role)
+        if not field:
+            return Response({"error": f"Unknown role {role!r}."}, status=400)
+
+        setattr(config, field, value)
         config.save()
-        return Response({"message": "Global maintenance updated"})
+        return Response({r: getattr(config, f) for r, f in self.ROLE_FIELDS.items()})
 
 
 def _mask_api_key(key):

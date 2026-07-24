@@ -20,12 +20,14 @@ class Institution(models.Model):
     # Database Isolation
     database_name = models.CharField(max_length=255, blank=True, default="")
 
-    # Maintenance Modes
+    # Maintenance Modes — one flag per StaffProfile/StudentProfile role
     maintenance_staff = models.BooleanField(default=False)
     maintenance_students = models.BooleanField(default=False)
     maintenance_hod = models.BooleanField(default=False)
     maintenance_inst_admin = models.BooleanField(default=False)
     maintenance_ja = models.BooleanField(default=False)
+    maintenance_tpu = models.BooleanField(default=False)
+    maintenance_director = models.BooleanField(default=False)
 
     # Branding Information
     display_name = models.CharField(max_length=300, blank=True, default="", help_text="Full display name for reports and headers")
@@ -58,6 +60,10 @@ class SystemConfiguration(models.Model):
     global_maintenance_staff = models.BooleanField(default=False)
     global_maintenance_students = models.BooleanField(default=False)
     global_maintenance_hod = models.BooleanField(default=False)
+    global_maintenance_tpu = models.BooleanField(default=False)
+    global_maintenance_director = models.BooleanField(default=False)
+    global_maintenance_ja = models.BooleanField(default=False)
+    global_maintenance_admin = models.BooleanField(default=False)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

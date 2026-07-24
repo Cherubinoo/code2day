@@ -20,6 +20,11 @@ import ProgressPage from "./components/student/pages/ProgressPage";
 import RoadmapsPage from "./components/student/pages/RoadmapsPage";
 import DevelopersProfile from "./components/common/DevelopersProfile";
 import Footer from "./components/common/Footer";
+import ClickBurstEffect from "./components/common/ClickBurstEffect";
+import LoadingScreen from "./components/common/LoadingScreen";
+import NotFoundPage from "./components/common/NotFoundPage";
+import OfflineOverlay from "./components/common/OfflineOverlay";
+import SuccessAnimation from "./components/common/SuccessAnimation";
 import "./layout-fix.css";
 import "./header-fix.css";
 import {
@@ -56,6 +61,9 @@ function App() {
   });
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [maintenanceMessage, setMaintenanceMessage] = useState("");
+  // Gates the branded boot animation — shown once on first entry, never
+  // replayed on later in-app navigation (see the render below).
+  const [firstLoadDone, setFirstLoadDone] = useState(false);
   const [dashboard, setDashboard] = useState(fallbackDashboard);
   const [problemSet, setProblemSet] = useState(normalizeProblems(fallbackProblems));
   const [selectedDifficulty, setSelectedDifficulty] = useState("All Levels");
@@ -107,6 +115,7 @@ function App() {
     memory: "",
   });
   const [executionBusy, setExecutionBusy] = useState(false);
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const [executionElapsed, setExecutionElapsed] = useState(0);
   const executionTimerRef = useRef(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -1102,6 +1111,7 @@ function App() {
     try {
       const result = await executeCurrentCode(true);
       if (result.status === "Accepted") {
+        if (stillCurrent()) setShowSuccessAnimation(true);
         // Skip global progress update for daily problems and contests
         if (!selectedProblem?.is_daily && sessionMode !== "contest") {
           const isSaved = await persistProblemProgress("completed");
@@ -1206,7 +1216,9 @@ function App() {
   let activeView = null;
 
   // Handle views that don't require login or are special
-  if (activePage === "developers") {
+  if (activePage === "not-found") {
+    activeView = <NotFoundPage onGoHome={() => navigate("explore", { replace: true })} />;
+  } else if (activePage === "developers") {
     activeView = <DevelopersProfile isLoggedIn={isLoggedIn} onBack={() => navigate("explore")} />;
   } else if (!isLoggedIn) {
     activeView = (
@@ -1631,6 +1643,14 @@ function App() {
   // while the navigate() call triggers the next render with the correct page.
   return (
     <div className="app-shell" style={!isLoggedIn ? { minHeight: "100vh", display: "flex", flexDirection: "column", padding: 0 } : {}}>
+      <ClickBurstEffect />
+      <OfflineOverlay />
+      {showSuccessAnimation && (
+        <SuccessAnimation onDone={() => setShowSuccessAnimation(false)} />
+      )}
+      {!firstLoadDone && (
+        <LoadingScreen ready={Boolean(activeView)} onFinished={() => setFirstLoadDone(true)} />
+      )}
       {isLoggedIn && (
         <TopBar
           activePage={activePage}

@@ -40,9 +40,12 @@ const PATH_TO_PAGE = Object.fromEntries(
   Object.entries(PAGE_PATHS).map(([page, path]) => [path, page]),
 );
 
-/** Read the current page from the URL (used on first load & popstate). */
+/** Read the current page from the URL (used on first load & popstate).
+ * This app's routing is exactly the fixed set of pages in PAGE_PATHS —
+ * nothing else ever calls pushState/replaceState — so any other path is a
+ * genuine unknown route, not just an unmodeled valid one. */
 function pageFromCurrentPath() {
-  return PATH_TO_PAGE[window.location.pathname] ?? "explore";
+  return PATH_TO_PAGE[window.location.pathname] ?? "not-found";
 }
 
 /**

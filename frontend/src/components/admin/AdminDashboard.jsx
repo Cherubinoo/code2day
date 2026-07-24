@@ -7,7 +7,7 @@ import {
   Trash2, Activity, Database, LayoutDashboard,
   GraduationCap, Briefcase, Award, Settings,
   ChevronRight, ArrowLeft, BarChart3, HardHat,
-  UserCheck, Wrench, Search, Brain
+  UserCheck, Wrench, Search, Brain, Crown, Compass
 } from 'lucide-react';
 import api from '../../lib/api';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
@@ -28,7 +28,9 @@ const AdminDashboard = () => {
   // System State (Global)
   const [metrics, setMetrics] = useState({ total_users: 0, total_staff: 0, total_problems: 0, total_aptitude: 0 });
   const [institutions, setInstitutions] = useState([]);
-  const [globalMaintenance, setGlobalMaintenance] = useState({ staff: false, student: false, hod: false });
+  const [globalMaintenance, setGlobalMaintenance] = useState({
+    staff: false, student: false, hod: false, tpu: false, director: false, ja: false, admin: false,
+  });
   
   // Institution Detail State (Hub)
   const [hubData, setHubData] = useState({
@@ -36,7 +38,7 @@ const AdminDashboard = () => {
     students: [],
     departments: [],
     batches: [],
-    maintenance: { staff: false, student: false, hod: false, inst_admin: false, ja: false },
+    maintenance: { staff: false, student: false, hod: false, inst_admin: false, ja: false, tpu: false, director: false },
     branding: { 
       display_name: '', 
       subheading: '', 
@@ -609,11 +611,15 @@ const AdminDashboard = () => {
               <h2 style={{ fontSize: '1.6rem', fontWeight: 900, color: 'var(--olive-900)', display: 'flex', alignItems: 'center', gap: 12, marginBottom: 32 }}>
                 <Shield size={28} /> Global System Permissions
               </h2>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 24 }}>
                 {[
                   { label: 'Student Portal', role: 'student', current: globalMaintenance.student, icon: GraduationCap },
                   { label: 'Staff Console', role: 'staff', current: globalMaintenance.staff, icon: Briefcase },
-                  { label: 'HOD Executive', role: 'hod', current: globalMaintenance.hod, icon: Award }
+                  { label: 'HOD Executive', role: 'hod', current: globalMaintenance.hod, icon: Award },
+                  { label: 'TPU', role: 'tpu', current: globalMaintenance.tpu, icon: Compass },
+                  { label: 'Director', role: 'director', current: globalMaintenance.director, icon: Crown },
+                  { label: 'JA Subsystem', role: 'ja', current: globalMaintenance.ja, icon: Wrench },
+                  { label: 'System Admin', role: 'admin', current: globalMaintenance.admin, icon: Shield }
                 ].map((p, i) => (
                   <div key={i} style={{ padding: 28, background: 'var(--bg-2)', borderRadius: 24, border: '1px solid var(--border-soft)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
@@ -1438,7 +1444,9 @@ const AdminDashboard = () => {
                             { label: 'Staff Members', role: 'staff', current: hubData.maintenance.staff, icon: Briefcase },
                             { label: 'HOD Executive', role: 'hod', current: hubData.maintenance.hod, icon: Award },
                             { label: 'Inst Admin', role: 'inst_admin', current: hubData.maintenance.inst_admin, icon: UserCheck },
-                            { label: 'JA Subsystem', role: 'ja', current: hubData.maintenance.ja, icon: Wrench }
+                            { label: 'JA Subsystem', role: 'ja', current: hubData.maintenance.ja, icon: Wrench },
+                            { label: 'TPU', role: 'tpu', current: hubData.maintenance.tpu, icon: Compass },
+                            { label: 'Director', role: 'director', current: hubData.maintenance.director, icon: Crown }
                           ].map((p, i) => (
                             <div key={i} style={{ padding: 20, background: 'white', borderRadius: 20, border: '1px solid var(--border-soft)' }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>

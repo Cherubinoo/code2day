@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@lottiefiles/dotlottie-react": "^0.19.12",
+    "@lottiefiles/dotlottie-wc": "^0.9.24",
     "@monaco-editor/react": "^4.7.0",
     "lucide-react": "^1.7.0",
     "monaco-editor": "^0.44.0",

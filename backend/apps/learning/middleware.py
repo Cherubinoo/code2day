@@ -31,26 +31,47 @@ class MaintenanceMiddleware:
         if not role:
             return self.get_response(request)
 
-        # 1. Check Global Maintenance
-        if role == 'student' and config.global_maintenance_students:
-            return self.maintenance_response("System-wide student portal maintenance.")
-        if role == 'staff' and config.global_maintenance_staff:
-            return self.maintenance_response("System-wide staff portal maintenance.")
-        if role == 'hod' and config.global_maintenance_hod:
-            return self.maintenance_response("System-wide HOD portal maintenance.")
+        # 1. Check Global Maintenance — one flag per role, covering every
+        # StudentProfile/StaffProfile role (student, staff, hod, tpu,
+        # director, ja, admin). Admin endpoints are already skipped at the
+        # top of this middleware (/api/admin/), so a global admin flag can't
+        # lock system admins out of the one place that could undo it.
+        global_role_labels = {
+            'student': 'student',
+            'staff': 'staff',
+            'hod': 'HOD',
+            'tpu': 'TPU',
+            'director': 'Director',
+            'ja': 'JA',
+            'admin': 'admin',
+        }
+        global_role_fields = {
+            'student': 'global_maintenance_students',
+            'staff': 'global_maintenance_staff',
+            'hod': 'global_maintenance_hod',
+            'tpu': 'global_maintenance_tpu',
+            'director': 'global_maintenance_director',
+            'ja': 'global_maintenance_ja',
+            'admin': 'global_maintenance_admin',
+        }
+        global_field = global_role_fields.get(role)
+        if global_field and getattr(config, global_field, False):
+            return self.maintenance_response(f"System-wide {global_role_labels[role]} portal maintenance.")
 
         # 2. Check Institution Maintenance
         if institution:
-            if role == 'student' and institution.maintenance_students:
-                return self.maintenance_response(f"{institution.name} student portal maintenance.")
-            if role == 'staff' and institution.maintenance_staff:
-                return self.maintenance_response(f"{institution.name} staff portal maintenance.")
-            if role == 'hod' and institution.maintenance_hod:
-                return self.maintenance_response(f"{institution.name} HOD portal maintenance.")
-            if role == 'admin' and institution.maintenance_inst_admin:
-                return self.maintenance_response(f"{institution.name} Institution Admin portal maintenance.")
-            if role == 'ja' and institution.maintenance_ja:
-                return self.maintenance_response(f"{institution.name} JA portal maintenance.")
+            inst_role_fields = {
+                'student': 'maintenance_students',
+                'staff': 'maintenance_staff',
+                'hod': 'maintenance_hod',
+                'tpu': 'maintenance_tpu',
+                'director': 'maintenance_director',
+                'admin': 'maintenance_inst_admin',
+                'ja': 'maintenance_ja',
+            }
+            field = inst_role_fields.get(role)
+            if field and getattr(institution, field, False):
+                return self.maintenance_response(f"{institution.name} {global_role_labels.get(role, role)} portal maintenance.")
 
         return self.get_response(request)
 
