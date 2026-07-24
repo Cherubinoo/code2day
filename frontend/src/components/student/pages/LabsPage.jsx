@@ -201,9 +201,27 @@ function ProblemStatement({ text, explanation }) {
             return null;
           })}
           {explanation && (
-            <div className="slab-hint-box">
-              <strong>Explanation:</strong>
-              <div className="formatted-explanation">{explanation}</div>
+            <div style={{
+              marginTop: 16,
+              padding: 16,
+              borderRadius: 10,
+              background: "#0f172a",
+              border: "1px solid #1e293b",
+              color: "#f8fafc"
+            }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "#38bdf8", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                💡 Detailed Explanation &amp; Walkthrough
+              </div>
+              <div style={{
+                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                fontSize: 13,
+                lineHeight: 1.6,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                color: "#cbd5e1"
+              }}>
+                {explanation}
+              </div>
             </div>
           )}
         </div>

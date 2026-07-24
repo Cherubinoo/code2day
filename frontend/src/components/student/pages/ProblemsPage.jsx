@@ -688,18 +688,42 @@ function WorkspaceView({
                     {problemDetailTab === "explanation" && (
                       <>
                         {selectedProblem.explanation ? (
-                          <div className="info-box">
-                            <h4>Explanation</h4>
-                            <p className="body-copy formatted-explanation">{selectedProblem.explanation}</p>
+                          <div className="info-box" style={{ background: 'none', padding: 0, border: 'none' }}>
+                            <h4 style={{ color: '#38bdf8', marginBottom: 10 }}>💡 Detailed Explanation &amp; Walkthrough</h4>
+                            <div style={{
+                              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                              fontSize: "13px",
+                              lineHeight: "1.6",
+                              whiteSpace: "pre-wrap",
+                              wordBreak: "break-word",
+                              color: "#cbd5e1",
+                              background: "#0f172a",
+                              padding: "16px",
+                              borderRadius: "8px",
+                              border: "1px solid #1e293b"
+                            }}>
+                              {selectedProblem.explanation}
+                            </div>
                           </div>
-                        ) : null}
+                        ) : (
+                          <div className="info-box">
+                            <p style={{ color: 'var(--text-soft)', fontStyle: 'italic' }}>No explanation writeup generated yet for this problem.</p>
+                          </div>
+                        )}
 
                         {selectedProblem.examples && selectedProblem.examples.length > 0 && (
-                          <div className="info-box">
-                            <h4>Examples</h4>
+                          <div className="info-box" style={{ marginTop: 20 }}>
+                            <h4 style={{ color: '#a78bfa', marginBottom: 12 }}>🧪 Sample Test Cases & Worked Examples</h4>
                             {selectedProblem.examples.map((ex, idx) => (
-                              <div key={idx} className="example-block">
-                                <pre>{`Input: ${ex.input}\nOutput: ${ex.output}${ex.explanation ? `\nExplanation: ${ex.explanation}` : ''}`}</pre>
+                              <div key={idx} className="example-block" style={{ marginBottom: 12, padding: 14, background: '#1e293b', borderRadius: 8, border: '1px solid #334155' }}>
+                                <div style={{ fontSize: 12, fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>Example {idx + 1}</div>
+                                <div style={{ fontSize: 13, fontFamily: 'monospace', color: '#e2e8f0' }}><strong>Input:</strong> <code>{ex.input}</code></div>
+                                <div style={{ fontSize: 13, fontFamily: 'monospace', color: '#e2e8f0', marginTop: 4 }}><strong>Output:</strong> <code>{ex.output}</code></div>
+                                {ex.explanation && (
+                                  <div style={{ fontSize: 13, color: '#cbd5e1', marginTop: 6, paddingTop: 6, borderTop: '1px solid #334155' }}>
+                                    <strong style={{ color: '#38bdf8' }}>Explanation:</strong> {ex.explanation}
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
