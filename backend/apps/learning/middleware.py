@@ -5,9 +5,14 @@ class MaintenanceMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
 
+    # Public/pre-login endpoints that must stay reachable regardless of
+    # maintenance mode (e.g. the login screen needs these to even render).
+    EXEMPT_PATHS = ('/api/institutions/', '/api/csrf-token/')
+
     def __call__(self, request):
-        # Skip for admin and auth endpoints
-        if request.path.startswith('/admin/') or '/auth/' in request.path or '/api/admin/' in request.path:
+        # Skip for admin, auth, and always-public endpoints
+        if (request.path.startswith('/admin/') or '/auth/' in request.path
+                or '/api/admin/' in request.path or request.path in self.EXEMPT_PATHS):
             return self.get_response(request)
 
         user = request.user
