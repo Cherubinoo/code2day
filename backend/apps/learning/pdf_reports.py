@@ -373,9 +373,6 @@ def _spider_chart(data, labels, max_val=100, size=150):
     
     # Scale
     spider.direction = 'clockwise'
-    for axis in spider.axes:
-        axis.strokeColor = _hx('#e2e8f0')
-        axis.strokeDashArray = [2, 2]
     
     d.add(spider)
     return d

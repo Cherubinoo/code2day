@@ -217,7 +217,16 @@ const StaffDashboard = ({ institutionId }) => {
     );
   }
 
-  const { staff, analytics } = staffDetail;
+  const { staff, analytics: rawAnalytics } = staffDetail;
+  const analytics = {
+    top_performers: [],
+    batch_wise: [],
+    contests: [],
+    weekly_progress: [],
+    recent_activity: [],
+    engagement_summary: {},
+    ...(rawAnalytics || {})
+  };
 
   function handleContestCreated() {
     loadStaffData();
@@ -250,9 +259,6 @@ const StaffDashboard = ({ institutionId }) => {
         <StudentAnalyticsModal
           registerNumber={selectedStudentForAnalytics}
           onClose={() => setSelectedStudentForAnalytics(null)}
-          batchAnalytics={analytics}
-          batchStudents={students}
-          onStudentClick={(reg) => setSelectedStudentForAnalytics(reg)}
         />
       )}
 
@@ -935,7 +941,7 @@ const StaffDashboard = ({ institutionId }) => {
                         }}
                       >
                         <option value="">All Batches</option>
-                        {analytics.batch_wise?.map(batch => (
+                        {(analytics?.batch_wise || []).map(batch => (
                           <option key={batch.batch} value={batch.batch}>Batch {batch.batch}</option>
                         ))}
                       </select>
@@ -1163,8 +1169,8 @@ const StaffDashboard = ({ institutionId }) => {
                     Submissions per day this week
                   </p>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 160, padding: '0 4px' }}>
-                    {(analytics.weekly_progress || []).map((day, i) => {
-                      const maxCount = Math.max(...(analytics.weekly_progress?.map(d => d.count) || [1]), 1);
+                    {(analytics?.weekly_progress || []).map((day, i) => {
+                      const maxCount = Math.max(...(analytics?.weekly_progress?.map(d => d.count) || [1]), 1);
                       const heightPct = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
                       return (
                         <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
@@ -1183,7 +1189,7 @@ const StaffDashboard = ({ institutionId }) => {
                         </div>
                       );
                     })}
-                    {(!analytics.weekly_progress || analytics.weekly_progress.length === 0) && (
+                    {(!analytics?.weekly_progress || analytics.weekly_progress.length === 0) && (
                       <div style={{ flex: 1, textAlign: 'center', color: 'var(--text-soft)', fontSize: '13px', paddingTop: 60 }}>No activity data yet.</div>
                     )}
                   </div>
@@ -1198,7 +1204,7 @@ const StaffDashboard = ({ institutionId }) => {
                     Top students by problems solved — click to view profile
                   </p>
                   {(() => {
-                    const builders = (analytics.top_performers || []).slice(0, 8);
+                    const builders = (analytics?.top_performers || []).slice(0, 8);
                     const maxSolved = Math.max(...builders.map(s => s.solved_count || 0), 1);
                     const colors = ['#2563eb','#7c3aed','#059669','#d97706','#dc2626','#0891b2','#4f46e5','#be185d'];
                     return builders.length > 0 ? (
@@ -1242,7 +1248,7 @@ const StaffDashboard = ({ institutionId }) => {
                 <p style={{ margin: '4px 0 24px', color: 'var(--text-soft)', fontSize: '14px' }}>Analyze performance across different student groups.</p>
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-                   {analytics.batch_wise?.map(batch => (
+                   {(analytics?.batch_wise || []).map(batch => (
                      <div 
                       key={batch.batch}
                       onClick={() => {
@@ -1289,14 +1295,14 @@ const StaffDashboard = ({ institutionId }) => {
                       Batch {selectedBatch} Students
                     </h3>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      {(analytics.batch_wise.find(b => b.batch === selectedBatch)?.sections?.length > 0) && (
+                      {((analytics?.batch_wise || []).find(b => b.batch === selectedBatch)?.sections?.length > 0) && (
                         <select
                           value={selectedSection}
                           onChange={(e) => setSelectedSection(e.target.value)}
                           style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-hard)', fontSize: '13px', fontWeight: '600' }}
                         >
                           <option value="">All Sections</option>
-                          {analytics.batch_wise.find(b => b.batch === selectedBatch)?.sections?.map(sec => (
+                          {(analytics?.batch_wise || []).find(b => b.batch === selectedBatch)?.sections?.map(sec => (
                             <option key={sec} value={sec}>Section {sec}</option>
                           ))}
                         </select>
@@ -1337,7 +1343,7 @@ const StaffDashboard = ({ institutionId }) => {
 
                   {/* Batch Podium */}
                   {(() => {
-                    const currentBatchData = analytics.batch_wise.find(b => b.batch === selectedBatch);
+                    const currentBatchData = (analytics?.batch_wise || []).find(b => b.batch === selectedBatch);
                     const top3 = currentBatchData?.top_performers || [];
                     if (top3.length === 0) return null;
 
@@ -1462,7 +1468,7 @@ const StaffDashboard = ({ institutionId }) => {
                         </tr>
                       </thead>
                       <tbody>
-                        {analytics.batch_wise.find(b => b.batch === selectedBatch)?.students
+                        {(analytics?.batch_wise || []).find(b => b.batch === selectedBatch)?.students
                           ?.filter(student => !selectedSection || student.section === selectedSection)
                           ?.map(student => (
                           <tr key={student.register_number} style={{ borderBottom: '1px solid var(--bg-1)' }}>

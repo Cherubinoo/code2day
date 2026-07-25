@@ -109,6 +109,20 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
 
   const { student, analytics: data } = analytics;
 
+  if (!student || !data) {
+    return (
+      <div style={{
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+        background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+      }}>
+        <div style={{ background: 'white', padding: 40, borderRadius: 12, textAlign: 'center' }}>
+          <p style={{ color: '#dc2626' }}>Invalid data received from server.</p>
+          <button onClick={onClose} style={{ marginTop: 20, padding: '10px 20px', borderRadius: 8, border: '1px solid #d1d5db', cursor: 'pointer' }}>Close</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
       position: 'fixed',
@@ -150,7 +164,7 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: '24px', fontWeight: '800', color: 'var(--olive-700)'
             }}>
-              {student.name[0]}
+              {(student.name || 'S')[0]}
             </div>
             <div>
               <h2 style={{ margin: 0, fontSize: '24px', fontWeight: '800', color: 'var(--text-hard)' }}>{student.name}</h2>
@@ -317,7 +331,7 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.recent_activity.map((activity, idx) => (
+                    {(data.recent_activity || []).map((activity, idx) => (
                       <tr key={idx} style={{ borderBottom: '1px solid #f3f4f6' }}>
                         <td style={{ padding: '10px 12px', color: '#666' }}>
                           {new Date(activity.date).toLocaleDateString()}
@@ -361,7 +375,7 @@ const StudentAnalyticsModal = ({ registerNumber, onClose }) => {
             <div>
               <h3 style={{ fontSize: 16, marginBottom: 16 }}>Contest Participation</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {data.contest_participations.map((contest, idx) => (
+                {(data.contest_participations || []).map((contest, idx) => (
                   <div key={idx} style={{
                     padding: 16, background: '#f9fafb', borderRadius: 10, border: '1px solid #e5e7eb',
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',

@@ -41,7 +41,7 @@
 .line-sidebar__item::before {
   content: '';
   position: absolute;
-  inset: -6px -48px;
+  inset: -2px -12px;
 }
 
 .line-sidebar__label {

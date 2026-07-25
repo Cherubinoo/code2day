@@ -131,7 +131,6 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
       {!hideNav && menuOpen && (
         <div 
           className="hamburger-overlay-centered" 
-          ref={drawerRef} 
           aria-hidden={!menuOpen}
           onClick={() => setMenuOpen(false)}
         >
@@ -151,7 +150,7 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
           
           <div 
             className="hamburger-overlay-content" 
-            onClick={(e) => e.stopPropagation()}
+            ref={drawerRef}
           >
             <LineSidebar
               items={flatItems.map(item => item.label)}
