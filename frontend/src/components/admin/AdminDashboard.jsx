@@ -622,8 +622,7 @@ const AdminDashboard = () => {
                   { label: 'HOD Executive', role: 'hod', current: globalMaintenance.hod, icon: Award },
                   { label: 'TPU', role: 'tpu', current: globalMaintenance.tpu, icon: Compass },
                   { label: 'Director', role: 'director', current: globalMaintenance.director, icon: Crown },
-                  { label: 'JA Subsystem', role: 'ja', current: globalMaintenance.ja, icon: Wrench },
-                  { label: 'System Admin', role: 'admin', current: globalMaintenance.admin, icon: Shield }
+                  { label: 'JA Subsystem', role: 'ja', current: globalMaintenance.ja, icon: Wrench }
                 ].map((p, i) => (
                   <div key={i} style={{ padding: 28, background: 'var(--bg-2)', borderRadius: 24, border: '1px solid var(--border-soft)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>

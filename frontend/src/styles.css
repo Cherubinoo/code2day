@@ -8515,6 +8515,28 @@ html.discuss-page {
   z-index: 1999;
 }
 
+.hamburger-overlay-centered {
+  position: fixed;
+  inset: 0;
+  background: rgba(18, 15, 23, 0.95);
+  backdrop-filter: blur(12px);
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.hamburger-overlay-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  max-width: 600px;
+  width: 100%;
+  padding: 2rem;
+  z-index: 2002;
+}
+
 /* Slide-out drawer panel */
 .hamburger-drawer {
   position: fixed;

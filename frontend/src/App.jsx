@@ -25,6 +25,7 @@ import LoadingScreen from "./components/common/LoadingScreen";
 import NotFoundPage from "./components/common/NotFoundPage";
 import OfflineOverlay from "./components/common/OfflineOverlay";
 import SuccessAnimation from "./components/common/SuccessAnimation";
+import TargetCursor from "./components/common/TargetCursor";
 import "./layout-fix.css";
 import "./header-fix.css";
 import {
@@ -1639,6 +1640,7 @@ function App() {
   // while the navigate() call triggers the next render with the correct page.
   return (
     <div className="app-shell" style={!isLoggedIn ? { minHeight: "100vh", display: "flex", flexDirection: "column", padding: 0 } : {}}>
+      <TargetCursor targetSelector=".hamburger-btn, button[type='submit'], .line-sidebar__item, .cursor-target" hideDefaultCursor={false} />
       <ClickBurstEffect />
       <OfflineOverlay />
       {showSuccessAnimation && (

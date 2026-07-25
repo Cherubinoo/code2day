@@ -9693,8 +9693,9 @@ class PublicInstitutionListView(APIView):
         """
         try:
             # Get query parameters for filtering
-            search = request.query_params.get('search', '').strip()
-            active_only = request.query_params.get('active_only', 'true').lower() == 'true'
+            params = getattr(request, 'query_params', getattr(request, 'GET', {}))
+            search = params.get('search', '').strip()
+            active_only = params.get('active_only', 'true').lower() == 'true'
             
             # Base queryset
             institutions = Institution.objects.all()

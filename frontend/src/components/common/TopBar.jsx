@@ -3,6 +3,7 @@ import { LayoutGrid, Bell, X, MessageSquare, ExternalLink, Mail, Menu } from "lu
 import { buildJsonPostOptions } from "../../lib/appUtils";
 import { PAGE_PATHS, appUrlForPage } from "../../lib/useHistoryNav";
 import AnimatedNumber from "./AnimatedNumber";
+import LineSidebar from "./LineSidebar";
 
 function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, userType, hideNav }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -33,6 +34,8 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
   };
 
   const items = getNavItems();
+  const flatItems = items.flatMap(item => item.dropdown ? [item, ...item.dropdown] : [item]);
+  const activeIndex = flatItems.findIndex(item => item.id === activePage);
 
   return (
     <>
@@ -126,56 +129,37 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
 
       {/* Backdrop */}
       {!hideNav && menuOpen && (
-        <div className="hamburger-overlay" onClick={() => setMenuOpen(false)} />
-      )}
-
-      {/* Slide-out nav drawer */}
-      {!hideNav && (
-        <nav className={`hamburger-drawer${menuOpen ? " open" : ""}`} ref={drawerRef} aria-hidden={!menuOpen}>
-          <div className="hamburger-drawer-header">
-            <div className="hamburger-drawer-brand">
-              <span>🏛️</span>
-              <span>code-2day</span>
-            </div>
-            <button type="button" className="hamburger-close" onClick={() => setMenuOpen(false)} aria-label="Close menu">
-              <X size={18} />
-            </button>
+        <div className="hamburger-overlay-centered" ref={drawerRef} aria-hidden={!menuOpen}>
+          <div className="hamburger-drawer-brand" style={{ position: 'absolute', top: '24px', left: '24px', color: '#fff', zIndex: 2001 }}>
+            <span style={{ filter: 'brightness(0) invert(1)' }}>🏛️</span>
+            <span style={{ color: '#fff' }}>code-2day</span>
           </div>
-
-          <div className="hamburger-nav">
-            {items.map((item) =>
-              item.dropdown ? (
-                <div key={item.id} className="hamburger-nav-group">
-                  <div className="hamburger-nav-group-label">
-                    <item.icon size={15} />
-                    {item.label}
-                  </div>
-                  {item.dropdown.map((sub) => (
-                    <button
-                      key={sub.id}
-                      type="button"
-                      className={`hamburger-nav-link hamburger-nav-sub${sub.id === activePage ? " active" : ""}`}
-                      onClick={() => { setActivePage(sub.id); setMenuOpen(false); }}
-                    >
-                      <sub.icon size={15} />
-                      <span>{sub.label}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`hamburger-nav-link${item.id === activePage ? " active" : ""}`}
-                  onClick={() => { setActivePage(item.id); setMenuOpen(false); }}
-                >
-                  {item.icon && <item.icon size={18} />}
-                  <span>{item.label}</span>
-                </button>
-              )
-            )}
+          <button type="button" className="hamburger-close" onClick={() => setMenuOpen(false)} aria-label="Close menu" style={{ position: 'absolute', top: '24px', right: '24px', color: '#fff', borderColor: 'rgba(255,255,255,0.2)', zIndex: 2001 }}>
+            <X size={18} />
+          </button>
+          
+          <div className="hamburger-overlay-content">
+            <LineSidebar
+              items={flatItems.map(item => item.label)}
+              defaultActive={activeIndex >= 0 ? activeIndex : 0}
+              onItemClick={(index) => {
+                const selected = flatItems[index];
+                if (selected) {
+                  setActivePage(selected.id);
+                  setMenuOpen(false);
+                }
+              }}
+              accentColor="#A855F7"
+              textColor="#f8f6ef"
+              markerColor="rgba(255, 255, 255, 0.4)"
+              showIndex={true}
+              showMarker={true}
+              fontSize={1.6}
+              itemGap={30}
+              maxShift={40}
+            />
           </div>
-        </nav>
+        </div>
       )}
     </>
   );
