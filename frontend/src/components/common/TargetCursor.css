@@ -12,6 +12,7 @@
 }
 
 .target-cursor-dot {
+  pointer-events: none;
   position: absolute;
   left: 50%;
   top: 50%;
@@ -24,6 +25,7 @@
 }
 
 .target-cursor-corner {
+  pointer-events: none;
   position: absolute;
   left: 50%;
   top: 50%;

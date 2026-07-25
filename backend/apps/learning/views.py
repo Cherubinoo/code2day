@@ -7103,7 +7103,7 @@ class StudentReportPDFView(APIView):
         # Create PDF with the shared branded header (logo + name + subheading +
         # address + department, drawn once on page 1 only) instead of the
         # plain-text-only title block this view used to build by hand.
-        from .pdf_reports import create_watermarked_pdf_contest, _bar_chart, _pie_chart
+        from .pdf_reports import create_watermarked_pdf_contest, _bar_chart, _pie_chart, _spider_chart, _bell_curve_chart
         buffer = BytesIO()
         doc = create_watermarked_pdf_contest(
             buffer,
@@ -7253,6 +7253,37 @@ class StudentReportPDFView(APIView):
         ]], colWidths=[2.2*inch, 4.2*inch])
         chart_labels.setStyle(TableStyle([('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTSIZE', (0, 0), (-1, -1), 8)]))
         elements.append(chart_labels)
+        elements.append(Spacer(1, 0.25 * inch))
+
+        # Strength Analysis & Platform Standing
+        radar_data = chart_data.get('profile_radar', {})
+        radar_labels = radar_data.get('labels', ['Programming', 'Aptitude', 'Contest', 'Daily', 'Overall'])
+        radar_values = radar_data.get('overall', [0, 0, 0, 0, 0])
+        radar_chart = _spider_chart(radar_values, radar_labels, max_val=100, size=150)
+
+        # Platform Standing (Bell Curve)
+        percentile = 0
+        rank = report_data.get('campus_rank', 0)
+        total_students = StudentProfile.objects.count()
+        if total_students > 0 and rank > 0:
+            percentile = round((1 - (rank - 1) / total_students) * 100, 1)
+        bell_curve = _bell_curve_chart(percentile, rank, w=300, h=140)
+
+        adv_charts_table = Table([[radar_chart, bell_curve]], colWidths=[2.2*inch, 4.2*inch])
+        adv_charts_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ]))
+        
+        elements.append(Paragraph("Advanced Analytics", header_style))
+        elements.append(adv_charts_table)
+        
+        adv_labels = Table([[
+            Paragraph("Strength Analysis", styles['Normal']),
+            Paragraph("Platform Standing", styles['Normal']),
+        ]], colWidths=[2.2*inch, 4.2*inch])
+        adv_labels.setStyle(TableStyle([('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTSIZE', (0, 0), (-1, -1), 8)]))
+        elements.append(adv_labels)
         elements.append(Spacer(1, 0.25 * inch))
 
         knowledge = chart_data.get('knowledge_distribution') or {}
@@ -7515,6 +7546,30 @@ class StudentReportPDFView(APIView):
                 'result': 'Success'
             })
 
+        # Topic Accuracy (from AptitudeContestSubmission)
+        try:
+            topic_acc_qs = AptitudeContestSubmission.objects.filter(
+                student=student
+            ).select_related('question__topic__parent').values(
+                'question__topic__title', 'question__topic__parent__title'
+            ).annotate(
+                total=Count('id'),
+                correct=Count('id', filter=Q(is_correct=True))
+            ).order_by('-total')[:20]
+
+            topic_accuracy = [
+                {
+                    'topic': t['question__topic__title'],
+                    'category': t['question__topic__parent__title'] or t['question__topic__title'],
+                    'accuracy': round(t['correct'] / t['total'] * 100, 1) if t['total'] else 0,
+                    'total': t['total'],
+                    'correct': t['correct'],
+                }
+                for t in topic_acc_qs if t['question__topic__title']
+            ]
+        except Exception:
+            topic_accuracy = []
+
         return {
             'total_solved': total_solved,
             'easy': difficulty_counts['Easy'],
@@ -7532,7 +7587,7 @@ class StudentReportPDFView(APIView):
             'top_skills': top_skills,
             'top_companies': top_companies,
             'recent_activities': recent_activities,
-            'performance_charts': _build_student_performance_charts(student, solved_problems.select_related('problem')),
+            'performance_charts': _build_student_performance_charts(student, solved_problems.select_related('problem'), topic_accuracy),
         }
 
 

@@ -350,6 +350,38 @@ def _bar_chart(data, labels, bar_color=_INDIGO, w=300, h=120):
     return d
 
 
+def _spider_chart(data, labels, max_val=100, size=150):
+    """Return a Drawing with a radar/spider chart."""
+    from reportlab.graphics.charts.spider import SpiderChart
+    d = Drawing(size, size)
+    spider = SpiderChart()
+    spider.x = size / 2
+    spider.y = size / 2
+    spider.width = size - 40
+    spider.height = size - 40
+    
+    spider.data = [data]
+    spider.labels = labels
+    spider.strands.strokeWidth = 1.5
+    spider.strands[0].fillColor = _hx('#818cf8')
+    spider.strands[0].strokeColor = _hx('#4f46e5')
+    spider.fillColor = _hx('#f8fafc')
+    
+    # Configure axes
+    spider.spokes.strokeDashArray = [2, 2]
+    spider.spokes.strokeColor = _hx('#e2e8f0')
+    
+    # Scale
+    spider.direction = 'clockwise'
+    for axis in spider.axes:
+        axis.strokeColor = _hx('#e2e8f0')
+        axis.strokeDashArray = [2, 2]
+    
+    d.add(spider)
+    return d
+
+
+
 def _bell_curve_chart(percentile_pct, rank, w=440, h=170):
     """A normal-distribution curve with Low/Mid/High performer bands and a
     marker at this student's percentile — the comparative-analysis visual

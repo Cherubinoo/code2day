@@ -20,6 +20,7 @@
 }
 
 .line-sidebar__list {
+  position: relative;
   list-style: none;
   margin: 0;
   padding: 1rem 0;
@@ -49,6 +50,7 @@
   align-items: baseline;
   font-size: var(--font-size);
   line-height: 1.2;
+  color: var(--accent-color); /* Fallback */
   color: color-mix(in srgb, var(--accent-color) calc(var(--effect, 0) * 100%), var(--text-color));
   transform: translateX(calc(var(--effect, 0) * var(--max-shift)));
 }
@@ -66,6 +68,7 @@
   left: calc(-1 * var(--marker-length) - var(--marker-gap));
   height: 1px;
   width: var(--marker-length);
+  background-color: var(--accent-color); /* Fallback */
   background-color: color-mix(in srgb, var(--accent-color) calc(var(--effect, 0) * 100%), var(--marker-color));
   transform-origin: left center;
   transform: translateY(-50%) scaleX(calc(0.7 + var(--effect, 0) * 0.5));

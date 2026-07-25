@@ -127,21 +127,35 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
         </div>
       </header>
 
-      {/* Backdrop */}
+      {/* Backdrop & Centered Overlay */}
       {!hideNav && menuOpen && (
-        <div className="hamburger-overlay-centered" ref={drawerRef} aria-hidden={!menuOpen}>
-          <div className="hamburger-drawer-brand" style={{ position: 'absolute', top: '24px', left: '24px', color: '#fff', zIndex: 2001 }}>
-            <span style={{ filter: 'brightness(0) invert(1)' }}>🏛️</span>
-            <span style={{ color: '#fff' }}>code-2day</span>
+        <div 
+          className="hamburger-overlay-centered" 
+          ref={drawerRef} 
+          aria-hidden={!menuOpen}
+          onClick={() => setMenuOpen(false)}
+        >
+          <div className="hamburger-drawer-brand" style={{ position: 'absolute', top: '24px', left: '24px', color: 'var(--olive-900)', zIndex: 2001 }}>
+            <span>🏛️</span>
+            <span>code-2day</span>
           </div>
-          <button type="button" className="hamburger-close" onClick={() => setMenuOpen(false)} aria-label="Close menu" style={{ position: 'absolute', top: '24px', right: '24px', color: '#fff', borderColor: 'rgba(255,255,255,0.2)', zIndex: 2001 }}>
+          <button 
+            type="button" 
+            className="hamburger-close" 
+            onClick={() => setMenuOpen(false)} 
+            aria-label="Close menu" 
+            style={{ position: 'absolute', top: '24px', right: '24px', color: 'var(--olive-900)', borderColor: 'rgba(31, 40, 22, 0.2)', zIndex: 2001 }}
+          >
             <X size={18} />
           </button>
           
-          <div className="hamburger-overlay-content">
+          <div 
+            className="hamburger-overlay-content" 
+            onClick={(e) => e.stopPropagation()}
+          >
             <LineSidebar
               items={flatItems.map(item => item.label)}
-              defaultActive={activeIndex >= 0 ? activeIndex : 0}
+              defaultActive={null}
               onItemClick={(index) => {
                 const selected = flatItems[index];
                 if (selected) {
@@ -149,14 +163,21 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
                   setMenuOpen(false);
                 }
               }}
-              accentColor="#A855F7"
-              textColor="#f8f6ef"
-              markerColor="rgba(255, 255, 255, 0.4)"
+              accentColor="#c49743"
+              textColor="#25301d"
+              markerColor="#9daa8b"
               showIndex={true}
               showMarker={true}
-              fontSize={1.6}
-              itemGap={30}
-              maxShift={40}
+              proximityRadius={195}
+              maxShift={51}
+              falloff="linear"
+              markerLength={60}
+              markerGap={20}
+              tickScale={0.22}
+              scaleTick={true}
+              itemGap={33}
+              fontSize={2.2}
+              smoothing={120}
             />
           </div>
         </div>
