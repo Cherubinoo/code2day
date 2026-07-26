@@ -2088,7 +2088,7 @@ class BatchReportPDFView(UnifiedAuthMixin, APIView):
             rows = rows[-MAX_BARS:]
         labels = [r['bucket'].strftime('%d %b') for r in rows]
         data = [r['c'] for r in rows]
-        bar = _bar_chart(data, labels, bar_color=_TEAL, w=520, h=150)
+        bar = _bar_chart(data, labels, bar_color=_TEAL, w=470, h=150)
         wrap = Table([[bar]], colWidths=[6.6*inch])
         wrap.setStyle(TableStyle([('ALIGN',(0,0),(-1,-1),'CENTER')]))
         story.append(wrap)

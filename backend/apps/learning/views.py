@@ -7147,11 +7147,43 @@ class StudentReportPDFView(APIView):
         ALT_ROW = '#f8f9f7'
 
         def _styled_table(data, col_widths, has_header=True):
-            t = Table(data, colWidths=col_widths)
+            cell_style = ParagraphStyle(
+                'RPTableCell',
+                parent=styles['Normal'],
+                fontSize=8,
+                leading=10,
+                textColor=colors.HexColor('#333333')
+            )
+            cell_header_style = ParagraphStyle(
+                'RPTableHeaderCell',
+                parent=styles['Normal'],
+                fontName='Helvetica-Bold',
+                fontSize=8,
+                leading=10,
+                textColor=colors.HexColor(GREEN_HDR)
+            )
+
+            wrapped_data = []
+            for row_idx, row in enumerate(data):
+                wrapped_row = []
+                for col_idx, cell in enumerate(row):
+                    if isinstance(cell, str):
+                        if '█' in cell or '░' in cell:
+                            wrapped_row.append(cell)
+                        else:
+                            escaped_cell = cell.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                            if has_header and row_idx == 0:
+                                wrapped_row.append(Paragraph(escaped_cell, cell_header_style))
+                            else:
+                                wrapped_row.append(Paragraph(escaped_cell, cell_style))
+                    else:
+                        wrapped_row.append(cell)
+                wrapped_data.append(wrapped_row)
+
+            t = Table(wrapped_data, colWidths=col_widths)
             style_cmds = [
                 ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTSIZE', (0, 0), (-1, -1), 8),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
                 ('TOPPADDING', (0, 0), (-1, -1), 6),
                 ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor(BORDER)),
@@ -7159,8 +7191,6 @@ class StudentReportPDFView(APIView):
             if has_header:
                 style_cmds += [
                     ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor(GREEN_BG)),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor(GREEN_HDR)),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                     ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor(ALT_ROW)]),
                 ]
             t.setStyle(TableStyle(style_cmds))
@@ -7306,7 +7336,7 @@ class StudentReportPDFView(APIView):
         trend_labels = [row.get('date', '')[5:] for row in trend_rows]
 
         overall_pie = _pie_chart(overall_values, overall_labels, ['#22c55e', '#3b82f6', '#f59e0b'], size=130)
-        trend_bar = _bar_chart(trend_values, trend_labels, bar_color='#0f766e', w=320, h=140)
+        trend_bar = _bar_chart(trend_values, trend_labels, bar_color='#0f766e', w=295, h=140)
         charts_table = Table([[overall_pie, trend_bar]], colWidths=[2.2 * inch, 4.2 * inch])
         charts_table.setStyle(TableStyle([
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -8034,7 +8064,7 @@ class StaffReportPDFView(APIView):
             daily_labels = [row.get('date', '')[5:] for row in daily]
 
             pie = _pie_chart(overall_values, overall_labels, ['#22c55e', '#3b82f6', '#f59e0b'], size=130)
-            daily_bar = _bar_chart(daily_values, daily_labels, bar_color='#0f766e', w=320, h=140)
+            daily_bar = _bar_chart(daily_values, daily_labels, bar_color='#0f766e', w=295, h=140)
             chart_table = Table([[pie, daily_bar]], colWidths=[2.2*inch, 4.2*inch])
             chart_table.setStyle(TableStyle([
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -8052,7 +8082,7 @@ class StaffReportPDFView(APIView):
                     [row.get('count', 0) for row in topics],
                     [row.get('label', '')[:10] for row in topics],
                     bar_color='#4f46e5',
-                    w=520,
+                    w=475,
                     h=150,
                 ))
                 elements.append(Spacer(1, 0.3 * inch))
