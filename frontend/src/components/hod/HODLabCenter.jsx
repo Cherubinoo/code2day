@@ -55,7 +55,7 @@ function LangMultiSelect({ options, values, onChange }) {
   );
 }
 
-function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
+function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab, labs = [] }) {
   const editing = !!editLab;
   const blank = {
     name: "", batch: "", section: "", start_date: "", end_date: "", staff_in_charge_id: "",
@@ -65,6 +65,7 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
     max_tab_switches: 3,
     enable_fullscreen_lock: true,
     enable_copy_paste_lock: true,
+    linked_lab_id: "",
   };
   const [form, setForm] = useState(blank);
   const [busy, setBusy] = useState(false);
@@ -86,6 +87,7 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
         max_tab_switches: editLab.max_tab_switches ?? 3,
         enable_fullscreen_lock: editLab.enable_fullscreen_lock ?? true,
         enable_copy_paste_lock: editLab.enable_copy_paste_lock ?? true,
+        linked_lab_id: editLab.linked_lab_id ?? "",
       });
     } else {
       setForm(blank);
@@ -146,6 +148,38 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
               </button>
             </div>
           </div>
+          {form.lab_type === "university" && (
+            <div className="hlc2-field">
+              <label className="hlc2-label">Connect to Practice Lab *</label>
+              <select
+                className="hlc2-input"
+                style={{ width: "100%", padding: "10px", marginTop: 4, background: "#0f172a", border: "1px solid #1e293b", color: "#cbd5e1", borderRadius: 6 }}
+                value={form.linked_lab_id || ""}
+                onChange={(e) => {
+                  const selectedId = e.target.value;
+                  const selectedLab = labs.find(l => String(l.id) === String(selectedId));
+                  setForm((f) => ({
+                    ...f,
+                    linked_lab_id: selectedId,
+                    name: selectedLab ? `${selectedLab.name} – University Practical` : f.name,
+                    batch: selectedLab ? selectedLab.batch : f.batch,
+                    section: selectedLab ? selectedLab.section : f.section,
+                    allowed_languages: selectedLab ? [...selectedLab.allowed_languages] : f.allowed_languages,
+                    staff_in_charge_id: selectedLab && selectedLab.staff_in_charge ? selectedLab.staff_in_charge.id : f.staff_in_charge_id,
+                  }));
+                }}
+              >
+                <option value="">-- Select an existing practice lab --</option>
+                {labs
+                  .filter((l) => l.lab_type !== "university")
+                  .map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.name} ({l.batch} {l.section ? `– ${l.section}` : ""})
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
           <div className="hlc2-field">
             <label className="hlc2-label">Lab Name *</label>
             <input className="hlc2-input" placeholder="e.g. Arrays & Strings Lab – Sem 3"
@@ -191,6 +225,61 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab }) {
             <LangMultiSelect options={LAB_LANGUAGES} values={form.allowed_languages}
               onChange={(v) => setForm((f) => ({ ...f, allowed_languages: v }))} />
           </div>
+          {form.lab_type === "university" && (
+            <div style={{ marginTop: 20, marginBottom: 20, padding: 15, background: "#0f172a", borderRadius: 8, border: "1px solid #1e293b" }}>
+              <h3 style={{ fontSize: 13, color: "#38bdf8", marginBottom: 12, fontWeight: "600" }}>🔒 Security &amp; Anti-Cheat Settings</h3>
+              
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <input
+                  type="checkbox"
+                  id="enable_tab_switch_check"
+                  checked={form.enable_tab_switch_check}
+                  onChange={(e) => setForm((f) => ({ ...f, enable_tab_switch_check: e.target.checked }))}
+                />
+                <label htmlFor="enable_tab_switch_check" style={{ fontSize: 13, color: "#cbd5e1", cursor: "pointer" }}>
+                  Enable Tab Switch Checking
+                </label>
+              </div>
+
+              {form.enable_tab_switch_check && (
+                <div className="hlc2-field" style={{ marginLeft: 24, marginBottom: 14 }}>
+                  <label className="hlc2-label" style={{ fontSize: 12 }}>Max Tab Switches Allowed</label>
+                  <input
+                    type="number"
+                    min="1"
+                    className="hlc2-input"
+                    style={{ width: 100, marginTop: 4 }}
+                    value={form.max_tab_switches}
+                    onChange={(e) => setForm((f) => ({ ...f, max_tab_switches: parseInt(e.target.value) || 3 }))}
+                  />
+                </div>
+              )}
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                <input
+                  type="checkbox"
+                  id="enable_fullscreen_lock"
+                  checked={form.enable_fullscreen_lock}
+                  onChange={(e) => setForm((f) => ({ ...f, enable_fullscreen_lock: e.target.checked }))}
+                />
+                <label htmlFor="enable_fullscreen_lock" style={{ fontSize: 13, color: "#cbd5e1", cursor: "pointer" }}>
+                  Enable Fullscreen Lock (Forces fullscreen mode)
+                </label>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <input
+                  type="checkbox"
+                  id="enable_copy_paste_lock"
+                  checked={form.enable_copy_paste_lock}
+                  onChange={(e) => setForm((f) => ({ ...f, enable_copy_paste_lock: e.target.checked }))}
+                />
+                <label htmlFor="enable_copy_paste_lock" style={{ fontSize: 13, color: "#cbd5e1", cursor: "pointer" }}>
+                  Disable Copy &amp; Paste (Anti-cheat)
+                </label>
+              </div>
+            </div>
+          )}
           {err && <p className="hlc2-error">{err}</p>}
           <div className="hlc2-form-actions">
             <button type="button" className="hlc2-btn-ghost" onClick={onClose}>Cancel</button>
@@ -501,7 +590,7 @@ export default function HODLabCenter() {
       )}
 
       <LabDrawer open={drawerOpen} onClose={() => { setDrawerOpen(false); setEditLab(null); }}
-        onSave={onSaved} deptInfo={deptInfo} staffList={staffList} editLab={editLab} />
+        onSave={onSaved} deptInfo={deptInfo} staffList={staffList} editLab={editLab} labs={labs} />
 
       {delConfirm && (
         <>

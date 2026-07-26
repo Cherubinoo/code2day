@@ -12253,6 +12253,11 @@ def _serialize_lab_v2(lab, student=None):
             "id": lab.created_by.id,
             "name": lab.created_by.name,
         } if lab.created_by else None,
+        "linked_lab_id": lab.linked_lab_id,
+        "enable_tab_switch_check": lab.enable_tab_switch_check,
+        "max_tab_switches": lab.max_tab_switches,
+        "enable_fullscreen_lock": lab.enable_fullscreen_lock,
+        "enable_copy_paste_lock": lab.enable_copy_paste_lock,
     }
     if student is not None:
         completed = LabExerciseSubmission.objects.filter(
@@ -12279,6 +12284,7 @@ def _serialize_exercise(ex):
         "added_by": {"id": ex.added_by.id, "name": ex.added_by.name} if ex.added_by else None,
         "submission_count": submission_count,
         "test_case_count": test_case_count,
+        "difficulty": ex.difficulty,
     }
 
 
@@ -12520,6 +12526,15 @@ class HODLabListView(APIView):
             )
 
         lab_type = data.get("lab_type", "practical")
+        linked_lab = None
+        linked_lab_id = data.get("linked_lab_id")
+        if linked_lab_id:
+            try:
+                linked_lab = Lab.objects.get(id=linked_lab_id, department=staff.department)
+            except Lab.DoesNotExist:
+                pass
+
+        is_univ = (lab_type == "university")
         lab = Lab.objects.create(
             name=data["name"],
             department=staff.department,
@@ -12532,11 +12547,12 @@ class HODLabListView(APIView):
             lab_type=lab_type,
             approval_status="approved",
             is_published=data.get("is_published", True),
-            enable_tab_switch_check=bool(data.get("enable_tab_switch_check", False)),
-            max_tab_switches=int(data.get("max_tab_switches", 3)),
-            enable_fullscreen_lock=bool(data.get("enable_fullscreen_lock", False)),
-            enable_copy_paste_lock=bool(data.get("enable_copy_paste_lock", False)),
+            enable_tab_switch_check=bool(data.get("enable_tab_switch_check", False)) if is_univ else False,
+            max_tab_switches=int(data.get("max_tab_switches", 3)) if is_univ else 3,
+            enable_fullscreen_lock=bool(data.get("enable_fullscreen_lock", False)) if is_univ else False,
+            enable_copy_paste_lock=bool(data.get("enable_copy_paste_lock", False)) if is_univ else False,
             allowed_languages=allowed_languages,
+            linked_lab=linked_lab,
         )
         lab.refresh_from_db()
         return Response(_serialize_lab_v2(lab), status=201)
@@ -12549,7 +12565,7 @@ class HODLabDetailView(APIView):
 
     def _get(self, lab_id, staff):
         try:
-            return Lab.objects.get(id=lab_id, department=staff.department, lab_type="practical")
+            return Lab.objects.get(id=lab_id, department=staff.department)
         except Lab.DoesNotExist:
             return None
 
@@ -12559,9 +12575,27 @@ class HODLabDetailView(APIView):
         if not lab:
             return Response({"error": "Not found"}, status=404)
         data = request.data
+        is_univ = (lab.lab_type == "university")
         for field in ("name", "batch", "section", "is_active"):
             if field in data:
                 setattr(lab, field, data[field])
+        if is_univ:
+            for field in ("enable_tab_switch_check", "max_tab_switches", "enable_fullscreen_lock", "enable_copy_paste_lock"):
+                if field in data:
+                    setattr(lab, field, data[field])
+        else:
+            lab.enable_tab_switch_check = False
+            lab.enable_fullscreen_lock = False
+            lab.enable_copy_paste_lock = False
+        if "linked_lab_id" in data:
+            linked_lab_id = data["linked_lab_id"]
+            if linked_lab_id:
+                try:
+                    lab.linked_lab = Lab.objects.get(id=linked_lab_id, department=staff.department)
+                except Lab.DoesNotExist:
+                    lab.linked_lab = None
+            else:
+                lab.linked_lab = None
         if "start_date" in data:
             lab.start_date = _parse_dt(data["start_date"]) or lab.start_date
         if "end_date" in data:
@@ -12618,7 +12652,15 @@ class StaffLabListView(APIView):
         allowed_languages = data.get("allowed_languages", list(LAB_LANGUAGE_CHOICES))
         lab_type = data.get("lab_type", "practical")
         approval_status = "pending_approval" if (lab_type == "university" and not getattr(staff, "is_hod", False)) else "approved"
+        linked_lab = None
+        linked_lab_id = data.get("linked_lab_id")
+        if linked_lab_id:
+            try:
+                linked_lab = Lab.objects.get(id=linked_lab_id, department=staff.department)
+            except Lab.DoesNotExist:
+                pass
 
+        is_univ = (lab_type == "university")
         lab = Lab.objects.create(
             name=data["name"],
             department=staff.department,
@@ -12631,11 +12673,12 @@ class StaffLabListView(APIView):
             lab_type=lab_type,
             approval_status=approval_status,
             is_published=False if lab_type == "university" else True,
-            enable_tab_switch_check=bool(data.get("enable_tab_switch_check", False)),
-            max_tab_switches=int(data.get("max_tab_switches", 3)),
-            enable_fullscreen_lock=bool(data.get("enable_fullscreen_lock", False)),
-            enable_copy_paste_lock=bool(data.get("enable_copy_paste_lock", False)),
+            enable_tab_switch_check=bool(data.get("enable_tab_switch_check", False)) if is_univ else False,
+            max_tab_switches=int(data.get("max_tab_switches", 3)) if is_univ else 3,
+            enable_fullscreen_lock=bool(data.get("enable_fullscreen_lock", False)) if is_univ else False,
+            enable_copy_paste_lock=bool(data.get("enable_copy_paste_lock", False)) if is_univ else False,
             allowed_languages=allowed_languages,
+            linked_lab=linked_lab,
         )
         lab.refresh_from_db()
         return Response(_serialize_lab_v2(lab), status=201)
@@ -12860,6 +12903,7 @@ class StaffLabExercisesView(APIView):
             description=data.get("description", ""),
             order=data.get("order", lab.exercises.count()),
             added_by=staff,
+            difficulty=data.get("difficulty", "Medium"),
         )
         # Test cases (and the explanation) are always a separate, explicit
         # step via the Generate buttons — never triggered automatically on
@@ -12987,7 +13031,7 @@ class StaffExerciseDetailView(APIView):
         ex = self._get_ex(lab_id, exercise_id, staff)
         if not ex:
             return Response({"error": "Not found"}, status=404)
-        for field in ("title", "description", "order"):
+        for field in ("title", "description", "order", "difficulty"):
             if field in request.data:
                 setattr(ex, field, request.data[field])
         ex.save()
@@ -13215,10 +13259,43 @@ class StudentLabExercisesView(APIView):
             lab = Lab.objects.get(id=lab_id, department=student.department, batch=student.batch, is_active=True)
         except Lab.DoesNotExist:
             return Response({"error": "Not found"}, status=404)
-        exercises = lab.exercises.all()
+        
+        session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
+        if session.is_locked:
+            return Response({
+                "lab": _serialize_lab_v2(lab, student=student),
+                "is_locked": True,
+                "lock_reason": session.lock_reason,
+                "exercises": [],
+            })
+
+        if lab.lab_type == "university" and lab.linked_lab:
+            if not session.allocated_exercises.exists():
+                pool = list(lab.linked_lab.exercises.all())
+                valid_pairs = []
+                for i in range(len(pool)):
+                    for j in range(i + 1, len(pool)):
+                        ex1 = pool[i]
+                        ex2 = pool[j]
+                        if ex1.difficulty == "Hard" and ex2.difficulty == "Hard":
+                            continue
+                        valid_pairs.append((ex1, ex2))
+                
+                if valid_pairs:
+                    import random
+                    allocated = random.choice(valid_pairs)
+                else:
+                    import random
+                    allocated = random.sample(pool, min(2, len(pool)))
+                
+                session.allocated_exercises.set(allocated)
+            exercises = session.allocated_exercises.all()
+        else:
+            exercises = lab.exercises.all()
+
         sub_map = {
             s.exercise_id: s
-            for s in LabExerciseSubmission.objects.filter(exercise__lab=lab, student=student)
+            for s in LabExerciseSubmission.objects.filter(exercise__in=exercises, student=student)
         }
         ex_data = []
         for ex in exercises:
@@ -13250,12 +13327,26 @@ class StudentExerciseRunView(APIView):
     def post(self, request, lab_id, exercise_id):
         student = _student_from_request(request)
         try:
-            exercise = LabExercise.objects.get(
-                id=exercise_id, lab_id=lab_id,
-                lab__department=student.department, lab__batch=student.batch,
-            )
-        except LabExercise.DoesNotExist:
-            return Response({"error": "Not found"}, status=404)
+            lab = Lab.objects.get(id=lab_id, department=student.department, batch=student.batch, is_active=True)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
+        if session.is_locked:
+            return Response({"error": "Your session is locked due to proctoring violation. Please contact staff to unlock."}, status=403)
+
+        if lab.lab_type == "university" and lab.linked_lab:
+            if not session.allocated_exercises.filter(id=exercise_id).exists():
+                return Response({"error": "You are not allocated this exercise."}, status=403)
+            try:
+                exercise = LabExercise.objects.get(id=exercise_id, lab=lab.linked_lab)
+            except LabExercise.DoesNotExist:
+                return Response({"error": "Exercise not found"}, status=404)
+        else:
+            try:
+                exercise = LabExercise.objects.get(id=exercise_id, lab=lab)
+            except LabExercise.DoesNotExist:
+                return Response({"error": "Exercise not found"}, status=404)
 
         source_code = (request.data.get("code") or "").strip()
         language = (request.data.get("language") or "").strip()
@@ -13313,12 +13404,26 @@ class StudentExerciseSubmitView(APIView):
     def post(self, request, lab_id, exercise_id):
         student = _student_from_request(request)
         try:
-            exercise = LabExercise.objects.get(
-                id=exercise_id, lab_id=lab_id,
-                lab__department=student.department, lab__batch=student.batch
-            )
-        except LabExercise.DoesNotExist:
-            return Response({"error": "Not found"}, status=404)
+            lab = Lab.objects.get(id=lab_id, department=student.department, batch=student.batch, is_active=True)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
+        if session.is_locked:
+            return Response({"error": "Your session is locked due to proctoring violation. Please contact staff to unlock."}, status=403)
+
+        if lab.lab_type == "university" and lab.linked_lab:
+            if not session.allocated_exercises.filter(id=exercise_id).exists():
+                return Response({"error": "You are not allocated this exercise."}, status=403)
+            try:
+                exercise = LabExercise.objects.get(id=exercise_id, lab=lab.linked_lab)
+            except LabExercise.DoesNotExist:
+                return Response({"error": "Exercise not found"}, status=404)
+        else:
+            try:
+                exercise = LabExercise.objects.get(id=exercise_id, lab=lab)
+            except LabExercise.DoesNotExist:
+                return Response({"error": "Exercise not found"}, status=404)
         data = request.data
         code = data.get("code", "")
         language = data.get("language", "")

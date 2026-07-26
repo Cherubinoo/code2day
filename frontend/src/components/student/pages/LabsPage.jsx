@@ -9,7 +9,7 @@ import SuccessAnimation from "../../common/SuccessAnimation";
 import {
   FlaskConical, ChevronLeft, BookOpen, CheckCircle2,
   Circle, Clock, Calendar, UserCheck,
-  ChevronDown, ChevronUp, Download, Loader2,
+  ChevronDown, ChevronUp, Download, Loader2, AlertCircle,
 } from "lucide-react";
 
 // Use the bundled ESM Monaco build instead of the AMD loader path.
@@ -247,7 +247,102 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
   const [customInput, setCustomInput] = useState("");
   const [outputLog, setOutputLog] = useState("Run your code to see output here.");
   const [elapsedTime, setElapsedTime] = useState(0);
-  const timerRef = useRef(null);
+  const [sessionLocked, setSessionLocked] = useState(false);
+  const [sessionLockReason, setSessionLockReason] = useState("");
+
+  const recordViolation = useCallback(async (action, reason) => {
+    try {
+      const token = getCsrfToken();
+      const res = await fetch(`/api/lab/v2/student/labs/${lab.id}/violation/`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": token || "",
+        },
+        body: JSON.stringify({ action, reason }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        if (d.is_locked) {
+          setSessionLocked(true);
+          setSessionLockReason(d.lock_reason || "Security violation limit reached.");
+        }
+      }
+    } catch (e) {
+      console.error("Failed to record violation", e);
+    }
+  }, [lab.id]);
+
+  const handleBack = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+    onBack();
+  };
+
+  // 1. Copy-Paste lock
+  useEffect(() => {
+    if (lab.lab_type !== "university" || !lab.enable_copy_paste_lock) return;
+    const preventCopyPaste = (e) => {
+      e.preventDefault();
+      alert("Copy and paste is disabled for this proctored lab session.");
+    };
+    document.addEventListener("copy", preventCopyPaste);
+    document.addEventListener("paste", preventCopyPaste);
+    document.addEventListener("cut", preventCopyPaste);
+    return () => {
+      document.removeEventListener("copy", preventCopyPaste);
+      document.removeEventListener("paste", preventCopyPaste);
+      document.removeEventListener("cut", preventCopyPaste);
+    };
+  }, [lab.lab_type, lab.enable_copy_paste_lock]);
+
+  // 2. Tab switch check
+  useEffect(() => {
+    if (lab.lab_type !== "university" || !lab.enable_tab_switch_check) return;
+    const handleVisibility = () => {
+      if (document.hidden) {
+        recordViolation("tab_switch", "Tab switched or browser minimized");
+      }
+    };
+    const handleBlur = () => {
+      recordViolation("tab_switch", "Window lost focus");
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, [lab.lab_type, lab.enable_tab_switch_check, recordViolation]);
+
+  // 3. Fullscreen lock
+  useEffect(() => {
+    if (lab.lab_type !== "university" || !lab.enable_fullscreen_lock) return;
+    
+    const checkFullscreen = () => {
+      const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      if (!isFull) {
+        recordViolation("fullscreen_exit", "Exited fullscreen mode");
+      }
+    };
+
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    
+    const handleFullscreenChange = () => {
+      checkFullscreen();
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+    };
+  }, [lab.lab_type, lab.enable_fullscreen_lock, recordViolation]);
 
   useEffect(() => () => clearInterval(timerRef.current), []);
 
@@ -410,6 +505,26 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
     }
   }
 
+  if (sessionLocked) {
+    return (
+      <div className="slab-lab-detail" style={{ textAlign: "center", padding: "40px 20px" }}>
+        <div style={{ marginTop: 60, display: "inline-block", padding: 30, background: "#1e1b4b", borderRadius: 12, border: "1px solid #dc2626", maxWidth: 500 }}>
+          <AlertCircle size={48} style={{ color: "#dc2626", margin: "0 auto 16px" }} />
+          <h2 style={{ fontSize: 20, color: "#f8fafc", marginBottom: 8 }}>Session Locked</h2>
+          <p style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 20 }}>
+            {sessionLockReason}
+          </p>
+          <p style={{ fontSize: 13, color: "#94a3b8", marginBottom: 20 }}>
+            Please contact your laboratory staff or HOD to unlock your session.
+          </p>
+          <button type="button" className="slab-back" style={{ display: "block", width: "100%", textAlign: "center" }} onClick={handleBack}>
+            Return to All Labs
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="page-stack problem-page">
       {showSuccessAnimation && (
@@ -418,7 +533,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
       {/* ── Workspace Header ── */}
       <section className="page-header compact-header problem-page-header">
         <div className="workspace-title-row">
-          <button type="button" className="back-to-list-btn" onClick={onBack}>
+          <button type="button" className="back-to-list-btn" onClick={handleBack}>
             ← All Exercises
           </button>
           <div>
@@ -589,11 +704,21 @@ function LabDetail({ lab, onBack }) {
   const [exercises, setExercises] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeExercise, setActiveExercise] = useState(null);
+  const [locked, setLocked] = useState(false);
+  const [lockReason, setLockReason] = useState("");
 
   useEffect(() => {
     fetch(`/api/lab/v2/${lab.id}/exercises/list/`, { credentials: "include" })
       .then((r) => r.json())
-      .then((d) => { setExercises(d.exercises ?? []); setLoading(false); })
+      .then((d) => {
+        if (d.is_locked) {
+          setLocked(true);
+          setLockReason(d.lock_reason || "Violation detected.");
+        } else {
+          setExercises(d.exercises ?? []);
+        }
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, [lab.id]);
 
@@ -602,6 +727,26 @@ function LabDetail({ lab, onBack }) {
       prev.map((ex) =>
         ex.id === exerciseId ? { ...ex, submitted: true, code, language, submitted_at } : ex
       )
+    );
+  }
+
+  if (locked) {
+    return (
+      <div className="slab-lab-detail" style={{ textAlign: "center", padding: "40px 20px" }}>
+        <button type="button" className="slab-back" onClick={onBack}>
+          <ChevronLeft size={15} /> All Labs
+        </button>
+        <div style={{ marginTop: 60, display: "inline-block", padding: 30, background: "#1e1b4b", borderRadius: 12, border: "1px solid #dc2626", maxWidth: 500 }}>
+          <AlertCircle size={48} style={{ color: "#dc2626", margin: "0 auto 16px" }} />
+          <h2 style={{ fontSize: 20, color: "#f8fafc", marginBottom: 8 }}>Session Locked</h2>
+          <p style={{ fontSize: 14, color: "#cbd5e1", marginBottom: 20 }}>
+            {lockReason}
+          </p>
+          <p style={{ fontSize: 13, color: "#94a3b8" }}>
+            Please contact your laboratory staff or HOD to unlock your session.
+          </p>
+        </div>
+      </div>
     );
   }
 
@@ -686,8 +831,9 @@ function LabDetail({ lab, onBack }) {
 
 // ─── Root ─────────────────────────────────────────────────────────────────────
 const LAB_TYPE_TABS = [
-  { id: "practical", label: "Lab Practical" },
-  { id: "company", label: "Company Based Lab Practical" },
+  { id: "practical", label: "💻 Curriculum / Practice Lab" },
+  { id: "university", label: "🏛️ University Practical Lab" },
+  { id: "company", label: "🏢 Company Based Lab" },
 ];
 
 export default function LabsPage() {

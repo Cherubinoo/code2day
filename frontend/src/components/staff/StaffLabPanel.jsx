@@ -646,6 +646,7 @@ function ExerciseForm({ labId, exercise, onSaved, onCancel }) {
       const res = await apiFetch(url, editing ? "PUT" : "POST", {
         title: title.trim(),
         description: compileDescription(fields),
+        difficulty: fields.difficulty || "Medium",
       });
       if (!res.ok) { setErr("Save failed"); return; }
       onSaved(await res.json(), editing);

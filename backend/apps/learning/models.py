@@ -1621,6 +1621,9 @@ class Lab(models.Model):
     company         = models.OneToOneField(
         Company, on_delete=models.CASCADE, null=True, blank=True, related_name="lab"
     )
+    linked_lab      = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True, related_name="university_labs"
+    )
     allowed_languages = models.JSONField(default=default_lab_languages)
 
     class Meta:
@@ -1643,6 +1646,7 @@ class LabExercise(models.Model):
     description = models.TextField(blank=True, default="")
     explanation = models.TextField(blank=True, default="")  # brief LLM-generated approach summary
     order       = models.PositiveIntegerField(default=0)
+    difficulty  = models.CharField(max_length=20, default="Medium")
     added_by    = models.ForeignKey(
         StaffProfile, on_delete=models.SET_NULL, null=True, blank=True,
         related_name="added_exercises"
@@ -1766,6 +1770,9 @@ class LabStudentSession(models.Model):
     lock_reason      = models.CharField(max_length=255, blank=True, default="")
     locked_at        = models.DateTimeField(null=True, blank=True)
     updated_at       = models.DateTimeField(auto_now=True)
+    allocated_exercises = models.ManyToManyField(
+        LabExercise, blank=True, related_name="allocated_sessions"
+    )
 
     class Meta:
         db_table = "lab_student_sessions"
