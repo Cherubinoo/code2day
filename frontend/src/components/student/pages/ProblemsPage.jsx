@@ -687,7 +687,7 @@ function WorkspaceView({
                     )}
                     {problemDetailTab === "explanation" && (
                       <>
-                        {selectedProblem.explanation ? (
+                        {selectedProblem.explanation && (
                           <div className="info-box" style={{ background: 'none', padding: 0, border: 'none' }}>
                             <h4 style={{ color: '#38bdf8', marginBottom: 10 }}>💡 Detailed Explanation &amp; Walkthrough</h4>
                             <div style={{
@@ -705,15 +705,11 @@ function WorkspaceView({
                               {selectedProblem.explanation}
                             </div>
                           </div>
-                        ) : (
-                          <div className="info-box">
-                            <p style={{ color: 'var(--text-soft)', fontStyle: 'italic' }}>No explanation writeup generated yet for this problem.</p>
-                          </div>
                         )}
 
                         {selectedProblem.examples && selectedProblem.examples.length > 0 && (
-                          <div className="info-box" style={{ marginTop: 20 }}>
-                            <h4 style={{ color: '#a78bfa', marginBottom: 12 }}>🧪 Sample Test Cases & Worked Examples</h4>
+                          <div className="info-box" style={{ marginTop: selectedProblem.explanation ? 20 : 0 }}>
+                            <h4 style={{ color: '#a78bfa', marginBottom: 12 }}>🧪 Sample Test Cases</h4>
                             {selectedProblem.examples.map((ex, idx) => (
                               <div key={idx} className="example-block" style={{ marginBottom: 12, padding: 14, background: '#1e293b', borderRadius: 8, border: '1px solid #334155' }}>
                                 <div style={{ fontSize: 12, fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>Example {idx + 1}</div>
