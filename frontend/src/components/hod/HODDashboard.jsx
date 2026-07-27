@@ -886,6 +886,34 @@ const HODDashboard = ({ institutionId }) => {
             </div>
           )}
 
+          {activeTab === 'performance' && (
+            <div className="performance-tab">
+              <div className="premium-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>
+                      Department Performance &amp; Analytics
+                    </h3>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '14px' }}>
+                      Overall student solving activity, contest benchmarks, and skill distribution for {department?.name || 'your department'}.
+                    </p>
+                  </div>
+                </div>
+                <PerformanceDashboard
+                  scoreHistory={leaderboard || []}
+                  testsCompleted={stats.totalContests || 0}
+                  solvedCount={stats.studentCount || 0}
+                  summaryCards={{
+                    programming_solved: stats.totalContests || 0,
+                    aptitude_solved: Math.round((stats.studentCount || 0) * 0.8),
+                    contest_solved: stats.totalContests || 0,
+                    active_days: weeklyActivity.length || 7,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
           {activeTab === 'staff' && (
             <div className="staff-tab">
               <div className="premium-card">

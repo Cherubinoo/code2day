@@ -3,7 +3,6 @@ import { LayoutGrid, Bell, X, MessageSquare, ExternalLink, Mail, Menu } from "lu
 import { buildJsonPostOptions } from "../../lib/appUtils";
 import { PAGE_PATHS, appUrlForPage } from "../../lib/useHistoryNav";
 import AnimatedNumber from "./AnimatedNumber";
-import LineSidebar from "./LineSidebar";
 
 function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, userType, hideNav }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -127,59 +126,58 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
         </div>
       </header>
 
-      {/* Backdrop & Centered Overlay */}
+      {/* Backdrop */}
       {!hideNav && menuOpen && (
-        <div 
-          className="hamburger-overlay-centered" 
-          aria-hidden={!menuOpen}
-          onClick={() => setMenuOpen(false)}
-        >
-          <div className="hamburger-drawer-brand" style={{ position: 'absolute', top: '24px', left: '24px', color: 'var(--olive-900)', zIndex: 2001 }}>
-            <span>🏛️</span>
-            <span>code-2day</span>
+        <div className="hamburger-overlay" onClick={() => setMenuOpen(false)} />
+      )}
+
+      {/* Slide-out nav drawer */}
+      {!hideNav && (
+        <nav className={`hamburger-drawer${menuOpen ? " open" : ""}`} ref={drawerRef} aria-hidden={!menuOpen}>
+          <div className="hamburger-drawer-header">
+            <div className="hamburger-drawer-brand">
+              <span>🏛️</span>
+              <span>code-2day</span>
+            </div>
+            <button type="button" className="hamburger-close" onClick={() => setMenuOpen(false)} aria-label="Close menu">
+              <X size={18} />
+            </button>
           </div>
-          <button 
-            type="button" 
-            className="hamburger-close" 
-            onClick={() => setMenuOpen(false)} 
-            aria-label="Close menu" 
-            style={{ position: 'absolute', top: '24px', right: '24px', color: 'var(--olive-900)', borderColor: 'rgba(31, 40, 22, 0.2)', zIndex: 2001 }}
-          >
-            <X size={18} />
-          </button>
-          
-          <div 
-            className="hamburger-overlay-content" 
-            ref={drawerRef}
-          >
-            <LineSidebar
-              items={flatItems.map(item => item.label)}
-              defaultActive={null}
-              onItemClick={(index) => {
-                const selected = flatItems[index];
-                if (selected) {
-                  setActivePage(selected.id);
-                  setMenuOpen(false);
-                }
-              }}
-              accentColor="#c49743"
-              textColor="#25301d"
-              markerColor="#9daa8b"
-              showIndex={true}
-              showMarker={true}
-              proximityRadius={195}
-              maxShift={51}
-              falloff="linear"
-              markerLength={60}
-              markerGap={20}
-              tickScale={0.22}
-              scaleTick={true}
-              itemGap={33}
-              fontSize={2.2}
-              smoothing={120}
-            />
+
+          <div className="hamburger-nav">
+            {items.map((item) =>
+              item.dropdown ? (
+                <div key={item.id} className="hamburger-nav-group">
+                  <div className="hamburger-nav-group-label">
+                    <item.icon size={15} />
+                    {item.label}
+                  </div>
+                  {item.dropdown.map((sub) => (
+                    <button
+                      key={sub.id}
+                      type="button"
+                      className={`hamburger-nav-link hamburger-nav-sub${sub.id === activePage ? " active" : ""}`}
+                      onClick={() => { setActivePage(sub.id); setMenuOpen(false); }}
+                    >
+                      <sub.icon size={15} />
+                      <span>{sub.label}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`hamburger-nav-link${item.id === activePage ? " active" : ""}`}
+                  onClick={() => { setActivePage(item.id); setMenuOpen(false); }}
+                >
+                  {item.icon && <item.icon size={18} />}
+                  <span>{item.label}</span>
+                </button>
+              )
+            )}
           </div>
-        </div>
+        </nav>
       )}
     </>
   );

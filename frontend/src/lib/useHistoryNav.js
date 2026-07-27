@@ -11,6 +11,19 @@
  *
  * All child components already receive `setActivePage` as a prop.
  * Pass `navigate` in its place — the function signature is identical.
+/**
+ * useHistoryNav.js
+ * ================
+ * Custom hook that syncs the active page with the browser's History API.
+ *
+ * - Navigating to a new page → `window.history.pushState` (URL updates,
+ *   browser Back button works)
+ * - Browser Back / Forward / mouse side-buttons → `popstate` fires →
+ *   React state updates → app re-renders the correct page
+ * - Deep-linking / page refresh → initial state is read from the URL path
+ *
+ * All child components already receive `setActivePage` as a prop.
+ * Pass `navigate` in its place — the function signature is identical.
  * No child component changes are required.
  */
 
@@ -21,6 +34,7 @@ export const PAGE_PATHS = {
   explore:       "/",
   roadmaps:      "/roadmaps",
   problems:      "/problems",
+  labs:          "/labs",
   contest:       "/contest",
   progress:      "/progress",
   discuss:       "/discuss",
@@ -33,6 +47,9 @@ export const PAGE_PATHS = {
   announcements: "/announcements",
   institution:   "/institution",
   developers:    "/developers",
+  profile:       "/profile",
+  batches:       "/batches",
+  analytics:     "/analytics",
 };
 
 /** Reverse map: URL paths → page IDs */
@@ -47,6 +64,12 @@ function normalizePath(pathname) {
 
 export function appUrlForPage(page) {
   const path = PAGE_PATHS[page] ?? "/";
+  if (page === "problems") {
+    const savedPage = sessionStorage.getItem("code2day-problems-page");
+    if (savedPage && savedPage !== "1") {
+      return new URL(`${path}?page=${savedPage}`, window.location.origin).href;
+    }
+  }
   return new URL(path, window.location.origin).href;
 }
 
@@ -70,7 +93,7 @@ export function useHistoryNav(getInitialPage) {
   const [activePage, setActivePage] = useState(() => {
     // Priority: 1. URL path, 2. Custom initial page function, 3. Default "explore"
     const fromPath = pageFromCurrentPath();
-    if (fromPath && fromPath !== "explore") {
+    if (fromPath && fromPath !== "not-found") {
       return fromPath;
     }
     const customInitial = getInitialPage?.() ?? null;
@@ -88,11 +111,10 @@ export function useHistoryNav(getInitialPage) {
         window.history.replaceState(state, "", url);
       } else {
         // Avoid pushing a duplicate entry when clicking the active nav item
-        if (normalizePath(window.location.pathname) !== path) {
+        if (normalizePath(window.location.pathname) !== path || (page === "problems" && window.location.search)) {
           window.history.pushState(state, "", url);
         }
       }
-
       setActivePage(page);
     },
     [],

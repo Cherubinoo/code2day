@@ -145,8 +145,15 @@ function ProblemListView({
   const displayTotalSolved = totalEasy + totalMedium + totalHard;
 
   const [showCompletedOnly, setShowCompletedOnly] = useState(false);
-  // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
+  // Pagination state preserved in sessionStorage and URL query param
+  const [currentPage, setCurrentPage] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const pParam = parseInt(params.get("page"), 10);
+    if (!isNaN(pParam) && pParam > 0) return pParam;
+    const saved = sessionStorage.getItem("code2day-problems-page");
+    return saved ? parseInt(saved, 10) : 1;
+  });
+
   const problemsPerPage = 20;
   const filteredProblems = showCompletedOnly 
     ? allProblems.filter(p => p.progress_state === 'completed')
@@ -154,6 +161,30 @@ function ProblemListView({
 
   const totalProblems = filteredProblems.length;
   const totalPages = Math.ceil(totalProblems / problemsPerPage);
+
+  const changePage = (newPage) => {
+    const validPage = Math.max(1, Math.min(newPage, totalPages || 1));
+    setCurrentPage(validPage);
+    sessionStorage.setItem("code2day-problems-page", String(validPage));
+    const url = new URL(window.location.href);
+    url.searchParams.set("page", String(validPage));
+    window.history.replaceState(window.history.state, "", url.href);
+  };
+
+  useEffect(() => {
+    function handlePopState() {
+      const params = new URLSearchParams(window.location.search);
+      const pParam = parseInt(params.get("page"), 10);
+      if (!isNaN(pParam) && pParam > 0) {
+        setCurrentPage(pParam);
+      } else {
+        const saved = sessionStorage.getItem("code2day-problems-page");
+        if (saved) setCurrentPage(parseInt(saved, 10));
+      }
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
   
   const startIndex = (currentPage - 1) * problemsPerPage;
   const endIndex = Math.min(startIndex + problemsPerPage, totalProblems);
@@ -332,7 +363,7 @@ function ProblemListView({
                 <button
                   type="button"
                   className="ghost-button"
-                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  onClick={() => changePage(currentPage - 1)}
                   disabled={currentPage === 1}
                 >
                   ← Prev
@@ -343,7 +374,7 @@ function ProblemListView({
                 <button
                   type="button"
                   className="ghost-button"
-                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  onClick={() => changePage(currentPage + 1)}
                   disabled={currentPage === totalPages}
                 >
                   Next →
