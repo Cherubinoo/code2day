@@ -55,10 +55,11 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
   async function loadInitialData() {
     setLoadingData(true);
     try {
-      const [problemsRes, batchesRes, aptitudeTopicsRes] = await Promise.all([
+      const [problemsRes, batchesRes, aptitudeTopicsRes, studentsRes] = await Promise.all([
         fetch('/api/problems/', { credentials: 'include' }),
         fetch('/api/batches/', { credentials: 'include' }),
         fetch('/api/aptitude/topics/', { credentials: 'include' }),
+        fetch('/api/students/filter/?limit=2000', { credentials: 'include' }),
       ]);
 
       if (problemsRes.ok) {
@@ -76,6 +77,11 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
         const data = await aptitudeTopicsRes.json();
         // The API returns {categories: [...]} or just [...]
         setAptitudeTopics(data.categories || data || []);
+      }
+
+      if (studentsRes && studentsRes.ok) {
+        const data = await studentsRes.json();
+        setStudents(data.students || []);
       }
     } catch (err) {
       console.error('Failed to load initial data:', err);
@@ -585,8 +591,19 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
   }
 
   const totalAssignedStudents = selectionMode === 'batch'
-    ? batches.filter(b => formData.assigned_batches.includes(b.batch))
-        .reduce((sum, b) => sum + b.student_count, 0)
+    ? (
+        formData.assigned_sections.length > 0 && students.length > 0
+          ? students.filter(s => {
+              const key = `${s.batch}::${s.section}`;
+              if (formData.assigned_sections.includes(key) || formData.assigned_sections.includes(s.section)) {
+                return true;
+              }
+              const hasSectionNarrowing = formData.assigned_sections.some(k => k.startsWith(`${s.batch}::`));
+              return !hasSectionNarrowing && formData.assigned_batches.includes(s.batch);
+            }).length
+          : batches.filter(b => formData.assigned_batches.includes(b.batch))
+              .reduce((sum, b) => sum + b.student_count, 0)
+      )
     : formData.assigned_student_ids.length;
 
   return (

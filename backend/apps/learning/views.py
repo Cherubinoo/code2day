@@ -3678,47 +3678,49 @@ class ContestListCreateView(APIView):
                 questions = AptitudeQuestion.objects.filter(id__in=aptitude_question_ids)
                 contest.aptitude_questions.set(questions)
 
-        # Assign batches
+        # Assign batches & sections
         assigned_batches = request.data.get('assigned_batches', [])
-        if assigned_batches:
-            contest.assigned_batches = assigned_batches
-            contest.save(update_fields=['assigned_batches'])
-
-            # Auto-assign students from batches
-            batch_students = StudentProfile.objects.filter(
-                institution=profile.institution,
-                department=profile.department,
-                batch__in=assigned_batches
-            )
-            contest.assigned_students.set(batch_students)
-
-        # Assign specific sections (e.g. "23-27::A") within batches
         assigned_sections = request.data.get('assigned_sections', [])
-        if assigned_sections:
-            contest.assigned_sections = assigned_sections
-            contest.save(update_fields=['assigned_sections'])
 
+        if assigned_batches or assigned_sections:
+            contest.assigned_batches = assigned_batches
+            contest.assigned_sections = assigned_sections
+            contest.save(update_fields=['assigned_batches', 'assigned_sections'])
+
+            # Determine which batches have specific section restrictions
+            restricted_batches = set()
             section_filter = Q(pk__in=[])
             for entry in assigned_sections:
                 if isinstance(entry, str) and '::' in entry:
                     batch, _, section = entry.partition('::')
                     if batch and section:
+                        restricted_batches.add(batch)
                         section_filter |= Q(batch=batch, section=section)
                 elif isinstance(entry, dict):
                     batch = entry.get('batch')
                     section = entry.get('section')
                     if batch and section:
+                        if batch:
+                            restricted_batches.add(batch)
                         section_filter |= Q(batch=batch, section=section)
                 elif isinstance(entry, str):
                     section_filter |= Q(section=entry)
 
+            unrestricted_batches = [b for b in assigned_batches if b not in restricted_batches]
+
+            final_student_filter = Q(pk__in=[])
+            if unrestricted_batches:
+                final_student_filter |= Q(batch__in=unrestricted_batches)
             if section_filter != Q(pk__in=[]):
-                section_students = StudentProfile.objects.filter(
-                    section_filter,
+                final_student_filter |= section_filter
+
+            if final_student_filter != Q(pk__in=[]):
+                target_students = StudentProfile.objects.filter(
+                    final_student_filter,
                     institution=profile.institution,
                     department=profile.department
                 )
-                contest.assigned_students.set(section_students)
+                contest.assigned_students.set(target_students)
 
         # Assign individual students
         assigned_student_ids = request.data.get('assigned_student_ids', [])
