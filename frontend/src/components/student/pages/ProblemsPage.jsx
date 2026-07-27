@@ -1,5 +1,5 @@
 import Editor from "@monaco-editor/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 

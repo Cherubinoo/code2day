@@ -1248,15 +1248,6 @@ function App() {
   } else {
     switch (activePage) {
     case "problems":
-      // Redirect staff and admin to their dashboards
-      if (userType === "staff") {
-        navigate("staff", { replace: true });
-        break;
-      }
-      if (userType === "admin") {
-        navigate("admin", { replace: true });
-        break;
-      }
       activeView = (
         <ProblemsPage
           activeContest={activeContest}
