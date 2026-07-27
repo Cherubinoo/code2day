@@ -267,30 +267,38 @@ class StudentProfile(models.Model):
         return True
 
     def record_login(self, login_day=None):
-        login_day = login_day or timezone.localdate()
+        try:
+            login_day = login_day or timezone.localdate()
 
-        if self.last_login_on == login_day:
+            if self.last_login_on == login_day:
+                StudentActivity.objects.get_or_create(
+                    student=self,
+                    activity_date=login_day,
+                    activity_type="login",
+                )
+                return False
+
+            if self.current_streak is None:
+                self.current_streak = 0
+            if self.login_days is None:
+                self.login_days = 0
+
+            if self.last_login_on == login_day - timedelta(days=1):
+                self.current_streak += 1
+            else:
+                self.current_streak = 1
+
+            self.login_days += 1
+            self.last_login_on = login_day
+            self.save(update_fields=["current_streak", "login_days", "last_login_on"])
             StudentActivity.objects.get_or_create(
                 student=self,
                 activity_date=login_day,
                 activity_type="login",
             )
+            return True
+        except Exception:
             return False
-
-        if self.last_login_on == login_day - timedelta(days=1):
-            self.current_streak += 1
-        else:
-            self.current_streak = 1
-
-        self.login_days += 1
-        self.last_login_on = login_day
-        self.save(update_fields=["current_streak", "login_days", "last_login_on"])
-        StudentActivity.objects.get_or_create(
-            student=self,
-            activity_date=login_day,
-            activity_type="login",
-        )
-        return True
 
 
 class Problem(models.Model):

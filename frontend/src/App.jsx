@@ -51,6 +51,7 @@ import {
   refreshCsrfToken,
   estimateComplexity,
   extractApiError,
+  safeParseJson,
   normalizeProblems,
 } from "./lib/appUtils";
 import { useHistoryNav } from "./lib/useHistoryNav";
@@ -747,7 +748,7 @@ function App() {
           credentials: "include",
         },
       );
-      const payload = await response.json();
+      const payload = await safeParseJson(response, "User lookup failed.");
 
       if (!response.ok) {
         if (response.status === 503) {
@@ -831,7 +832,7 @@ function App() {
       const response = await fetch(endpoint, {
         ...buildJsonPostOptions(requestBody),
       });
-      const payload = await response.json();
+      const payload = await safeParseJson(response, "Authentication failed.");
 
       if (!response.ok) {
         if (response.status === 503) {

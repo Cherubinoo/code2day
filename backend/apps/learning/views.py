@@ -4514,7 +4514,7 @@ class UnifiedUserLookupView(APIView):
             )
 
         # 1. Check if it's a student (register_number)
-        student = StudentProfile.objects.filter(register_number=user_id).first()
+        student = StudentProfile.objects.filter(register_number__iexact=user_id).first()
         if student:
             if student.account and not student.account.is_active:
                 return Response(
@@ -4531,7 +4531,7 @@ class UnifiedUserLookupView(APIView):
             })
 
         # 2. Check if it's staff (faculty_id) - return role from profile
-        staff = StaffProfile.objects.filter(faculty_id=user_id).first()
+        staff = StaffProfile.objects.filter(faculty_id__iexact=user_id).first()
         if staff:
             if staff.account and not staff.account.is_active:
                 return Response(
@@ -4549,7 +4549,7 @@ class UnifiedUserLookupView(APIView):
             })
 
         # 3. Check if it's an admin (superuser)
-        admin = User.objects.filter(username=user_id, is_superuser=True).first()
+        admin = User.objects.filter(username__iexact=user_id, is_superuser=True).first()
         if admin:
             return Response({
                 "user_type": "admin",

@@ -1,5 +1,28 @@
 import { fallbackProblems, languageOptions } from "./appData";
 
+export async function safeParseJson(response, fallbackMessage = "Server communication error.") {
+  try {
+    const contentType = response.headers ? (response.headers.get("content-type") || "") : "";
+    const text = await response.text();
+    if (contentType.includes("application/json") || text.trim().startsWith("{") || text.trim().startsWith("[")) {
+      return JSON.parse(text);
+    }
+    let msg = fallbackMessage;
+    if (response.status === 404) {
+      msg = "Service or endpoint not found (HTTP 404).";
+    } else if (response.status === 500) {
+      msg = "Internal server error (HTTP 500). Please check backend logs.";
+    } else if (response.status === 502 || response.status === 503 || response.status === 504) {
+      msg = "Server is temporarily unavailable or restarting (HTTP " + response.status + ").";
+    } else if (response.status) {
+      msg = `${fallbackMessage} (HTTP ${response.status})`;
+    }
+    return { detail: msg, error: msg };
+  } catch (err) {
+    return { detail: fallbackMessage, error: fallbackMessage };
+  }
+}
+
 export function extractApiError(payload, fallbackMessage) {
   if (!payload || typeof payload !== "object") {
     return fallbackMessage;
