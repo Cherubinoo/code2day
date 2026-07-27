@@ -275,6 +275,7 @@ urlpatterns = [
 
     # Student Management
     path("students/filter/", DepartmentStudentsFilterView.as_view(), name="students-filter"),
+    path("students/<str:register_number>/details/", StudentDetailView.as_view(), name="student-detail"),
     path("students/<str:register_number>/analytics/", StudentIndividualAnalyticsView.as_view(), name="student-analytics"),
     path("student/analytics/", StudentSelfAnalyticsView.as_view(), name="student-self-analytics"),
 
