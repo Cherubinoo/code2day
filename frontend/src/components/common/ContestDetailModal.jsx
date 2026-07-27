@@ -34,7 +34,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
       });
       if (res.ok) {
-        alert(`✅ Student ${participant.name} (${regNo}) has been unlocked! They can now re-enter and continue their contest session.`);
+        alert(`✅ Student ${participant.name} (${regNo}) has been unlocked successfully! Their workspace is now re-activated.`);
         loadContestData();
       } else {
         const err = await res.json();
@@ -50,7 +50,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
   async function handleUnlockAllStudents() {
     const allParticipants = analytics?.participants || [];
     if (allParticipants.length === 0) return;
-    if (!window.confirm("Are you sure you want to unlock ALL participating students? Their sessions will be re-activated with extra time.")) return;
+    if (!window.confirm("Are you sure you want to unlock ALL participating students? Their contest sessions will be re-activated.")) return;
 
     setUnlockingAll(true);
     try {
@@ -459,7 +459,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
                   🔓 Unlock & Re-activate Students
                 </h3>
                 <p style={{ margin: '4px 0 0', fontSize: 13, color: '#64748b' }}>
-                  Unlock blocked or auto-submitted students so they can continue their contest session without losing their work.
+                  Unlock blocked or locked students so they can continue their contest session without losing their work.
                 </p>
               </div>
               <button
@@ -494,36 +494,56 @@ const ContestDetailModal = ({ contestId, onClose }) => {
               <div style={{ display: 'grid', gap: 12, maxHeight: 400, overflowY: 'auto' }}>
                 {analytics.participants
                   .filter(p => !unblockSearch || p.name.toLowerCase().includes(unblockSearch.toLowerCase()) || p.register_number.toLowerCase().includes(unblockSearch.toLowerCase()))
-                  .map((participant) => (
-                    <div key={participant.register_number} style={{
-                      padding: '16px 20px', background: 'white', borderRadius: 12, border: '1px solid #e2e8f0',
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
-                      boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
-                    }}>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>{participant.name}</div>
-                        <div style={{ fontSize: 13, color: '#64748b', fontFamily: 'monospace', marginTop: 2 }}>
-                          Reg No: {participant.register_number} • Batch {participant.batch || '—'} ({participant.section || '—'})
+                  .map((participant) => {
+                    const isLocked = participant.is_locked;
+                    return (
+                      <div key={participant.register_number} style={{
+                        padding: '16px 20px',
+                        background: isLocked ? '#fef2f2' : 'white',
+                        borderRadius: 12,
+                        border: isLocked ? '2px solid #f87171' : '1px solid #e2e8f0',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16,
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                      }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>{participant.name}</span>
+                            {isLocked ? (
+                              <span style={{ padding: '2px 8px', borderRadius: 6, background: '#fee2e2', color: '#991b1b', fontSize: 12, fontWeight: 700 }}>
+                                🔒 LOCKED ({participant.lock_reason || 'Security Violation Limit'})
+                              </span>
+                            ) : (
+                              <span style={{ padding: '2px 8px', borderRadius: 6, background: '#d1fae5', color: '#065f46', fontSize: 12, fontWeight: 700 }}>
+                                ✅ Active
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 13, color: '#64748b', fontFamily: 'monospace', marginTop: 4 }}>
+                            Reg No: {participant.register_number} • Batch {participant.batch || '—'} ({participant.section || '—'})
+                          </div>
+                          <div style={{ fontSize: 12, color: '#4f46e5', fontWeight: 600, marginTop: 4 }}>
+                            Score: {participant.score || 0} • Solved: {participant.problems_solved || 0}
+                          </div>
                         </div>
-                        <div style={{ fontSize: 12, color: '#4f46e5', fontWeight: 600, marginTop: 4 }}>
-                          Score: {participant.score || 0} • Solved: {participant.problems_solved || 0}
-                        </div>
+                        <button
+                          onClick={() => handleUnlockStudent(participant)}
+                          disabled={!!unlockingStudent[participant.register_number]}
+                          style={{
+                            padding: '10px 18px', borderRadius: 8,
+                            border: isLocked ? 'none' : '1px solid #10b981',
+                            background: isLocked ? '#dc2626' : unlockingStudent[participant.register_number] ? '#f3f4f6' : '#ecfdf5',
+                            color: isLocked ? 'white' : '#047857',
+                            fontWeight: 700, fontSize: 14,
+                            cursor: unlockingStudent[participant.register_number] ? 'not-allowed' : 'pointer',
+                            display: 'flex', alignItems: 'center', gap: 6,
+                            boxShadow: isLocked ? '0 4px 12px rgba(220,38,38,0.3)' : 'none'
+                          }}
+                        >
+                          🔓 {unlockingStudent[participant.register_number] ? 'Unlocking...' : isLocked ? 'Unlock Student' : 'Re-authorize Student'}
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleUnlockStudent(participant)}
-                        disabled={!!unlockingStudent[participant.register_number]}
-                        style={{
-                          padding: '10px 18px', borderRadius: 8, border: '1px solid #10b981',
-                          background: unlockingStudent[participant.register_number] ? '#f3f4f6' : '#ecfdf5',
-                          color: '#047857', fontWeight: 700, fontSize: 14,
-                          cursor: unlockingStudent[participant.register_number] ? 'not-allowed' : 'pointer',
-                          display: 'flex', alignItems: 'center', gap: 6,
-                        }}
-                      >
-                        🔓 {unlockingStudent[participant.register_number] ? 'Unlocking...' : 'Unlock Student'}
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
               </div>
             )}
           </div>
@@ -795,6 +815,8 @@ const ContestDetailModal = ({ contestId, onClose }) => {
         </div>
       </>
     )}
+
+      {/* Staff PIN Authorization Modal */}
       </div>
     </div>
   );

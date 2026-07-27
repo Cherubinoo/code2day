@@ -1299,6 +1299,16 @@ class ContestParticipation(models.Model):
         default=False,
         help_text="True if contest was manually stopped by student"
     )
+    is_locked = models.BooleanField(
+        default=False,
+        help_text="True if contest workspace is locked due to violation limits"
+    )
+    lock_reason = models.CharField(max_length=255, blank=True, default="")
+    snapshots = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of webcam snapshots captured during proctoring"
+    )
     
     # Score
     total_score = models.PositiveIntegerField(default=0)

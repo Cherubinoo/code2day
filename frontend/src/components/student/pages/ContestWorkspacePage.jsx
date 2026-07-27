@@ -199,8 +199,104 @@ function ContestWorkspacePage({ contestId, onBack }) {
   const [contestSecondsLeft, setContestSecondsLeft] = useState(null);
   const [problemSecondsElapsed, setProblemSecondsElapsed] = useState(0);
 
-  // Problem detail tab
-  const [problemDetailTab, setProblemDetailTab] = useState("current");
+  // Camera & Snapshot state
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const [cameraActive, setCameraActive] = useState(false);
+  const snapshotsTakenRef = useRef(0);
+
+  // Lock State
+  const [isLocked, setIsLocked] = useState(false);
+  const [lockReason, setLockReason] = useState('');
+
+  // Camera initialization
+  useEffect(() => {
+    async function initCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        cameraStreamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+        setCameraActive(true);
+      } catch (err) {
+        console.warn('Camera access denied or unavailable:', err);
+      }
+    }
+    initCamera();
+    return () => {
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  // Snapshot capture function
+  const captureSnapshot = useCallback(async () => {
+    if (!videoRef.current || !canvasRef.current) return;
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (video.videoWidth && video.videoHeight) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+
+        if (dataUrl && dataUrl.length > 100) {
+          snapshotsTakenRef.current += 1;
+          await fetch(`/api/student/contests/${contestId}/snapshot/`, {
+            method: 'POST',
+            ...buildJsonPostOptions({ image: dataUrl }),
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to capture snapshot:', err);
+    }
+  }, [contestId]);
+
+  // Trigger random snapshot on question switch
+  useEffect(() => {
+    if (cameraActive && snapshotsTakenRef.current < 2) {
+      const timer = setTimeout(() => {
+        captureSnapshot();
+      }, 2500);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedProblemIndex, cameraActive, captureSnapshot]);
+
+
+
+  // Live polling for staff unlock status when contest workspace is locked
+  useEffect(() => {
+    if (!isLocked) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/student/contests/${contestId}/session-status/`, {
+          credentials: 'include',
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.participation && data.participation.is_locked === false) {
+            setIsLocked(false);
+            setLockReason('');
+            setUnlockPinInput('');
+            violationCountRef.current = 0;
+            violationLockRef.current = false;
+            setViolationModal(null);
+            isContestActiveRef.current = true;
+            showToast('🔓 Staff unlocked your contest session! Resuming workspace...', 'success');
+          }
+        }
+      } catch (err) {
+        console.warn('Session status check error:', err);
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [contestId, isLocked]);
 
   const maxTabSwitches = contest?.max_tab_switches ?? 3;
   const enableTabCheck = contest?.enable_tab_switch_check !== false;
@@ -227,26 +323,18 @@ function ContestWorkspacePage({ contestId, onBack }) {
     setViolationModal({ count, reason });
 
     if (count >= maxTabSwitches) {
-      // Auto-submit
+      // Lock contest session instead of auto-submitting
       isContestActiveRef.current = false;
-      autoSubmittedRef.current = true;
+      setIsLocked(true);
+      setLockReason(reason);
       try {
-        await fetch(`/api/student/contests/${contestId}/auto-submit/`, {
+        await fetch(`/api/student/contests/${contestId}/lock/`, {
           method: 'POST',
-          ...buildJsonPostOptions({}),
+          ...buildJsonPostOptions({ reason }),
         });
       } catch {}
-      try {
-        Object.keys(localStorage)
-          .filter(k => k.startsWith(`c2d-contest-${contestId}`))
-          .forEach(k => localStorage.removeItem(k));
-      } catch {}
-      setTimeout(() => {
-        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-        onBack();
-      }, 4000);
     }
-  }, [contestId, enableCopyPasteLock, enableFullscreenLock, enableTabCheck, maxTabSwitches, onBack]);
+  }, [contestId, enableCopyPasteLock, enableFullscreenLock, enableTabCheck, maxTabSwitches]);
 
   const dismissViolationModal = useCallback(() => {
     setViolationModal(null);
@@ -316,6 +404,15 @@ function ContestWorkspacePage({ contestId, onBack }) {
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
 
+    // Block drag and drop globally
+    const blockDragDrop = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    document.addEventListener('dragstart', blockDragDrop, true);
+    document.addEventListener('dragover', blockDragDrop, true);
+    document.addEventListener('drop', blockDragDrop, true);
+
     // Re-enter fullscreen if user exits it
     const handleFullscreenChange = () => {
       const isFull = !!document.fullscreenElement || !!document.webkitFullscreenElement;
@@ -330,6 +427,9 @@ function ContestWorkspacePage({ contestId, onBack }) {
 
     return () => {
       document.removeEventListener('paste', blockPaste, true);
+      document.removeEventListener('dragstart', blockDragDrop, true);
+      document.removeEventListener('dragover', blockDragDrop, true);
+      document.removeEventListener('drop', blockDragDrop, true);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('blur', handleWindowBlur);
       document.removeEventListener('keydown', blockKeys, true);
@@ -1185,7 +1285,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
       )}
 
       {/* Fullscreen Overlay Prompt when not in fullscreen */}
-      {!isFullscreen && isContestActiveRef.current && !violationModal && (
+      {!isFullscreen && isContestActiveRef.current && !violationModal && !isLocked && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 9999,
           background: 'rgba(15, 23, 42, 0.95)',
@@ -1219,6 +1319,46 @@ function ContestWorkspacePage({ contestId, onBack }) {
             >
               Click to Enter Fullscreen Mode
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden camera & canvas elements for proctoring snapshots */}
+      <video ref={videoRef} autoPlay playsInline muted style={{ display: 'none' }} />
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+      {/* Lock Screen Overlay */}
+      {isLocked && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          zIndex: 99999, background: 'rgba(15, 23, 42, 0.97)',
+          backdropFilter: 'blur(16px)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', padding: 24
+        }}>
+          <div style={{
+            background: 'white', borderRadius: 20, maxWidth: 460, width: '100%',
+            padding: '36px 32px', textAlign: 'center', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)'
+          }}>
+            <div style={{
+              width: 72, height: 72, borderRadius: '50%', background: '#fef2f2',
+              color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 20px'
+            }}>
+              <span style={{ fontSize: 36 }}>🔒</span>
+            </div>
+            <h2 style={{ margin: '0 0 8px', fontSize: '1.5rem', fontWeight: 800, color: '#0f172a' }}>
+              Contest Session Locked
+            </h2>
+            <p style={{ color: '#64748b', fontSize: '14px', lineHeight: 1.5, marginBottom: 24 }}>
+              {lockReason || 'Maximum proctoring warnings exceeded.'} Your contest workspace is locked. Please inform your staff member or lab invigilator to unlock your session from their Staff Dashboard.
+            </p>
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 10,
+              padding: '12px 24px', borderRadius: 12, background: '#f1f5f9',
+              color: '#334155', fontSize: 14, fontWeight: 700
+            }}>
+              <span>⏳</span> Waiting for Staff Unlock Authorization...
+            </div>
           </div>
         </div>
       )}

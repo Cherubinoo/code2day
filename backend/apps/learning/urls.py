@@ -71,31 +71,6 @@ from .views import (
     StudentIndividualAnalyticsView,
     StudentSelfAnalyticsView,
     UpdateTrackedCompaniesView,
-    StaffLookupView,
-    StaffFirstLoginView,
-    StaffLoginView,
-    StaffLogoutView,
-    StaffInstitutionDetailView,
-    StaffPerformanceView,
-    StaffDetailView,
-    DepartmentDetailView,
-    StaffDeptListView,
-    StaffLockToggleView,
-    ContestListCreateView,
-    ContestDetailView,
-    ContestAnalyticsView,
-    ContestStudentSubmissionsView,
-    ContestStudentUnlockView,
-    UnifiedUserLookupView,
-    ExecutorSystemInfoView,
-    ExecutorSubmitView,
-    AnnouncementListView,
-    NotificationListView,
-    NotificationMarkReadView,
-    AptitudeTopicListView,
-    SystemAdminDashboardView,
-    PublicInstitutionListView,
-    InstitutionManagementView,
     InstitutionDetailManagementView,
     GlobalMaintenanceControlView,
     AdminProblemBankView,
@@ -215,6 +190,9 @@ urlpatterns = [
     path("student/contests/<int:contest_id>/problems/<slug:problem_slug>/", StudentContestProblemView.as_view(), name="student-contest-problem"),
     path("student/contests/<int:contest_id>/problems/<slug:problem_slug>/submit/", StudentContestSubmitView.as_view(), name="student-contest-submit"),
     path("student/contests/<int:contest_id>/aptitude/submit/", AptitudeContestSubmitView.as_view(), name="student-contest-aptitude-submit"),
+    path("student/contests/<int:pk>/lock/", ContestLockView.as_view(), name="contest-student-lock"),
+    path("student/contests/<int:pk>/unlock/", ContestUnlockByPinView.as_view(), name="contest-student-unlock-pin"),
+    path("student/contests/<int:pk>/snapshot/", ContestSnapshotView.as_view(), name="contest-student-snapshot"),
 
     # Code execution
     path("run/", CodeRunView.as_view(), name="code-run"),
@@ -271,26 +249,6 @@ urlpatterns = [
     path("staff/institutions/<int:institution_id>/performance/", StaffPerformanceView.as_view(), name="staff-performance"),
     path("staff/<str:faculty_id>/details/", StaffDetailView.as_view(), name="staff-detail"),
     path("staff/<str:faculty_id>/lock/", StaffLockToggleView.as_view(), name="staff-lock-toggle"),
-
-    # Student Details
-    path("students/<str:register_number>/details/", StudentDetailView.as_view(), name="student-detail"),
-    path("students/<str:register_number>/block/", StudentBlockToggleView.as_view(), name="student-block-toggle"),
-
-    # Contests
-    path("contests/", ContestListCreateView.as_view(), name="contest-list"),
-    path("contests/<int:pk>/", ContestDetailView.as_view(), name="contest-detail"),
-    path("contests/<int:pk>/analytics/", ContestAnalyticsView.as_view(), name="contest-analytics"),
-    path("contests/<int:pk>/student/<str:register_number>/unlock/", ContestStudentUnlockView.as_view(), name="contest-student-unlock"),
-    path("contests/<int:contest_id>/student/<str:register_number>/submissions/", ContestStudentSubmissionsView.as_view(), name="contest-student-submissions"),
-    path("contests/<int:contest_id>/assign-batches/", ContestBatchAssignView.as_view(), name="contest-batch-assign"),
-    path("contests/<int:contest_id>/submit-for-approval/", ContestSubmitForApprovalView.as_view(), name="contest-submit-approval"),
-    path("contests/<int:contest_id>/approve/", ContestApprovalView.as_view(), name="contest-approve"),
-    path("contests/<int:contest_id>/publish/", ContestPublishView.as_view(), name="contest-publish"),
-
-    # Batch Management
-    path("batches/", BatchListView.as_view(), name="batch-list"),
-    path("batches/<str:batch_code>/students/", BatchStudentsView.as_view(), name="batch-students"),
-    path("batches/<str:batch_code>/report/", BatchReportPDFView.as_view(), name="batch-report-pdf"),
 
     # Student Management
     path("students/filter/", DepartmentStudentsFilterView.as_view(), name="students-filter"),
