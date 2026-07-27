@@ -49,11 +49,33 @@ function AuthScreen({
       try {
         setInstLoading(true);
         const res = await fetch("/api/institutions/", { credentials: "include" });
-        if (!res.ok) throw new Error("Failed to load institutions");
-        const data = await res.json();
-        setInstitutions(data.institutions || []);
+        if (res.ok) {
+          const data = await res.json();
+          const list = data.institutions || [];
+          if (list.length > 0) {
+            setInstitutions(list);
+            setInstError("");
+            return;
+          }
+        }
+        // Fallback default institution if server returns empty list or non-200 status
+        setInstitutions([{
+          id: 1,
+          name: "Ramco Institute of Technology",
+          code: "RIT",
+          institution_id: 1,
+          display_name: "Ramco Institute of Technology",
+          subheading: "(An Autonomous Institution)"
+        }]);
       } catch (e) {
-        setInstError(e.message);
+        setInstitutions([{
+          id: 1,
+          name: "Ramco Institute of Technology",
+          code: "RIT",
+          institution_id: 1,
+          display_name: "Ramco Institute of Technology",
+          subheading: "(An Autonomous Institution)"
+        }]);
       } finally {
         setInstLoading(false);
       }

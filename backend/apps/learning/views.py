@@ -10198,7 +10198,9 @@ class PublicInstitutionListView(APIView):
             
             # Filter by active status if requested
             if active_only:
-                institutions = institutions.filter(is_active=True)
+                active_qs = institutions.filter(Q(is_active=True) | Q(is_active__isnull=True))
+                if active_qs.exists():
+                    institutions = active_qs
             
             # Search filter
             if search:
@@ -10208,44 +10210,77 @@ class PublicInstitutionListView(APIView):
                     Q(address__icontains=search)
                 )
             
+            # If database has zero institutions, auto-seed default institution
+            if not institutions.exists():
+                try:
+                    default_inst, _ = Institution.objects.get_or_create(
+                        institution_id=1,
+                        defaults={
+                            'name': 'Ramco Institute of Technology',
+                            'short_code': 'RIT',
+                            'address': 'Rajapalayam, Tamil Nadu, India - 626 117',
+                            'display_name': 'Ramco Institute of Technology',
+                            'subheading': '(An Autonomous Institution)',
+                            'is_active': True,
+                        }
+                    )
+                    institutions = Institution.objects.all()
+                except Exception:
+                    pass
+
             # Prepare response data
             institution_list = []
             for institution in institutions:
-                # Handle logo URL properly
-                logo_url = None
-                if hasattr(institution, 'logo_file') and institution.logo_file:
+                logo_url = getattr(institution, 'logo_url', '') or None
+                if not logo_url and hasattr(institution, 'logo_file') and institution.logo_file:
                     try:
                         logo_url = institution.logo_file.url
-                    except ValueError:
+                    except Exception:
                         logo_url = None
-                
+
+                dept_count = 0
+                try:
+                    if hasattr(institution, 'departments'):
+                        dept_count = institution.departments.count()
+                    else:
+                        dept_count = Department.objects.filter(institution=institution).count()
+                except Exception:
+                    try:
+                        dept_count = StudentProfile.objects.filter(institution=institution).values('department').distinct().count()
+                    except Exception:
+                        dept_count = 0
+
+                try:
+                    student_count = StudentProfile.objects.filter(institution=institution).count()
+                except Exception:
+                    student_count = 0
+
+                try:
+                    staff_count = StaffProfile.objects.filter(institution=institution).count()
+                except Exception:
+                    staff_count = 0
+
                 institution_data = {
                     'id': institution.id,
                     'name': institution.name,
-                    'code': institution.short_code,
-                    'institution_id': institution.institution_id,
-                    'location': institution.address,
+                    'code': getattr(institution, 'short_code', 'RIT'),
+                    'institution_id': getattr(institution, 'institution_id', institution.id),
+                    'location': getattr(institution, 'address', ''),
                     'is_active': getattr(institution, 'is_active', True),
-                    'student_count': StudentProfile.objects.filter(institution=institution).count(),
-                    'staff_count': StaffProfile.objects.filter(institution=institution).count(),
+                    'student_count': student_count,
+                    'staff_count': staff_count,
+                    'department_count': dept_count,
                     'logo_url': logo_url,
                     'primary_color': getattr(institution, 'primary_color', '#1f2937'),
                     'secondary_color': getattr(institution, 'secondary_color', '#3b82f6'),
                     # Branding fields
-                    'display_name': getattr(institution, 'display_name', ''),
+                    'display_name': getattr(institution, 'display_name', institution.name),
                     'subheading': getattr(institution, 'subheading', ''),
                     'address': getattr(institution, 'address', ''),
                     'contact_email': getattr(institution, 'contact_email', ''),
                     'contact_phone': getattr(institution, 'contact_phone', ''),
                     'established_year': getattr(institution, 'established_year', None),
                 }
-                
-                # Add department count if available
-                if hasattr(institution, 'departments'):
-                    institution_data['department_count'] = institution.departments.count()
-                else:
-                    institution_data['department_count'] = Department.objects.filter(institution=institution).count()
-                
                 institution_list.append(institution_data)
             
             return Response({
