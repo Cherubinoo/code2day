@@ -25,6 +25,7 @@ export default function AptitudePage({ onToggleWorkspace }) {
       sessionStorage.removeItem("code2day-aptitude-question-index");
       url.searchParams.delete("topic");
       url.searchParams.delete("topic_id");
+      url.searchParams.delete("q");
     }
     window.history.replaceState(window.history.state, "", url.href);
   };

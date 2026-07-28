@@ -6,6 +6,12 @@ import { getCsrfToken, extractApiError } from '../../../lib/appUtils';
 const AptitudeQuizPage = ({ topicId, onBack }) => {
   const [questions, setQuestions] = useState([]);
   const [currentIndex, setCurrentIndexState] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const qParam = params.get("q");
+    if (qParam) {
+      const parsedQ = parseInt(qParam, 10);
+      if (!isNaN(parsedQ) && parsedQ >= 1) return parsedQ - 1;
+    }
     const saved = sessionStorage.getItem(`code2day-aptitude-question-index-${topicId}`);
     return saved ? parseInt(saved, 10) : 0;
   });
@@ -14,6 +20,9 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
     setCurrentIndexState((prev) => {
       const next = typeof val === 'function' ? val(prev) : val;
       sessionStorage.setItem(`code2day-aptitude-question-index-${topicId}`, String(next));
+      const url = new URL(window.location.href);
+      url.searchParams.set("q", String(next + 1));
+      window.history.replaceState(window.history.state, "", url.href);
       return next;
     });
   };
@@ -62,12 +71,31 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
       .then(data => {
         const loadedQuestions = Array.isArray(data) ? data : [];
         setQuestions(loadedQuestions);
-        const savedIdx = parseInt(sessionStorage.getItem(`code2day-aptitude-question-index-${topicId}`), 10);
-        if (!isNaN(savedIdx) && savedIdx >= 0 && savedIdx < loadedQuestions.length) {
-          setCurrentIndexState(savedIdx);
-        } else {
-          setCurrentIndexState(0);
+        
+        const params = new URLSearchParams(window.location.search);
+        const qParam = params.get("q");
+        let targetIdx = -1;
+        if (qParam) {
+          const parsedQ = parseInt(qParam, 10);
+          if (!isNaN(parsedQ) && parsedQ >= 1 && parsedQ <= loadedQuestions.length) {
+            targetIdx = parsedQ - 1;
+          }
         }
+        if (targetIdx < 0) {
+          const savedIdx = parseInt(sessionStorage.getItem(`code2day-aptitude-question-index-${topicId}`), 10);
+          if (!isNaN(savedIdx) && savedIdx >= 0 && savedIdx < loadedQuestions.length) {
+            targetIdx = savedIdx;
+          } else {
+            targetIdx = 0;
+          }
+        }
+        
+        setCurrentIndexState(targetIdx);
+        sessionStorage.setItem(`code2day-aptitude-question-index-${topicId}`, String(targetIdx));
+        const url = new URL(window.location.href);
+        url.searchParams.set("q", String(targetIdx + 1));
+        window.history.replaceState(window.history.state, "", url.href);
+        
         setSelectedOption(null);
         setIsSubmitted(false);
         setResult(null);
