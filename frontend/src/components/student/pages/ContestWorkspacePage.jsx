@@ -999,21 +999,11 @@ function ContestWorkspacePage({ contestId, onBack }) {
       {/* ──3-Column Layout ── */}
       <section className="problem-layout code2day-layout">
         {/* LEFT: problem list sidebar */}
-        <aside className={sidebarOpen ? "surface-card problem-sidebar judge-sidebar" : "problem-sidebar-rail"}>
-          <button
-            type="button"
-            className="sidebar-toggle compact-toggle"
-            onClick={() => setSidebarOpen((cur) => !cur)}
-          >
-            {sidebarOpen ? "Hide" : "Show"}
-          </button>
-
-          {sidebarOpen && (
-            <>
-              <div className="section-head">
-                <h3>Contest Problems</h3>
-                <span>{problems.length} problems</span>
-              </div>
+        <aside className="surface-card problem-sidebar judge-sidebar">
+          <div className="section-head">
+            <h3>Contest Problems</h3>
+            <span>{problems.length} problems</span>
+          </div>
 
               <div className="problem-section-list scroll-column">
                 <div className="problem-section-card compact">
@@ -1048,8 +1038,6 @@ function ContestWorkspacePage({ contestId, onBack }) {
                   </div>
                 </div>
               </div>
-            </>
-          )}
         </aside>
 
         {/* CENTER: editor */}
@@ -1185,13 +1173,35 @@ function ContestWorkspacePage({ contestId, onBack }) {
         {/* RIGHT: problem statement */}
         <section className="right-column judge-right">
           <article className="surface-card statement-panel judge-statement">
-            <div className="section-head">
-              <h2>{selectedProblem?.title ?? "Problem details"}</h2>
-              {selectedProblem && (
-                <span className={`difficulty-chip ${selectedProblem.difficulty.toLowerCase()}`}>
-                  {selectedProblem.difficulty}
-                </span>
-              )}
+            <div className="section-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                  {selectedProblem ? `Problem ${selectedProblemIndex + 1} of ${problems.length}: ${selectedProblem.title}` : "Problem details"}
+                  {selectedProblem && (
+                    <span className={`difficulty-chip ${selectedProblem.difficulty.toLowerCase()}`}>
+                      {selectedProblem.difficulty}
+                    </span>
+                  )}
+                </h2>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="ghost-button dense-action"
+                  onClick={() => setSelectedProblemIndex(Math.max(0, selectedProblemIndex - 1))}
+                  disabled={selectedProblemIndex === 0}
+                >
+                  ← Previous
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button dense-action"
+                  onClick={() => setSelectedProblemIndex(Math.min(problems.length - 1, selectedProblemIndex + 1))}
+                  disabled={selectedProblemIndex === problems.length - 1}
+                >
+                  Next →
+                </button>
+              </div>
             </div>
 
             <div className="tab-strip dense">

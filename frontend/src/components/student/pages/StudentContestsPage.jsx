@@ -134,9 +134,9 @@ const StudentContestsPage = ({ onNavigateToContest, autoOpenContestId, onResetAu
     selectedType === 'all' || c.contest_type === selectedType
   );
 
-  const activeContests = filteredByType.filter(c => c.is_active && !c.is_ended);
+  const activeContests = filteredByType.filter(c => c.is_active && !c.is_ended && !(c.has_started && c.participation && !c.participation.is_active));
   const upcomingContests = filteredByType.filter(c => c.is_upcoming);
-  const completedContests = filteredByType.filter(c => c.is_ended);
+  const completedContests = filteredByType.filter(c => c.is_ended || (c.has_started && c.participation && !c.participation.is_active));
 
   console.log('Contest categories:', {
     total: contests.length,

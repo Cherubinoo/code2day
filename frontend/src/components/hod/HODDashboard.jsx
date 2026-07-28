@@ -2562,22 +2562,22 @@ const HODDashboard = ({ institutionId }) => {
                 </div>
 
                 {/* ── Performance Dashboard ───────────────────────────── */}
-                {studentDetail.fullAnalytics && (
+                {studentDetail.analytics && (
                   <div style={{ marginBottom: 32 }}>
                     <PerformanceDashboard
-                      scoreHistory={studentDetail.fullAnalytics.score_history || []}
-                      topicAccuracy={studentDetail.fullAnalytics.topic_accuracy || []}
-                      testsCompleted={studentDetail.fullAnalytics.tests_completed || 0}
-                      avgScore={studentDetail.fullAnalytics.avg_score || 0}
-                      peakScore={studentDetail.fullAnalytics.peak_score || 0}
-                      solvedCount={studentDetail.fullAnalytics.solved_count || 0}
-                      aptitude={studentDetail.fullAnalytics.aptitude}
-                      overallPerformance={studentDetail.fullAnalytics.overall_performance || []}
-                      profileRadar={studentDetail.fullAnalytics.profile_radar}
-                      dailySolvedTrend={studentDetail.fullAnalytics.daily_solved_trend || []}
-                      knowledgeDistribution={studentDetail.fullAnalytics.knowledge_distribution}
-                      contestPerformance={studentDetail.fullAnalytics.contest_performance || []}
-                      summaryCards={studentDetail.fullAnalytics.summary_cards}
+                      scoreHistory={studentDetail.analytics.score_history || []}
+                      topicAccuracy={studentDetail.analytics.topic_accuracy || []}
+                      testsCompleted={studentDetail.analytics.tests_completed || 0}
+                      avgScore={studentDetail.analytics.avg_score || 0}
+                      peakScore={studentDetail.analytics.peak_score || 0}
+                      solvedCount={studentDetail.analytics.solved_count || 0}
+                      aptitude={studentDetail.analytics.aptitude}
+                      overallPerformance={studentDetail.analytics.overall_performance || []}
+                      profileRadar={studentDetail.analytics.profile_radar}
+                      dailySolvedTrend={studentDetail.analytics.daily_solved_trend || []}
+                      knowledgeDistribution={studentDetail.analytics.knowledge_distribution}
+                      contestPerformance={studentDetail.analytics.contest_performance || []}
+                      summaryCards={studentDetail.analytics.summary_cards}
                     />
                   </div>
                 )}

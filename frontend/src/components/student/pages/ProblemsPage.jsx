@@ -526,26 +526,15 @@ function WorkspaceView({
       <section
         className="problem-layout code2day-layout"
         style={{
-          gridTemplateColumns: sidebarOpen ? "280px 1fr" : "40px 1fr",
-          transition: 'grid-template-columns 0.3s cubic-bezier(0.4,0,0.2,1)',
+          gridTemplateColumns: "280px 1fr",
         }}
       >
         {/* LEFT: problem list sidebar */}
-        <aside className={sidebarOpen ? "surface-card problem-sidebar judge-sidebar" : "problem-sidebar-rail"}>
-          <button
-            type="button"
-            className="sidebar-toggle compact-toggle"
-            onClick={() => setSidebarOpen((cur) => !cur)}
-          >
-            {sidebarOpen ? "Hide" : "Show"}
-          </button>
-
-          {sidebarOpen && (
-            <>
-              <div className="section-head">
-                <h3>Problemset</h3>
-                <span>{selectedDifficulty} | {selectedTag}</span>
-              </div>
+        <aside className="surface-card problem-sidebar judge-sidebar">
+          <div className="section-head">
+            <h3>Problemset</h3>
+            <span>{selectedDifficulty} | {selectedTag}</span>
+          </div>
 
               <div className="problem-section-list scroll-column">
                 {groupedProblems.map((section) => (
@@ -662,8 +651,6 @@ function WorkspaceView({
                   </div>
                 ))}
               </div>
-            </>
-          )}
         </aside>
 
       {/* RIGHT: vertical stack — question top, editor+console bottom */}
@@ -672,12 +659,49 @@ function WorkspaceView({
           {/* TOP: Problem Statement */}
           <section className="right-column judge-right" style={{ minHeight: 0 }}>
             <article className="surface-card statement-panel judge-statement">
-              <div className="section-head">
-                <h2>{selectedProblem?.title ?? "Problem details"}</h2>
+              <div className="section-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                    {(() => {
+                      if (!selectedProblem) return "Problem details";
+                      const allList = groupedProblems.flatMap(g => g.items);
+                      const idx = allList.findIndex(p => p.slug === selectedProblem.slug);
+                      return idx >= 0 ? `Problem ${idx + 1} of ${allList.length}: ${selectedProblem.title}` : selectedProblem.title;
+                    })()}
+                    {selectedProblem && (
+                      <span className={`difficulty-chip ${selectedProblem.difficulty.toLowerCase()}`}>
+                        {selectedProblem.difficulty}
+                      </span>
+                    )}
+                  </h2>
+                </div>
                 {selectedProblem && (
-                  <span className={`difficulty-chip ${selectedProblem.difficulty.toLowerCase()}`}>
-                    {selectedProblem.difficulty}
-                  </span>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {(() => {
+                      const allList = groupedProblems.flatMap(g => g.items);
+                      const idx = allList.findIndex(p => p.slug === selectedProblem.slug);
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            className="ghost-button dense-action"
+                            onClick={() => setSelectedProblemSlug(allList[idx - 1].slug)}
+                            disabled={idx <= 0}
+                          >
+                            ← Previous
+                          </button>
+                          <button
+                            type="button"
+                            className="ghost-button dense-action"
+                            onClick={() => setSelectedProblemSlug(allList[idx + 1].slug)}
+                            disabled={idx === -1 || idx === allList.length - 1}
+                          >
+                            Next →
+                          </button>
+                        </>
+                      );
+                    })()}
+                  </div>
                 )}
               </div>
 

@@ -431,8 +431,9 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
     ? (dashboard.aptitude_stats.reduce((sum, s) => sum + (s.percentage || 0), 0) / dashboard.aptitude_stats.length)
     : 0;
   
-  const contestsAttended = (contestHistory || []).length;
-  const contestWins = (contestHistory || []).filter(c => c.solved > 0).length;
+  const attendedContestList = (contestHistory || []).filter(c => c.is_ended || c.has_started || (c.participation && c.participation.started_at));
+  const contestsAttended = attendedContestList.length;
+  const contestWins = attendedContestList.filter(c => (c.participation?.total_score > 0 || c.participation?.problems_solved > 0 || c.solved > 0)).length;
 
   const earnedCodingBadges = (dashboard?.achievements || []).filter(a => a.category === 'coding' && a.is_earned);
   const earnedAptitudeBadges = (dashboard?.achievements || []).filter(a => a.category === 'aptitude' && a.is_earned);

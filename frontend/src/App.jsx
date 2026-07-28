@@ -73,9 +73,7 @@ function App() {
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     return window.localStorage.getItem("code2day-language") || "Python";
   });
-  const [selectedProblemSlug, setSelectedProblemSlug] = useState(() => {
-    return window.localStorage.getItem("code2day-problem-slug") || "";
-  });
+  const [selectedProblemSlug, setSelectedProblemSlug] = useState("");
   const [problemDetailTab, setProblemDetailTab] = useState("current");
   const [code, setCode] = useState(() => {
     const savedCode = window.localStorage.getItem("code2day-code");
@@ -694,10 +692,8 @@ function App() {
 
   // Save problem slug to localStorage when it changes
   useEffect(() => {
-    if (selectedProblemSlug) {
-      window.localStorage.setItem("code2day-problem-slug", selectedProblemSlug);
-    }
-  }, [selectedProblemSlug]);
+    window.localStorage.removeItem("code2day-problem-slug");
+  }, []);
 
   // Save selected language to localStorage when it changes
   useEffect(() => {

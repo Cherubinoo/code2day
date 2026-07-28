@@ -160,7 +160,7 @@ function ExplorePage({
                 onClick={() => {
                   setSelectedConcept("All Concepts");
                   setSelectedDifficulty(dashboard.dailyProblem.difficulty);
-                  setSelectedProblemSlug(dashboard.dailyProblem.slug);
+                  setSelectedProblemSlug("");
                   if (dashboard.dailyProblem.preferredLanguage) {
                     setSelectedLanguage(dashboard.dailyProblem.preferredLanguage);
                   }
@@ -350,7 +350,7 @@ function ExplorePage({
                   type="button"
                   className="practice-preview-item"
                   onClick={() => {
-                    setSelectedProblemSlug(problem.slug);
+                    setSelectedProblemSlug("");
                     setActivePage("problems");
                   }}
                 >
