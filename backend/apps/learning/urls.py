@@ -98,6 +98,8 @@ from .views import (
     DepartmentManagementView,
     StudentReportPDFView,
     StaffReportPDFView,
+    BatchReportPDFView,
+    TrackedCompaniesReportPDFView,
     AptitudeQuestionListView,
     AptitudeQuestionSubmitView,
     AptitudeContestSubmitView,
@@ -302,6 +304,8 @@ urlpatterns = [
 
     path("students/<str:register_number>/report/", StudentReportPDFView.as_view(), name="student-report-pdf"),
     path("staff/<str:faculty_id>/report/", StaffReportPDFView.as_view(), name="staff-report-pdf"),
+    path("batches/<str:batch_code>/report/", BatchReportPDFView.as_view(), name="batch-report-pdf"),
+    path("dashboard/tracked-companies/report/", TrackedCompaniesReportPDFView.as_view(), name="tracked-companies-report-pdf"),
     path("contests/<int:contest_id>/report/", ContestReportPDFView.as_view(), name="contest-report-pdf"),
     path("contests/<int:contest_id>/students/<str:register_number>/report/", StudentContestReportPDFView.as_view(), name="contest-student-report-pdf"),
     

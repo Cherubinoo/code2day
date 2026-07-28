@@ -8030,6 +8030,175 @@ class StudentReportPDFView(APIView):
         return plan[:5]  # Cap at 5
 
 
+class BatchReportPDFView(APIView):
+    """Generate a comprehensive PDF performance report for a batch of students."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, batch_code):
+        if not (hasattr(request.user, 'staff_profile') or request.user.is_superuser):
+            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        staff = getattr(request.user, 'staff_profile', None)
+        section_filter = request.GET.get('section', '')
+        date_from = request.GET.get('date_from', '')
+        date_to = request.GET.get('date_to', '')
+        report_type = request.GET.get('type', 'overall')
+
+        # Filter students
+        students_qs = StudentProfile.objects.filter(batch=batch_code)
+        if staff and staff.department and getattr(staff, 'role', '') not in ['admin', 'superuser']:
+            students_qs = students_qs.filter(department=staff.department)
+        if section_filter:
+            students_qs = students_qs.filter(section=section_filter)
+
+        if not students_qs.exists():
+            return Response({"error": f"No students found for batch {batch_code}."}, status=status.HTTP_404_NOT_FOUND)
+
+        from .pdf_reports import create_watermarked_pdf_contest
+        buffer = BytesIO()
+        first_student = students_qs.first()
+        institution = first_student.institution or getattr(staff, 'institution', None)
+        department = first_student.department or getattr(staff, 'department', None)
+
+        doc = create_watermarked_pdf_contest(
+            buffer,
+            institution=institution,
+            department=department,
+            pagesize=A4,
+            topMargin=2.1 * inch,
+            bottomMargin=0.6 * inch,
+        )
+
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle('BTitle', parent=styles['Heading1'], fontSize=18, spaceAfter=14, alignment=1, textColor=colors.HexColor('#2d5016'))
+        header_style = ParagraphStyle('BHeader', parent=styles['Heading2'], fontSize=12, spaceBefore=12, spaceAfter=6, textColor=colors.HexColor('#39482a'))
+
+        elements = []
+        elements.append(Paragraph(f"Batch Performance Report: {batch_code}", title_style))
+        if section_filter:
+            elements.append(Paragraph(f"Section: {section_filter}", header_style))
+
+        # Metrics overview
+        total_students = students_qs.count()
+        solved_qs = SolvedProblem.objects.filter(student__in=students_qs)
+        total_problems_solved = solved_qs.count()
+        total_submissions = ExecutionRecord.objects.filter(student__in=students_qs).count()
+        avg_solved = (total_problems_solved / total_students) if total_students > 0 else 0
+
+        summary_data = [
+            ["Metric", "Value"],
+            ["Batch Code", str(batch_code)],
+            ["Total Students", str(total_students)],
+            ["Total Problems Solved", str(total_problems_solved)],
+            ["Total Code Executions", str(total_submissions)],
+            ["Avg Solved per Student", f"{avg_solved:.1f}"],
+        ]
+        elements.append(Paragraph("Batch Summary Overview", header_style))
+        t_summary = Table(summary_data, colWidths=[3*inch, 3.5*inch])
+        t_summary.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e6ebdd')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#39482a')),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d0d9c2')),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ]))
+        elements.append(t_summary)
+        elements.append(Spacer(1, 0.2 * inch))
+
+        # Student Leaderboard Table for the Batch
+        elements.append(Paragraph("Student Performance Leaderboard", header_style))
+        student_rows = [["Reg No", "Name", "Section", "Problems Solved", "Streak"]]
+        for st in students_qs.annotate(s_count=Count('solved_problems')).order_by('-s_count')[:50]:
+            student_rows.append([
+                st.register_number,
+                st.name[:25],
+                st.section or 'N/A',
+                str(st.s_count),
+                f"{st.current_streak} days",
+            ])
+
+        t_students = Table(student_rows, colWidths=[1.4*inch, 2.2*inch, 0.8*inch, 1.1*inch, 1*inch])
+        t_students.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e6ebdd')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#39482a')),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8f9f7')]),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d0d9c2')),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(t_students)
+
+        doc.build(elements)
+        buffer.seek(0)
+        pdf_bytes = buffer.getvalue()
+
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="batch_report_{batch_code}.pdf"'
+        return response
+
+
+class TrackedCompaniesReportPDFView(APIView):
+    """Generate PDF report for student's company readiness."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not hasattr(request.user, 'student_profile'):
+            return Response({"detail": "Student access required."}, status=status.HTTP_403_FORBIDDEN)
+        student = request.user.student_profile
+
+        from .pdf_reports import create_watermarked_pdf_contest
+        buffer = BytesIO()
+        doc = create_watermarked_pdf_contest(
+            buffer,
+            institution=student.institution,
+            department=student.department,
+            pagesize=A4,
+            topMargin=2.1 * inch,
+            bottomMargin=0.6 * inch,
+        )
+        styles = getSampleStyleSheet()
+        title_style = ParagraphStyle('CTitle', parent=styles['Heading1'], fontSize=16, spaceAfter=12, alignment=1, textColor=colors.HexColor('#2d5016'))
+        header_style = ParagraphStyle('CHeader', parent=styles['Heading2'], fontSize=11, spaceBefore=10, spaceAfter=4, textColor=colors.HexColor('#39482a'))
+
+        elements = []
+        elements.append(Paragraph(f"Company Readiness Report: {student.name}", title_style))
+        elements.append(Paragraph(f"Register Number: {student.register_number}", header_style))
+        elements.append(Spacer(1, 0.2 * inch))
+
+        solved_qs = SolvedProblem.objects.filter(student=student)
+        total_solved = solved_qs.count()
+
+        data = [
+            ["Category", "Details"],
+            ["Total Problems Solved", str(total_solved)],
+            ["Current Streak", f"{student.current_streak} days"],
+            ["Department", student.department.get_full_name() if student.department else 'N/A'],
+        ]
+        t = Table(data, colWidths=[2.5*inch, 4*inch])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e6ebdd')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.HexColor('#39482a')),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d0d9c2')),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('PADDING', (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(t)
+
+        doc.build(elements)
+        buffer.seek(0)
+        pdf_bytes = buffer.getvalue()
+
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="company_readiness_report_{student.register_number}.pdf"'
+        return response
+
+
 class StaffReportPDFView(APIView):
     """Generate a comprehensive PDF performance report with filtering options."""
     permission_classes = [IsAuthenticated]
