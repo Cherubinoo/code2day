@@ -5,7 +5,19 @@ import { getCsrfToken, extractApiError } from '../../../lib/appUtils';
 
 const AptitudeQuizPage = ({ topicId, onBack }) => {
   const [questions, setQuestions] = useState([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  const [currentIndex, setCurrentIndexState] = useState(() => {
+    const saved = sessionStorage.getItem(`code2day-aptitude-question-index-${topicId}`);
+    return saved ? parseInt(saved, 10) : 0;
+  });
+
+  const setCurrentIndex = (val) => {
+    setCurrentIndexState((prev) => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      sessionStorage.setItem(`code2day-aptitude-question-index-${topicId}`, String(next));
+      return next;
+    });
+  };
+
   const [loading, setLoading] = useState(true);
   const [selectedOption, setSelectedOption] = useState(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -43,16 +55,19 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
       .then(async res => {
         const data = await res.json().catch(() => null);
         if (!res.ok) {
-          // Surface real failures distinctly — treating any non-2xx response
-          // as "0 questions" (the old behaviour) made server/auth errors
-          // indistinguishable from a topic that genuinely has no questions.
           throw new Error((data && (data.detail || data.error)) || `Failed to load questions (HTTP ${res.status}).`);
         }
         return data;
       })
       .then(data => {
-        setQuestions(Array.isArray(data) ? data : []);
-        setCurrentIndex(0);
+        const loadedQuestions = Array.isArray(data) ? data : [];
+        setQuestions(loadedQuestions);
+        const savedIdx = parseInt(sessionStorage.getItem(`code2day-aptitude-question-index-${topicId}`), 10);
+        if (!isNaN(savedIdx) && savedIdx >= 0 && savedIdx < loadedQuestions.length) {
+          setCurrentIndexState(savedIdx);
+        } else {
+          setCurrentIndexState(0);
+        }
         setSelectedOption(null);
         setIsSubmitted(false);
         setResult(null);
@@ -103,6 +118,11 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
         setIsSubmitted(true);
         if (data.is_correct) {
           setScore(prev => prev + 1);
+          setQuestions(prev =>
+            prev.map((q, i) =>
+              i === currentIndex ? { ...q, is_solved: true } : q
+            )
+          );
         }
       })
       .catch(err => {

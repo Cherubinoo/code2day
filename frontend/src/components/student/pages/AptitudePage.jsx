@@ -6,7 +6,28 @@ export default function AptitudePage({ onToggleWorkspace }) {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCats, setExpandedCats] = useState({});
-  const [practiceTopicId, setPracticeTopicId] = useState(null);
+  const [practiceTopicId, setPracticeTopicIdState] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tParam = params.get("topic") || params.get("topic_id");
+    if (tParam) return tParam;
+    const saved = sessionStorage.getItem("code2day-aptitude-topic-id");
+    return saved || null;
+  });
+
+  const setPracticeTopicId = (id) => {
+    setPracticeTopicIdState(id);
+    const url = new URL(window.location.href);
+    if (id) {
+      sessionStorage.setItem("code2day-aptitude-topic-id", String(id));
+      url.searchParams.set("topic", String(id));
+    } else {
+      sessionStorage.removeItem("code2day-aptitude-topic-id");
+      sessionStorage.removeItem("code2day-aptitude-question-index");
+      url.searchParams.delete("topic");
+      url.searchParams.delete("topic_id");
+    }
+    window.history.replaceState(window.history.state, "", url.href);
+  };
 
   // Sync isInsideWorkspace state with parent
   useEffect(() => {
