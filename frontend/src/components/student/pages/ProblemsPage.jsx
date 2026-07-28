@@ -1,6 +1,5 @@
-import Editor from "@monaco-editor/react";
-import { useState, useEffect } from "react";
-import { loader } from "@monaco-editor/react";
+import React, { useState, useEffect } from "react";
+import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 
 import { executionLanguageMap } from "../../../lib/codeExecution";
@@ -24,6 +23,7 @@ const ALL_CODE_LANGUAGES = Object.keys(executionLanguageMap).filter(
 
 // ── Problem description Markdown-like renderer ───────────────────────────────
 function renderInline(text) {
+  if (!text || typeof text !== "string") return "";
   return text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
@@ -32,7 +32,8 @@ function renderInline(text) {
 
 function renderDescription(raw) {
   if (!raw) return null;
-  const lines = raw.replace(/\\n/g, '\n').split('\n');
+  const strRaw = typeof raw === "string" ? raw : (typeof raw === "object" ? (raw.description || raw.body || JSON.stringify(raw)) : String(raw));
+  const lines = strRaw.replace(/\\n/g, '\n').split('\n');
   const elements = [];
   let i = 0;
 
@@ -331,8 +332,8 @@ function ProblemListView({
                     </span>
 
                     <span className="col-diff">
-                      <span className={`difficulty-chip ${problem.difficulty.toLowerCase()}`}>
-                        {problem.difficulty}
+                      <span className={`difficulty-chip ${(problem.difficulty || 'Easy').toLowerCase()}`}>
+                        {problem.difficulty || 'Easy'}
                       </span>
                     </span>
 
@@ -395,6 +396,7 @@ function ProblemListView({
 // ── Workspace / Editor View ────────────────────────────────────────────────
 
 function WorkspaceView({
+  problemSet,
   activeContest,
   code,
   tagCounts,
@@ -478,8 +480,8 @@ function WorkspaceView({
             </strong>
           </div>
           {selectedProblem && (
-            <span className={`difficulty-chip ${selectedProblem.difficulty.toLowerCase()}`}>
-              {selectedProblem.difficulty}
+            <span className={`difficulty-chip ${(selectedProblem.difficulty || 'Easy').toLowerCase()}`}>
+              {selectedProblem.difficulty || 'Easy'}
             </span>
           )}
           {sessionMode === "contest" && (
@@ -587,8 +589,8 @@ function WorkspaceView({
                                   {problem.tags?.join(" | ") || "Practice set"}
                                 </p>
                               </div>
-                              <span className={`mini-pill ${problem.difficulty.toLowerCase()}`}>
-                                {problem.difficulty}
+                              <span className={`mini-pill ${(problem.difficulty || 'Easy').toLowerCase()}`}>
+                                {problem.difficulty || 'Easy'}
                               </span>
                             </button>
                           ))
@@ -649,8 +651,8 @@ function WorkspaceView({
                                 <strong>{problem.title}</strong>
                                 <p>{problem.tags?.join(" | ") || "Practice set"}</p>
                               </div>
-                              <span className={`mini-pill ${problem.difficulty.toLowerCase()}`}>
-                                {problem.difficulty}
+                              <span className={`mini-pill ${(problem.difficulty || 'Easy').toLowerCase()}`}>
+                                {problem.difficulty || 'Easy'}
                               </span>
                             </button>
                           ))
@@ -675,13 +677,13 @@ function WorkspaceView({
                   <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
                     {(() => {
                       if (!selectedProblem) return "Problem details";
-                      const allList = (props.problemSet && props.problemSet.length > 0) ? props.problemSet : groupedProblems.flatMap(g => g.items);
+                      const allList = (problemSet && problemSet.length > 0) ? problemSet : (groupedProblems || []).flatMap(g => g.items || []);
                       const idx = allList.findIndex(p => p.slug === selectedProblem.slug);
                       return idx >= 0 ? `Problem ${idx + 1} of ${allList.length}: ${selectedProblem.title}` : selectedProblem.title;
                     })()}
                     {selectedProblem && (
-                      <span className={`difficulty-chip ${selectedProblem.difficulty.toLowerCase()}`}>
-                        {selectedProblem.difficulty}
+                      <span className={`difficulty-chip ${(selectedProblem.difficulty || 'Easy').toLowerCase()}`}>
+                        {selectedProblem.difficulty || 'Easy'}
                       </span>
                     )}
                   </h2>
@@ -689,7 +691,7 @@ function WorkspaceView({
                 {selectedProblem && (
                   <div style={{ display: 'flex', gap: '8px' }}>
                     {(() => {
-                      const allList = (props.problemSet && props.problemSet.length > 0) ? props.problemSet : groupedProblems.flatMap(g => g.items);
+                      const allList = (problemSet && problemSet.length > 0) ? problemSet : (groupedProblems || []).flatMap(g => g.items || []);
                       const idx = allList.findIndex(p => p.slug === selectedProblem.slug);
                       return (
                         <>
@@ -956,32 +958,75 @@ function WorkspaceView({
 
 // ── Main export: switches between list and workspace ───────────────────────
 
-function ProblemsPage(props) {
-  if (!props.selectedProblem) {
-    return (
-      <ProblemListView
-        tagCounts={props.tagCounts}
-        dynamicTags={props.dynamicTags}
-        difficultyOrder={props.difficultyOrder}
-        groupedProblems={props.groupedProblems}
-        handleSelectTag={props.handleSelectTag}
-        selectedTag={props.selectedTag}
-        selectedDifficulty={props.selectedDifficulty}
-        setSelectedDifficulty={props.setSelectedDifficulty}
-        setSelectedLanguage={props.setSelectedLanguage}
-        setSelectedProblemSlug={props.setSelectedProblemSlug}
-        setProblemDetailTab={props.setProblemDetailTab}
-        totalSolved={props.totalSolved}
-        dashboard={props.dashboard}
-        sessionMode={props.sessionMode}
-        activeContest={props.activeContest}
-        contestSecondsLeft={props.contestSecondsLeft}
-        handleFinishContest={props.handleFinishContest}
-      />
-    );
+class WorkspaceErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
   }
 
-  return <WorkspaceView {...props} />;
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Workspace render error caught:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: '40px', textAlign: 'center', background: '#0f172a', color: '#f8fafc', borderRadius: '12px', margin: '20px' }}>
+          <h2 style={{ color: '#ef4444', marginBottom: '12px' }}>Workspace Error</h2>
+          <p style={{ color: '#94a3b8', marginBottom: '20px' }}>
+            {this.state.error?.message || "A rendering issue occurred in the problem workspace."}
+          </p>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              if (this.props.setSelectedProblemSlug) {
+                this.props.setSelectedProblemSlug("");
+              }
+            }}
+          >
+            Return to Problems List
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function ProblemsPage(props) {
+  return (
+    <WorkspaceErrorBoundary setSelectedProblemSlug={props.setSelectedProblemSlug}>
+      {!props.selectedProblem ? (
+        <ProblemListView
+          tagCounts={props.tagCounts}
+          dynamicTags={props.dynamicTags || []}
+          difficultyOrder={props.difficultyOrder || ["All Levels", "Easy", "Medium", "Hard"]}
+          groupedProblems={props.groupedProblems || []}
+          handleSelectTag={props.handleSelectTag}
+          selectedTag={props.selectedTag}
+          selectedDifficulty={props.selectedDifficulty}
+          setSelectedDifficulty={props.setSelectedDifficulty}
+          setSelectedLanguage={props.setSelectedLanguage}
+          setSelectedProblemSlug={props.setSelectedProblemSlug}
+          setProblemDetailTab={props.setProblemDetailTab}
+          totalSolved={props.totalSolved}
+          dashboard={props.dashboard}
+          sessionMode={props.sessionMode}
+          activeContest={props.activeContest}
+          contestSecondsLeft={props.contestSecondsLeft}
+          handleFinishContest={props.handleFinishContest}
+        />
+      ) : (
+        <WorkspaceView {...props} />
+      )}
+    </WorkspaceErrorBoundary>
+  );
 }
 
 export default ProblemsPage;

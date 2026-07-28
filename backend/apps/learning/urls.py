@@ -192,7 +192,7 @@ urlpatterns = [
     # Dashboard & problems
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
     path("dashboard/tracked-companies/", UpdateTrackedCompaniesView.as_view(), name="update-tracked-companies"),
-    path("dashboard/tracked-companies/report/", StudentCompanyTrackReportPDFView.as_view(), name="tracked-companies-report-pdf"),
+    path("dashboard/tracked-companies/report/", TrackedCompaniesReportPDFView.as_view(), name="tracked-companies-report-pdf"),
     path("dashboard/daily/leaderboard/", DailyLeaderboardView.as_view(), name="daily-leaderboard"),
     path("ranking/", CampusRankingView.as_view(), name="campus-ranking"),
     path("problems/", ProblemListView.as_view(), name="problem-list"),
@@ -305,7 +305,6 @@ urlpatterns = [
     path("students/<str:register_number>/report/", StudentReportPDFView.as_view(), name="student-report-pdf"),
     path("staff/<str:faculty_id>/report/", StaffReportPDFView.as_view(), name="staff-report-pdf"),
     path("batches/<str:batch_code>/report/", BatchReportPDFView.as_view(), name="batch-report-pdf"),
-    path("dashboard/tracked-companies/report/", TrackedCompaniesReportPDFView.as_view(), name="tracked-companies-report-pdf"),
     path("contests/<int:contest_id>/report/", ContestReportPDFView.as_view(), name="contest-report-pdf"),
     path("contests/<int:contest_id>/students/<str:register_number>/report/", StudentContestReportPDFView.as_view(), name="contest-student-report-pdf"),
     

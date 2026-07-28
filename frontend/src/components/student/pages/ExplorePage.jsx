@@ -358,8 +358,8 @@ function ExplorePage({
                     <strong>{problem.title}</strong>
                     <p>{(problem.tags ?? []).join(" | ")}</p>
                   </div>
-                  <span className={`mini-pill ${problem.difficulty.toLowerCase()}`}>
-                    {problem.difficulty}
+                  <span className={`mini-pill ${(problem.difficulty || 'Easy').toLowerCase()}`}>
+                    {problem.difficulty || 'Easy'}
                   </span>
                 </button>
               ))

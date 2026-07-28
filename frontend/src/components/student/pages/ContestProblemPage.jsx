@@ -396,8 +396,8 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
           
           {/* Difficulty */}
           {problem && (
-            <span className={`difficulty-chip ${problem.difficulty.toLowerCase()}`}>
-              {problem.difficulty}
+            <span className={`difficulty-chip ${(problem.difficulty || 'Easy').toLowerCase()}`}>
+              {problem.difficulty || 'Easy'}
             </span>
           )}
           
@@ -438,8 +438,8 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
       <section className="surface-card statement-panel judge-statement">
         <div className="section-head">
           <h2>{problem.title}</h2>
-          <span className={`difficulty-chip ${problem.difficulty.toLowerCase()}`}>
-            {problem.difficulty}
+          <span className={`difficulty-chip ${(problem.difficulty || 'Easy').toLowerCase()}`}>
+            {problem.difficulty || 'Easy'}
           </span>
         </div>
 

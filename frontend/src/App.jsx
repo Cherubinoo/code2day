@@ -1247,6 +1247,7 @@ function App() {
     case "problems":
       activeView = (
         <ProblemsPage
+          problemSet={problemSet}
           activeContest={activeContest}
           code={code}
           tagCounts={tagCounts}

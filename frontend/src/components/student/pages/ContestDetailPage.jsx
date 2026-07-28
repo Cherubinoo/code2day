@@ -296,8 +296,8 @@ const ContestDetailPage = ({ contestId, onBack, onSelectProblem }) => {
                   </span>
 
                   <span className="col-diff">
-                    <span className={`difficulty-chip ${problem.difficulty.toLowerCase()}`}>
-                      {problem.difficulty}
+                    <span className={`difficulty-chip ${(problem.difficulty || 'Easy').toLowerCase()}`}>
+                      {problem.difficulty || 'Easy'}
                     </span>
                   </span>
 

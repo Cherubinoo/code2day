@@ -946,8 +946,8 @@ function ContestWorkspacePage({ contestId, onBack }) {
             </div>
           )}
           {selectedProblem && (
-            <span className={`difficulty-chip ${selectedProblem.difficulty.toLowerCase()}`}>
-              {selectedProblem.difficulty}
+            <span className={`difficulty-chip ${(selectedProblem.difficulty || 'Easy').toLowerCase()}`}>
+              {selectedProblem.difficulty || 'Easy'}
             </span>
           )}
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -1029,8 +1029,8 @@ function ContestWorkspacePage({ contestId, onBack }) {
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                           {problem.is_solved && <span style={{ color: "#4ade80" }}>✓</span>}
-                          <span className={`mini-pill ${problem.difficulty.toLowerCase()}`}>
-                            {problem.difficulty}
+                          <span className={`mini-pill ${(problem.difficulty || 'Easy').toLowerCase()}`}>
+                            {problem.difficulty || 'Easy'}
                           </span>
                         </div>
                       </button>
@@ -1178,8 +1178,8 @@ function ContestWorkspacePage({ contestId, onBack }) {
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
                   {selectedProblem ? `Problem ${selectedProblemIndex + 1} of ${problems.length}: ${selectedProblem.title}` : "Problem details"}
                   {selectedProblem && (
-                    <span className={`difficulty-chip ${selectedProblem.difficulty.toLowerCase()}`}>
-                      {selectedProblem.difficulty}
+                    <span className={`difficulty-chip ${(selectedProblem.difficulty || 'Easy').toLowerCase()}`}>
+                      {selectedProblem.difficulty || 'Easy'}
                     </span>
                   )}
                 </h2>
