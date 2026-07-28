@@ -715,8 +715,8 @@ function App() {
     if (!selectedProblemSlug) {
       return null;
     }
-    return filteredProblemSet.find((problem) => problem.slug === selectedProblemSlug) ?? null;
-  }, [filteredProblemSet, selectedProblemSlug, activePage]);
+    return problemSet.find((problem) => problem.slug === selectedProblemSlug) ?? null;
+  }, [problemSet, selectedProblemSlug, activePage]);
 
   const activityCalendar = dashboard.activityCalendar ?? fallbackDashboard.activityCalendar;
   const filteredPreviewProblems = filteredProblemSet.slice(0, 5);

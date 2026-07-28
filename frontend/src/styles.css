@@ -1345,8 +1345,15 @@ button.tab-pill {
 }
 
 .problem-list-row.selected {
-  border-color: rgba(57, 72, 42, 0.18);
-  background: linear-gradient(145deg, rgba(230, 235, 221, 0.9), rgba(255, 255, 255, 0.96));
+  border-color: var(--olive-700) !important;
+  background: linear-gradient(145deg, #e2ebd8, #ffffff) !important;
+  box-shadow: 0 4px 12px rgba(45, 80, 22, 0.15);
+}
+
+.problem-list-row.selected .problem-index {
+  background: var(--olive-700) !important;
+  color: white !important;
+  font-weight: 800 !important;
 }
 
 .problem-index,

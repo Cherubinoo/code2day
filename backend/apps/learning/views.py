@@ -8306,7 +8306,8 @@ class StaffReportPDFView(APIView):
     def _get_filtered_report_data(self, staff, report_type, batch_filter, topic_filter, date_from, date_to):
         """Get comprehensive report data based on filters."""
         from datetime import datetime, timedelta
-        from django.db.models import Q, Avg, Count, Sum
+        from django.db.models import Q, Avg, Count, Sum, Max
+        from collections import defaultdict
         
         # Base queryset for students
         students_qs = StudentProfile.objects.filter(

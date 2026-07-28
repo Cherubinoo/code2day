@@ -438,6 +438,17 @@ function WorkspaceView({
   const [showAllBatches, setShowAllBatches] = useState(false);
   const editorLanguages = ALL_CODE_LANGUAGES;
 
+  useEffect(() => {
+    if (selectedProblem?.slug) {
+      setTimeout(() => {
+        const selectedEl = document.querySelector('.problem-sidebar .problem-list-row.selected');
+        if (selectedEl) {
+          selectedEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      }, 100);
+    }
+  }, [selectedProblem?.slug]);
+
   return (
     <div className="page-stack problem-page">
       {/* ── Workspace Header ── */}
@@ -664,7 +675,7 @@ function WorkspaceView({
                   <h2 style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
                     {(() => {
                       if (!selectedProblem) return "Problem details";
-                      const allList = groupedProblems.flatMap(g => g.items);
+                      const allList = (props.problemSet && props.problemSet.length > 0) ? props.problemSet : groupedProblems.flatMap(g => g.items);
                       const idx = allList.findIndex(p => p.slug === selectedProblem.slug);
                       return idx >= 0 ? `Problem ${idx + 1} of ${allList.length}: ${selectedProblem.title}` : selectedProblem.title;
                     })()}
@@ -678,14 +689,18 @@ function WorkspaceView({
                 {selectedProblem && (
                   <div style={{ display: 'flex', gap: '8px' }}>
                     {(() => {
-                      const allList = groupedProblems.flatMap(g => g.items);
+                      const allList = (props.problemSet && props.problemSet.length > 0) ? props.problemSet : groupedProblems.flatMap(g => g.items);
                       const idx = allList.findIndex(p => p.slug === selectedProblem.slug);
                       return (
                         <>
                           <button
                             type="button"
                             className="ghost-button dense-action"
-                            onClick={() => setSelectedProblemSlug(allList[idx - 1].slug)}
+                            onClick={() => {
+                              if (idx > 0 && allList[idx - 1]) {
+                                setSelectedProblemSlug(allList[idx - 1].slug);
+                              }
+                            }}
                             disabled={idx <= 0}
                           >
                             ← Previous
@@ -693,8 +708,12 @@ function WorkspaceView({
                           <button
                             type="button"
                             className="ghost-button dense-action"
-                            onClick={() => setSelectedProblemSlug(allList[idx + 1].slug)}
-                            disabled={idx === -1 || idx === allList.length - 1}
+                            onClick={() => {
+                              if (idx >= 0 && idx < allList.length - 1 && allList[idx + 1]) {
+                                setSelectedProblemSlug(allList[idx + 1].slug);
+                              }
+                            }}
+                            disabled={idx === -1 || idx >= allList.length - 1}
                           >
                             Next →
                           </button>
