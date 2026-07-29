@@ -58,7 +58,7 @@ The platform is **multi-tenant**: each institution (college) operates in its own
 - Curated problem bank with Easy / Medium / Hard difficulty levels
 - Multi-language support (C, C++, Java, Python, JavaScript, SQL, and more)
 - Monaco editor (same engine as VS Code) with syntax highlighting
-- Real-time code execution via an isolated Judge0 container
+- Real-time code execution via Code2Day Custom Code Executor (`code-executor`)
 - Per-problem time tracking (session-based)
 - Solved / unsolved state with full submission history
 
@@ -127,7 +127,7 @@ The platform is **multi-tenant**: each institution (college) operates in its own
 | Auth | Django session-based authentication |
 | CORS | django-cors-headers |
 | Task Queue | Celery + Redis |
-| Code Execution | Judge0 (containerized, self-hosted) |
+| Code Execution Engine | Code2Day Custom Executor (`code-executor` FastAPI + Docker) |
 | PDF Generation | ReportLab 4.0.7 |
 | Data Processing | pandas 2.2.3, openpyxl 3.1.5 |
 | Image Handling | Pillow 10.4.0 |
@@ -144,60 +144,74 @@ The platform is **multi-tenant**: each institution (college) operates in its own
 | Charts | Custom SVG (no external chart library) |
 | Styling | Plain CSS (no UI framework) |
 
-### Infrastructure
+### Infrastructure & Deployment
 
 | Layer | Technology |
 |---|---|
-| Containerization | Docker + Docker Compose |
-| Reverse Proxy | Nginx |
-| CI/CD | GitHub Actions |
-| Code Sandbox | Judge0 (custom-built container) |
-| Cache / Broker | Redis |
+| PaaS & Deployment Manager | Dokploy Platform |
+| Containerization | Docker + Docker Compose (`code2day-frontend`, `code2day-backend`, `code-executor`) |
+| Container Networks | `dokploy-network`, `code2day-shared` (external bridges) |
+| Reverse Proxy | Nginx (SSL termination, static delivery, `/api/*` proxy) |
+| CI/CD & Auto-Deploy | GitHub Webhooks + Dokploy Auto-Deployment Pipeline |
+| Code Sandbox Microservice | Code2Day Custom Code Executor (`code-executor` - FastAPI + Docker) |
+| Cache / Message Broker | Redis |
 
 ---
 
 ## 4. System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                        Browser                          │
-│                React 18 SPA (Vite build)                │
-└────────────────────────┬────────────────────────────────┘
-                         │ HTTPS
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│                   Nginx (Reverse Proxy)                 │
-│   • SSL termination                                     │
-│   • Static file serving (dist/)                         │
-│   • /api/* → Django  |  /* → React SPA                 │
-└──────────────┬──────────────────────┬───────────────────┘
-               │                      │
-               ▼                      ▼
-┌──────────────────────┐  ┌───────────────────────────────┐
-│  Django (Gunicorn)   │  │    Code Executor (Judge0)     │
-│  REST Framework API  │  │  • Isolated container         │
-│  Session Auth + CSRF │  │  • Multi-language support     │
-│  Celery tasks        │  │  • Resource limits enforced   │
-└──────────┬───────────┘  └───────────────────────────────┘
-           │
-     ┌─────┴──────┐
-     │            │
-     ▼            ▼
-┌─────────┐  ┌─────────┐
-│PostgreSQL│  │  Redis  │
-│ (data)  │  │(cache/  │
-│         │  │ broker) │
-└─────────┘  └─────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           Dokploy PaaS Engine                           │
+│     • GitHub Webhook Auto-Deployment                                    │
+│     • Container Lifecycle & Monitoring                                 │
+│     • dokploy-network & code2day-shared docker networks                 │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │
+┌────────────────────────────────────▼────────────────────────────────────┐
+│                        Browser / Client                                 │
+│                React 18 SPA (Vite Production Build)                     │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │ HTTPS
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      Nginx Reverse Proxy Server                         │
+│   • SSL / TLS Termination                                               │
+│   • Static Asset Delivery (React SPA frontend:8001)                      │
+│   • /api/* → Backend Gunicorn Application                               │
+└──────────────┬────────────────────────────────────────┬─────────────────┘
+               │                                        │
+               ▼                                        ▼
+┌─────────────────────────────┐        ┌──────────────────────────────────┐
+│   Django DRF Backend        │        │  Code2Day Custom Code Executor   │
+│   • Session Auth + CSRF     │        │  • FastAPI Microservice          │
+│   • Role-Based Access       │◄──────►│  • Isolated Docker Containers    │
+│   • PDF Report Generator    │        │  • cgroup v2 & Quota Limits      │
+│   • Celery Async Worker     │        └──────────────────────────────────┘
+└──────────────┬──────────────┘
+               │
+         ┌─────┴────────┐
+         │              │
+         ▼              ▼
+┌────────────────┐ ┌─────────┐
+│   PostgreSQL   │ │  Redis  │
+│  (Database)    │ │ (Cache/ │
+│                │ │ Broker) │
+└────────────────┘ └─────────┘
 ```
 
-### Request Flow
+### Request & Deployment Flow
 
-1. Browser makes a request to the Nginx reverse proxy over HTTPS.
-2. Static assets (`/`, `/static/`) are served directly from the Vite build output.
-3. API calls (`/api/*`) are proxied to the Django/Gunicorn backend.
-4. Django validates the session cookie and CSRF token, resolves the user's role, and routes to the appropriate view.
-5. For code execution, Django sends a job to the Judge0 container and polls for a verdict.
-6. Background tasks (winner allocation, report generation) are handled by Celery workers via Redis.
+1. **Auto-Deployment Flow**:
+   - Commits pushed to GitHub trigger Dokploy webhooks.
+   - Dokploy pulls updates, builds production Docker images (`code2day-frontend`, `code2day-backend`), and deploys container instances over `dokploy-network` and `code2day-shared` networks without interrupting background microservices like `code-executor`.
+
+2. **Application Request Flow**:
+   - Web requests reach Nginx reverse proxy over HTTPS.
+   - Front-end assets (`/`) serve from `code2day-frontend` container.
+   - API endpoints (`/api/*`) proxy to `code2day-backend` Django service.
+   - For code execution, Django dispatches jobs to `code-executor` custom sandbox container and returns structured verdict payloads.
+   - Asynchronous jobs (PDF generation, contest winner calculations) execute via Celery workers with Redis.
 
 ### Multi-Tenancy
 
@@ -490,6 +504,9 @@ All routes are prefixed with `/api/`. Authentication uses Django's session cooki
 | POST | `/api/student/contests/<id>/auto-submit/` | Auto-submit on timer expiry |
 | GET | `/api/student/contests/<id>/session-status/` | Check if session is still active |
 | POST | `/api/student/contests/<id>/aptitude/submit/` | Submit aptitude contest answers |
+| POST | `/api/student/contests/<id>/lock/` | Trigger proctoring lock screen |
+| POST | `/api/student/contests/<id>/unlock/` | Unlock contest via staff PIN authorization |
+| POST | `/api/student/contests/<id>/snapshot/` | Upload proctoring webcam snapshot |
 | GET | `/api/student/analytics/` | Own performance analytics |
 | GET | `/api/student/mentor-advisor/` | Assigned mentor and class advisor |
 | GET | `/api/aptitude/topics/` | Full aptitude topic tree |
@@ -498,6 +515,7 @@ All routes are prefixed with `/api/`. Authentication uses Django's session cooki
 | GET | `/api/ranking/` | Campus leaderboard |
 | GET | `/api/dashboard/daily/leaderboard/` | Daily leaderboard |
 | POST | `/api/run/` | Execute a code snippet (practice mode) |
+| GET | `/api/dashboard/tracked-companies/report/` | Download Tracked Companies PDF performance report |
 
 ### Staff
 
@@ -514,7 +532,11 @@ All routes are prefixed with `/api/`. Authentication uses Django's session cooki
 | GET | `/api/staff/mentor/dashboard/` | Mentees view (with progress) |
 | GET | `/api/staff/advisor/dashboard/` | Class advisor view |
 | GET | `/api/students/<reg_no>/analytics/` | Individual student analytics |
-| GET | `/api/students/<reg_no>/report/` | Student PDF report |
+| GET | `/api/students/<reg_no>/report/` | Download Student Performance PDF report |
+| GET | `/api/staff/<faculty_id>/report/` | Download Staff Performance PDF report |
+| GET | `/api/batches/<batch_code>/report/` | Download Batch Performance PDF report |
+| GET | `/api/contests/<id>/report/` | Download Contest Overview PDF report |
+| GET | `/api/contests/<id>/students/<reg_no>/report/` | Download Student Contest Performance PDF report |
 
 ### Junior Admin (JA)
 
@@ -744,9 +766,9 @@ Student writes code in the Monaco editor and clicks "Run".
 
 2. Django CodeRunView:
    a. Security-validates the code (code_validator.py)
-   b. Maps language name → Judge0 language ID
-   c. Submits job to Judge0: POST /submissions/
-   d. Polls Judge0 until verdict is ready (≤ ~10 seconds)
+   b. Maps language name → execution language ID
+   c. Submits job to Code2Day Custom Executor (`code-executor` microservice): POST /submissions/
+   d. Polls executor service until verdict is ready
    e. Normalises output via execution_adapter.py
    f. Returns: { status, stdout, stderr, time_ms, memory_kb }
 
@@ -769,12 +791,20 @@ Student writes code in the Monaco editor and clicks "Run".
       GET /api/aptitude/topics/      → full topic tree
       GET /api/aptitude/questions/   → questions, filterable by topic
 
-2. Student selects an answer and submits
-      POST /api/aptitude/questions/submit/
-      Body: { question_id, selected_answer }
-      Response: { correct, correct_answer, explanation }
+2. Topic & Question State Persistence:
+   • The current topic ID is synchronized with URL search params (?topic=<id>) and sessionStorage.
+   • The active question number is synchronized with URL search params (?q=<num>) and sessionStorage.
+   • On browser refresh (F5 / Ctrl+R), the application restores both the active topic and exact question position.
 
-3. SolvedAptitude record is created if correct (prevents double-counting).
+3. Student selects an answer and submits:
+      POST /api/aptitude/questions/submit/
+      Body: { question_id, selected_option }
+      Response: { is_correct, correct_option, explanation }
+
+4. Real-time Status & Solved Tracking:
+   • On correct submission, SolvedAptitude record is created in backend.
+   • Question state immediately updates to is_solved: true in UI with green CheckCircle badges.
+   • Question navigator highlights solved questions, and topic completion percentages update dynamically.
 ```
 
 #### Contest Mode (Timed)
@@ -1100,18 +1130,23 @@ RATE_LIMIT_MAX=30       # requests per window per user
 
 ---
 
-## 12. Deployment Scripts
+## 12. Deployment & Dokploy Maintenance Scripts
 
-| Script | Purpose |
+| Script / Config | Purpose |
 |---|---|
-| `deploy.sh` | Standard deployment (pull, build, restart) |
-| `full-deploy.sh` | Full fresh deployment from scratch |
-| `deploy-judge0.sh` | Deploy or redeploy only the Judge0 service |
-| `judge0_install.sh` | First-time Judge0 installation |
-| `judge0_setup.sh` | Configure Judge0 workers and queues |
-| `build-custom-judge0.sh` | Build a customised Judge0 Docker image |
-| `fix-db-connection.sh` | Diagnose and repair database connectivity |
-| `fix-deployment.sh` | General deployment troubleshooting |
+| `docker-compose.yml` | Container definition for Dokploy PaaS deployment (`dokploy-network`, `code2day-shared`) |
+| `redeploy-app.sh` | Rebuild and restart frontend & backend containers while keeping Judge0 services running |
+| `deploy.sh` | Standard deployment script (git pull, build, database migration, container restart) |
+| `quick-redeploy.sh` | Fast zero-downtime application container reload |
+| `full-deploy.sh` | Complete deployment from scratch (services, database setup, environment bootstrap) |
+| `deploy-judge0.sh` | Deploy or redeploy only the isolated Judge0 code sandbox container |
+| `judge0_install.sh` | First-time installation script for Judge0 sandbox environment |
+| `judge0_setup.sh` | Configure Judge0 worker threads, memory quotas, and execution queues |
+| `build-custom-judge0.sh` | Build custom multi-language Judge0 Docker image |
+| `fix-db-connection.sh` | Diagnose and repair PostgreSQL database connectivity |
+| `fix-deployment.sh` | Automated deployment troubleshooting and container container diagnostic tool |
+| `setup-auto-restart.sh` | Configure auto-restart policies for containers and services |
+| `setup-dns.sh` | Configure DNS and domain routing for multi-tenant institution hosts |
 
 ---
 
@@ -1193,64 +1228,85 @@ RATE_LIMIT_MAX=30       # requests per window per user
 
 ---
 
-## 15. Contributing
+## 15. Contributing & Git Workflow Guide
 
-### Development Workflow
+### Comprehensive Git Workflow
+
+#### 1. Branch Management
+- Always create a dedicated branch for every feature or fix from `main`:
+  ```bash
+  git checkout main
+  git pull origin main
+  git checkout -b feat/your-feature-name
+  ```
+
+#### 2. Branch Naming Standards
+
+| Prefix | Usage | Example |
+|---|---|---|
+| `feat/` | New features or API endpoints | `feat/batch-pdf-report` |
+| `fix/` | Bug fixes and runtime repairs | `fix/workspace-render-error` |
+| `refactor/` | Code structure improvements with no logic change | `refactor/aptitude-state` |
+| `docs/` | Documentation and README updates | `docs/update-git-explanation` |
+| `chore/` | Configuration, build, or dependency updates | `chore/vite-config` |
+
+#### 3. Pre-Commit Verification (Mandatory)
+Before committing any changes, run backend and frontend verification commands to guarantee zero regressions:
 
 ```bash
-# 1. Create a feature branch
-git checkout -b feat/your-feature-name
-
-# 2. Make your changes
-
-# 3. Run backend checks
+# 1. Verify Django Backend System Check
 cd backend
 python manage.py check
 
-# 4. Verify the frontend builds cleanly
-cd frontend
+# 2. Verify Frontend Production Build
+cd ../frontend
 npm run build
+```
 
-# 5. Stage specific files and commit
-git add <specific files — avoid git add -A>
-git commit -m "feat: short description of what changed and why"
+#### 4. Staging & Atomic Commits
+- **STRICT RULE**: Avoid `git add -A` or `git add .` to prevent staging temporary files, environment variables, or log scratchpads.
+- Stage only explicit, related files for each commit:
 
-# 6. Push and open a pull request against main
+```bash
+# Stage specific modified files
+git add backend/apps/learning/views.py backend/apps/learning/urls.py
+git commit -m "feat: add PDF performance report endpoints for batch and company tracking"
+```
+
+#### 5. Conventional Commit Conventions
+
+| Prefix | Description | Example |
+|---|---|---|
+| `feat:` | Adding a new feature | `feat: add aptitude problem persistence across page refreshes` |
+| `fix:` | Fixing an error or bug | `fix: resolve undefined props in workspace render view` |
+| `refactor:` | Restructuring code | `refactor: optimize database query in student analytics` |
+| `docs:` | Updating documentation | `docs: update API reference and Git workflow guide in README` |
+| `chore:` | Maintenance tasks | `chore: update dependencies` |
+
+#### 6. Database Migrations Workflow
+When adding or altering Django models in `backend/apps/learning/models.py`:
+
+```bash
+# 1. Create migration file
+python manage.py makemigrations
+
+# 2. Apply and test locally
+python manage.py migrate
+
+# 3. Stage model changes and migration file together
+git add backend/apps/learning/models.py backend/apps/learning/migrations/
+git commit -m "feat: add proctoring lock and snapshot fields to Contest model"
+```
+
+*Note: Never edit or delete migration files that have already been applied to production.*
+
+#### 7. Pushing & Pull Request Submission
+
+```bash
+# Push feature branch to remote
 git push origin feat/your-feature-name
 ```
-
-### Branch Naming
-
-| Prefix | Use |
-|---|---|
-| `feat/` | New features |
-| `fix/` | Bug fixes |
-| `refactor/` | Code restructure with no behaviour change |
-| `docs/` | Documentation updates only |
-| `chore/` | Build, config, or dependency changes |
-
-### Adding a Database Migration
-
-```bash
-# After editing a model in models.py:
-python manage.py makemigrations
-python manage.py migrate    # apply locally to verify it works
-
-# Commit both the model change and the migration file together
-git add apps/learning/models.py apps/learning/migrations/
-```
-
-Never edit migration files that have already been applied to production.
-
-### Adding a Management Command
-
-Place new commands in `backend/apps/learning/management/commands/`. Each is a Python module with a `Command` class inheriting from `BaseCommand`.
-
-```bash
-python manage.py <command_name> [args]
-```
-
-### Adding a New API Endpoint
+Open a Pull Request against `main`. Ensure all automated build checks pass before merging.
 
 1. Write the view class in `views.py` (or a dedicated `*_views.py` file for large feature areas).
 2. Register the URL in `apps/learning/urls.py`.

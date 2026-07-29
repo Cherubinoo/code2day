@@ -423,14 +423,40 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
     }
   };
 
-  const totalAptitudeInSystem = user.total_aptitude_count || 100;
-  const totalAptitudeSolved = (dashboard?.aptitude_stats || []).reduce((sum, s) => sum + (s.solved || 0), 0);
+  const totalAptitudeStats = dashboard?.aptitude_stats || [];
+  const calculatedAptitudeTotal = totalAptitudeStats.reduce((sum, s) => sum + (s.total || 0), 0);
+  const totalAptitudeInSystem = user.total_aptitude_count || (calculatedAptitudeTotal > 0 ? calculatedAptitudeTotal : 100);
+  const totalAptitudeSolved = totalAptitudeStats.reduce((sum, s) => sum + (s.solved || 0), 0);
 
-  const codingRate = Math.min((totalCodingSolved / totalCodingInSystem) * 100, 100);
-  const aptitudeRate = (dashboard?.aptitude_stats || []).length > 0 
-    ? (dashboard.aptitude_stats.reduce((sum, s) => sum + (s.percentage || 0), 0) / dashboard.aptitude_stats.length)
+  // 1. Coding Overall System Metric (Problems Ratio + Topic Coverage + Topic Mastery)
+  const codingProblemRatio = totalCodingInSystem > 0 ? (totalCodingSolved / totalCodingInSystem) : 0;
+  const totalCodingTopicsCount = codingTopicMastery.length;
+  const codingTopicsAttemptedCount = codingTopicMastery.filter(t => t.correct > 0).length;
+  const codingTopicCoverageRatio = totalCodingTopicsCount > 0 ? (codingTopicsAttemptedCount / totalCodingTopicsCount) : 0;
+  const codingAvgTopicAccuracyRatio = totalCodingTopicsCount > 0 
+    ? (codingTopicMastery.reduce((sum, t) => sum + (t.accuracy || 0), 0) / totalCodingTopicsCount) / 100 
     : 0;
-  
+
+  const codingRate = Math.min(100, Math.round(
+    ((codingProblemRatio * 0.5) + (codingTopicCoverageRatio * 0.25) + (codingAvgTopicAccuracyRatio * 0.25)) * 100
+  ));
+
+  // 2. Aptitude Overall System Metric (Questions Ratio + Topic Coverage + Topic Accuracy)
+  const aptitudeQuestionRatio = totalAptitudeInSystem > 0 ? (totalAptitudeSolved / totalAptitudeInSystem) : 0;
+  const totalAptitudeTopicsCount = totalAptitudeStats.length;
+  const aptitudeTopicsAttemptedCount = totalAptitudeStats.filter(s => (s.solved || 0) > 0).length;
+  const aptitudeTopicCoverageRatio = totalAptitudeTopicsCount > 0 ? (aptitudeTopicsAttemptedCount / totalAptitudeTopicsCount) : 0;
+  const aptitudeAvgTopicAccuracyRatio = totalAptitudeTopicsCount > 0 
+    ? (totalAptitudeStats.reduce((sum, s) => sum + (s.percentage || 0), 0) / totalAptitudeTopicsCount) / 100 
+    : 0;
+
+  const aptitudeRate = Math.min(100, Math.round(
+    ((aptitudeQuestionRatio * 0.5) + (aptitudeTopicCoverageRatio * 0.25) + (aptitudeAvgTopicAccuracyRatio * 0.25)) * 100
+  ));
+
+  // 3. Combined System Readiness Score
+  const overallReadiness = Math.min(100, Math.round((codingRate * 0.5) + (aptitudeRate * 0.5)));
+
   const attendedContestList = (contestHistory || []).filter(c => c.is_ended || c.has_started || (c.participation && c.participation.started_at));
   const contestsAttended = attendedContestList.length;
   const contestWins = attendedContestList.filter(c => (c.participation?.total_score > 0 || c.participation?.problems_solved > 0 || c.solved > 0)).length;
@@ -476,23 +502,30 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
               <h1 style={{ fontSize: '3rem', fontWeight: 950, marginBottom: 16, color: 'var(--olive-950)', lineHeight: 1.1 }}>
                 Analyze Your <br/><span style={{ color: 'var(--accent)' }}>Placement Performance</span>
               </h1>
-              <p style={{ color: 'var(--text-soft)', fontSize: '1.2rem', marginBottom: 32, fontWeight: 500, maxWidth: 600 }}>
-                Your preparation progress is measured by <strong>problems solved</strong> across coding and aptitude modules against the campus question bank.
+              <p style={{ color: 'var(--text-soft)', fontSize: '1.2rem', marginBottom: 24, fontWeight: 500, maxWidth: 600 }}>
+                Your readiness is measured across <strong>all problems and topics</strong> in coding and aptitude question banks.
               </p>
               
-              <div style={{ display: 'flex', gap: 40 }}>
+              <div style={{ display: 'flex', gap: 40, marginBottom: 20 }}>
                 <div style={{ textAlign: 'left' }}>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Coding Solved</span>
                   <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}><AnimatedNumber value={totalCodingSolved} duration={1} /></div>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>{totalCodingSolved}/{totalCodingInSystem} problems ({codingRate}%)</span>
                 </div>
                 <div style={{ textAlign: 'left' }}>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Aptitude Solved</span>
                   <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}><AnimatedNumber value={totalAptitudeSolved} duration={1} /></div>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>{totalAptitudeSolved}/{totalAptitudeInSystem} questions ({aptitudeRate}%)</span>
                 </div>
                 <div style={{ textAlign: 'left' }}>
                   <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Companies Tracked</span>
                   <div style={{ fontSize: '2.4rem', fontWeight: 950, color: 'var(--olive-900)' }}><AnimatedNumber value={companyProgress.length} duration={1} /></div>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Target drives</span>
                 </div>
+              </div>
+
+              <div style={{ fontSize: '0.8rem', color: '#64748b', background: '#f8fafc', padding: '10px 16px', borderRadius: 12, border: '1px solid #e2e8f0', display: 'inline-block' }}>
+                💡 <strong>Overall System Calculation:</strong> Evaluates total problem completion ({totalCodingSolved}/{totalCodingInSystem} coding, {totalAptitudeSolved}/{totalAptitudeInSystem} aptitude) combined with topic coverage ({codingTopicsAttemptedCount}/{totalCodingTopicsCount || 1} coding topics, {aptitudeTopicsAttemptedCount}/{totalAptitudeTopicsCount || 1} aptitude topics) and topic mastery accuracy.
               </div>
             </div>
 
@@ -506,27 +539,27 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                     stroke="#f1f5f9"
                     strokeWidth="10"
                   />
-                  {/* Coding Segment (Accent Color) */}
+                  {/* Coding Segment (Accent Color - 50% max circle allocation) */}
                   <circle
                     cx="50" cy="50" r="40"
                     fill="transparent"
                     stroke="var(--accent)"
                     strokeWidth="10"
-                    strokeDasharray={`${codingRate * 2.51} 251`}
+                    strokeDasharray={`${(codingRate / 100) * 125.6} 251`}
                     strokeLinecap="round"
                     style={{ transition: 'stroke-dasharray 1s ease-out' }}
                   />
-                  {/* Aptitude Segment (Blue) */}
+                  {/* Aptitude Segment (Blue - 50% max circle allocation) */}
                   <circle
                     cx="50" cy="50" r="40"
                     fill="transparent"
                     stroke="#0ea5e9"
                     strokeWidth="10"
-                    strokeDasharray={`${aptitudeRate * 2.51} 251`}
+                    strokeDasharray={`${(aptitudeRate / 100) * 125.6} 251`}
                     strokeLinecap="round"
                     style={{ 
                       transition: 'stroke-dasharray 1s ease-out',
-                      transform: `rotate(${(codingRate / 100) * 360}deg)`,
+                      transform: `rotate(${((codingRate / 100) * 0.5) * 360}deg)`,
                       transformOrigin: '50% 50%'
                     }}
                   />
@@ -542,7 +575,7 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
                   textAlign: 'center'
                 }}>
                   <span style={{ fontSize: '3rem', fontWeight: 950, color: 'var(--olive-950)', lineHeight: 1 }}>
-                    <AnimatedNumber value={`${Math.round((codingRate * 0.75) + (aptitudeRate * 0.25))}%`} duration={1} />
+                    <AnimatedNumber value={`${overallReadiness}%`} duration={1} />
                   </span>
                   <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', marginTop: 4 }}>
                     Ready
@@ -552,11 +585,11 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
               <div style={{ display: 'flex', gap: 20 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--accent)' }} />
-                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-soft)' }}>Coding</span>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-soft)' }}>Coding ({codingRate}%)</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#0ea5e9' }} />
-                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-soft)' }}>Aptitude</span>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-soft)' }}>Aptitude ({aptitudeRate}%)</span>
                 </div>
               </div>
             </div>

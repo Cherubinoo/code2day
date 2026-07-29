@@ -4,7 +4,7 @@ import * as monaco from "monaco-editor";
 
 import { executionLanguageMap } from "../../../lib/codeExecution";
 import { starterCodeByLanguage } from "../../../lib/appData";
-import { formatDuration } from "../../../lib/appUtils";
+import { formatDuration, configureEditorProtection } from "../../../lib/appUtils";
 
 // Use the bundled ESM Monaco build instead of the AMD loader path.
 loader.config({ monaco });
@@ -839,6 +839,7 @@ function WorkspaceView({
                     value={code || starterCodeByLanguage[selectedLanguage] || "// Write your solution here"}
                     onChange={(value) => setCode(value ?? "")}
                     onMount={(editor, monaco) => {
+                      configureEditorProtection(editor, monaco);
                       console.log("Monaco editor mounted successfully");
                       editor.focus();
                       setTimeout(() => {
@@ -878,13 +879,14 @@ function WorkspaceView({
                       folding: true,
                       matchBrackets: "always",
                       autoIndent: "full",
-                      formatOnPaste: true,
+                      formatOnPaste: false,
                       formatOnType: true,
                       quickSuggestions: true,
                       tabCompletion: "on",
                       parameterHints: { enabled: true },
                       hover: { enabled: true },
-                      contextmenu: true,
+                      contextmenu: false,
+                      dragAndDrop: false,
                     }}
                   />
                 </div>

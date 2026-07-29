@@ -231,3 +231,41 @@ export function estimateComplexity(code, language) {
     confidence: "Frontend estimate only. Backend compiler analysis will replace this later.",
   };
 }
+
+export function configureEditorProtection(editor, monaco) {
+  if (!editor) return;
+
+  try {
+    const domNode = editor.getDomNode();
+    if (domNode) {
+      const preventAction = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        return false;
+      };
+
+      domNode.addEventListener("copy", preventAction, true);
+      domNode.addEventListener("cut", preventAction, true);
+      domNode.addEventListener("paste", preventAction, true);
+      domNode.addEventListener("dragstart", preventAction, true);
+      domNode.addEventListener("dragover", preventAction, true);
+      domNode.addEventListener("drop", preventAction, true);
+      domNode.addEventListener("contextmenu", preventAction, true);
+    }
+  } catch (err) {
+    console.warn("Could not attach DOM protection listeners:", err);
+  }
+
+  if (monaco && editor.addCommand) {
+    try {
+      const noop = () => {};
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, noop);
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, noop);
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX, noop);
+      editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.Insert, noop);
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Insert, noop);
+    } catch (err) {
+      console.warn("Could not attach Monaco command overrides:", err);
+    }
+  }
+}

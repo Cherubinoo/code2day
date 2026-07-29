@@ -5,7 +5,7 @@ import Editor from "@monaco-editor/react";
 import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { runCodeExecution, getLanguageIdForChoice } from '../../../lib/codeExecution';
-import { getCsrfToken, formatDuration } from '../../../lib/appUtils';
+import { getCsrfToken, formatDuration, configureEditorProtection } from '../../../lib/appUtils';
 import { starterCodeByLanguage } from '../../../lib/appData';
 import { useTabNav } from '../../../lib/useTabNav';
 
@@ -574,6 +574,7 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
             value={code || getStarterCode(language)}
             onChange={(value) => setCode(value ?? "")}
             onMount={(editor, monaco) => {
+              configureEditorProtection(editor, monaco);
               console.log("Monaco editor mounted successfully");
               editor.focus();
               setTimeout(() => {
@@ -612,13 +613,14 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
               folding: true,
               matchBrackets: "always",
               autoIndent: "full",
-              formatOnPaste: true,
+              formatOnPaste: false,
               formatOnType: true,
               quickSuggestions: true,
               tabCompletion: "on",
               parameterHints: { enabled: true },
               hover: { enabled: true },
-              contextmenu: true,
+              contextmenu: false,
+              dragAndDrop: false,
             }}
           />
         </div>

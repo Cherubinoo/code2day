@@ -5,8 +5,7 @@ import * as monaco from "monaco-editor";
 
 import { runCodeExecution, getLanguageIdForChoice } from "../../../lib/codeExecution";
 import { starterCodeByLanguage, editorLanguageByChoice } from "../../../lib/appData";
-import { formatDuration } from "../../../lib/appUtils";
-import { buildJsonPostOptions } from "../../../lib/appUtils";
+import { formatDuration, buildJsonPostOptions, configureEditorProtection } from "../../../lib/appUtils";
 import { validateLanguageMatch, getLanguageMismatchError, detectLanguageFromCode } from "../../../lib/languageDetector";
 import { AlertCircle } from "lucide-react";
 import DoubleConfirmModal from "../../common/DoubleConfirmModal";
@@ -1068,7 +1067,8 @@ function ContestWorkspacePage({ contestId, onBack }) {
                   theme="vs-dark"
                   value={code || starterCodeByLanguage[selectedLanguage] || "// Write your solution here"}
                   onChange={handleEditorCodeChange}
-                  onMount={(editor) => {
+                  onMount={(editor, monaco) => {
+                    configureEditorProtection(editor, monaco);
                     editor.focus();
                     setTimeout(() => editor.layout(), 200);
                   }}
@@ -1094,6 +1094,8 @@ function ContestWorkspacePage({ contestId, onBack }) {
                     automaticLayout: true,
                     wordWrap: "on",
                     lineNumbers: "on",
+                    contextmenu: false,
+                    dragAndDrop: false,
                   }}
                 />
               </div>

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Editor from "@monaco-editor/react";
 import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { getCsrfToken } from "../../../lib/appUtils";
+import { getCsrfToken, configureEditorProtection } from "../../../lib/appUtils";
 import { editorLanguageMap } from "../../../lib/codeExecution";
 import { starterCodeByLanguage, LAB_LANGUAGES } from "../../../lib/appData";
 import SuccessAnimation from "../../common/SuccessAnimation";
@@ -609,6 +609,11 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
                   theme="vs-dark"
                   value={code}
                   onChange={handleEditorCodeChange}
+                  onMount={(editor, monaco) => {
+                    configureEditorProtection(editor, monaco);
+                    editor.focus();
+                    setTimeout(() => editor.layout(), 200);
+                  }}
                   options={{
                     minimap: { enabled: false },
                     fontSize: 14,
@@ -621,13 +626,14 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
                     folding: true,
                     matchBrackets: "always",
                     autoIndent: "full",
-                    formatOnPaste: true,
+                    formatOnPaste: false,
                     formatOnType: true,
                     quickSuggestions: true,
                     tabCompletion: "on",
                     parameterHints: { enabled: true },
                     hover: { enabled: true },
-                    contextmenu: true,
+                    contextmenu: false,
+                    dragAndDrop: false,
                   }}
                 />
               </div>
