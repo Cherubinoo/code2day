@@ -1068,7 +1068,8 @@ function ContestWorkspacePage({ contestId, onBack }) {
                   value={code || starterCodeByLanguage[selectedLanguage] || "// Write your solution here"}
                   onChange={handleEditorCodeChange}
                   onMount={(editor, monaco) => {
-                    configureEditorProtection(editor, monaco);
+                    const allowCopyPaste = Boolean(user?.allow_copy_paste || student?.allow_copy_paste || dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste);
+                    configureEditorProtection(editor, monaco, allowCopyPaste);
                     editor.focus();
                     setTimeout(() => editor.layout(), 200);
                   }}
@@ -1094,8 +1095,8 @@ function ContestWorkspacePage({ contestId, onBack }) {
                     automaticLayout: true,
                     wordWrap: "on",
                     lineNumbers: "on",
-                    contextmenu: false,
-                    dragAndDrop: false,
+                    contextmenu: Boolean(user?.allow_copy_paste || student?.allow_copy_paste || dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste),
+                    dragAndDrop: Boolean(user?.allow_copy_paste || student?.allow_copy_paste || dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste),
                   }}
                 />
               </div>

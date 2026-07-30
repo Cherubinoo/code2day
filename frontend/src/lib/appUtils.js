@@ -232,8 +232,8 @@ export function estimateComplexity(code, language) {
   };
 }
 
-export function configureEditorProtection(editor, monaco) {
-  if (!editor) return;
+export function configureEditorProtection(editor, monaco, allowCopyPaste = false) {
+  if (!editor || allowCopyPaste) return;
 
   try {
     const domNode = editor.getDomNode();

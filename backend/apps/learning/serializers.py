@@ -50,6 +50,7 @@ class StudentProfileSerializer(serializers.ModelSerializer):
             "mentor_id",
             "mentor_name",
             "mentor_faculty_id",
+            "allow_copy_paste",
         )
 
 

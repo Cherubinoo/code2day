@@ -43,9 +43,17 @@ const ContestContainer = ({ targetContestId, setTargetContestId, onToggleWorkspa
             const data = await res.json();
             setContestType(data.contest_type || 'programming');
             setView('workspace');
+          } else {
+            const data = await res.json().catch(() => ({}));
+            alert(data.detail || "Failed to load contest");
+            setView('list');
+            setSelectedContestId(null);
           }
         } catch (err) {
           console.error("Failed to fetch contest type:", err);
+          alert("Failed to load contest: " + err.message);
+          setView('list');
+          setSelectedContestId(null);
         } finally {
           setLoadingType(false);
         }

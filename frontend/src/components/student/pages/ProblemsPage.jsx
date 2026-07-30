@@ -839,7 +839,8 @@ function WorkspaceView({
                     value={code || starterCodeByLanguage[selectedLanguage] || "// Write your solution here"}
                     onChange={(value) => setCode(value ?? "")}
                     onMount={(editor, monaco) => {
-                      configureEditorProtection(editor, monaco);
+                      const allowCopyPaste = Boolean(user?.allow_copy_paste || student?.allow_copy_paste || dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste);
+                      configureEditorProtection(editor, monaco, allowCopyPaste);
                       console.log("Monaco editor mounted successfully");
                       editor.focus();
                       setTimeout(() => {
@@ -885,8 +886,8 @@ function WorkspaceView({
                       tabCompletion: "on",
                       parameterHints: { enabled: true },
                       hover: { enabled: true },
-                      contextmenu: false,
-                      dragAndDrop: false,
+                      contextmenu: Boolean(user?.allow_copy_paste || student?.allow_copy_paste || dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste),
+                      dragAndDrop: Boolean(user?.allow_copy_paste || student?.allow_copy_paste || dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste),
                     }}
                   />
                 </div>

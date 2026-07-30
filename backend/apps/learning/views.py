@@ -5066,6 +5066,62 @@ class StudentBlockToggleView(APIView):
         })
 
 
+class StudentCopyPasteToggleView(APIView):
+    """HOD/Staff/JA can enable or disable copy-paste for a specific student."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, register_number):
+        """Toggle student allow_copy_paste permission."""
+        if not hasattr(request.user, 'staff_profile'):
+            return Response(
+                {"detail": "Staff access required."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        staff_profile = request.user.staff_profile
+
+        student = StudentProfile.objects.filter(
+            register_number=register_number
+        ).first()
+        if not student:
+            return Response(
+                {"detail": "Student not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if student.institution_id != staff_profile.institution_id:
+            return Response(
+                {"detail": "You do not have access to this student."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if staff_profile.role not in ['hod', 'admin', 'ja', 'tpu', 'director'] and student.department_id != staff_profile.department_id:
+            return Response(
+                {"detail": "You can only manage students in your department."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if 'allow_copy_paste' in request.data:
+            student.allow_copy_paste = bool(request.data['allow_copy_paste'])
+        else:
+            student.allow_copy_paste = not student.allow_copy_paste
+
+        student.save(update_fields=['allow_copy_paste'])
+
+        logger.info(
+            "Student %s copy-paste set to %s by staff %s",
+            student.register_number,
+            student.allow_copy_paste,
+            staff_profile.faculty_id,
+        )
+
+        return Response({
+            "detail": f"Copy-paste {'enabled' if student.allow_copy_paste else 'disabled'} for {student.name}.",
+            "register_number": student.register_number,
+            "allow_copy_paste": student.allow_copy_paste,
+        })
+
+
 # =============================================================================
 # Batch Management & Student Assignment Views
 # =============================================================================
@@ -5140,6 +5196,8 @@ class BatchStudentsView(APIView):
                 "solved_count": student.solved_count,
                 "current_streak": student.current_streak,
                 "last_active": student.last_login_on.isoformat() if student.last_login_on else None,
+                "is_active": student.account.is_active if student.account else True,
+                "allow_copy_paste": student.allow_copy_paste,
             })
 
         return Response({
@@ -6034,15 +6092,12 @@ class StudentContestListView(APIView):
 
         student = request.user.student_profile
 
-        # Get contests where student is assigned via:
-        # 1. Direct assignment to student
-        # 2. Assignment to student's batch AND department (both must match)
-        # Only show contests that are published or completed (after HOD approval)
-        contests = Contest.objects.filter(
-            Q(assigned_students=student) | 
-            Q(assigned_batches__contains=student.batch, department=student.department),
-            status__in=['published', 'completed']  # Only published/completed contests visible to students
-        ).distinct().select_related('created_by', 'department').prefetch_related('problems')
+        # Get contests accessible to student (published, completed, active, or approved)
+        all_contests = Contest.objects.filter(
+            status__in=['published', 'completed', 'active', 'approved']
+        ).distinct().select_related('created_by', 'department').prefetch_related('problems', 'aptitude_questions')
+
+        contests = [c for c in all_contests if c.is_student_assigned(student)]
 
         data = []
         for contest in contests:
@@ -6112,16 +6167,17 @@ class StudentContestDetailView(APIView):
 
         student = request.user.student_profile
 
-        contest = Contest.objects.filter(
-            Q(assigned_students=student) | 
-            Q(assigned_batches__contains=student.batch, department=student.department),
-            id=contest_id,
-            status__in=['published', 'completed']  # Only published/completed contests
-        ).select_related('created_by', 'department').prefetch_related('problems', 'aptitude_questions').first()
+        contest = Contest.objects.filter(id=contest_id).select_related('created_by', 'department').prefetch_related('problems', 'aptitude_questions').first()
 
-        if not contest:
+        if not contest or not contest.is_student_assigned(student):
             return Response(
                 {"detail": "Contest not found or not accessible."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if contest.status not in ['published', 'completed', 'active', 'approved']:
+            return Response(
+                {"detail": "Contest is not accessible."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
@@ -6140,13 +6196,6 @@ class StudentContestDetailView(APIView):
                 participation.end_participation()
                 # Refresh participation object
                 participation.refresh_from_db()
-
-        # Prevent access if participation has ended (one attempt only)
-        if participation and not participation.is_active:
-            return Response(
-                {"detail": "You have already completed this contest. Each contest can only be attempted once."},
-                status=status.HTTP_403_FORBIDDEN
-            )
 
         # Check if contest is active
         is_active = contest.is_active
@@ -6240,16 +6289,17 @@ class StudentContestStartView(APIView):
 
         student = request.user.student_profile
 
-        contest = Contest.objects.filter(
-            Q(assigned_students=student) | 
-            Q(assigned_batches__contains=student.batch, department=student.department),
-            id=contest_id,
-            status__in=['published', 'completed']  # Only published/completed contests
-        ).first()
+        contest = Contest.objects.filter(id=contest_id).first()
 
-        if not contest:
+        if not contest or not contest.is_student_assigned(student):
             return Response(
                 {"detail": "Contest not found or not accessible."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if contest.status not in ['published', 'completed', 'active', 'approved']:
+            return Response(
+                {"detail": "Contest is not accessible."},
                 status=status.HTTP_404_NOT_FOUND
             )
 
@@ -10684,6 +10734,7 @@ class JABatchDetailView(APIView):
                 "mobile_number": s.mobile_number,
                 "gender": s.gender,
                 "is_active": s.account.is_active if s.account else True,
+                "allow_copy_paste": s.allow_copy_paste,
                 "mentor_id": s.mentor_id,
                 "mentor_name": s.mentor.name if s.mentor_id else None,
                 "mentor_faculty_id": s.mentor.faculty_id if s.mentor_id else None,
@@ -10696,7 +10747,7 @@ class JABatchDetailView(APIView):
         })
 
     def delete(self, request, batch_code):
-        """Delete all students in a batch (removes their profiles and accounts)."""
+        """Delete all students in a batch (removes their profiles, accounts, and batch advisor records)."""
         profile, err = _ja_guard(request)
         if err:
             return err
@@ -10708,18 +10759,22 @@ class JABatchDetailView(APIView):
         ).select_related('account')
 
         count = students.count()
-        if count == 0:
-            return Response({"detail": "Batch not found or already empty."}, status=status.HTTP_404_NOT_FOUND)
-
-        # Delete associated User accounts first
         user_ids = list(students.values_list('account_id', flat=True))
         students.delete()
-        User.objects.filter(id__in=user_ids).delete()
+        if user_ids:
+            User.objects.filter(id__in=user_ids).delete()
+
+        # Delete any batch advisor assignments for this batch
+        BatchAdvisor.objects.filter(
+            institution=profile.institution,
+            department=profile.department,
+            batch=batch_code
+        ).delete()
 
         logger.info("JA %s deleted batch '%s' (%d students)", profile.faculty_id, batch_code, count)
 
         return Response({
-            "detail": f"Batch '{batch_code}' deleted. {count} student(s) removed.",
+            "detail": f"Batch '{batch_code}' deleted successfully ({count} student(s) removed).",
             "deleted_count": count,
         })
 

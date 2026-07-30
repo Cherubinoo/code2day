@@ -342,6 +342,36 @@ const HODDashboard = ({ institutionId }) => {
     );
   }
 
+  async function handleStudentCopyPasteToggle(registerNumber, currentVal) {
+    try {
+      const res = await fetch(`/api/students/${encodeURIComponent(registerNumber)}/toggle-copy-paste/`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrfToken(),
+        },
+        body: JSON.stringify({ allow_copy_paste: !currentVal }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to toggle copy-paste permission');
+      
+      setDepartmentStudents(prev =>
+        prev.map(s =>
+          s.register_number === registerNumber ? { ...s, allow_copy_paste: data.allow_copy_paste } : s
+        )
+      );
+      if (studentDetail && studentDetail.student.register_number === registerNumber) {
+        setStudentDetail(prev => ({
+          ...prev,
+          student: { ...prev.student, allow_copy_paste: data.allow_copy_paste },
+        }));
+      }
+    } catch (err) {
+      alert(err.message || 'Failed to toggle copy-paste permission');
+    }
+  }
+
   async function handleStudentClick(registerNumber) {
     setSelectedStudent(registerNumber);
     setStudentDetailLoading(true);
@@ -1963,6 +1993,7 @@ const HODDashboard = ({ institutionId }) => {
                           <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>SOLVED</th>
                           <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>STREAK</th>
                           <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>STATUS</th>
+                          <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'center' }}>COPY-PASTE</th>
                           <th style={{ padding: '12px 8px', color: 'var(--text-soft)', fontWeight: '600', textAlign: 'right' }}>ACTION</th>
                         </tr>
                       </thead>
@@ -2011,6 +2042,27 @@ const HODDashboard = ({ institutionId }) => {
                               <span style={{ fontSize: '12px', fontWeight: '500', color: student.is_active ? '#059669' : '#b91c1c' }}>
                                 {student.is_active ? 'Active' : 'Blocked'}
                               </span>
+                            </td>
+                            <td style={{ textAlign: 'center', padding: '16px 8px' }}>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStudentCopyPasteToggle(student.register_number, student.allow_copy_paste);
+                                }}
+                                style={{
+                                  padding: '5px 12px',
+                                  borderRadius: 8,
+                                  border: '1px solid ' + (student.allow_copy_paste ? '#bbf7d0' : '#fca5a5'),
+                                  background: student.allow_copy_paste ? '#f0fdf4' : '#fff5f5',
+                                  color: student.allow_copy_paste ? '#15803d' : '#dc2626',
+                                  fontSize: 12,
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                }}
+                                title={student.allow_copy_paste ? "Disable copy-paste for this student" : "Enable copy-paste for this student"}
+                              >
+                                {student.allow_copy_paste ? "📋 Allowed" : "🚫 Blocked"}
+                              </button>
                             </td>
                             <td style={{ textAlign: 'right', padding: '16px 8px' }}>
                               <button 
@@ -2324,6 +2376,7 @@ const HODDashboard = ({ institutionId }) => {
                                       <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Solved</th>
                                       <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Streak</th>
                                       <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Last Active</th>
+                                      <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Copy-Paste</th>
                                       <th style={{ textAlign: 'center', padding: '10px 8px', fontWeight: 600, color: '#374151', position: 'sticky', top: 0, background: '#f9fafb' }}>Profile</th>
                                     </tr>
                                   </thead>
@@ -2365,6 +2418,27 @@ const HODDashboard = ({ institutionId }) => {
                                         </td>
                                         <td style={{ padding: '8px', textAlign: 'center' }}>
                                           <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleStudentCopyPasteToggle(student.register_number, student.allow_copy_paste);
+                                            }}
+                                            style={{
+                                              padding: '4px 10px',
+                                              borderRadius: 6,
+                                              border: '1px solid ' + (student.allow_copy_paste ? '#bbf7d0' : '#fca5a5'),
+                                              background: student.allow_copy_paste ? '#f0fdf4' : '#fff5f5',
+                                              color: student.allow_copy_paste ? '#15803d' : '#dc2626',
+                                              fontSize: 11,
+                                              fontWeight: 700,
+                                              cursor: 'pointer',
+                                            }}
+                                            title={student.allow_copy_paste ? "Disable copy-paste for this student" : "Enable copy-paste for this student"}
+                                          >
+                                            {student.allow_copy_paste ? "📋 Allowed" : "🚫 Blocked"}
+                                          </button>
+                                        </td>
+                                        <td style={{ padding: '8px', textAlign: 'center' }}>
+                                          <button
                                             onClick={() => handleStudentClick(student.register_number)}
                                             style={{ padding: '4px 10px', borderRadius: 5, border: 'none', background: '#e0e7ff', color: '#4338ca', fontSize: 12, cursor: 'pointer' }}
                                           >
@@ -2386,9 +2460,8 @@ const HODDashboard = ({ institutionId }) => {
               })()}
             </div>
           )}
-
         </div>
-        
+
         {activeTab === 'labs' && (
           <HODLabCenter />
         )}

@@ -610,7 +610,8 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
                   value={code}
                   onChange={handleEditorCodeChange}
                   onMount={(editor, monaco) => {
-                    configureEditorProtection(editor, monaco);
+                    const allowCopyPaste = Boolean(user?.allow_copy_paste || student?.allow_copy_paste || dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste);
+                    configureEditorProtection(editor, monaco, allowCopyPaste);
                     editor.focus();
                     setTimeout(() => editor.layout(), 200);
                   }}
@@ -632,8 +633,8 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
                     tabCompletion: "on",
                     parameterHints: { enabled: true },
                     hover: { enabled: true },
-                    contextmenu: false,
-                    dragAndDrop: false,
+                    contextmenu: Boolean(user?.allow_copy_paste || student?.allow_copy_paste || dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste),
+                    dragAndDrop: Boolean(user?.allow_copy_paste || student?.allow_copy_paste || dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste),
                   }}
                 />
               </div>

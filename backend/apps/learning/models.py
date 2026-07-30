@@ -174,6 +174,10 @@ class StudentProfile(models.Model):
         blank=True,
         help_text="Staff assigned as mentor for this student",
     )
+    allow_copy_paste = models.BooleanField(
+        default=False,
+        help_text="Allow copy/paste and drag-drop in coding workspace for this student",
+    )
 
     def __str__(self):
         return self.register_number or self.name
