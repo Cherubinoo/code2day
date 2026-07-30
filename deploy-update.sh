@@ -71,11 +71,10 @@ docker-compose up -d --force-recreate --no-deps backend frontend
 ok "Containers restarted"
 echo ""
 
-# ── Step 5: Run Django migrations (DB sync) ───────────────────────────────────
-info "[5/6] Running Django database migrations..."
+# ── Step 5: Post-start tasks now run automatically via entrypoint ─────────────
+info "[5/6] Waiting for backend entrypoint to finish (migrate + SQL cleanup + collectstatic)..."
 
-# Wait for backend to be ready before running migrations
-MAX_WAIT=60
+MAX_WAIT=90
 WAITED=0
 until docker exec code2day-backend python manage.py check --database default > /dev/null 2>&1; do
     if [ $WAITED -ge $MAX_WAIT ]; then
@@ -85,13 +84,7 @@ until docker exec code2day-backend python manage.py check --database default > /
     sleep 3
     WAITED=$((WAITED + 3))
 done
-
-docker exec code2day-backend python manage.py migrate --noinput
-ok "Migrations applied"
-
-# Collect static files (in case any changed)
-docker exec code2day-backend python manage.py collectstatic --noinput --clear > /dev/null 2>&1 || true
-ok "Static files collected"
+ok "Backend is up — migrations and SQL cleanup already applied by entrypoint"
 echo ""
 
 # ── Step 6: Health checks ─────────────────────────────────────────────────────

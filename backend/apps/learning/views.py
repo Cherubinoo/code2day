@@ -42,6 +42,7 @@ from .models import (
     DailyProblem,
     Announcement,
     Notification,
+    SystemUpdate,
     AptitudeTopic,
     AptitudeQuestion,
     Achievement,
@@ -7047,6 +7048,148 @@ class NotificationMarkReadView(UnifiedAuthMixin, APIView):
         notification = get_object_or_404(Notification, id=notification_id, recipient=request.user)
         notification.delete()
         return Response({"success": True})
+
+
+class NotificationMarkAllReadView(UnifiedAuthMixin, APIView):
+    def post(self, request):
+        Notification.objects.filter(recipient=request.user).delete()
+        return Response({"success": True, "message": "All notifications marked as read."})
+
+
+class AdminDAUAnalyticsView(APIView):
+    """Daily Active Users (DAU) analytics broken down institution-wise and role-wise (students vs staff)"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not (request.user.is_staff or getattr(request.user, 'role', '') == 'admin' or hasattr(request.user, 'staff_profile')):
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        institution_id = request.query_params.get("institution_id")
+        days = int(request.query_params.get("days", 14))
+        days = max(1, min(days, 60))
+
+        today = timezone.now().date()
+        date_list = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
+
+        student_qs = StudentProfile.objects.all()
+        staff_qs = StaffProfile.objects.all()
+
+        if institution_id:
+            student_qs = student_qs.filter(institution_id=institution_id)
+            staff_qs = staff_qs.filter(institution_id=institution_id)
+
+        daily_data = []
+
+        for dt in date_list:
+            dt_start = timezone.make_aware(datetime.combine(dt, time.min))
+            dt_end = timezone.make_aware(datetime.combine(dt, time.max))
+
+            active_students = student_qs.filter(
+                Q(last_login_on=dt) |
+                Q(submissions__submitted_at__range=(dt_start, dt_end)) |
+                Q(contest_participations__started_at__range=(dt_start, dt_end))
+            ).distinct().count()
+
+            active_staff = staff_qs.filter(
+                user__last_login__range=(dt_start, dt_end)
+            ).distinct().count()
+
+            daily_data.append({
+                "date": dt.strftime("%Y-%m-%d"),
+                "display_date": dt.strftime("%b %d"),
+                "day_name": dt.strftime("%a"),
+                "students": active_students,
+                "staff": active_staff,
+                "total": active_students + active_staff
+            })
+
+        return Response({
+            "institution_id": institution_id,
+            "days": days,
+            "daily_active_users": daily_data
+        })
+
+
+class AdminSystemUpdateView(APIView):
+    """Admin endpoint to create and manage system updates / release notes"""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        updates = SystemUpdate.objects.all()
+        data = [{
+            "id": u.id,
+            "title": u.title,
+            "version": u.version,
+            "content": u.content,
+            "category": u.category,
+            "target_role": u.target_role,
+            "is_active": u.is_active,
+            "created_at": u.created_at.strftime("%b %d, %Y %H:%M"),
+        } for u in updates]
+        return Response({"updates": data})
+
+    def post(self, request):
+        title = request.data.get("title", "").strip()
+        content = request.data.get("content", "").strip()
+        version = request.data.get("version", "").strip()
+        category = request.data.get("category", "feature")
+        target_role = request.data.get("target_role", "all")
+
+        if not title or not content:
+            return Response({"detail": "Title and content are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        update = SystemUpdate.objects.create(
+            title=title,
+            content=content,
+            version=version,
+            category=category,
+            target_role=target_role,
+            is_active=True
+        )
+
+        return Response({
+            "message": "System update broadcasted successfully!",
+            "update": {
+                "id": update.id,
+                "title": update.title,
+                "version": update.version,
+                "content": update.content,
+                "category": update.category,
+                "target_role": update.target_role,
+                "created_at": update.created_at.strftime("%b %d, %Y %H:%M"),
+            }
+        }, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, pk=None):
+        if pk:
+            SystemUpdate.objects.filter(id=pk).delete()
+            return Response({"message": "System update deleted."})
+        return Response({"detail": "ID required."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserSystemUpdatesView(UnifiedAuthMixin, APIView):
+    """User endpoint to read active platform updates matching their role"""
+    def get(self, request):
+        profile, profile_type, _ = self.get_authenticated_profile(request)
+        user_role = "student" if hasattr(profile, 'register_number') else getattr(profile, 'role', 'staff')
+
+        updates = SystemUpdate.objects.filter(
+            is_active=True
+        ).filter(
+            Q(target_role='all') | Q(target_role=user_role)
+        ).order_by('-created_at')[:10]
+
+        data = [{
+            "id": u.id,
+            "title": u.title,
+            "version": u.version,
+            "content": u.content,
+            "category": u.category,
+            "target_role": u.target_role,
+            "created_at": u.created_at.strftime("%b %d, %Y"),
+        } for u in updates]
+
+        return Response({"updates": data, "user_role": user_role})
 
 
 class AptitudeTopicListView(UnifiedAuthMixin, APIView):

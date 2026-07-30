@@ -444,6 +444,38 @@ class Notification(models.Model):
         return f"To {self.recipient.username}: {self.title}"
 
 
+class SystemUpdate(models.Model):
+    """System updates, release notes, and broadcast announcements posted by Admin"""
+    ROLE_CHOICES = (
+        ("all", "All Roles"),
+        ("student", "Students Only"),
+        ("staff", "Faculty Only"),
+        ("hod", "HODs Only"),
+        ("ja", "Junior Admins Only"),
+        ("tpu", "TPU Officers Only"),
+        ("director", "Directors Only"),
+    )
+    CATEGORY_CHOICES = (
+        ("feature", "New Feature"),
+        ("bugfix", "Improvement & Fix"),
+        ("announcement", "Announcement"),
+    )
+
+    title = models.CharField(max_length=255)
+    version = models.CharField(max_length=50, blank=True, default="")
+    content = models.TextField()
+    category = models.CharField(max_length=30, choices=CATEGORY_CHOICES, default="feature")
+    target_role = models.CharField(max_length=30, choices=ROLE_CHOICES, default="all")
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"[{self.target_role.upper()}] {self.title} ({self.version})"
+
+
 class AptitudeTopic(models.Model):
     title = models.CharField(max_length=200)
     parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='subtopics')
