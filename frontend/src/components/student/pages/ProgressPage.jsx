@@ -169,6 +169,8 @@ function MentorAdvisorCard() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+import UserSystemUpdatesWidget from '../../common/UserSystemUpdatesWidget';
+
 function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, onNavigateToContest, problemSet }) {
   const [activeTab, setActiveTab] = useTabNav('overall');
   const [selectedBadge, setSelectedBadge] = useState(null);
@@ -481,6 +483,9 @@ function ProgressPage({ contestCards, contestHistory, dashboard, setDashboard, o
   return (
     <div className="page-stack animate-fade-in" style={{ padding: '40px 60px', background: '#f8f9fa' }}>
       <style>{shimmerStyles}</style>
+
+      {/* LATEST SYSTEM UPDATES FOR STUDENTS */}
+      <UserSystemUpdatesWidget />
 
       {/* Brighter Hero / Readiness Gauge */}
       <section style={{ marginBottom: 40 }}>

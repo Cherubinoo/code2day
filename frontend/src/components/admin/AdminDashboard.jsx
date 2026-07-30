@@ -7,13 +7,15 @@ import {
   Trash2, Activity, Database, LayoutDashboard,
   GraduationCap, Briefcase, Award, Settings,
   ChevronRight, ArrowLeft, BarChart3, HardHat,
-  UserCheck, Wrench, Search, Brain, Crown, Compass
+  UserCheck, Wrench, Search, Brain, Crown, Compass, Megaphone
 } from 'lucide-react';
 import api from '../../lib/api';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import ProblemBankView from './ProblemBankView';
 import AptitudeBankView from './AptitudeBankView';
 import LLMProviderView from './LLMProviderView';
+import DAUAnalyticsChart from './DAUAnalyticsChart';
+import SystemUpdatesModal from './SystemUpdatesModal';
 import AnimatedNumber from '../common/AnimatedNumber';
 import { useTabNav } from '../../lib/useTabNav';
 
@@ -23,6 +25,7 @@ const AdminDashboard = () => {
   const [showProblemBank, setShowProblemBank] = useState(false);
   const [showAptitudeBank, setShowAptitudeBank] = useState(false);
   const [showLLMProviders, setShowLLMProviders] = useState(false);
+  const [showSystemUpdates, setShowSystemUpdates] = useState(false);
   const [activeTab, setActiveTab] = useTabNav('dashboard');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
@@ -339,7 +342,10 @@ const AdminDashboard = () => {
           </div>
           
           {!selectedInstitution && (
-            <div style={{ display: 'flex', gap: 10 }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <button onClick={() => setShowSystemUpdates(true)} style={{ borderRadius: 12, padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', width: 'fit-content', background: '#e0f2fe', border: '1px solid #bae6fd', color: '#0284c7', fontWeight: 800, cursor: 'pointer' }}>
+                <Megaphone size={16} /> Broadcast Updates
+              </button>
               <button onClick={() => setShowLLMProviders(true)} style={{ borderRadius: 12, padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.9rem', width: 'fit-content', background: 'white', border: '1px solid var(--border-soft)', color: 'var(--olive-900)', fontWeight: 700, cursor: 'pointer' }}>
                 <Settings size={16} /> LLM Providers
               </button>
@@ -384,6 +390,9 @@ const AdminDashboard = () => {
                 </div>
               ))}
             </div>
+
+            {/* DAILY ACTIVE USERS (DAU) GRAPH */}
+            <DAUAnalyticsChart institutions={institutions} />
 
             {/* INSTITUTION CARDS */}
             <div style={{ marginBottom: 48 }}>
@@ -1530,6 +1539,12 @@ const AdminDashboard = () => {
               if (cb) await cb();
             }}
             onCancel={() => setConfirmState(prev => ({ ...prev, show: false }))}
+          />
+        )}
+        {showSystemUpdates && (
+          <SystemUpdatesModal
+            isOpen={showSystemUpdates}
+            onClose={() => setShowSystemUpdates(false)}
           />
         )}
       </div>

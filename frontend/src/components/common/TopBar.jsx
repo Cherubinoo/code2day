@@ -230,6 +230,18 @@ function NotificationInbox() {
     }
   }
 
+  async function markAllAsRead() {
+    try {
+      const res = await fetch("/api/notifications/mark-all-read/", buildJsonPostOptions({}));
+      if (res.ok) {
+        setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+        setUnreadCount(0);
+      }
+    } catch (err) {
+      console.error("Failed to mark all notifications as read", err);
+    }
+  }
+
   function notificationHref(link) {
     if (!link) return "#";
     try {
@@ -257,8 +269,18 @@ function NotificationInbox() {
       {isOpen && (
         <div className="inbox-dropdown surface-card">
           <div className="inbox-header">
-            <h3>Notifications</h3>
-            {unreadCount > 0 && <span className="unread-label"><AnimatedNumber value={unreadCount} duration={0.7} /> new</span>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <h3>Notifications</h3>
+              {unreadCount > 0 && <span className="unread-label"><AnimatedNumber value={unreadCount} duration={0.7} /> new</span>}
+            </div>
+            {notifications.length > 0 && unreadCount > 0 && (
+              <button 
+                className="mark-all-read-btn"
+                onClick={(e) => { e.stopPropagation(); markAllAsRead(); }}
+              >
+                Mark all read
+              </button>
+            )}
           </div>
 
           <div className="inbox-list scroll-column">

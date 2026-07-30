@@ -20,6 +20,7 @@ import StaffLabPanel from '../staff/StaffLabPanel';
 import { PerformanceDashboard } from '../common/PerformanceCharts';
 import { FlaskConical } from 'lucide-react';
 import { useTabNav } from '../../lib/useTabNav';
+import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
 
 
 
@@ -612,6 +613,8 @@ const HODDashboard = ({ institutionId }) => {
             <strong>Error:</strong> {error}
           </div>
         )}
+
+        <UserSystemUpdatesWidget />
 
         <div className="tab-container">
           {activeTab === 'performance' && (
