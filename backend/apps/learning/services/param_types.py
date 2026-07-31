@@ -16,8 +16,12 @@ It has zero Django/DB dependencies so it can be imported from both
 views.py (schema-save validation) and execution_adapter.py (typed
 marshalling) without any circular-import risk.
 
-Scope (deliberate, per product decision): primitives + 1D/2D arrays only.
-No linked-list/tree/custom-struct types in this phase.
+Scope: primitives + 1D/2D arrays, plus a small set of named structural
+types (currently just GraphNode) added on demand as real problems need
+them — not the full LeetCode structural type catalog (TreeNode/ListNode
+already work today via the older name/annotation-based heuristics in
+execution_adapter.py; only GraphNode needed a real fix, since no existing
+heuristic builds a proper cyclic graph).
 """
 
 from __future__ import annotations
@@ -27,7 +31,15 @@ import re
 SCALAR_TYPES = ("int", "float", "double", "string", "boolean")
 ARRAY_SUFFIXES = ("", "[]", "[][]")  # scalar, 1D, 2D
 
-VALID_TYPES = [s + suf for s in SCALAR_TYPES for suf in ARRAY_SUFFIXES]
+# Structural types: not primitives, not arrays of primitives — each one names
+# a real object shape the execution pipeline knows how to build/serialize.
+# GraphNode: val + neighbors (List[GraphNode]), possibly cyclic — the shape
+# LeetCode-style "Clone Graph"-family problems use, represented on the wire
+# as an adjacency list keyed by 1-indexed node value (see
+# execution_adapter.py's __c2d_to_graph/__c2d_from_graph).
+STRUCTURAL_TYPES = ("GraphNode",)
+
+VALID_TYPES = [s + suf for s in SCALAR_TYPES for suf in ARRAY_SUFFIXES] + list(STRUCTURAL_TYPES)
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -110,6 +122,71 @@ def ordered_params(schema: dict) -> list[dict]:
     return sorted(schema.get("params", []), key=lambda p: p.get("order", 0))
 
 
+# ── Design/OOP problems (LRU Cache, Trie, ZigzagIterator, ...) ───────────────
+# A completely different shape from a function schema: instead of one call in
+# / one value out, the wire format is a *sequence* of operations replayed
+# against one constructed instance, e.g.:
+#
+#   {"kind": "design", "class_name": "LRUCache",
+#    "methods": {
+#        "LRUCache": {"params": ["int"], "return_type": "void"},
+#        "put":      {"params": ["int", "int"], "return_type": "void"},
+#        "get":      {"params": ["int"], "return_type": "int"},
+#    }}
+#
+# TestCase.input_data for a design schema is {"operations": [...], "arguments": [[...], ...]}
+# (the operations list's first entry is always the constructor, matching
+# class_name) and expected_output is a JSON array, one entry per operation
+# (null for void-returning ones) — exactly LeetCode's own convention.
+# A schema with no "kind" (every existing function schema) is implicitly
+# "function" — this is purely additive, existing schemas are untouched.
+
+def is_design_schema(schema: dict) -> bool:
+    return isinstance(schema, dict) and schema.get("kind") == "design"
+
+
+def validate_design_schema(schema: dict) -> list[str]:
+    """Validate a design-kind schema. Returns a list of human-readable error
+    strings; an empty list means the schema is valid."""
+    errors: list[str] = []
+    if not isinstance(schema, dict):
+        return ["Schema must be a JSON object."]
+
+    class_name = schema.get("class_name")
+    if not isinstance(class_name, str) or not _IDENTIFIER_RE.match(class_name):
+        errors.append(f"class_name must be a valid identifier (got {class_name!r}).")
+
+    methods = schema.get("methods")
+    if not isinstance(methods, dict) or not methods:
+        errors.append("`methods` must be a non-empty object mapping method name -> {params, return_type}.")
+        methods = {}
+
+    if isinstance(class_name, str) and class_name not in methods:
+        errors.append(f"`methods` must include a constructor entry named {class_name!r}.")
+
+    for name, spec in methods.items():
+        if not isinstance(spec, dict):
+            errors.append(f"methods[{name!r}] must be an object.")
+            continue
+        params = spec.get("params")
+        if not isinstance(params, list) or not all(is_valid_param_type(t) for t in params):
+            errors.append(f"methods[{name!r}].params must be a list of types from {VALID_TYPES}.")
+        return_type = spec.get("return_type")
+        if return_type != "void" and not is_valid_param_type(return_type):
+            errors.append(f"methods[{name!r}].return_type {return_type!r} is not 'void' or one of {VALID_TYPES}.")
+
+    return errors
+
+
+def validate_schema(schema: dict) -> list[str]:
+    """Dispatches to validate_design_schema or validate_param_schema based on
+    schema['kind'] — the single entry point new callers (admin schema-save
+    endpoint) should use instead of calling either validator directly."""
+    if is_design_schema(schema):
+        return validate_design_schema(schema)
+    return validate_param_schema(schema)
+
+
 def ordered_param_names(schema: dict) -> list[str]:
     """Return param names sorted by declared order — used to turn a
     TestCase.input_data dict into the positional arg list the existing
@@ -178,16 +255,43 @@ def generate_starter_code(problem, language: str) -> str | None:
 
     params = ordered_params(schema)
     return_type = schema.get("return_type", "")
+    uses_graph_node = any(p["type"] == "GraphNode" for p in params) or return_type == "GraphNode"
 
     if language == "Python":
+        if uses_graph_node:
+            args = ", ".join(f"{p['name']}: 'Node'" if p["type"] == "GraphNode" else p["name"] for p in params)
+            ret = "'Node'" if return_type == "GraphNode" else _py_type_hint(return_type)
+            return (
+                '"""\n# Definition for a Node.\nclass Node:\n'
+                '    def __init__(self, val = 0, neighbors = None):\n'
+                '        self.val = val\n'
+                '        self.neighbors = neighbors if neighbors is not None else []\n"""\n\n'
+                f"class Solution:\n    def {fn}(self, {args}) -> {ret}:\n        pass\n"
+            )
         needs_list = any(array_dimensions(p["type"]) > 0 for p in params) or array_dimensions(return_type) > 0
         args = ", ".join(f"{p['name']}: {_py_type_hint(p['type'])}" for p in params)
         header = "from typing import List\n\n\n" if needs_list else ""
         return f"{header}class Solution:\n    def {fn}(self, {args}) -> {_py_type_hint(return_type)}:\n        pass\n"
 
     if language == "Java":
+        if uses_graph_node:
+            args = ", ".join(f"Node {p['name']}" if p["type"] == "GraphNode" else f"{_java_type(p['type'])} {p['name']}" for p in params)
+            ret = "Node" if return_type == "GraphNode" else _java_type(return_type)
+            return (
+                "/*\n// Definition for a Node.\nclass Node {\n    public int val;\n    public List<Node> neighbors;\n"
+                "    public Node() { val = 0; neighbors = new ArrayList<Node>(); }\n"
+                "    public Node(int _val) { val = _val; neighbors = new ArrayList<Node>(); }\n}\n*/\n\n"
+                f"class Solution {{\n    public {ret} {fn}({args}) {{\n        \n    }}\n}}\n"
+            )
         args = ", ".join(f"{_java_type(p['type'])} {p['name']}" for p in params)
         return f"class Solution {{\n    public {_java_type(return_type)} {fn}({args}) {{\n        \n    }}\n}}\n"
+
+    # GraphNode execution is Python/Java only for now (see
+    # _build_python_wrapper_typed / _build_java_wrapper_typed in
+    # execution_adapter.py) — no starter stub for other languages, since one
+    # would imply the platform can actually run it there, which it can't yet.
+    if uses_graph_node:
+        return None
 
     if language in ("C++", "CPP"):
         args = ", ".join(f"{_cpp_type(p['type'])} {p['name']}" for p in params)

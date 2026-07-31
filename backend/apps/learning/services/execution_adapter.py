@@ -361,6 +361,17 @@ def _values_equal_typed(actual, expected, return_type: str, float_tol: float) ->
         return bool(actual) == bool(expected)
     if base == "string":
         return str(actual) == str(expected)
+    if base == "GraphNode":
+        # Serialized as an adjacency list indexed by node value (position IS
+        # meaningful — see __c2d_from_graph), but the neighbor order WITHIN
+        # each node's own list isn't semantically meaningful for an
+        # undirected graph, so compare each node's neighbor set unordered.
+        if not isinstance(actual, list) or not isinstance(expected, list) or len(actual) != len(expected):
+            return False
+        return all(
+            isinstance(a, list) and isinstance(e, list) and sorted(a) == sorted(e)
+            for a, e in zip(actual, expected)
+        )
     return actual == expected
 
 
@@ -375,6 +386,35 @@ def compare_typed_output(actual_raw: str, expected_raw: str, return_type: str, *
         return _values_equal_typed(actual, expected, return_type, float_tol)
     except Exception:
         return False
+
+
+def compare_design_output(actual_raw: str, expected_raw: str, schema: dict, operations: list, *, float_tol: float = 1e-6) -> bool:
+    """Type-aware comparison for design/OOP problems — each position in the
+    output array can have a DIFFERENT return type (one per operation in the
+    replayed sequence), unlike a function problem's single uniform
+    return_type, so this looks up each operation's declared type from
+    schema['methods'] rather than taking one type for the whole array."""
+    try:
+        actual = json.loads(actual_raw)
+        expected = json.loads(expected_raw)
+    except (json.JSONDecodeError, TypeError):
+        return False
+    if not isinstance(actual, list) or not isinstance(expected, list) or len(actual) != len(expected):
+        return False
+
+    methods = schema.get("methods", {})
+    for i, (a, e) in enumerate(zip(actual, expected)):
+        op = operations[i] if i < len(operations) else None
+        return_type = methods.get(op, {}).get("return_type", "") if op else ""
+        if return_type in ("float", "double"):
+            try:
+                if abs(float(a) - float(e)) > float_tol:
+                    return False
+            except (TypeError, ValueError):
+                return False
+        elif a != e:
+            return False
+    return True
 
 
 def _looks_like_python_function_solution(source_code: str, candidates: list[str]) -> bool:
@@ -849,6 +889,195 @@ class Main {
     )
 
 
+def _build_java_wrapper_typed(source_code: str, candidates: list[str], schema: dict) -> str | None:
+    """Schema-driven Java driver — only diverges from _build_java_wrapper
+    when a GraphNode is actually involved. Same root cause as the Python fix:
+    the untyped wrapper's convertOne() dispatches purely on the reflected
+    parameter type's simple name ("Node"), and the Node class it injects when
+    the student doesn't define their own is the n-ary-tree shape (val +
+    children) — wrong for a graph (val + neighbors, possibly cyclic). This
+    injects a graph-shaped Node instead and builds/serializes it explicitly
+    from the schema, rather than guessing from the type name."""
+    params = param_types.ordered_params(schema)
+    return_type = schema.get("return_type", "")
+    if not any(p["type"] == "GraphNode" for p in params) and return_type != "GraphNode":
+        return None
+
+    candidate_list_java = "{" + ", ".join(json.dumps(c) for c in candidates) + "}"
+    source_code = re.sub(r'\bpublic\s+class\s+Solution\b', 'class Solution', source_code)
+    source_code = re.sub(r'^\s*package\s+[^;]+;\s*', '', source_code, flags=re.MULTILINE)
+    source_code = re.sub(r'^\s*import\s+[^;]+;\s*', '', source_code, flags=re.MULTILINE)
+    graph_param_indices = [i for i, p in enumerate(params) if p["type"] == "GraphNode"]
+    returns_graph = return_type == "GraphNode"
+
+    template = r'''
+import java.io.*;
+import java.lang.reflect.*;
+import java.util.*;
+
+class Node {
+    public int val;
+    public List<Node> neighbors;
+    public Node() { val = 0; neighbors = new ArrayList<>(); }
+    public Node(int v) { val = v; neighbors = new ArrayList<>(); }
+}
+
+__SOURCE_CODE__
+
+class Main {
+    public static void main(String[] args) throws Exception {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+        String line = reader.readLine();
+        if (line == null || line.trim().isEmpty()) line = "[]";
+        Object parsed = parseValue(line.trim());
+        List<Object> argList = parsed instanceof List ? (List<Object>) parsed : new ArrayList<>(Arrays.asList(parsed));
+
+        Set<Integer> graphIndices = new HashSet<>(Arrays.asList(__GRAPH_INDICES__));
+        Object[] converted = new Object[argList.size()];
+        for (int i = 0; i < argList.size(); i++) {
+            converted[i] = graphIndices.contains(i) ? buildGraph(argList.get(i)) : argList.get(i);
+        }
+
+        Object result = callSolution(converted);
+        if (__RETURNS_GRAPH__) {
+            System.out.println(serializeGraph((Node) result));
+        } else {
+            System.out.println(serialize(result));
+        }
+    }
+
+    static Node buildGraph(Object adjListObj) {
+        List<Object> adjList = adjListObj instanceof List ? (List<Object>) adjListObj : new ArrayList<>();
+        if (adjList.isEmpty()) return null;
+        Map<Integer, Node> nodes = new HashMap<>();
+        for (int i = 0; i < adjList.size(); i++) nodes.put(i + 1, new Node(i + 1));
+        for (int i = 0; i < adjList.size(); i++) {
+            List<Object> neighborVals = (List<Object>) adjList.get(i);
+            for (Object v : neighborVals) nodes.get(i + 1).neighbors.add(nodes.get(toInt(v)));
+        }
+        return nodes.get(1);
+    }
+
+    static String serializeGraph(Node start) {
+        if (start == null) return "[]";
+        Map<Integer, Node> visited = new TreeMap<>();
+        visited.put(start.val, start);
+        Queue<Node> q = new LinkedList<>(); q.add(start);
+        while (!q.isEmpty()) {
+            Node n = q.poll();
+            for (Node nb : n.neighbors) {
+                if (!visited.containsKey(nb.val)) { visited.put(nb.val, nb); q.add(nb); }
+            }
+        }
+        List<String> rows = new ArrayList<>();
+        for (Node n : visited.values()) {
+            List<Integer> vals = new ArrayList<>();
+            for (Node nb : n.neighbors) vals.add(nb.val);
+            Collections.sort(vals);
+            List<String> parts = new ArrayList<>();
+            for (int v : vals) parts.add(String.valueOf(v));
+            rows.add("[" + String.join(",", parts) + "]");
+        }
+        return "[" + String.join(",", rows) + "]";
+    }
+
+    static Object parseValue(String s) {
+        s = s.trim();
+        if (s.isEmpty() || s.equalsIgnoreCase("null")) return null;
+        if (s.equalsIgnoreCase("true")) return true;
+        if (s.equalsIgnoreCase("false")) return false;
+        if (s.startsWith("[") && s.endsWith("]")) return parseList(s.substring(1, s.length() - 1));
+        if ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'"))) return s.substring(1, s.length() - 1);
+        try { return s.contains(".") ? Double.parseDouble(s) : Integer.parseInt(s); }
+        catch (NumberFormatException e) { return s; }
+    }
+
+    static List<Object> parseList(String s) {
+        List<Object> result = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        boolean inString = false; char quote = 0; int depth = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!inString && (c == '"' || c == '\'')) { inString = true; quote = c; cur.append(c); }
+            else if (inString && c == quote) { inString = false; cur.append(c); }
+            else if (!inString && c == '[') { depth++; cur.append(c); }
+            else if (!inString && c == ']') { depth--; cur.append(c); }
+            else if (!inString && c == ',' && depth == 0) { result.add(parseValue(cur.toString())); cur.setLength(0); }
+            else cur.append(c);
+        }
+        if (cur.length() > 0) result.add(parseValue(cur.toString()));
+        return result;
+    }
+
+    static Object callSolution(Object[] preparedArgs) throws Exception {
+        String[] names = __CANDIDATES__;
+        Class<?> cls = Class.forName("Solution");
+        Object instance = cls.getDeclaredConstructor().newInstance();
+        for (String name : names) {
+            for (Method m : cls.getDeclaredMethods()) {
+                if (!m.getName().equals(name)) continue;
+                if (m.getParameterCount() != preparedArgs.length) continue;
+                try {
+                    Class<?>[] types = m.getParameterTypes();
+                    Object[] finalArgs = new Object[preparedArgs.length];
+                    for (int i = 0; i < preparedArgs.length; i++) {
+                        finalArgs[i] = preparedArgs[i] instanceof Node ? preparedArgs[i] : convertOne(preparedArgs[i], types[i]);
+                    }
+                    m.setAccessible(true);
+                    return m.invoke(instance, finalArgs);
+                } catch (Exception ignored) {}
+            }
+        }
+        throw new RuntimeException("Could not find matching Solution method");
+    }
+
+    static Object convertOne(Object value, Class<?> type) {
+        if (type == int.class || type == Integer.class) return toInt(value);
+        if (type == long.class || type == Long.class) return Long.valueOf(toLong(value));
+        if (type == double.class || type == Double.class) return Double.valueOf(toDouble(value));
+        if (type == boolean.class || type == Boolean.class) return Boolean.valueOf(toBool(value));
+        if (type == String.class) return toStringValue(value);
+        if (type.isArray()) return toArray(value, type.getComponentType());
+        if (List.class.isAssignableFrom(type)) return value instanceof List ? value : new ArrayList<>(Arrays.asList(value));
+        return value;
+    }
+
+    static Object toArray(Object value, Class<?> component) {
+        List<Object> list = asList(value);
+        Object arr = Array.newInstance(component, list.size());
+        for (int i = 0; i < list.size(); i++) Array.set(arr, i, convertOne(list.get(i), component));
+        return arr;
+    }
+
+    static List<Object> asList(Object value) {
+        return value instanceof List ? (List<Object>) value : new ArrayList<>(Arrays.asList(value));
+    }
+    static int toInt(Object v) { return v instanceof Number ? ((Number) v).intValue() : Integer.parseInt(String.valueOf(v)); }
+    static long toLong(Object v) { return v instanceof Number ? ((Number) v).longValue() : Long.parseLong(String.valueOf(v)); }
+    static double toDouble(Object v) { return v instanceof Number ? ((Number) v).doubleValue() : Double.parseDouble(String.valueOf(v)); }
+    static boolean toBool(Object v) { return v instanceof Boolean ? ((Boolean) v) : Boolean.parseBoolean(String.valueOf(v)); }
+    static String toStringValue(Object v) { return v == null ? "" : String.valueOf(v); }
+
+    static String serialize(Object obj) {
+        if (obj == null) return "null";
+        if (obj instanceof Boolean || obj instanceof Number) return obj.toString();
+        if (obj instanceof String || obj instanceof Character) return obj.toString();
+        Class<?> cls = obj.getClass();
+        if (cls.isArray()) { int n = Array.getLength(obj); List<String> parts = new ArrayList<>(); for (int i=0;i<n;i++) parts.add(serialize(Array.get(obj, i))); return "[" + String.join(",", parts) + "]"; }
+        if (obj instanceof List) { List<String> parts = new ArrayList<>(); for (Object v : (List<?>) obj) parts.add(serialize(v)); return "[" + String.join(",", parts) + "]"; }
+        if (obj instanceof Node) return serializeGraph((Node) obj);
+        return obj.toString();
+    }
+}
+'''.strip()
+    return (
+        template
+        .replace("__SOURCE_CODE__", source_code)
+        .replace("__CANDIDATES__", candidate_list_java)
+        .replace("__GRAPH_INDICES__", ", ".join(str(i) for i in graph_param_indices))
+        .replace("__RETURNS_GRAPH__", "true" if returns_graph else "false")
+    )
+
 
 # Scalar C types the typed wrapper below knows how to parse from a JSON token
 # and pass into the user's function. Array/pointer parameters aren't handled —
@@ -1209,6 +1438,192 @@ _C_SCALAR_PARSE = {
 }
 
 
+# ── GraphNode support for C (schema-driven, no reflection/STL to lean on) ────
+# The riskiest of the four typed builders: unlike Python/Java/C++, there's no
+# existing map/vector/GC to reuse, no compiler available to test-compile this
+# against in this environment, and it's almost entirely new code rather than
+# a small delta on proven logic. Verified by careful manual trace against all
+# 4 of Clone Graph's real stored test cases (empty graph, single isolated
+# node, and two connected multi-node cases) — but this one specifically
+# should be the first thing compiled for real once deployed, before trusting
+# it with real student submissions. Node vals are capped at 100000 (LeetCode's
+# real Clone Graph constraint is n<=100) via fixed-size arrays instead of a
+# hash map, to keep the generated C simple.
+_C_GRAPH_HELPERS = r'''
+#define _C_MAX_GRAPH_NODES 100001
+
+struct Node {
+    int val;
+    int numNeighbors;
+    struct Node** neighbors;
+};
+
+static void __c2d_split_toplevel(char* s, char** out, int* out_n) {
+    int depth = 0, in_str = 0, n = 0;
+    char* start = s;
+    char* c = s;
+    while (1) {
+        char ch = *c;
+        if (ch == '"') in_str = !in_str;
+        else if (!in_str && ch == '[') depth++;
+        else if (!in_str && ch == ']') depth--;
+        if ((ch == ',' && depth == 0 && !in_str) || ch == '\0') {
+            *c = '\0';
+            if (n < _C_MAX_GRAPH_NODES) out[n++] = start;
+            if (ch == '\0') break;
+            start = c + 1;
+        }
+        c++;
+    }
+    *out_n = n;
+}
+
+static struct Node* __c2d_build_graph(char* tok) {
+    int len = (int)strlen(tok);
+    if (len < 2) return NULL;
+    tok[len - 1] = '\0';   /* strip trailing ']' */
+    tok++;                  /* skip leading '[' */
+    if (strlen(tok) == 0) return NULL;   /* adjList == [] -- empty graph */
+
+    static char* rows[_C_MAX_GRAPH_NODES];
+    int n_rows = 0;
+    __c2d_split_toplevel(tok, rows, &n_rows);
+
+    struct Node** nodes = (struct Node**)malloc((n_rows + 1) * sizeof(struct Node*));
+    for (int i = 1; i <= n_rows; i++) {
+        nodes[i] = (struct Node*)malloc(sizeof(struct Node));
+        nodes[i]->val = i;
+        nodes[i]->numNeighbors = 0;
+        nodes[i]->neighbors = NULL;
+    }
+    for (int i = 0; i < n_rows; i++) {
+        int size = 0;
+        int* vals = _c_parse_int_array(rows[i], &size);
+        nodes[i + 1]->numNeighbors = size;
+        if (size > 0) {
+            nodes[i + 1]->neighbors = (struct Node**)malloc(size * sizeof(struct Node*));
+            for (int j = 0; j < size; j++) nodes[i + 1]->neighbors[j] = nodes[vals[j]];
+        }
+    }
+    return nodes[1];
+}
+
+static char* __c2d_serialize_graph(struct Node* start) {
+    char* out = (char*)malloc(65536);
+    int pos = 0;
+    if (!start) { strcpy(out, "[]"); return out; }
+
+    static struct Node* visited[_C_MAX_GRAPH_NODES];
+    static int seen[_C_MAX_GRAPH_NODES];
+    memset(seen, 0, sizeof(seen));
+    static struct Node* q[_C_MAX_GRAPH_NODES];
+    int qh = 0, qt = 0, max_val = 0;
+
+    q[qt++] = start; seen[start->val] = 1; visited[start->val] = start;
+    if (start->val > max_val) max_val = start->val;
+    while (qh < qt) {
+        struct Node* n = q[qh++];
+        for (int i = 0; i < n->numNeighbors; i++) {
+            struct Node* nb = n->neighbors[i];
+            if (!seen[nb->val]) {
+                seen[nb->val] = 1; visited[nb->val] = nb; q[qt++] = nb;
+                if (nb->val > max_val) max_val = nb->val;
+            }
+        }
+    }
+
+    out[pos++] = '[';
+    int first_row = 1;
+    for (int v = 1; v <= max_val; v++) {
+        if (!seen[v]) continue;
+        if (!first_row) out[pos++] = ',';
+        first_row = 0;
+        out[pos++] = '[';
+        struct Node* n = visited[v];
+        int vals[10000], cnt = 0;
+        for (int i = 0; i < n->numNeighbors; i++) vals[cnt++] = n->neighbors[i]->val;
+        for (int i = 1; i < cnt; i++) {
+            int key = vals[i], j = i - 1;
+            while (j >= 0 && vals[j] > key) { vals[j + 1] = vals[j]; j--; }
+            vals[j + 1] = key;
+        }
+        for (int i = 0; i < cnt; i++) {
+            if (i) out[pos++] = ',';
+            pos += sprintf(out + pos, "%d", vals[i]);
+        }
+        out[pos++] = ']';
+    }
+    out[pos++] = ']';
+    out[pos] = '\0';
+    return out;
+}
+'''
+
+
+def _build_c_graph_wrapper_typed(source_code: str, candidates: list[str], schema: dict) -> str:
+    """GraphNode-specific C driver — only ever called when the schema
+    actually uses GraphNode (see _build_c_wrapper_typed's dispatch)."""
+    params = param_types.ordered_params(schema)
+    return_type = schema.get("return_type", "")
+
+    func_name = None
+    for name in candidates:
+        if re.search(rf'\b{re.escape(name)}\s*\(', source_code):
+            func_name = name
+            break
+    if not func_name and candidates:
+        func_name = candidates[0]
+    if not func_name:
+        func_name = "solution"
+
+    arg_lines = []
+    call_args = []
+    for idx, p in enumerate(params):
+        var = f"_c_a{idx}"
+        if p["type"] == "GraphNode":
+            arg_lines.append(f"    struct Node* {var} = __c2d_build_graph(_c_tok(_c_i++));")
+        else:
+            base = param_types.base_scalar_type(p["type"])
+            expr, c_type = _C_SCALAR_PARSE[base]
+            arg_lines.append(f"    {c_type} {var} = {expr};")
+        call_args.append(var)
+
+    call_expr = f'{func_name}({", ".join(call_args)})'
+    if return_type == "GraphNode":
+        call_lines = f"    struct Node* _c_result = {call_expr};\n    printf(\"%s\\n\", __c2d_serialize_graph(_c_result));"
+    elif return_type == "boolean":
+        call_lines = f'    printf({call_expr} ? "true\\n" : "false\\n");'
+    else:
+        fmt = '"%g\\n"' if return_type in ("float", "double") else '"%d\\n"'
+        call_lines = f"    printf({fmt}, {call_expr});"
+
+    return (
+        "#include <stdio.h>\n"
+        "#include <stdlib.h>\n"
+        "#include <string.h>\n\n"
+        # struct Node + its helpers (which need _c_parse_int_array, hence
+        # _C_TYPED_ARRAY_HELPERS) MUST come before the user's source code —
+        # the student's function dereferences node->val/neighbors, which
+        # requires struct Node to already be a complete type at that point,
+        # not just forward-declared.
+        f"{_C_WRAPPER_HELPERS}\n"
+        f"{_C_TYPED_ARRAY_HELPERS}\n"
+        f"{_C_GRAPH_HELPERS}\n"
+        "// User code\n"
+        f"{source_code}\n\n"
+        "int main() {\n"
+        "    char line[65536];\n"
+        "    if (!fgets(line, sizeof(line), stdin)) line[0] = '\\0';\n"
+        "    int len = (int)strlen(line);\n"
+        "    while (len > 0 && (line[len - 1] == '\\n' || line[len - 1] == '\\r')) line[--len] = '\\0';\n"
+        "    if (len > 0) _c_split_args(line);\n\n"
+        f"{chr(10).join(arg_lines)}\n\n"
+        f"{call_lines}\n"
+        "    return 0;\n"
+        "}\n"
+    )
+
+
 def _build_c_wrapper_typed(source_code: str, candidates: list[str], schema: dict) -> str | None:
     """Build a C driver directly from an explicit param_schema, instead of
     regex-guessing types from the source. This is what closes the gap
@@ -1217,6 +1632,9 @@ def _build_c_wrapper_typed(source_code: str, candidates: list[str], schema: dict
     existing untyped wrapper in that case."""
     params = param_types.ordered_params(schema)
     return_type = schema.get("return_type", "")
+
+    if any(p["type"] == "GraphNode" for p in params) or return_type == "GraphNode":
+        return _build_c_graph_wrapper_typed(source_code, candidates, schema)
 
     if any(param_types.array_dimensions(p["type"]) > 1 for p in params) or param_types.array_dimensions(return_type) > 1:
         return None
@@ -1954,6 +2372,207 @@ int main() {
     return wrapper
 
 
+# ── Typed C++ wrapper (schema-driven, currently only needed for GraphNode) ──
+# Same root cause/fix as the Python and Java versions: the untyped wrapper
+# above injects an n-ary-tree-shaped `Node` (val + children) when the
+# student's code doesn't define its own, which is wrong for a graph (val +
+# neighbors, possibly cyclic). Reuses the SAME J-struct JSON parser as the
+# untyped wrapper (copied verbatim below — this file has no shared-constant
+# extraction point for it) but skips the regex-based signature detection
+# entirely: the schema already tells us the exact param count/order/types,
+# so args are built directly, the same principle as the Java typed wrapper.
+_CPP_JSON_PARSER = r"""
+struct J {
+    enum Type { INT, DOUBLE, BOOL, STR, ARR, NUL } type = NUL;
+    long long   ival = 0;
+    double      dval = 0;
+    bool        bval = false;
+    string      sval;
+    vector<J>   aval;
+    int         asInt()    const { return (int)ival; }
+    double      asDouble() const { return type==DOUBLE?dval:(double)ival; }
+    bool        asBool()   const { return bval; }
+    string      asStr()    const { return sval; }
+    vector<int> asVecInt() const { vector<int> v; for(auto&x:aval) v.push_back(x.asInt()); return v; }
+};
+
+static size_t _pos;
+static string _src;
+static void skip_ws() { while(_pos<_src.size()&&isspace(_src[_pos]))_pos++; }
+static J parse_value();
+static J parse_array() {
+    J j; j.type=J::ARR; _pos++;
+    skip_ws();
+    if(_pos<_src.size()&&_src[_pos]==']'){_pos++;return j;}
+    while(true){
+        skip_ws();
+        j.aval.push_back(parse_value());
+        skip_ws();
+        if(_pos>=_src.size()||_src[_pos]==']'){_pos++;break;}
+        if(_src[_pos]==',')_pos++;
+    }
+    return j;
+}
+static J parse_string() {
+    J j; j.type=J::STR; _pos++;
+    while(_pos<_src.size()&&_src[_pos]!='"'){
+        if(_src[_pos]=='\\'&&_pos+1<_src.size()){_pos++;j.sval+=_src[_pos++];}
+        else j.sval+=_src[_pos++];
+    }
+    if(_pos<_src.size())_pos++;
+    return j;
+}
+static J parse_value() {
+    skip_ws();
+    if(_pos>=_src.size()){J j;return j;}
+    char c=_src[_pos];
+    if(c=='[') return parse_array();
+    if(c=='"') return parse_string();
+    if(c=='t'){_pos+=4;J j;j.type=J::BOOL;j.bval=true;return j;}
+    if(c=='f'){_pos+=5;J j;j.type=J::BOOL;j.bval=false;return j;}
+    if(c=='n'){_pos+=4;J j;j.type=J::NUL;return j;}
+    size_t start=_pos;
+    bool is_float=false;
+    if(c=='-')_pos++;
+    while(_pos<_src.size()&&(isdigit(_src[_pos])||_src[_pos]=='.'||_src[_pos]=='e'||_src[_pos]=='E'||_src[_pos]=='+'||_src[_pos]=='-')){
+        if(_src[_pos]=='.'||_src[_pos]=='e'||_src[_pos]=='E') is_float=true;
+        _pos++;
+    }
+    string num=_src.substr(start,_pos-start);
+    J j;
+    if(is_float){j.type=J::DOUBLE;j.dval=stod(num);}
+    else{j.type=J::INT;j.ival=stoll(num);}
+    return j;
+}
+static vector<J> parse_json_args(const string& line) {
+    _src=line; _pos=0;
+    skip_ws();
+    if(_pos<_src.size()&&_src[_pos]=='['){
+        J arr=parse_array();
+        return arr.aval;
+    }
+    return {parse_value()};
+}
+"""
+
+_CPP_GRAPH_HELPERS = r"""
+class Node {
+public:
+    int val;
+    vector<Node*> neighbors;
+    Node() { val = 0; neighbors = vector<Node*>(); }
+    Node(int _val) { val = _val; neighbors = vector<Node*>(); }
+    Node(int _val, vector<Node*> _neighbors) { val = _val; neighbors = _neighbors; }
+};
+
+static Node* __c2d_build_graph(const J& adjList) {
+    if (adjList.type != J::ARR || adjList.aval.empty()) return nullptr;
+    int n = (int)adjList.aval.size();
+    vector<Node*> nodes(n + 1, nullptr);
+    for (int i = 1; i <= n; i++) nodes[i] = new Node(i);
+    for (int i = 0; i < n; i++) {
+        for (const J& nb : adjList.aval[i].aval) nodes[i + 1]->neighbors.push_back(nodes[nb.asInt()]);
+    }
+    return nodes[1];
+}
+
+static string __c2d_serialize_graph(Node* start) {
+    if (!start) return "[]";
+    map<int, Node*> visited;
+    visited[start->val] = start;
+    queue<Node*> q; q.push(start);
+    while (!q.empty()) {
+        Node* n = q.front(); q.pop();
+        for (Node* nb : n->neighbors) {
+            if (visited.find(nb->val) == visited.end()) { visited[nb->val] = nb; q.push(nb); }
+        }
+    }
+    vector<string> rows;
+    for (auto& kv : visited) {
+        vector<int> vals;
+        for (Node* nb : kv.second->neighbors) vals.push_back(nb->val);
+        sort(vals.begin(), vals.end());
+        vector<string> parts;
+        for (int v : vals) parts.push_back(to_string(v));
+        string row = "[";
+        for (size_t i = 0; i < parts.size(); i++) { if (i) row += ","; row += parts[i]; }
+        row += "]";
+        rows.push_back(row);
+    }
+    string out = "[";
+    for (size_t i = 0; i < rows.size(); i++) { if (i) out += ","; out += rows[i]; }
+    out += "]";
+    return out;
+}
+"""
+
+
+def _build_cpp_wrapper_typed(source_code: str, candidates: list[str], schema: dict) -> str | None:
+    """Schema-driven C++ driver — only diverges from _build_cpp_wrapper when
+    a GraphNode is actually involved; otherwise returns None so the caller
+    falls back to the untyped builder unchanged."""
+    params = param_types.ordered_params(schema)
+    return_type = schema.get("return_type", "")
+    if not any(p["type"] == "GraphNode" for p in params) and return_type != "GraphNode":
+        return None
+
+    func_name = None
+    for name in candidates:
+        if re.search(rf'\b{re.escape(name)}\s*\(', source_code):
+            func_name = name
+            break
+    if not func_name and candidates:
+        func_name = candidates[0]
+    if not func_name:
+        func_name = "solution"
+
+    arg_exprs = []
+    for i, p in enumerate(params):
+        base = param_types.base_scalar_type(p["type"])
+        dims = param_types.array_dimensions(p["type"])
+        if p["type"] == "GraphNode":
+            arg_exprs.append(f"__c2d_build_graph(args[{i}])")
+        elif dims == 1 and base == "int":
+            arg_exprs.append(f"args[{i}].asVecInt()")
+        elif base in ("float", "double"):
+            arg_exprs.append(f"args[{i}].asDouble()")
+        elif base == "string":
+            arg_exprs.append(f"args[{i}].asStr()")
+        elif base == "boolean":
+            arg_exprs.append(f"args[{i}].asBool()")
+        else:
+            arg_exprs.append(f"args[{i}].asInt()")
+    call_expr = f'sol.{func_name}({", ".join(arg_exprs)})'
+
+    if return_type == "GraphNode":
+        print_expr = f"__c2d_serialize_graph({call_expr})"
+    elif return_type == "boolean":
+        print_expr = f'(({call_expr}) ? "true" : "false")'
+    elif return_type == "string":
+        print_expr = call_expr
+    else:
+        print_expr = f"({call_expr})"  # int/float/double — ostream << handles these directly
+
+    wrapper = r"""
+#include <bits/stdc++.h>
+using namespace std;
+""" + _CPP_JSON_PARSER + _CPP_GRAPH_HELPERS + r"""
+
+// User solution
+""" + source_code + r"""
+
+int main() {
+    string line;
+    if (!getline(cin, line) || line.empty()) line = "[]";
+    vector<J> args = parse_json_args(line);
+    Solution sol;
+    cout << """ + print_expr + r""" << endl;
+    return 0;
+}
+"""
+    return wrapper
+
+
 def _build_csharp_wrapper(source_code: str, candidates: list[str]) -> str:
     """Build C# wrapper that reads from stdin and calls the solution method."""
     candidate_list = json.dumps(candidates)
@@ -2251,6 +2870,331 @@ if __name__ == "__main__":
         __code2day_sys.stderr.write(__c2d_tb.format_exc())
         __code2day_sys.exit(1)
 """
+
+
+# ── Typed Python wrapper (schema-driven, currently only needed for GraphNode) ─
+# Python's reflection-based calling (_build_python_wrapper above) already
+# handles scalars/arrays/TreeNode/ListNode fine via name/annotation guessing.
+# GraphNode is the one shape nothing existing builds correctly — the old
+# n-ary-tree __c2d_to_nary conversion a "node"-named param falls into builds a
+# hierarchy (parent→children, no cycles), not a general undirected graph
+# (arbitrary bidirectional neighbors, possibly cyclic) — exactly what a
+# Clone-Graph-style adjacency list represents. This uses the schema's
+# declared type (not a name guess) to know when a real graph, not a tree,
+# needs to be built.
+#
+# The injected class is named `Node` (matching real LeetCode Python solutions,
+# which construct `Node(val)` directly inside their own algorithm, e.g. Clone
+# Graph's DFS copy step) — NOT `GraphNode`. This driver is only ever built for
+# a GraphNode-schema problem, so there's no ambiguity with the *other* `Node`
+# (n-ary tree, val+children) the untyped wrapper injects elsewhere; the two
+# never coexist in the same generated file.
+_PY_GRAPH_HELPERS = '''
+class Node:
+    def __init__(self, val=0, neighbors=None):
+        self.val = val; self.neighbors = neighbors if neighbors is not None else []
+    def __repr__(self): return f"Node({self.val})"
+
+def __c2d_to_graph(adj_list):
+    if not adj_list:
+        return None
+    nodes = {i + 1: Node(i + 1) for i in range(len(adj_list))}
+    for i, neighbor_vals in enumerate(adj_list):
+        nodes[i + 1].neighbors = [nodes[v] for v in neighbor_vals]
+    return nodes[1]
+
+def __c2d_from_graph(start):
+    if not start:
+        return []
+    from collections import deque as _dq
+    visited = {start.val: start}
+    q = _dq([start])
+    while q:
+        node = q.popleft()
+        for nb in node.neighbors:
+            if nb.val not in visited:
+                visited[nb.val] = nb
+                q.append(nb)
+    return [sorted(n.val for n in visited[v].neighbors) for v in sorted(visited)]
+'''
+
+
+def _build_python_wrapper_typed(source_code: str, candidates: list[str], schema: dict) -> str | None:
+    """Schema-driven Python driver — only diverges from the untyped
+    _build_python_wrapper when a GraphNode is actually involved; otherwise
+    returns None so the caller falls back to the untyped builder unchanged
+    (Python's reflection already handles every other type in our vocabulary
+    correctly)."""
+    params = param_types.ordered_params(schema)
+    return_type = schema.get("return_type", "")
+    if not any(p["type"] == "GraphNode" for p in params) and return_type != "GraphNode":
+        return None
+
+    candidate_list = json.dumps(candidates)
+    param_types_json = json.dumps([p["type"] for p in params])
+    returns_graph = return_type == "GraphNode"
+
+    return f"""
+# ── Data structure definitions (always available) ────────────────────────────
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val; self.next = next
+
+class DoublyNode:
+    def __init__(self, val=0, prev=None, next=None):
+        self.val = val; self.prev = prev; self.next = next
+
+{_PY_GRAPH_HELPERS}
+
+# ── Solution code ─────────────────────────────────────────────────────────────
+{source_code}
+
+# ── Driver ────────────────────────────────────────────────────────────────────
+import json as __code2day_json
+import sys as __code2day_sys
+
+def __code2day_find_solver():
+    candidates = {candidate_list}
+    for name in candidates:
+        fn = globals().get(name)
+        if callable(fn) and not isinstance(fn, type):
+            return fn
+    solution_cls = globals().get("Solution")
+    if solution_cls:
+        instance = solution_cls()
+        for name in candidates:
+            method = getattr(instance, name, None)
+            if callable(method):
+                return method
+        _own_methods = [
+            name for name, obj in vars(solution_cls).items()
+            if not name.startswith("_") and callable(obj)
+        ]
+        if len(_own_methods) == 1:
+            return getattr(instance, _own_methods[0])
+    raise RuntimeError(f"No solver function found. Expected one of: {{candidates}}.")
+
+if __name__ == "__main__":
+    try:
+        raw = __code2day_sys.stdin.read().strip()
+        args = __code2day_json.loads(raw) if raw else []
+        if not isinstance(args, list):
+            args = [args]
+
+        __c2d_param_types = {param_types_json}
+        converted = []
+        for i, v in enumerate(args):
+            t = __c2d_param_types[i] if i < len(__c2d_param_types) else None
+            converted.append(__c2d_to_graph(v) if t == "GraphNode" else v)
+
+        solver = __code2day_find_solver()
+        result = solver(*converted)
+
+        if {returns_graph!r}:
+            __code2day_sys.stdout.write(__code2day_json.dumps(__c2d_from_graph(result), separators=(",", ":")) + "\\n")
+        elif isinstance(result, bool):
+            __code2day_sys.stdout.write(("true" if result else "false") + "\\n")
+        elif isinstance(result, str):
+            __code2day_sys.stdout.write(result + "\\n")
+        else:
+            __code2day_sys.stdout.write(__code2day_json.dumps(result, separators=(",", ":"), ensure_ascii=False) + "\\n")
+    except Exception as __c2d_err:
+        import traceback as __c2d_tb
+        __code2day_sys.stderr.write(__c2d_tb.format_exc())
+        __code2day_sys.exit(1)
+"""
+
+
+# ── Design/OOP problem drivers (LRU Cache, Trie, ZigzagIterator, ...) ────────
+# A fundamentally different shape from every typed builder above: no single
+# call in / value out. The wire format (built by _prepare_design_execution_payload)
+# is a 2-element JSON array [operations, arguments] rather than a dict, so
+# every language can reuse its existing array-only JSON parser unchanged —
+# none of them had object/map parsing before this, and adding it just for
+# this one wire format wasn't worth the risk. operations[0] is always the
+# constructor (its name matches schema['class_name']); each subsequent
+# operations[i] is a method name, called with arguments[i], and every
+# call's result (None/null for void) is collected into one output array —
+# exactly LeetCode's own convention for these problems.
+
+def _build_python_design_wrapper(source_code: str, schema: dict) -> str:
+    class_name = schema.get("class_name")
+    return f"""
+# ── Data structure definitions (always available) ────────────────────────────
+class TreeNode:
+    def __init__(self, val=0, left=None, right=None):
+        self.val = val; self.left = left; self.right = right
+
+class ListNode:
+    def __init__(self, val=0, next=None):
+        self.val = val; self.next = next
+
+# ── Solution code ─────────────────────────────────────────────────────────────
+{source_code}
+
+# ── Driver ────────────────────────────────────────────────────────────────────
+import json as __code2day_json
+import sys as __code2day_sys
+
+if __name__ == "__main__":
+    try:
+        data = __code2day_json.loads(__code2day_sys.stdin.read())
+        operations, arguments = data[0], data[1]
+        cls = globals()[{class_name!r}]
+        obj = None
+        results = []
+        for op, op_args in zip(operations, arguments):
+            if op == {class_name!r}:
+                obj = cls(*op_args)
+                results.append(None)
+            else:
+                results.append(getattr(obj, op)(*op_args))
+        __code2day_sys.stdout.write(__code2day_json.dumps(results, separators=(",", ":"), ensure_ascii=False) + "\\n")
+    except Exception as __c2d_err:
+        import traceback as __c2d_tb
+        __code2day_sys.stderr.write(__c2d_tb.format_exc())
+        __code2day_sys.exit(1)
+"""
+
+
+_JAVA_DESIGN_SCALAR_CONVERTERS = {
+    "int": "toInt", "double": "toDouble", "boolean": "toBool", "string": "toStringValue",
+}
+_JAVA_DESIGN_LIST_CONVERTERS = {
+    "int": "toIntList", "double": "toDoubleList", "boolean": "toBoolList", "string": "toStringList",
+}
+
+
+def _java_design_arg_expr(ptype: str, idx: int) -> str:
+    """Scalars and 1D arrays (as List<T> — the real LeetCode convention for
+    Design/OOP problem constructors/methods, e.g. ZigzagIterator(List<Integer>
+    v1, List<Integer> v2), not a raw Java array). 2D arrays aren't needed by
+    any Design/OOP problem yet and raise KeyError (caught by the caller as a
+    clear "can't build this driver" signal) rather than silently emitting a
+    broken conversion."""
+    dims = param_types.array_dimensions(ptype)
+    base = param_types.base_scalar_type(ptype)
+    if dims == 1:
+        return f"{_JAVA_DESIGN_LIST_CONVERTERS[base]}(argsFor.get({idx}))"
+    if ptype == "float":
+        return f"(float) toDouble(argsFor.get({idx}))"
+    return f"{_JAVA_DESIGN_SCALAR_CONVERTERS[ptype]}(argsFor.get({idx}))"
+
+
+def _build_java_design_wrapper(source_code: str, schema: dict) -> str:
+    class_name = schema.get("class_name")
+    methods = schema.get("methods", {})
+    source_code = re.sub(rf'\bpublic\s+class\s+{re.escape(class_name)}\b', f'class {class_name}', source_code)
+    source_code = re.sub(r'^\s*package\s+[^;]+;\s*', '', source_code, flags=re.MULTILINE)
+    source_code = re.sub(r'^\s*import\s+[^;]+;\s*', '', source_code, flags=re.MULTILINE)
+
+    cases = []
+    for name, spec in methods.items():
+        params = spec.get("params", [])
+        return_type = spec.get("return_type", "void")
+        args = ", ".join(_java_design_arg_expr(t, i) for i, t in enumerate(params))
+        if name == class_name:
+            body = f"obj = new {class_name}({args}); results.add(null);"
+        elif return_type == "void":
+            body = f"obj.{name}({args}); results.add(null);"
+        else:
+            body = f"results.add(obj.{name}({args}));"
+        cases.append(f'                case {json.dumps(name)}: {body} break;')
+    switch_body = "\n".join(cases)
+
+    return r'''
+import java.io.*;
+import java.lang.reflect.*;
+import java.util.*;
+
+class TreeNode { int val; TreeNode left, right; TreeNode() {} TreeNode(int v) { val = v; } }
+class ListNode { int val; ListNode next; ListNode() {} ListNode(int v) { val = v; } }
+
+''' + source_code + r'''
+
+class Main {
+    public static void main(String[] args) throws Exception {
+        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) sb.append(line);
+        Object parsed = parseValue(sb.toString().trim());
+        List<Object> data = (List<Object>) parsed;
+        List<Object> operations = (List<Object>) data.get(0);
+        List<Object> arguments = (List<Object>) data.get(1);
+
+        ''' + class_name + r''' obj = null;
+        List<Object> results = new ArrayList<>();
+
+        for (int __i = 0; __i < operations.size(); __i++) {
+            String op = (String) operations.get(__i);
+            List<Object> argsFor = (List<Object>) arguments.get(__i);
+            switch (op) {
+''' + switch_body + r'''
+                default: throw new RuntimeException("Unknown operation: " + op);
+            }
+        }
+
+        System.out.println(serialize(results));
+    }
+
+    static Object parseValue(String s) {
+        s = s.trim();
+        if (s.isEmpty() || s.equalsIgnoreCase("null")) return null;
+        if (s.equalsIgnoreCase("true")) return true;
+        if (s.equalsIgnoreCase("false")) return false;
+        if (s.startsWith("[") && s.endsWith("]")) return parseList(s.substring(1, s.length() - 1));
+        if ((s.startsWith("\"") && s.endsWith("\"")) || (s.startsWith("'") && s.endsWith("'"))) return s.substring(1, s.length() - 1);
+        try { return s.contains(".") ? Double.parseDouble(s) : Integer.parseInt(s); }
+        catch (NumberFormatException e) { return s; }
+    }
+
+    static List<Object> parseList(String s) {
+        List<Object> result = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        boolean inString = false; char quote = 0; int depth = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (!inString && (c == '"' || c == '\'')) { inString = true; quote = c; cur.append(c); }
+            else if (inString && c == quote) { inString = false; cur.append(c); }
+            else if (!inString && c == '[') { depth++; cur.append(c); }
+            else if (!inString && c == ']') { depth--; cur.append(c); }
+            else if (!inString && c == ',' && depth == 0) { result.add(parseValue(cur.toString())); cur.setLength(0); }
+            else cur.append(c);
+        }
+        if (cur.length() > 0) result.add(parseValue(cur.toString()));
+        return result;
+    }
+
+    static int toInt(Object v) { return v instanceof Number ? ((Number) v).intValue() : Integer.parseInt(String.valueOf(v)); }
+    static double toDouble(Object v) { return v instanceof Number ? ((Number) v).doubleValue() : Double.parseDouble(String.valueOf(v)); }
+    static boolean toBool(Object v) { return v instanceof Boolean ? ((Boolean) v) : Boolean.parseBoolean(String.valueOf(v)); }
+    static String toStringValue(Object v) { return v == null ? "" : String.valueOf(v); }
+
+    static List<Object> asList(Object value) {
+        return value instanceof List ? (List<Object>) value : new ArrayList<>(Arrays.asList(value));
+    }
+    // Design/OOP problems (ZigzagIterator, etc.) conventionally take array-shaped
+    // constructor/method args as List<Integer>/List<String>/... , not a raw Java
+    // array, matching real LeetCode signatures for these problem types.
+    static List<Integer> toIntList(Object v) { List<Integer> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toInt(o)); return out; }
+    static List<Double> toDoubleList(Object v) { List<Double> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toDouble(o)); return out; }
+    static List<Boolean> toBoolList(Object v) { List<Boolean> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toBool(o)); return out; }
+    static List<String> toStringList(Object v) { List<String> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toStringValue(o)); return out; }
+
+    static String serialize(Object obj) {
+        if (obj == null) return "null";
+        if (obj instanceof Boolean || obj instanceof Number) return obj.toString();
+        if (obj instanceof String || obj instanceof Character) return "\"" + obj + "\"";
+        if (obj instanceof List) { List<String> parts = new ArrayList<>(); for (Object v : (List<?>) obj) parts.add(serialize(v)); return "[" + String.join(",", parts) + "]"; }
+        return obj.toString();
+    }
+}
+'''
 
 
 def _build_go_wrapper(source_code: str, candidates: list[str]) -> str:
@@ -3192,6 +4136,10 @@ _init_adapters()
 # no entry here simply falls back to its existing untyped builder.
 _TYPED_ADAPTERS = {
     "C": _build_c_wrapper_typed,
+    "Python": _build_python_wrapper_typed,
+    "Java": _build_java_wrapper_typed,
+    "C++": _build_cpp_wrapper_typed,
+    "CPP": _build_cpp_wrapper_typed,
 }
 
 
@@ -3228,6 +4176,40 @@ def _prepare_typed_execution_payload(
     }
 
 
+_DESIGN_ADAPTERS = {
+    "Python": _build_python_design_wrapper,
+    "Java": _build_java_design_wrapper,
+}
+
+
+def _prepare_design_execution_payload(source_code: str, language: str, input_data: dict, schema: dict) -> dict:
+    """Design/OOP problems (LRU Cache, Trie, ...) — completely bypasses the
+    function-shape typed path above; see the _DESIGN_ADAPTERS builders for
+    the wire format and per-language driver shape."""
+    operations = input_data.get("operations", [])
+    arguments = input_data.get("arguments", [])
+    serialized_stdin = json.dumps([operations, arguments], separators=(",", ":"), ensure_ascii=False)
+
+    builder = _DESIGN_ADAPTERS.get(language)
+    try:
+        driver = builder(source_code, schema) if builder else None
+    except KeyError as exc:
+        driver = None
+        _unsupported_reason = f"parameter type not supported for this language yet: {exc}"
+    else:
+        _unsupported_reason = f"design-problem execution not yet supported for {language}"
+
+    if driver is None:
+        # Fail the compile step cleanly rather than silently produce wrong
+        # output — #error is understood by every C-family compiler; for a
+        # language without one at all (not currently reachable, since every
+        # _DESIGN_ADAPTERS-missing case above already returns None before
+        # this point) this at least fails loudly instead of executing junk.
+        driver = f'#error "Design/OOP problem: {_unsupported_reason}"'
+
+    return {"source_code": driver, "stdin": serialized_stdin, "adapted": True, "exec_type": "design"}
+
+
 def prepare_execution_payload(*, problem, source_code: str, language: str, stdin: str, input_data: dict | None = None) -> dict:
     """
     Route a submission through the correct execution pipeline.
@@ -3250,7 +4232,12 @@ def prepare_execution_payload(*, problem, source_code: str, language: str, stdin
     function    — code defines a function; engine injects a driver to call it
     class       — code defines a class; engine injects a driver to instantiate + call methods
     interactive — back-and-forth with judge (pass-through, future)
+    design      — construct once, replay a sequence of operations (LRU Cache-style)
     """
+    schema = getattr(problem, "param_schema", None) if problem else None
+    if schema and param_types.is_design_schema(schema) and input_data is not None:
+        return _prepare_design_execution_payload(source_code, language, input_data, schema)
+
     exec_type = _resolve_execution_type(problem, source_code, language)
 
     # ── STDIN / INTERACTIVE — pass through unchanged ──────────────────────────

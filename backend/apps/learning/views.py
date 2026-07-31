@@ -91,6 +91,7 @@ from .services.execution_adapter import (
     normalize_comparable_output,
     prepare_execution_payload,
     compare_typed_output,
+    compare_design_output,
 )
 from .services.problem_testcases import build_runtime_test_cases
 from .services.complexity_analyzer import calculate_complexity
@@ -638,7 +639,12 @@ def execute_problem_test_case_batch(
         )
         actual_raw = (tc_result["stdout"] or "").strip()
         expected = case.expected_output.strip()
-        if schema and case_input_data is not None:
+        if schema and param_types.is_design_schema(schema) and case_input_data is not None:
+            passed = (
+                tc_result["status"] == "Accepted"
+                and compare_design_output(actual_raw, expected, schema, case_input_data.get("operations", []))
+            )
+        elif schema and case_input_data is not None:
             passed = (
                 tc_result["status"] == "Accepted"
                 and compare_typed_output(actual_raw, expected, schema.get("return_type", ""))
@@ -9132,16 +9138,31 @@ class InstitutionDetailManagementView(APIView):
         elif action == 'update_branding':
             # Update branding information
             branding_data = request.data.get('branding', {})
-            
+
             institution.display_name = branding_data.get('display_name', institution.display_name)
             institution.subheading = branding_data.get('subheading', institution.subheading)
             institution.logo_url = branding_data.get('logo_url', institution.logo_url)
             institution.website = branding_data.get('website', institution.website)
-            institution.established_year = branding_data.get('established_year', institution.established_year)
+
+            # established_year is a nullable PositiveIntegerField, but the
+            # frontend always sends "" (not omitted) when it's unset — assigning
+            # that straight onto the model used to crash institution.save() with
+            # an unhandled DB-level error (empty string into an integer column),
+            # surfacing as an opaque "Failed to update branding:" with no message.
+            if 'established_year' in branding_data:
+                raw_year = branding_data.get('established_year')
+                if raw_year in ('', None):
+                    institution.established_year = None
+                else:
+                    try:
+                        institution.established_year = int(raw_year)
+                    except (TypeError, ValueError):
+                        return Response({"error": "established_year must be a valid year, or left blank."}, status=400)
+
             institution.address = branding_data.get('address', institution.address)
             institution.contact_email = branding_data.get('contact_email', institution.contact_email)
             institution.contact_phone = branding_data.get('contact_phone', institution.contact_phone)
-            
+
             institution.save()
             return Response({"message": "Branding updated successfully"})
             
@@ -9589,7 +9610,7 @@ class AdminProblemParamSchemaView(APIView):
             return Response({"error": "Not found"}, status=404)
 
         schema = request.data.get("param_schema")
-        errors = param_types.validate_param_schema(schema)
+        errors = param_types.validate_schema(schema)
         if errors:
             return Response({"error": "Invalid schema", "details": errors}, status=400)
 
@@ -9781,6 +9802,123 @@ class AdminProblemBulkDeleteView(APIView):
         deleted_count = qs.count()
         qs.delete()
         return Response({"deleted_count": deleted_count})
+
+
+class AdminProblemBankFillMissingView(APIView):
+    """System Admin: single bulk button — sweeps every Problem in the bank
+    and generates whatever it's missing (test cases, param_schema,
+    explanation) via the LLM fallback chain. Every piece is skip-if-exists,
+    same as the per-problem actions this mirrors — it never overwrites
+    hand-authored content, it only fills gaps.
+
+    Bounded per click by a wall-clock TIME budget, not a fixed action count.
+    param_schema is a brand-new field, so on a bank this size (checked live:
+    1828 problems, all 1828 missing a schema) a small fixed count would need
+    ~180 clicks to ever finish. A time budget instead processes as many
+    problems as safely fit in one request — adapting to however fast the
+    LLM rotation happens to be responding right now — while still stopping
+    well short of gunicorn's worker timeout. Call again to keep sweeping;
+    the response reports how many problems still need something."""
+    permission_classes = [IsAuthenticated]
+
+    TIME_BUDGET_SECONDS = 90  # gunicorn's worker timeout is 120s; leaves headroom for request overhead
+    MAX_ACTIONS = 200          # hard backstop in case calls return implausibly fast
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        import time
+        from .services.testcase_generator import (
+            generate_test_cases, generate_param_schema, generate_explanation,
+            derive_examples, TestCaseGenError,
+        )
+
+        problems = (
+            Problem.objects
+            .annotate(tc_count=Count("test_cases", distinct=True))
+            .filter(Q(tc_count=0) | Q(param_schema__isnull=True) | Q(explanation=""))
+            .order_by("title")
+        )
+
+        processed = []
+        actions_done = 0
+        start = time.monotonic()
+
+        def budget_left():
+            return actions_done < self.MAX_ACTIONS and (time.monotonic() - start) < self.TIME_BUDGET_SECONDS
+
+        for problem in problems:
+            if not budget_left():
+                break
+
+            entry = {"id": problem.id, "title": problem.title}
+            did_anything = False
+
+            if problem.tc_count == 0 and budget_left():
+                actions_done += 1
+                did_anything = True
+                try:
+                    generated = generate_test_cases(
+                        title=problem.title, description=problem.description,
+                        examples=problem.examples, difficulty=problem.difficulty,
+                    )
+                    with transaction.atomic():
+                        TestCase.objects.bulk_create([
+                            TestCase(
+                                problem=problem, stdin=case["stdin"], expected_output=case["expected_output"],
+                                is_sample=case["is_sample"], order=order,
+                            )
+                            for order, case in enumerate(generated, start=1)
+                        ])
+                    if not problem.examples:
+                        problem.examples = derive_examples(generated)
+                        problem.save(update_fields=["examples"])
+                    entry["test_cases_generated"] = len(generated)
+                except TestCaseGenError as exc:
+                    entry["test_cases_error"] = str(exc)
+
+            if not problem.param_schema and budget_left():
+                actions_done += 1
+                did_anything = True
+                try:
+                    schema = generate_param_schema(title=problem.title, description=problem.description, examples=problem.examples)
+                    problem.param_schema = schema
+                    problem.save(update_fields=["param_schema"])
+                    entry["schema_generated"] = True
+                except TestCaseGenError as exc:
+                    entry["schema_error"] = str(exc)
+
+            if not problem.explanation and budget_left():
+                actions_done += 1
+                did_anything = True
+                try:
+                    explanation = generate_explanation(
+                        title=problem.title, description=problem.description,
+                        examples=problem.examples, difficulty=problem.difficulty,
+                    )
+                    problem.explanation = explanation
+                    problem.save(update_fields=["explanation"])
+                    entry["explanation_generated"] = True
+                except TestCaseGenError as exc:
+                    entry["explanation_error"] = str(exc)
+
+            if did_anything:
+                processed.append(entry)
+
+        remaining = (
+            Problem.objects
+            .annotate(tc_count=Count("test_cases", distinct=True))
+            .filter(Q(tc_count=0) | Q(param_schema__isnull=True) | Q(explanation=""))
+            .count()
+        )
+
+        return Response({
+            "processed": processed,
+            "actions_done": actions_done,
+            "elapsed_seconds": round(time.monotonic() - start, 1),
+            "remaining_problems": remaining,
+        })
 
 
 def _resolve_aptitude_correct_option(raw_answer, option_a, option_b, option_c, option_d):

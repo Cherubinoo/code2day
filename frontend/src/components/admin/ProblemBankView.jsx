@@ -16,7 +16,10 @@ function apiFetch(url, method, body) {
 // Mirrors backend/apps/learning/services/param_types.py VALID_TYPES — primitives
 // + 1D/2D arrays only. Kept in sync manually since the vocabulary is small and stable.
 const SCALAR_PARAM_TYPES = ['int', 'float', 'double', 'string', 'boolean'];
-const VALID_PARAM_TYPES = SCALAR_PARAM_TYPES.flatMap((t) => [t, `${t}[]`, `${t}[][]`]);
+const VALID_PARAM_TYPES = [
+  ...SCALAR_PARAM_TYPES.flatMap((t) => [t, `${t}[]`, `${t}[][]`]),
+  'GraphNode', // val + neighbors, possibly cyclic — Python execution only for now
+];
 
 function isArrayType(type) {
   return typeof type === 'string' && type.endsWith('[]');
@@ -54,6 +57,7 @@ const ProblemBankView = ({ onBack }) => {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [fillMissing, setFillMissing] = useState({ busy: false, msg: '' });
   const PAGE_SIZE = 50;
 
   useEffect(() => {
@@ -440,6 +444,35 @@ const ProblemBankView = ({ onBack }) => {
     }
   }
 
+  // Bulk sweep: fills in whatever each problem is missing (test cases,
+  // schema, explanation) via the LLM, skipping anything already present.
+  // Capped server-side per click — call again to keep sweeping the rest.
+  async function fillMissingData() {
+    setFillMissing({ busy: true, msg: '' });
+    try {
+      const res = await apiFetch('/api/admin/v2/problem-bank/fill-missing/', 'POST');
+      const data = await res.json();
+      if (!res.ok) {
+        setFillMissing({ busy: false, msg: data.error || 'Failed.' });
+        return;
+      }
+      const tcCount = data.processed.filter((p) => p.test_cases_generated).length;
+      const schemaCount = data.processed.filter((p) => p.schema_generated).length;
+      const expCount = data.processed.filter((p) => p.explanation_generated).length;
+      const errorCount = data.processed.filter((p) => p.test_cases_error || p.schema_error || p.explanation_error).length;
+
+      let msg = `Processed ${data.processed.length} problem(s): ${tcCount} test case set(s), ${schemaCount} schema(s), ${expCount} explanation(s) generated.`;
+      if (errorCount) msg += ` ${errorCount} error(s) — see details.`;
+      if (data.remaining_problems > 0) msg += ` ${data.remaining_problems} problem(s) still missing something — click again to continue.`;
+      else msg += ' Nothing left missing across the whole bank!';
+
+      setFillMissing({ busy: false, msg });
+      await load(); // refresh test_case_count / has_param_schema / explanation across the list
+    } catch {
+      setFillMissing({ busy: false, msg: 'Network error.' });
+    }
+  }
+
   const missingCount = problems.filter((p) => p.test_case_count === 0).length;
 
   return (
@@ -468,13 +501,32 @@ const ProblemBankView = ({ onBack }) => {
           </button>
         )}
         <button
+          onClick={fillMissingData}
+          disabled={fillMissing.busy}
+          title="Sweep every problem in the bank and generate whatever it's missing — test cases, schema, explanation — skipping anything already present"
+          style={{
+            marginLeft: selectedIds.size > 0 ? 0 : 'auto', background: 'white', border: '1px solid var(--border-soft)',
+            borderRadius: 12, padding: '10px 16px', cursor: fillMissing.busy ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+          }}
+        >
+          {fillMissing.busy ? <Loader2 size={16} className="spin" /> : <Settings2 size={16} />}
+          {fillMissing.busy ? 'Filling in…' : 'Fill Missing Data'}
+        </button>
+        <button
           onClick={load}
           disabled={loading}
-          style={{ marginLeft: selectedIds.size > 0 ? 0 : 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}
+          style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}
         >
           <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
         </button>
       </div>
+
+      {fillMissing.msg && (
+        <div style={{ padding: 14, background: /error|failed/i.test(fillMissing.msg) ? '#fef2f2' : '#f0fdf4', color: /error|failed/i.test(fillMissing.msg) ? '#dc2626' : '#166534', borderRadius: 12, marginBottom: 16, fontSize: 13 }}>
+          {fillMissing.msg}
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 16, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 240 }}>
