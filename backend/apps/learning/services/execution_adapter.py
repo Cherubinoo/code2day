@@ -710,7 +710,7 @@ __STANDARD_DEFS__
 
 __SOURCE_CODE__
 
-class Main {
+public class Main {
     public static void main(String[] args) throws Exception {
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         String line = reader.readLine();
@@ -924,7 +924,7 @@ class Node {
 
 __SOURCE_CODE__
 
-class Main {
+public class Main {
     public static void main(String[] args) throws Exception {
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         String line = reader.readLine();
@@ -3116,7 +3116,7 @@ class ListNode { int val; ListNode next; ListNode() {} ListNode(int v) { val = v
 
 ''' + source_code + r'''
 
-class Main {
+public class Main {
     public static void main(String[] args) throws Exception {
         BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
         StringBuilder sb = new StringBuilder();

@@ -173,13 +173,35 @@ def execute_submission(
     piston_lang, piston_ver = _LANG_ID_TO_PISTON[language_id]
     timeout_s = timeout or getattr(settings, "EXECUTOR_TIMEOUT_SECONDS", 30)
 
+    # Piston has no way to know which class to run when no filename is given
+    # for a compiled language — it falls back to (effectively) the first class
+    # declared in the file, which is NOT necessarily the one with main().
+    # Every Java driver this platform generates (function/class/graph/design
+    # execution types) always names its actual entry point "Main" and marks
+    # it `public class Main` specifically so this regex finds it; giving
+    # Piston the matching "Main.java" filename lets it — and `javac` itself,
+    # which requires a public class's filename to match — resolve correctly
+    # regardless of how many other (non-public) helper classes (TreeNode,
+    # ListNode, ...) precede it in the file. Falls back to no override for
+    # any other language, or a raw stdin-mode Java submission where the
+    # student's own public class (if any) is whatever regex finds.
+    filename = None
+    if language_id == 62:  # Java
+        match = re.search(r'\bpublic\s+class\s+(\w+)', source_code)
+        if match:
+            filename = f"{match.group(1)}.java"
+
     # Do not send run_timeout / compile_timeout — let Piston use its configured
     # PISTON_RUN_TIMEOUT / PISTON_COMPILE_TIMEOUT defaults (set in docker-compose).
     # Sending values that exceed those limits causes a 400 rejection.
+    file_entry = {"content": source_code}
+    if filename:
+        file_entry["name"] = filename
+
     payload = {
         "language": piston_lang,
         "version":  piston_ver,
-        "files":    [{"content": source_code}],
+        "files":    [file_entry],
         "stdin":    stdin or "",
     }
 
