@@ -836,7 +836,7 @@ function WorkspaceView({
                     height="400px"
                     language={editorLanguage}
                     theme="vs-dark"
-                    value={code || starterCodeByLanguage[selectedLanguage] || "// Write your solution here"}
+                    value={code || selectedProblem?.starter_code?.[selectedLanguage] || starterCodeByLanguage[selectedLanguage] || "// Write your solution here"}
                     onChange={(value) => setCode(value ?? "")}
                     onMount={(editor, monaco) => {
                       const allowCopyPaste = Boolean(dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste);

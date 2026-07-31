@@ -13,6 +13,7 @@ import {
 import { getCsrfToken } from '../../lib/appUtils';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import AnimatedNumber from '../common/AnimatedNumber';
+import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
 import { useTabNav } from '../../lib/useTabNav';
 
 const SECTIONS = ['A', 'B', 'C'];
@@ -90,6 +91,7 @@ function Alert({ type = 'error', message, onClose }) {
 function OverviewTab({ stats, batches, jaInfo, onSelectBatch }) {
   return (
     <div>
+      <UserSystemUpdatesWidget />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginBottom: 32 }}>
         <StatCard icon={Users} label="Total Students" value={stats.total_students} />
         <StatCard icon={FolderOpen} label="Total Batches" value={stats.total_batches} color="#1d4ed8" />

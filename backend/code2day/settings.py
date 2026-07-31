@@ -248,6 +248,12 @@ LLM_PROVIDER_SEED_2 = {
     "model_name": os.getenv("LLM_MODEL_NAME_2", "nvidia/nemotron-3-ultra-550b-a55b"),
     "timeout_seconds": int(os.getenv("LLM_TIMEOUT_SECONDS_2", "45")),
 }
+LLM_PROVIDER_SEED_3 = {
+    "api_key": os.getenv("LLM_API_KEY_MANTLE", ""),
+    "base_url": os.getenv("LLM_API_BASE_URL_MANTLE", "https://bedrock-mantle.us-east-1.api.aws/v1"),
+    "model_name": os.getenv("LLM_MODEL_NAME_MANTLE", "deepseek.v3.2"),
+    "timeout_seconds": int(os.getenv("LLM_TIMEOUT_SECONDS_MANTLE", "30")),
+}
 
 # ---------------------------------------------------------------------------
 # Auth rate limiting (InMemoryRateLimiter in auth_utils.py)

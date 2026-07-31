@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from .models import Contest, Department, DiscussionMessage, Problem, ProblemSolution, StudentProfile, StaffProfile, Submission, TestCase
 from .services.execution_adapter import clean_expected_output
+from .services import param_types
 
 
 DEFAULT_PRACTICE_LANGUAGES = [
@@ -102,6 +103,7 @@ class ProblemSerializer(serializers.ModelSerializer):
 class ProblemDetailSerializer(ProblemSerializer):
     examples = serializers.SerializerMethodField()
     last_solutions = serializers.SerializerMethodField()
+    starter_code = serializers.SerializerMethodField()
 
     class Meta(ProblemSerializer.Meta):
         fields = ProblemSerializer.Meta.fields + (
@@ -109,6 +111,7 @@ class ProblemDetailSerializer(ProblemSerializer):
             "explanation",
             "editorial",
             "last_solutions",
+            "starter_code",
         )
 
     def get_examples(self, obj):
@@ -127,6 +130,22 @@ class ProblemDetailSerializer(ProblemSerializer):
         for the requesting student's most recent submission per language on
         this problem, so the editor can restore exactly what they last had."""
         return self.context.get("last_solutions", {})
+
+    def get_starter_code(self, obj):
+        """{language: code} for problems with a param_schema — a correctly
+        typed, empty stub for the declared function/class signature, so
+        students fill in a signature the backend can actually execute
+        instead of guessing one from the description. None per language
+        (or the whole dict empty) when there's no schema; the frontend
+        falls back to its existing generic per-language template."""
+        if not obj.param_schema:
+            return {}
+        result = {}
+        for language in DEFAULT_PRACTICE_LANGUAGES:
+            code = param_types.generate_starter_code(obj, language)
+            if code:
+                result[language] = code
+        return result
 
 
 class SubmissionSerializer(serializers.ModelSerializer):

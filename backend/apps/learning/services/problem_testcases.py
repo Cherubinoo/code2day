@@ -13,6 +13,7 @@ class RuntimeTestCase:
     is_sample: bool
     order: int
     source: str
+    input_data: dict | None = None
 
 
 def _build_example_test_cases(problem) -> list[RuntimeTestCase]:
@@ -53,6 +54,7 @@ def build_runtime_test_cases(problem, sample_only: bool = False) -> list[Runtime
                 is_sample=case.is_sample,
                 order=case.order,
                 source="stored",
+                input_data=case.input_data,
             )
             for case in selected_cases
         ]

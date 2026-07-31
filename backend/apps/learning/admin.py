@@ -63,7 +63,7 @@ class ProblemSolutionAdmin(admin.ModelAdmin):
 class TestCaseInline(admin.TabularInline):
     model = TestCase
     extra = 0
-    fields = ("order", "stdin", "expected_output", "is_sample")
+    fields = ("order", "stdin", "expected_output", "input_data", "is_sample")
 
 
 @admin.register(Problem)

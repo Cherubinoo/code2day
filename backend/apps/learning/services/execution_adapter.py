@@ -4,6 +4,8 @@ import ast
 import json
 import re
 
+from . import param_types
+
 
 # ── Execution model constants ─────────────────────────────────────────────────
 # These define how the engine passes test-case input to the submitted code.
@@ -323,6 +325,56 @@ def normalize_comparable_output(value: str) -> str:
     if isinstance(parsed, (list, dict, bool, int, float)) or parsed is None:
         return json.dumps(_canonicalize_numbers(parsed), separators=(",", ":"), ensure_ascii=False)
     return " ".join(cleaned.split())
+
+
+def _parse_typed_value(raw: str):
+    cleaned = str(raw or "").strip()
+    try:
+        return json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError):
+        return _coerce_literal(cleaned)
+
+
+def _values_equal_typed(actual, expected, return_type: str, float_tol: float) -> bool:
+    dims = param_types.array_dimensions(return_type)
+    base = param_types.base_scalar_type(return_type)
+
+    if dims > 0:
+        if not isinstance(actual, list) or not isinstance(expected, list):
+            return False
+        if len(actual) != len(expected):
+            return False
+        inner_type = base + "[]" * (dims - 1)
+        return all(_values_equal_typed(a, e, inner_type, float_tol) for a, e in zip(actual, expected))
+
+    if base in ("float", "double"):
+        try:
+            return abs(float(actual) - float(expected)) <= float_tol
+        except (TypeError, ValueError):
+            return False
+    if base == "int":
+        try:
+            return int(actual) == int(expected)
+        except (TypeError, ValueError):
+            return False
+    if base == "boolean":
+        return bool(actual) == bool(expected)
+    if base == "string":
+        return str(actual) == str(expected)
+    return actual == expected
+
+
+def compare_typed_output(actual_raw: str, expected_raw: str, return_type: str, *, float_tol: float = 1e-6) -> bool:
+    """Type-aware comparison used only when problem.param_schema is present
+    (see normalize_comparable_output for the untouched heuristic-path
+    comparison used by every non-schema problem). Never raises — a parse
+    mismatch is just a normal Wrong Answer, not a 500."""
+    try:
+        actual = _parse_typed_value(actual_raw)
+        expected = _parse_typed_value(expected_raw)
+        return _values_equal_typed(actual, expected, return_type, float_tol)
+    except Exception:
+        return False
 
 
 def _looks_like_python_function_solution(source_code: str, candidates: list[str]) -> bool:
@@ -1007,6 +1059,240 @@ done:
     return 0;
 }}
 '''.strip()
+
+
+# ── Typed C wrapper (driven by Problem.param_schema, not signature-guessing) ─
+# Only used when a param_schema is present — see _prepare_typed_execution_payload.
+# Scalars reuse the same decl/parse pairs as _C_SCALAR_TYPES. Array params follow
+# the LeetCode-C convention: a schema array param "nums" is expected to appear in
+# the student's actual C signature as `int* nums, int numsSize` (pointer directly
+# followed by an implicit size parameter that has NO entry in param_schema — the
+# schema only models logical parameters). An array return type gets an implicit
+# trailing `int* returnSize` output parameter. 2D arrays are not supported in this
+# phase — _build_c_wrapper_typed returns None so the caller falls back to the
+# existing untyped path (same behavior C already has for unsupported signatures).
+_C_TYPED_ARRAY_HELPERS = r'''
+static int* _c_parse_int_array(const char* tok, int* out_size) {
+    int cap = 16, n = 0;
+    int* arr = (int*)malloc(cap * sizeof(int));
+    const char* p = tok;
+    while (*p == ' ') p++;
+    if (*p == '[') p++;
+    while (*p && *p != ']') {
+        while (*p == ' ' || *p == ',') p++;
+        if (*p == ']' || *p == '\0') break;
+        char* end;
+        long v = strtol(p, &end, 10);
+        if (n >= cap) { cap *= 2; arr = (int*)realloc(arr, cap * sizeof(int)); }
+        arr[n++] = (int)v;
+        p = end;
+    }
+    *out_size = n;
+    return arr;
+}
+
+static double* _c_parse_double_array(const char* tok, int* out_size) {
+    int cap = 16, n = 0;
+    double* arr = (double*)malloc(cap * sizeof(double));
+    const char* p = tok;
+    while (*p == ' ') p++;
+    if (*p == '[') p++;
+    while (*p && *p != ']') {
+        while (*p == ' ' || *p == ',') p++;
+        if (*p == ']' || *p == '\0') break;
+        char* end;
+        double v = strtod(p, &end);
+        if (n >= cap) { cap *= 2; arr = (double*)realloc(arr, cap * sizeof(double)); }
+        arr[n++] = v;
+        p = end;
+    }
+    *out_size = n;
+    return arr;
+}
+
+static char** _c_parse_string_array(const char* tok, int* out_size) {
+    int cap = 16, n = 0;
+    char** arr = (char**)malloc(cap * sizeof(char*));
+    const char* p = tok;
+    while (*p == ' ') p++;
+    if (*p == '[') p++;
+    while (*p && *p != ']' && *p != '\0') {
+        while (*p == ' ' || *p == ',') p++;
+        if (*p != '"') break;
+        p++;
+        const char* start = p;
+        while (*p && *p != '"') p++;
+        int len = (int)(p - start);
+        char* s = (char*)malloc(len + 1);
+        memcpy(s, start, len);
+        s[len] = '\0';
+        if (n >= cap) { cap *= 2; arr = (char**)realloc(arr, cap * sizeof(char*)); }
+        arr[n++] = s;
+        if (*p == '"') p++;
+    }
+    *out_size = n;
+    return arr;
+}
+
+static int* _c_parse_bool_array(const char* tok, int* out_size) {
+    int cap = 16, n = 0;
+    int* arr = (int*)malloc(cap * sizeof(int));
+    const char* p = tok;
+    while (*p == ' ') p++;
+    if (*p == '[') p++;
+    while (*p && *p != ']') {
+        while (*p == ' ' || *p == ',') p++;
+        if (*p == ']' || *p == '\0') break;
+        int val = (strncmp(p, "true", 4) == 0) ? 1 : 0;
+        if (strncmp(p, "true", 4) == 0) p += 4;
+        else if (strncmp(p, "false", 5) == 0) p += 5;
+        else p++;
+        if (n >= cap) { cap *= 2; arr = (int*)realloc(arr, cap * sizeof(int)); }
+        arr[n++] = val;
+    }
+    *out_size = n;
+    return arr;
+}
+
+static void _c_print_int_array(int* arr, int size) {
+    printf("[");
+    for (int _c_pi = 0; _c_pi < size; _c_pi++) { if (_c_pi) printf(","); printf("%d", arr[_c_pi]); }
+    printf("]\n");
+}
+
+static void _c_print_double_array(double* arr, int size) {
+    printf("[");
+    for (int _c_pi = 0; _c_pi < size; _c_pi++) { if (_c_pi) printf(","); printf("%g", arr[_c_pi]); }
+    printf("]\n");
+}
+
+static void _c_print_string_array(char** arr, int size) {
+    printf("[");
+    for (int _c_pi = 0; _c_pi < size; _c_pi++) { if (_c_pi) printf(","); printf("\"%s\"", arr[_c_pi]); }
+    printf("]\n");
+}
+
+static void _c_print_bool_array(int* arr, int size) {
+    printf("[");
+    for (int _c_pi = 0; _c_pi < size; _c_pi++) { if (_c_pi) printf(","); printf(arr[_c_pi] ? "true" : "false"); }
+    printf("]\n");
+}
+'''
+
+_C_ARRAY_PARSE_FN = {
+    "int": "_c_parse_int_array",
+    "float": "_c_parse_double_array",
+    "double": "_c_parse_double_array",
+    "string": "_c_parse_string_array",
+    "boolean": "_c_parse_bool_array",
+}
+_C_ARRAY_ELEM_C_TYPE = {
+    "int": "int",
+    "float": "double",
+    "double": "double",
+    "string": "char*",
+    "boolean": "int",
+}
+_C_ARRAY_PRINT_FN = {
+    "int": "_c_print_int_array",
+    "float": "_c_print_double_array",
+    "double": "_c_print_double_array",
+    "string": "_c_print_string_array",
+    "boolean": "_c_print_bool_array",
+}
+_C_SCALAR_PARSE = {
+    "int":     ('(int)strtol(_c_tok(_c_i++), NULL, 10)', "int"),
+    "float":   ('(float)strtod(_c_tok(_c_i++), NULL)', "float"),
+    "double":  ('strtod(_c_tok(_c_i++), NULL)', "double"),
+    "boolean": ('(strncmp(_c_tok(_c_i++), "true", 4) == 0)', "int"),
+    "string":  ('_c_strip_quotes(_c_tok(_c_i++))', "char*"),
+}
+
+
+def _build_c_wrapper_typed(source_code: str, candidates: list[str], schema: dict) -> str | None:
+    """Build a C driver directly from an explicit param_schema, instead of
+    regex-guessing types from the source. This is what closes the gap
+    _build_c_wrapper has today (no array support at all). Returns None if
+    the schema uses a 2D array anywhere — the caller falls back to the
+    existing untyped wrapper in that case."""
+    params = param_types.ordered_params(schema)
+    return_type = schema.get("return_type", "")
+
+    if any(param_types.array_dimensions(p["type"]) > 1 for p in params) or param_types.array_dimensions(return_type) > 1:
+        return None
+
+    func_name = None
+    for name in candidates:
+        if re.search(rf'\b{re.escape(name)}\s*\(', source_code):
+            func_name = name
+            break
+    if not func_name and candidates:
+        func_name = candidates[0]
+    if not func_name:
+        func_name = "solution"
+
+    arg_lines = []
+    call_args = []
+    for idx, p in enumerate(params):
+        ptype = p["type"]
+        base = param_types.base_scalar_type(ptype)
+        var = f"_c_a{idx}"
+        if param_types.array_dimensions(ptype) == 1:
+            parse_fn = _C_ARRAY_PARSE_FN[base]
+            elem_type = _C_ARRAY_ELEM_C_TYPE[base]
+            size_var = f"{var}_size"
+            arg_lines.append(f"    int {size_var} = 0;")
+            arg_lines.append(f"    {elem_type}* {var} = {parse_fn}(_c_tok(_c_i++), &{size_var});")
+            call_args.append(var)
+            call_args.append(size_var)
+        else:
+            expr, c_type = _C_SCALAR_PARSE[base]
+            arg_lines.append(f"    {c_type} {var} = {expr};")
+            call_args.append(var)
+
+    return_dims = param_types.array_dimensions(return_type)
+    return_size_var = "_c_return_size"
+    if return_dims == 1:
+        call_args.append(f"&{return_size_var}")
+
+    call_expr = f'{func_name}({", ".join(call_args)})'
+
+    if return_dims == 1:
+        ret_base = param_types.base_scalar_type(return_type)
+        elem_type = _C_ARRAY_ELEM_C_TYPE[ret_base]
+        print_fn = _C_ARRAY_PRINT_FN[ret_base]
+        call_lines = (
+            f"    int {return_size_var} = 0;\n"
+            f"    {elem_type}* _c_result = {call_expr};\n"
+            f"    {print_fn}(_c_result, {return_size_var});"
+        )
+    elif return_type == "boolean":
+        call_lines = f'    printf({call_expr} ? "true\\n" : "false\\n");'
+    elif return_type == "string":
+        call_lines = f'    printf("%s\\n", {call_expr});'
+    else:
+        fmt = '"%g\\n"' if return_type in ("float", "double") else '"%d\\n"'
+        call_lines = f"    printf({fmt}, {call_expr});"
+
+    return (
+        "#include <stdio.h>\n"
+        "#include <stdlib.h>\n"
+        "#include <string.h>\n\n"
+        "// User code\n"
+        f"{source_code}\n\n"
+        f"{_C_WRAPPER_HELPERS}\n"
+        f"{_C_TYPED_ARRAY_HELPERS}\n"
+        "int main() {\n"
+        "    char line[65536];\n"
+        "    if (!fgets(line, sizeof(line), stdin)) line[0] = '\\0';\n"
+        "    int len = (int)strlen(line);\n"
+        "    while (len > 0 && (line[len - 1] == '\\n' || line[len - 1] == '\\r')) line[--len] = '\\0';\n"
+        "    if (len > 0) _c_split_args(line);\n\n"
+        f"{chr(10).join(arg_lines)}\n\n"
+        f"{call_lines}\n"
+        "    return 0;\n"
+        "}\n"
+    )
 
 
 def _generate_cpp_call(func_name: str, sig_match, source_code: str, has_solution_class: bool = True) -> str:
@@ -2899,7 +3185,50 @@ def _init_adapters():
 _init_adapters()
 
 
-def prepare_execution_payload(*, problem, source_code: str, language: str, stdin: str) -> dict:
+# Typed driver builders, keyed by language — consulted only when a problem has
+# a param_schema. Only C has one today (the language with no other type-safe
+# marshalling mechanism); Python/Java/JS reuse their existing, already generic
+# builders unmodified (see _prepare_typed_execution_payload). A language with
+# no entry here simply falls back to its existing untyped builder.
+_TYPED_ADAPTERS = {
+    "C": _build_c_wrapper_typed,
+}
+
+
+def _prepare_typed_execution_payload(
+    source_code: str,
+    language: str,
+    input_data: dict,
+    schema: dict,
+    exec_type: str,
+    candidates: list[str],
+    build_driver,
+) -> dict:
+    """Build an execution payload from an explicit param_schema instead of
+    guessing types out of a free-text stdin string. Arg order is taken from
+    the schema (not the heuristic stdin parser); the wire format handed to
+    the sandboxed process is unchanged (a JSON array on stdin), so any
+    language without its own typed builder just reuses build_driver — the
+    same driver-builder function the untyped path would have used — with
+    these schema-ordered args."""
+    ordered_names = param_types.ordered_param_names(schema)
+    args = [input_data.get(name) for name in ordered_names]
+    serialized_stdin = json.dumps(args, separators=(",", ":"), ensure_ascii=False)
+
+    typed_builder = _TYPED_ADAPTERS.get(language)
+    driver = typed_builder(source_code, candidates, schema) if typed_builder else None
+    if driver is None:
+        driver = build_driver(source_code, candidates)
+
+    return {
+        "source_code": driver,
+        "stdin": serialized_stdin,
+        "adapted": True,
+        "exec_type": exec_type,
+    }
+
+
+def prepare_execution_payload(*, problem, source_code: str, language: str, stdin: str, input_data: dict | None = None) -> dict:
     """
     Route a submission through the correct execution pipeline.
 
@@ -2944,8 +3273,26 @@ def prepare_execution_payload(*, problem, source_code: str, language: str, stdin
         return {"source_code": source_code, "stdin": stdin, "adapted": False, "exec_type": EXEC_STDIN}
 
     looks_like_fn, build_driver = adapter
-    if not looks_like_fn(source_code, candidates):
+    schema = getattr(problem, "param_schema", None) if problem else None
+
+    # The "looks like a solution" heuristic exists to guess intent when
+    # nothing else is known. A declared param_schema is explicit, authoritative
+    # proof of intent from staff — skip the heuristic gate in that case (it
+    # has real false negatives, e.g. it never matches a pointer-returning C
+    # function like `int* twoSum(...)`, which is exactly the shape a schema's
+    # array return type needs). Schema-less problems keep the exact original
+    # gate, unchanged.
+    if not schema and not looks_like_fn(source_code, candidates):
         return {"source_code": source_code, "stdin": stdin, "adapted": False, "exec_type": EXEC_STDIN}
+
+    # ── Typed path — only when both the problem declares a schema AND this
+    # call passed structured input_data (e.g. a stored TestCase.input_data).
+    # The ad-hoc "Run with custom stdin" flow never has input_data, so it
+    # keeps using the heuristic path below even for schema-enabled problems.
+    if schema and input_data is not None:
+        return _prepare_typed_execution_payload(
+            source_code, language, input_data, schema, exec_type, candidates, build_driver,
+        )
 
     try:
         args = parse_argument_list(stdin)

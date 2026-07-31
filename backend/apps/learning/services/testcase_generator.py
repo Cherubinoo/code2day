@@ -394,6 +394,56 @@ def generate_explanation(*, title, description, examples=None, difficulty=None):
     return explanation
 
 
+PARAM_SCHEMA_PROMPT_TEMPLATE = """You are inferring a structured function signature for an online judge, given a problem statement.
+
+Title: {title}
+
+Description:
+{description}
+{examples_block}
+
+Respond with ONLY a JSON object of this exact shape, nothing else:
+{{"params": [{{"name": "paramName", "type": "int", "order": 0}}, ...], "return_type": "int"}}
+
+Rules:
+- "type" and "return_type" must each be one of: int, float, double, string, boolean, or one of those
+  with "[]" (1D array) or "[][]" (2D array) appended — nothing else (no objects, no other type names).
+- "order" values must be 0..N-1 matching each parameter's position in the function's argument list.
+- Pick param names that match the problem's natural variable names (e.g. "nums", "target").
+- Do not include a "self" or "this" parameter.
+"""
+
+
+def generate_param_schema(*, title, description, examples=None):
+    """Returns a validated {"params": [...], "return_type": ...} dict inferred
+    by an LLM from the problem statement — the same structured schema a
+    staff member could hand-author in the Problem Bank's schema editor (see
+    services/param_types.py for the type vocabulary and validation rules).
+    Raises a TestCaseGenError subclass if every active provider fails, or if
+    every provider's response fails schema validation."""
+    if examples:
+        blocks = [f"Example input:\n{ex.get('input', '')}\nExample output:\n{ex.get('output', '')}" for ex in examples]
+        examples_block = "\nExamples:\n\n" + "\n\n".join(blocks)
+    else:
+        examples_block = ""
+
+    prompt = PARAM_SCHEMA_PROMPT_TEMPLATE.format(title=title or "", description=description or "", examples_block=examples_block)
+    providers = _providers_in_rotation_order()
+    schema = _try_providers_in_order(providers, prompt, transform=_parse_and_validate_schema, log_label=f"{title} (param schema)")
+    logger.info("Generated param schema for %r: %s", title, schema)
+    return schema
+
+
+def _parse_and_validate_schema(content):
+    from . import param_types
+
+    parsed = _extract_json(content)
+    errors = param_types.validate_param_schema(parsed)
+    if errors:
+        raise TestCaseGenServiceError(f"LLM produced an invalid schema ({'; '.join(errors)}): {content[:300]!r}")
+    return parsed
+
+
 def generate_hint(*, title, description):
     """Returns a single short (one-sentence) nudge-hint — distinct from
     generate_explanation()'s full write-up. Used for lab exercises, whose

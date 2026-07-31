@@ -345,6 +345,19 @@ class Problem(models.Model):
         default="",
         help_text="Explicit function/method name to call. Leave blank to use slug-based detection.",
     )
+    param_schema = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "Optional structured parameter/return-type schema, e.g. "
+            '{"params":[{"name":"nums","type":"int[]","order":0},'
+            '{"name":"target","type":"int","order":1}],"return_type":"int[]"}. '
+            "Types are limited to int/float/double/string/boolean and their [] / [][] array forms "
+            "(see services/param_types.py). When null, execution uses the existing regex/heuristic "
+            "path unchanged — this field is strictly opt-in per problem."
+        ),
+    )
 
     def __str__(self):
         return self.title
@@ -574,6 +587,16 @@ class TestCase(models.Model):
     expected_output = models.TextField()
     is_sample = models.BooleanField(default=False)
     order = models.PositiveIntegerField(default=0)
+    input_data = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "Structured input keyed by the parent Problem.param_schema's param names, e.g. "
+            '{"nums": [2,7,11,15], "target": 9}. Only consulted when the parent Problem has a '
+            "param_schema; otherwise stdin (unchanged) is used."
+        ),
+    )
 
     class Meta:
         ordering = ("order",)

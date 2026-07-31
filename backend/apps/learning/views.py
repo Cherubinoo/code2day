@@ -90,10 +90,12 @@ from .services.executor import (
 from .services.execution_adapter import (
     normalize_comparable_output,
     prepare_execution_payload,
+    compare_typed_output,
 )
 from .services.problem_testcases import build_runtime_test_cases
 from .services.complexity_analyzer import calculate_complexity
 from .services.code_validator import validate_submission
+from .services import param_types
 
 # ReportLab imports for PDF generation
 from reportlab.lib import colors
@@ -610,12 +612,16 @@ def execute_problem_test_case_batch(
     latest_time = ""
     latest_memory = ""
 
+    schema = getattr(problem, "param_schema", None) if problem else None
+
     for case in test_cases:
+        case_input_data = getattr(case, "input_data", None)
         prepared = prepare_execution_payload(
             problem=problem,
             source_code=source_code,
             language=language,
             stdin=case.stdin,
+            input_data=case_input_data,
         )
         logger.debug(
             "Test case %d: prepared stdin=%r, adapted=%s",
@@ -632,11 +638,17 @@ def execute_problem_test_case_batch(
         )
         actual_raw = (tc_result["stdout"] or "").strip()
         expected = case.expected_output.strip()
-        passed = (
-            tc_result["status"] == "Accepted"
-            and normalize_comparable_output(actual_raw)
-            == normalize_comparable_output(expected)
-        )
+        if schema and case_input_data is not None:
+            passed = (
+                tc_result["status"] == "Accepted"
+                and compare_typed_output(actual_raw, expected, schema.get("return_type", ""))
+            )
+        else:
+            passed = (
+                tc_result["status"] == "Accepted"
+                and normalize_comparable_output(actual_raw)
+                == normalize_comparable_output(expected)
+            )
 
         latest_time = tc_result["time"] or latest_time
         latest_memory = tc_result["memory"] or latest_memory
@@ -7258,7 +7270,11 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
         if not topic_ids and topic_id:
             topic_ids = topic_id.split(',')
 
-        qs = AptitudeQuestion.objects.all().select_related('topic')
+        # Explicit stable order — an unordered queryset's row order isn't
+        # guaranteed across requests, which combined with the frontend
+        # restoring only a numeric position (not question identity) after a
+        # refresh could show a different question at the same index.
+        qs = AptitudeQuestion.objects.all().select_related('topic').order_by('id')
         
         if topic_ids:
             # Enhanced filtering: Include subtopics recursively if a parent topic is selected
@@ -9460,6 +9476,7 @@ class AdminProblemBankView(APIView):
             "execution_type": p.execution_type,
             "test_case_count": p.test_case_count,
             "explanation": p.explanation,
+            "has_param_schema": bool(p.param_schema),
         } for p in problems]
 
         return Response({"problems": data, "total": len(data)})
@@ -9485,10 +9502,14 @@ class AdminProblemTestCasesView(APIView):
             "expected_output": tc.expected_output,
             "is_sample": tc.is_sample,
             "order": tc.order,
+            "input_data": tc.input_data,
         } for tc in problem.test_cases.all().order_by("order", "id")]
 
         return Response({
-            "problem": {"id": problem.id, "title": problem.title, "slug": problem.slug, "examples": problem.examples},
+            "problem": {
+                "id": problem.id, "title": problem.title, "slug": problem.slug, "examples": problem.examples,
+                "param_schema": problem.param_schema,
+            },
             "test_cases": test_cases,
         })
 
@@ -9504,6 +9525,10 @@ class AdminProblemTestCasesView(APIView):
         if not expected_output:
             return Response({"error": "expected_output is required"}, status=400)
 
+        input_data = request.data.get("input_data")
+        if input_data is not None and not isinstance(input_data, dict):
+            return Response({"error": "input_data must be a JSON object"}, status=400)
+
         next_order = (problem.test_cases.aggregate(Max("order"))["order__max"] or 0) + 1
         tc = TestCase.objects.create(
             problem=problem,
@@ -9511,10 +9536,11 @@ class AdminProblemTestCasesView(APIView):
             expected_output=expected_output,
             is_sample=bool(request.data.get("is_sample")),
             order=next_order,
+            input_data=input_data,
         )
         return Response({
             "id": tc.id, "stdin": tc.stdin, "expected_output": tc.expected_output,
-            "is_sample": tc.is_sample, "order": tc.order,
+            "is_sample": tc.is_sample, "order": tc.order, "input_data": tc.input_data,
         }, status=201)
 
 
@@ -9530,6 +9556,57 @@ class AdminProblemTestCaseDetailView(APIView):
         if not tc:
             return Response({"error": "Not found"}, status=404)
         tc.delete()
+        return Response(status=204)
+
+
+class AdminProblemParamSchemaView(APIView):
+    """System Admin: view/set/clear a Problem's structured parameter/return-type
+    schema (Problem.param_schema). Strictly opt-in — a problem with no schema
+    keeps executing through the existing regex/heuristic path unchanged; see
+    services/param_types.py for the type vocabulary and services/execution_adapter.py
+    for how a schema changes execution once set."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        return Response({
+            "param_schema": problem.param_schema,
+            "valid_types": param_types.VALID_TYPES,
+        })
+
+    def put(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        schema = request.data.get("param_schema")
+        errors = param_types.validate_param_schema(schema)
+        if errors:
+            return Response({"error": "Invalid schema", "details": errors}, status=400)
+
+        problem.param_schema = schema
+        problem.save(update_fields=["param_schema"])
+        return Response({"param_schema": problem.param_schema})
+
+    def delete(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        problem.param_schema = None
+        problem.save(update_fields=["param_schema"])
         return Response(status=204)
 
 
@@ -9582,6 +9659,57 @@ class AdminProblemGenerateTestCasesView(APIView):
             "test_case_count": problem.test_cases.count(),
             "examples_count": len(problem.examples),
         })
+
+
+class AdminProblemGenerateSchemaAndDescriptionView(APIView):
+    """System Admin: single button that fills in whatever "necessary data"
+    a problem is missing — the typed param_schema and/or the explanation —
+    via the LLM fallback chain, WITHOUT touching test cases (that stays a
+    separate, explicit action). Both pieces are skip-if-exists: this never
+    overwrites a hand-authored schema or an already-generated explanation,
+    it only fills in what's actually missing."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        from .services.testcase_generator import generate_param_schema, generate_explanation, TestCaseGenError
+
+        result = {"schema_generated": False, "explanation_generated": False, "errors": {}}
+
+        if not problem.param_schema:
+            try:
+                schema = generate_param_schema(title=problem.title, description=problem.description, examples=problem.examples)
+                problem.param_schema = schema
+                problem.save(update_fields=["param_schema"])
+                result["schema_generated"] = True
+                result["param_schema"] = schema
+            except TestCaseGenError as exc:
+                result["errors"]["param_schema"] = str(exc)
+        else:
+            result["param_schema"] = problem.param_schema
+
+        if not problem.explanation:
+            try:
+                explanation = generate_explanation(
+                    title=problem.title, description=problem.description,
+                    examples=problem.examples, difficulty=problem.difficulty,
+                )
+                problem.explanation = explanation
+                problem.save(update_fields=["explanation"])
+                result["explanation_generated"] = True
+                result["explanation"] = explanation
+            except TestCaseGenError as exc:
+                result["errors"]["explanation"] = str(exc)
+        else:
+            result["explanation"] = problem.explanation
+
+        return Response(result)
 
 
 class AdminProblemGenerateExplanationView(APIView):

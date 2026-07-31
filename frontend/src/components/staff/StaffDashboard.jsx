@@ -6,6 +6,7 @@ import StudentAnalyticsModal from './StudentAnalyticsModal';
 import ContestDetailModal from '../common/ContestDetailModal';
 import DiscussPage from '../student/pages/DiscussPage';
 import StaffLabPanel from './StaffLabPanel';
+import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
 import { useTabNav } from '../../lib/useTabNav';
 
 const StaffDashboard = ({ institutionId }) => {
@@ -403,6 +404,7 @@ const StaffDashboard = ({ institutionId }) => {
 
           {activeTab === 'overview' && (
             <div className="overview-tab">
+              <UserSystemUpdatesWidget />
               <div className="metric-grid" style={{ marginBottom: 32 }}>
                 <div className="metric-card premium-card">
                   <div className="icon-box" style={{ background: '#eff6ff', color: '#2563eb' }}>

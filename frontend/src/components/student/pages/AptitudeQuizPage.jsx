@@ -53,9 +53,24 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
   
-  // Filters
-  const [difficulty, setDifficulty] = useState('All');
-  const [status, setStatus] = useState('all');
+  // Filters — restored from sessionStorage per-topic so a refresh doesn't
+  // silently reset to "All"/"all" and show a *different* question at the
+  // same restored index (the index alone doesn't identify which question
+  // it was; the filters that produced that ordering matter just as much).
+  const [difficulty, setDifficulty] = useState(() => (
+    sessionStorage.getItem(`code2day-aptitude-difficulty-${topicId}`) || 'All'
+  ));
+  const [status, setStatus] = useState(() => (
+    sessionStorage.getItem(`code2day-aptitude-status-${topicId}`) || 'all'
+  ));
+
+  useEffect(() => {
+    sessionStorage.setItem(`code2day-aptitude-difficulty-${topicId}`, difficulty);
+  }, [topicId, difficulty]);
+
+  useEffect(() => {
+    sessionStorage.setItem(`code2day-aptitude-status-${topicId}`, status);
+  }, [topicId, status]);
 
   useEffect(() => {
     setLoading(true);
