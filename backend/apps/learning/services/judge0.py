@@ -8,6 +8,7 @@ import json
 import logging
 import socket
 import time
+import re
 from base64 import b64encode, b64decode
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -153,6 +154,14 @@ def execute_judge0_submission(
         "stdin": encode_base64(stdin or ""),
         "base64_encoded": True,
     }
+
+    # Judge0 requires main_file_name for Java submissions to compile properly
+    if language_id == 62:
+        match = re.search(r'\bpublic\s+class\s+(\w+)', source_code)
+        if not match:
+            match = re.search(r'\bclass\s+(\w+)', source_code)
+        main_filename = f"{match.group(1)}.java" if match else "Main.java"
+        request_payload["main_file_name"] = main_filename
     
     # Build request URL with base64 encoding
     base_url = settings.JUDGE0_BASE_URL.rstrip('/')
