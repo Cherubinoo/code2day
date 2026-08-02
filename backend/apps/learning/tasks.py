@@ -54,18 +54,36 @@ def run_code_task(self, profile_id, problem_slug, source_code, language, languag
                         stdin="",  # Will be set per test case
                     )
                     
-                    # Execute first test case for now (simplified)
-                    first_test = test_cases[0] if test_cases else None
-                    if first_test:
-                        result = execute_judge0_submission(
-                            source_code=prepared["source_code"],
-                            language_id=language_id,
-                            stdin=first_test.get('stdin', ''),
+                    # Run every configured test case using the problem-specific payload
+                    test_results = []
+                    for test_case in test_cases:
+                        case_payload = prepare_execution_payload(
+                            problem=problem,
+                            source_code=source_code,
+                            language=language,
+                            stdin=getattr(test_case, 'stdin', '') or '',
                         )
-                        # Add test case results format
-                        result['passed_cases'] = 1 if result.get('status_description') == 'Accepted' else 0
-                        result['total_cases'] = len(test_cases)
-                        result['all_tests_passed'] = result['passed_cases'] == result['total_cases']
+                        case_result = execute_judge0_submission(
+                            source_code=case_payload["source_code"],
+                            language_id=language_id,
+                            stdin=case_payload["stdin"],
+                        )
+                        test_results.append(case_result)
+
+                    if test_results:
+                        result = {
+                            "status": "Accepted" if all(r.get("status") == "Accepted" for r in test_results) else "Wrong Answer",
+                            "time": max((r.get("time") or "") for r in test_results if r.get("time")),
+                            "memory": max((r.get("memory") or "") for r in test_results if r.get("memory")),
+                            "stdout": "",
+                            "stderr": "",
+                            "compile_output": "",
+                            "output": "",
+                            "passed_cases": sum(1 for r in test_results if r.get("status") == "Accepted"),
+                            "total_cases": len(test_results),
+                            "all_tests_passed": sum(1 for r in test_results if r.get("status") == "Accepted") == len(test_results),
+                            "test_results": test_results,
+                        }
                     else:
                         result = {"error": "No valid test cases found"}
                 except Exception as e:

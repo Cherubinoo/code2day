@@ -4191,7 +4191,7 @@ class ExecutorSystemInfoView(APIView):
                 return Response({
                     "status": "online",
                     "executor_info": {
-                        "engine": "piston",
+                        "engine": "judge0",
                         "runtimes": runtimes,
                     }
                 })
