@@ -689,9 +689,18 @@ def _looks_like_javascript_solution(source_code: str, candidates: list[str]) -> 
 def _build_java_wrapper(source_code: str, candidates: list[str]) -> str:
     """Build Java wrapper that converts raw args by the method signature."""
     candidate_list_java = "{" + ", ".join(json.dumps(c) for c in candidates) + "}"
-    source_code = re.sub(r'\bpublic\s+class\s+Solution\b', 'class Solution', source_code)
+    source_code = re.sub(r'\bpublic\s+class\s+([A-Za-z0-9_]+)\b', r'class \1', source_code)
     source_code = re.sub(r'^\s*package\s+[^;]+;\s*', '', source_code, flags=re.MULTILINE)
     source_code = re.sub(r'^\s*import\s+[^;]+;\s*', '', source_code, flags=re.MULTILINE)
+    
+    exclude_classes = {'Solution', 'Main', 'TreeNode', 'ListNode', 'DoublyNode', 'Node'}
+    user_classes = re.findall(r'\bclass\s+([A-Za-z0-9_]+)\b', source_code)
+    class_name = "Solution"
+    for c in user_classes:
+        if c not in exclude_classes:
+            class_name = c
+            break
+
     standard_defs = []
     if not re.search(r'\b(?:class|static\s+class)\s+TreeNode\b', source_code):
         standard_defs.append("class TreeNode { int val; TreeNode left, right; TreeNode() {} TreeNode(int v) { val = v; } }")
@@ -751,7 +760,7 @@ public class Main {
 
     static Object callSolution(List<Object> args) throws Exception {
         String[] names = __CANDIDATES__;
-        Class<?> cls = Class.forName("Solution");
+        Class<?> cls = Class.forName("__CLASS_NAME__");
         Object instance = cls.getDeclaredConstructor().newInstance();
         for (String name : names) {
             for (Method m : cls.getDeclaredMethods()) {
@@ -886,6 +895,7 @@ public class Main {
         .replace("__STANDARD_DEFS__", "\n".join(standard_defs))
         .replace("__SOURCE_CODE__", source_code)
         .replace("__CANDIDATES__", candidate_list_java)
+        .replace("__CLASS_NAME__", class_name)
     )
 
 
@@ -904,9 +914,17 @@ def _build_java_wrapper_typed(source_code: str, candidates: list[str], schema: d
         return None
 
     candidate_list_java = "{" + ", ".join(json.dumps(c) for c in candidates) + "}"
-    source_code = re.sub(r'\bpublic\s+class\s+Solution\b', 'class Solution', source_code)
+    source_code = re.sub(r'\bpublic\s+class\s+([A-Za-z0-9_]+)\b', r'class \1', source_code)
     source_code = re.sub(r'^\s*package\s+[^;]+;\s*', '', source_code, flags=re.MULTILINE)
     source_code = re.sub(r'^\s*import\s+[^;]+;\s*', '', source_code, flags=re.MULTILINE)
+    
+    exclude_classes = {'Solution', 'Main', 'TreeNode', 'ListNode', 'DoublyNode', 'Node'}
+    user_classes = re.findall(r'\bclass\s+([A-Za-z0-9_]+)\b', source_code)
+    class_name = "Solution"
+    for c in user_classes:
+        if c not in exclude_classes:
+            class_name = c
+            break
     graph_param_indices = [i for i, p in enumerate(params) if p["type"] == "GraphNode"]
     returns_graph = return_type == "GraphNode"
 
@@ -1011,7 +1029,7 @@ public class Main {
 
     static Object callSolution(Object[] preparedArgs) throws Exception {
         String[] names = __CANDIDATES__;
-        Class<?> cls = Class.forName("Solution");
+        Class<?> cls = Class.forName("__CLASS_NAME__");
         Object instance = cls.getDeclaredConstructor().newInstance();
         for (String name : names) {
             for (Method m : cls.getDeclaredMethods()) {
@@ -1076,6 +1094,7 @@ public class Main {
         .replace("__CANDIDATES__", candidate_list_java)
         .replace("__GRAPH_INDICES__", ", ".join(str(i) for i in graph_param_indices))
         .replace("__RETURNS_GRAPH__", "true" if returns_graph else "false")
+        .replace("__CLASS_NAME__", class_name)
     )
 
 
