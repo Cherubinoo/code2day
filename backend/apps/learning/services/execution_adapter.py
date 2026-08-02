@@ -3152,9 +3152,37 @@ public class Main {
         for (int __i = 0; __i < operations.size(); __i++) {
             String op = (String) operations.get(__i);
             List<Object> argsFor = (List<Object>) arguments.get(__i);
-            switch (op) {
-''' + switch_body + r'''
-                default: throw new RuntimeException("Unknown operation: " + op);
+                default:
+                    Class<?> __targetClass = (obj != null) ? obj.getClass() : Class.forName("__CLASS_NAME__");
+                    if (op.equals(class_name) || op.equals(__targetClass.getSimpleName())) {
+                        Constructor<?>[] ctors = __targetClass.getDeclaredConstructors();
+                        Constructor<?> chosenCtor = ctors[0];
+                        chosenCtor.setAccessible(true);
+                        Object[] ctorArgs = convertReflectionArgs(argsFor, chosenCtor.getParameterTypes());
+                        obj = chosenCtor.newInstance(ctorArgs);
+                        results.add(null);
+                    } else {
+                        Method __targetMethod = null;
+                        for (Method m : __targetClass.getDeclaredMethods()) {
+                            if (m.getName().equals(op)) {
+                                __targetMethod = m;
+                                break;
+                            }
+                        }
+                        if (__targetMethod != null) {
+                            __targetMethod.setAccessible(true);
+                            Object[] methodArgs = convertReflectionArgs(argsFor, __targetMethod.getParameterTypes());
+                            Object res = __targetMethod.invoke(obj, methodArgs);
+                            if (__targetMethod.getReturnType().equals(void.class)) {
+                                results.add(null);
+                            } else {
+                                results.add(res);
+                            }
+                        } else {
+                            throw new RuntimeException("Unknown operation: " + op);
+                        }
+                    }
+                    break;
             }
         }
 
@@ -3203,7 +3231,23 @@ public class Main {
     static List<Integer> toIntList(Object v) { List<Integer> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toInt(o)); return out; }
     static List<Double> toDoubleList(Object v) { List<Double> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toDouble(o)); return out; }
     static List<Boolean> toBoolList(Object v) { List<Boolean> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toBool(o)); return out; }
-    static List<String> toStringList(Object v) { List<String> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toStringValue(o)); return out; }
+    static Object[] convertReflectionArgs(List<Object> rawArgs, Class<?>[] paramTypes) {
+        Object[] res = new Object[paramTypes.length];
+        for (int i = 0; i < paramTypes.length; i++) {
+            res[i] = convertOne(i < rawArgs.size() ? rawArgs.get(i) : null, paramTypes[i]);
+        }
+        return res;
+    }
+
+    static Object convertOne(Object val, Class<?> type) {
+        if (val == null) return null;
+        if (type.equals(int.class) || type.equals(Integer.class)) return toInt(val);
+        if (type.equals(double.class) || type.equals(Double.class)) return toDouble(val);
+        if (type.equals(boolean.class) || type.equals(Boolean.class)) return toBool(val);
+        if (type.equals(String.class)) return toStringValue(val);
+        if (List.class.isAssignableFrom(type)) return asList(val);
+        return val;
+    }
 
     static String serialize(Object obj) {
         if (obj == null) return "null";
@@ -4254,8 +4298,33 @@ def prepare_execution_payload(*, problem, source_code: str, language: str, stdin
     design      — construct once, replay a sequence of operations (LRU Cache-style)
     """
     schema = getattr(problem, "param_schema", None) if problem else None
-    if schema and param_types.is_design_schema(schema) and input_data is not None:
-        return _prepare_design_execution_payload(source_code, language, input_data, schema)
+    
+    # ── Design Auto-Detection ─────────────────────────────────────────────
+    is_design_payload = False
+    effective_input_data = input_data
+
+    if effective_input_data and isinstance(effective_input_data, dict) and "operations" in effective_input_data and "arguments" in effective_input_data:
+        is_design_payload = True
+    elif not effective_input_data and stdin:
+        try:
+            parsed_stdin = json.loads(stdin)
+            if isinstance(parsed_stdin, list) and len(parsed_stdin) == 2 and isinstance(parsed_stdin[0], list) and isinstance(parsed_stdin[1], list):
+                if parsed_stdin[0] and isinstance(parsed_stdin[0][0], str) and parsed_stdin[0][0][0].isupper():
+                    is_design_payload = True
+                    effective_input_data = {"operations": parsed_stdin[0], "arguments": parsed_stdin[1]}
+        except Exception:
+            pass
+
+    if is_design_payload:
+        ops = effective_input_data.get("operations", [])
+        class_name = ops[0] if ops else "Solution"
+        if not schema or not param_types.is_design_schema(schema):
+            schema = {
+                "kind": "design",
+                "class_name": class_name,
+                "methods": {op: {"params": [], "return_type": "auto"} for op in set(ops)}
+            }
+        return _prepare_design_execution_payload(source_code, language, effective_input_data, schema)
 
     exec_type = _resolve_execution_type(problem, source_code, language)
 
