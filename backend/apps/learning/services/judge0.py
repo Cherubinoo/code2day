@@ -144,24 +144,25 @@ def execute_judge0_submission(
     if not source_code or not source_code.strip():
         raise Judge0ServiceError("Source code cannot be empty")
     
-    if not language_id or language_id < 1:
+    lang_id_int = int(language_id) if language_id else 0
+    if lang_id_int < 1:
         raise Judge0ServiceError(f"Invalid language_id: {language_id}")
     
     # Use base64 encoding to handle special characters properly
     request_payload = {
         "source_code": encode_base64(source_code),
-        "language_id": language_id,
+        "language_id": lang_id_int,
         "stdin": encode_base64(stdin or ""),
         "base64_encoded": True,
     }
 
     # Judge0 requires main_file_name for Java submissions to compile properly
-    if language_id == 62:
+    if lang_id_int == 62:
         match = re.search(r'\bpublic\s+class\s+(\w+)', source_code)
         if not match:
             match = re.search(r'\bclass\s+(\w+)', source_code)
         main_filename = f"{match.group(1)}.java" if match else "Main.java"
-        request_payload["main_file_name"] = main_filename
+        request_payload["main_file_name"] = encode_base64(main_filename)
     
     # Build request URL with base64 encoding
     base_url = settings.JUDGE0_BASE_URL.rstrip('/')
