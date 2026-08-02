@@ -1,30 +1,40 @@
 services:
-  code2day-executor:
-    image: ghcr.io/engineer-man/piston
-    container_name: code2day-executor
-    privileged: true
+  judge0-server:
+    image: judge0/judge0:latest
+    container_name: judge0-server
     restart: unless-stopped
     ports:
       - "2358:2358"
-    volumes:
-      - piston-data:/piston
+    privileged: true
     environment:
-      - PISTON_BIND_ADDRESS=0.0.0.0:2358
-      - PISTON_RUN_TIMEOUT=30000
-      - PISTON_COMPILE_TIMEOUT=15000
-      - PISTON_OUTPUT_MAX_SIZE=1048576
-      - PISTON_MAX_CONCURRENT_JOBS=40
-      - PISTON_MAX_PROCESS_COUNT=64
-      - PISTON_DISABLE_NETWORKING=true
+      - JUDGE0_HOMEPAGE=https://code2day.ramcoad.com
+      - RAILS_MAX_THREADS=40
+      - REDIS_URL=redis://code2day-redis:6379
     logging:
       driver: json-file
       options:
         max-size: "100M"
     networks:
       - code2day-shared
+    depends_on:
+      - judge0-workers
 
-volumes:
-  piston-data:
+  judge0-workers:
+    image: judge0/judge0:latest
+    container_name: judge0-workers
+    restart: unless-stopped
+    privileged: true
+    command: ["./scripts/workers"]
+    environment:
+      - JUDGE0_HOMEPAGE=https://code2day.ramcoad.com
+      - RAILS_MAX_THREADS=40
+      - REDIS_URL=redis://code2day-redis:6379
+    logging:
+      driver: json-file
+      options:
+        max-size: "100M"
+    networks:
+      - code2day-shared
 
 networks:
   code2day-shared:

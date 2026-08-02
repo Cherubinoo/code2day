@@ -82,10 +82,10 @@ from .serializers import (
     StudentLookupListSerializer,
     StudentProfileSerializer,
 )
-from .services.executor import (
-    ExecutorServiceError,
-    ExecutorTimeoutError,
-    execute_submission as execute_judge0_submission,
+from .services.judge0 import (
+    Judge0ServiceError as ExecutorServiceError,
+    Judge0TimeoutError as ExecutorTimeoutError,
+    execute_judge0_submission,
 )
 from .services.execution_adapter import (
     normalize_comparable_output,
@@ -1336,18 +1336,18 @@ class HealthCheckView(APIView):
         # Opt-in diagnostics — kept off the default fast path so this endpoint
         # stays cheap for routine uptime checks.
         if request.query_params.get("executor") == "1":
-            from .services.executor import check_executor_health
-            payload["executor"] = check_executor_health()
+            from .services.judge0 import check_judge0_health
+            payload["executor"] = check_judge0_health()
         if request.query_params.get("packages") == "1":
-            from .services.executor import list_executor_packages
-            payload["packages"] = list_executor_packages()
+            # Judge0 doesn't have a packages endpoint like Piston
+            payload["packages"] = {"note": "Not available with Judge0"}
         # Exercises the FUNCTION-style driver-injection path (prepare_execution_payload)
         # that a typical Problems-page submission goes through, to verify the
         # typed-argument C wrapper. Temporary — remove once confirmed fixed.
         if request.query_params.get("test_driver") == "c":
             import time
             from types import SimpleNamespace
-            from .services.executor import execute_submission
+            from .services.judge0 import execute_judge0_submission as execute_submission
             from .services.execution_adapter import prepare_execution_payload
             fake_problem = SimpleNamespace(execution_type="auto", slug="add-two-numbers", function_name="addTwoNumbers")
             source = "int addTwoNumbers(int a, int b) {\n    return a + b;\n}"
@@ -1370,7 +1370,7 @@ class HealthCheckView(APIView):
         if request.query_params.get("test_driver") == "java":
             import time
             from types import SimpleNamespace
-            from .services.executor import execute_submission
+            from .services.judge0 import execute_judge0_submission as execute_submission
             from .services.execution_adapter import prepare_execution_payload
             fake_problem = SimpleNamespace(execution_type="auto", slug="add-two-numbers", function_name="addTwoNumbers")
             source = "class Solution {\n    public int addTwoNumbers(int a, int b) {\n        return a + b;\n    }\n}"
@@ -4598,21 +4598,21 @@ class ExecutorSystemInfoView(APIView):
         import json
         from django.conf import settings
 
-        base_url = getattr(settings, 'EXECUTOR_BASE_URL', 'http://localhost:2358').rstrip('/')
+        base_url = getattr(settings, 'JUDGE0_BASE_URL', 'http://localhost:2358').rstrip('/')
 
         try:
             req = urllib.request.Request(
-                f"{base_url}/api/v2/runtimes",
+                f"{base_url}/system_info",
                 headers={"Accept": "application/json"},
                 method="GET"
             )
             with urllib.request.urlopen(req, timeout=10) as response:
-                runtimes = json.loads(response.read().decode('utf-8'))
+                system_info = json.loads(response.read().decode('utf-8'))
                 return Response({
                     "status": "online",
                     "executor_info": {
-                        "engine": "piston",
-                        "runtimes": runtimes,
+                        "engine": "judge0",
+                        "system_info": system_info,
                     }
                 })
         except Exception as e:

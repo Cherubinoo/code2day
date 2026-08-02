@@ -1566,13 +1566,13 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
     # 5a. Problem-wise breakdown (programming contests)
     # ------------------------------------------------------------------
     def _problem_breakdown_section(self, contest, student, problems):
-        from .services.executor import check_executor_health
+        from .services.judge0 import check_judge0_health
         story = [_section_header('PROBLEM-WISE BREAKDOWN', _SLATE)]
         if not problems:
             story.append(Paragraph("No problems were assigned to this contest.", ParagraphStyle("np", fontSize=9)))
             return story
 
-        executor_ok = check_executor_health().get('healthy', False)
+        executor_ok = check_judge0_health().get('healthy', False)
         code_s = ParagraphStyle('code', fontName='Courier', fontSize=7.5, leading=10, textColor=_hx(_DARK))
         title_s = ParagraphStyle('pt', fontName='Helvetica-Bold', fontSize=11, textColor=colors.white,
                                  backColor=_hx(_INDIGO), borderPadding=(5,8,5,8), spaceAfter=6)

@@ -22,8 +22,8 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_HOST=host.docker.internal
       - DB_PORT=5432
-      - JUDGE0_BASE_URL=http://code2day-executor:2358
-      - JUDGE0_TIMEOUT_SECONDS=30
+      - JUDGE0_BASE_URL=http://judge0-server:2358
+      - JUDGE0_TIMEOUT_SECONDS=300
       - LLM_API_KEY=${LLM_API_KEY}
       - LLM_API_BASE_URL=${LLM_API_BASE_URL:-https://integrate.api.nvidia.com/v1}
       - LLM_MODEL_NAME=${LLM_MODEL_NAME:-deepseek-ai/deepseek-v4-pro}
