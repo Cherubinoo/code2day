@@ -31,6 +31,9 @@ from .views import (
     BatchListView,
     BatchStudentsView,
     CampusRankingView,
+    ContestListCreateView,
+    ContestDetailView,
+    ContestAnalyticsView,
     ContestApprovalView,
     ContestBatchAssignView,
     ContestLockView,
@@ -228,6 +231,11 @@ urlpatterns = [
     path("student/contests/<int:pk>/lock/", ContestLockView.as_view(), name="contest-student-lock"),
     path("student/contests/<int:pk>/unlock/", ContestUnlockByPinView.as_view(), name="contest-student-unlock-pin"),
     path("student/contests/<int:pk>/snapshot/", ContestSnapshotView.as_view(), name="contest-student-snapshot"),
+
+    # Staff / HOD Contests Management & Analytics
+    path("contests/", ContestListCreateView.as_view(), name="contest-list-create"),
+    path("contests/<int:pk>/", ContestDetailView.as_view(), name="contest-detail"),
+    path("contests/<int:pk>/analytics/", ContestAnalyticsView.as_view(), name="contest-analytics"),
 
     # Code execution
     path("run/", CodeRunView.as_view(), name="code-run"),

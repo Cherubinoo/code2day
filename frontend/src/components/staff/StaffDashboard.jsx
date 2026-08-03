@@ -1536,6 +1536,13 @@ const StaffDashboard = ({ institutionId }) => {
           </div>
         )}
       </main>
+
+      {showContestDetail && (
+        <ContestDetailModal
+          contestId={showContestDetail}
+          onClose={() => setShowContestDetail(null)}
+        />
+      )}
     </div>
   );
 };

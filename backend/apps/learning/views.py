@@ -3764,18 +3764,19 @@ class ContestDetailView(APIView):
 
     def get(self, request, pk):
         """Get contest details"""
+        is_admin = request.user.is_superuser or getattr(request.user, 'username', '') in ('0001', 'staff_0001', 'admin')
         is_staff = hasattr(request.user, 'staff_profile')
-        if not is_staff:
-            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+        if not (is_admin or is_staff):
+            return Response({"detail": "Staff or Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
-        profile = request.user.staff_profile
+        profile = getattr(request.user, 'staff_profile', None)
         contest = Contest.objects.filter(id=pk).first()
         
         if not contest:
             return Response({"detail": "Contest not found."}, status=status.HTTP_404_NOT_FOUND)
 
         # Check permissions
-        if profile.role == "hod" and contest.department != profile.department:
+        if not is_admin and profile and profile.role == "hod" and profile.department and contest.department != profile.department:
             return Response({"detail": "You can only view contests in your department."}, status=status.HTTP_403_FORBIDDEN)
 
         problems_data = []
@@ -3792,7 +3793,7 @@ class ContestDetailView(APIView):
                 problems_data.append({
                     "id": q.id,
                     "question_text": q.question_text,
-                    "topic": q.topic.title,
+                    "topic": q.topic.title if q.topic else "General",
                     "difficulty": q.difficulty,
                     "option_a": q.option_a,
                     "option_b": q.option_b,
@@ -3815,7 +3816,7 @@ class ContestDetailView(APIView):
             "aptitude_question_count": contest.aptitude_question_count,
             "assigned_batches": contest.assigned_batches,
             "assigned_student_count": contest.assigned_student_count,
-            "created_by": contest.created_by.name,
+            "created_by": contest.created_by.name if contest.created_by else "Admin",
             "department": contest.department.name if contest.department else None,
             "approved_by": contest.approved_by.name if contest.approved_by else None,
             "approved_at": contest.approved_at,
@@ -3830,18 +3831,19 @@ class ContestAnalyticsView(APIView):
 
     def get(self, request, pk):
         """Get contest analytics"""
+        is_admin = request.user.is_superuser or getattr(request.user, 'username', '') in ('0001', 'staff_0001', 'admin')
         is_staff = hasattr(request.user, 'staff_profile')
-        if not is_staff:
-            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+        if not (is_admin or is_staff):
+            return Response({"detail": "Staff or Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
-        profile = request.user.staff_profile
+        profile = getattr(request.user, 'staff_profile', None)
         contest = Contest.objects.filter(id=pk).first()
         
         if not contest:
             return Response({"detail": "Contest not found."}, status=status.HTTP_404_NOT_FOUND)
 
         # Check permissions
-        if profile.role == "hod" and contest.department != profile.department:
+        if not is_admin and profile and profile.role == "hod" and profile.department and contest.department != profile.department:
             return Response({"detail": "You can only view contests in your department."}, status=status.HTTP_403_FORBIDDEN)
 
         # Get submission stats based on contest type
