@@ -7127,50 +7127,56 @@ class AdminDAUAnalyticsView(APIView):
         if not is_admin_user:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
-        institution_id = request.query_params.get("institution_id")
-        days = int(request.query_params.get("days", 14))
-        days = max(1, min(days, 60))
+        try:
+            institution_id = request.query_params.get("institution_id")
+            days = int(request.query_params.get("days", 14))
+            days = max(1, min(days, 60))
 
-        today = timezone.now().date()
-        date_list = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
+            today = timezone.now().date()
+            date_list = [today - timedelta(days=i) for i in range(days - 1, -1, -1)]
 
-        student_qs = StudentProfile.objects.all()
-        staff_qs = StaffProfile.objects.all()
+            student_qs = StudentProfile.objects.all()
+            staff_qs = StaffProfile.objects.all()
 
-        if institution_id:
-            student_qs = student_qs.filter(institution_id=institution_id)
-            staff_qs = staff_qs.filter(institution_id=institution_id)
+            if institution_id:
+                student_qs = student_qs.filter(institution_id=institution_id)
+                staff_qs = staff_qs.filter(institution_id=institution_id)
 
-        daily_data = []
+            daily_data = []
 
-        for dt in date_list:
-            dt_start = timezone.make_aware(datetime.combine(dt, time.min))
-            dt_end = timezone.make_aware(datetime.combine(dt, time.max))
+            for dt in date_list:
+                active_students = student_qs.filter(
+                    Q(last_login_on=dt) |
+                    Q(submissions__submitted_at__date=dt) |
+                    Q(contest_participations__started_at__date=dt)
+                ).distinct().count()
 
-            active_students = student_qs.filter(
-                Q(last_login_on=dt) |
-                Q(submissions__submitted_at__range=(dt_start, dt_end)) |
-                Q(contest_participations__started_at__range=(dt_start, dt_end))
-            ).distinct().count()
+                active_staff = staff_qs.filter(
+                    user__last_login__date=dt
+                ).distinct().count()
 
-            active_staff = staff_qs.filter(
-                user__last_login__range=(dt_start, dt_end)
-            ).distinct().count()
+                daily_data.append({
+                    "date": dt.strftime("%Y-%m-%d"),
+                    "display_date": dt.strftime("%b %d"),
+                    "day_name": dt.strftime("%a"),
+                    "students": active_students,
+                    "staff": active_staff,
+                    "total": active_students + active_staff
+                })
 
-            daily_data.append({
-                "date": dt.strftime("%Y-%m-%d"),
-                "display_date": dt.strftime("%b %d"),
-                "day_name": dt.strftime("%a"),
-                "students": active_students,
-                "staff": active_staff,
-                "total": active_students + active_staff
+            return Response({
+                "institution_id": institution_id,
+                "days": days,
+                "daily_active_users": daily_data
             })
-
-        return Response({
-            "institution_id": institution_id,
-            "days": days,
-            "daily_active_users": daily_data
-        })
+        except Exception as exc:
+            logging.exception("DAU Analytics failed: %s", exc)
+            return Response({
+                "detail": f"Failed to load analytics data: {str(exc)}",
+                "institution_id": institution_id if 'institution_id' in locals() else None,
+                "days": days if 'days' in locals() else 14,
+                "daily_active_users": []
+            })
 
 
 class AdminSystemUpdateView(APIView):
