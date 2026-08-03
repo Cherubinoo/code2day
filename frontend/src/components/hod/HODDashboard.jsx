@@ -373,6 +373,42 @@ const HODDashboard = ({ institutionId }) => {
     }
   }
 
+  async function handleBatchCopyPasteToggle(batchCode, allowCopyPaste) {
+    const actionLabel = allowCopyPaste ? "UNLOCK (allow)" : "BLOCK (disable)";
+    const targetLabel = batchCode === 'all' ? "ALL students across all batches" : `all students in Batch ${batchCode}`;
+    
+    askDouble(
+      async () => {
+        try {
+          const res = await fetch(`/api/batches/${encodeURIComponent(batchCode)}/toggle-copy-paste/`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            body: JSON.stringify({ allow_copy_paste: allowCopyPaste }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Failed to update batch copy-paste permissions');
+          
+          setDepartmentStudents(prev =>
+            prev.map(s => {
+              if (batchCode === 'all' || s.batch === batchCode) {
+                return { ...s, allow_copy_paste: data.allow_copy_paste };
+              }
+              return s;
+            })
+          );
+        } catch (err) {
+          alert(err.message || 'Failed to update batch copy-paste permissions');
+        }
+      },
+      `Are you sure you want to ${actionLabel} copy-paste for ${targetLabel}?`,
+      `Final confirmation: This will update copy-paste permissions for ${targetLabel}. Confirm bulk change?`
+    );
+  }
+
   async function handleStudentClick(registerNumber) {
     setSelectedStudent(registerNumber);
     setStudentDetailLoading(true);
@@ -1957,27 +1993,90 @@ const HODDashboard = ({ institutionId }) => {
                     </p>
                   </div>
                   
-                  <div style={{ position: 'relative', width: '300px' }}>
-                    <Search 
-                      size={18} 
-                      style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-soft)' }} 
-                    />
-                    <input
-                      type="text"
-                      placeholder="Search by name or ID..."
-                      value={studentSearchQuery}
-                      onChange={(e) => setStudentSearchQuery(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px 10px 40px',
-                        borderRadius: '12px',
-                        border: '1px solid var(--border-soft)',
-                        background: 'var(--bg-1)',
-                        fontSize: '14px',
-                        outline: 'none',
-                        transition: 'border-color 0.2s',
-                      }}
-                    />
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {/* Batch Filter */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--bg-1)', padding: '6px 12px', borderRadius: 12, border: '1px solid var(--border-soft)' }}>
+                      <Building2 size={16} color="var(--text-soft)" />
+                      <select
+                        value={selectedBatch || 'all'}
+                        onChange={(e) => setSelectedBatch(e.target.value === 'all' ? null : e.target.value)}
+                        style={{ background: 'transparent', border: 'none', fontWeight: 700, fontSize: '13px', color: 'var(--text-hard)', cursor: 'pointer', outline: 'none' }}
+                      >
+                        <option value="all">All Batches</option>
+                        {Array.from(new Set(departmentStudents.map(s => s.batch).filter(Boolean))).sort().map(b => (
+                          <option key={b} value={b}>Batch {b}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Overall Batch Copy-Paste Controls */}
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-1)', padding: '4px 8px', borderRadius: 12, border: '1px solid var(--border-soft)' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.04em', marginRight: 2 }}>
+                        Overall {selectedBatch ? `Batch ${selectedBatch}` : 'All Batches'}:
+                      </span>
+                      <button
+                        onClick={() => handleBatchCopyPasteToggle(selectedBatch || 'all', true)}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: 8,
+                          border: '1px solid #bbf7d0',
+                          background: '#f0fdf4',
+                          color: '#15803d',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 5
+                        }}
+                        title={`Unlock copy-paste for ${selectedBatch ? `Batch ${selectedBatch}` : 'all batches'}`}
+                      >
+                        <Unlock size={13} /> Unlock (All)
+                      </button>
+
+                      <button
+                        onClick={() => handleBatchCopyPasteToggle(selectedBatch || 'all', false)}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: 8,
+                          border: '1px solid #fca5a5',
+                          background: '#fff5f5',
+                          color: '#dc2626',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 5
+                        }}
+                        title={`Block copy-paste for ${selectedBatch ? `Batch ${selectedBatch}` : 'all batches'}`}
+                      >
+                        <Lock size={13} /> Block (All)
+                      </button>
+                    </div>
+
+                    {/* Search Input */}
+                    <div style={{ position: 'relative', width: '220px' }}>
+                      <Search 
+                        size={18} 
+                        style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-soft)' }} 
+                      />
+                      <input
+                        type="text"
+                        placeholder="Search student..."
+                        value={studentSearchQuery}
+                        onChange={(e) => setStudentSearchQuery(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '9px 12px 9px 36px',
+                          borderRadius: '12px',
+                          border: '1px solid var(--border-soft)',
+                          background: 'var(--bg-1)',
+                          fontSize: '13px',
+                          outline: 'none',
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -2002,6 +2101,7 @@ const HODDashboard = ({ institutionId }) => {
                       </thead>
                       <tbody>
                         {departmentStudents
+                          .filter(s => !selectedBatch || s.batch === selectedBatch)
                           .filter(s => 
                             s.name?.toLowerCase().includes(studentSearchQuery.toLowerCase()) || 
                             s.register_number?.includes(studentSearchQuery)

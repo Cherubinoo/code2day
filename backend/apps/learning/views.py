@@ -5141,6 +5141,44 @@ class StudentCopyPasteToggleView(APIView):
         })
 
 
+
+class BatchCopyPasteToggleView(APIView):
+    """Bulk toggle allow_copy_paste permission for ALL students in a batch or all batches."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, batch_code):
+        if not (request.user.is_superuser or request.user.is_staff or getattr(request.user, 'role', '') in ('admin', 'hod', 'tpu', 'director', 'ja') or hasattr(request.user, 'staff_profile')):
+            return Response({"detail": "Staff or HOD access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        staff_profile = getattr(request.user, 'staff_profile', None)
+        
+        student_qs = StudentProfile.objects.all()
+        if batch_code != "all":
+            student_qs = student_qs.filter(batch=batch_code)
+        
+        if staff_profile:
+            student_qs = student_qs.filter(institution_id=staff_profile.institution_id)
+            if staff_profile.role not in ['admin', 'ja', 'tpu', 'director']:
+                student_qs = student_qs.filter(department_id=staff_profile.department_id)
+
+        if 'allow_copy_paste' in request.data:
+            new_status = bool(request.data['allow_copy_paste'])
+        else:
+            sample_student = student_qs.first()
+            new_status = not sample_student.allow_copy_paste if sample_student else True
+
+        updated_count = student_qs.update(allow_copy_paste=new_status)
+
+        action_word = "unlocked" if new_status else "blocked"
+        batch_label = f"Batch {batch_code}" if batch_code != "all" else "all batches"
+        return Response({
+            "detail": f"Copy-paste successfully {action_word} for all {updated_count} students in {batch_label}.",
+            "batch": batch_code,
+            "allow_copy_paste": new_status,
+            "updated_count": updated_count,
+        })
+
+
 # =============================================================================
 # Batch Management & Student Assignment Views
 # =============================================================================
