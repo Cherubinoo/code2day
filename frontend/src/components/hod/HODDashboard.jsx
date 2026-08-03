@@ -409,6 +409,42 @@ const HODDashboard = ({ institutionId }) => {
     );
   }
 
+  async function handleBatchBlockToggle(batchCode, isActive) {
+    const actionLabel = isActive ? "UNBLOCK / ACTIVATE" : "BLOCK (disable)";
+    const targetLabel = batchCode === 'all' ? "ALL students across all batches" : `all students in Batch ${batchCode}`;
+    
+    askDouble(
+      async () => {
+        try {
+          const res = await fetch(`/api/batches/${encodeURIComponent(batchCode)}/toggle-block/`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken(),
+            },
+            body: JSON.stringify({ is_active: isActive }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || 'Failed to update batch student status');
+          
+          setDepartmentStudents(prev =>
+            prev.map(s => {
+              if (batchCode === 'all' || s.batch === batchCode) {
+                return { ...s, is_active: data.is_active };
+              }
+              return s;
+            })
+          );
+        } catch (err) {
+          alert(err.message || 'Failed to update batch student status');
+        }
+      },
+      `Are you sure you want to ${actionLabel} account access for ${targetLabel}?`,
+      `Final confirmation: This will change login access for ${targetLabel}. Confirm bulk change?`
+    );
+  }
+
   async function handleStudentClick(registerNumber) {
     setSelectedStudent(registerNumber);
     setStudentDetailLoading(true);
@@ -2010,48 +2046,94 @@ const HODDashboard = ({ institutionId }) => {
                     </div>
 
                     {/* Overall Batch Copy-Paste Controls */}
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--bg-1)', padding: '4px 8px', borderRadius: 12, border: '1px solid var(--border-soft)' }}>
-                      <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.04em', marginRight: 2 }}>
-                        Overall {selectedBatch ? `Batch ${selectedBatch}` : 'All Batches'}:
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: 'var(--bg-1)', padding: '4px 8px', borderRadius: 12, border: '1px solid var(--border-soft)' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.04em', marginRight: 2 }}>
+                        Copy-Paste:
                       </span>
                       <button
                         onClick={() => handleBatchCopyPasteToggle(selectedBatch || 'all', true)}
                         style={{
-                          padding: '6px 14px',
+                          padding: '5px 10px',
                           borderRadius: 8,
                           border: '1px solid #bbf7d0',
                           background: '#f0fdf4',
                           color: '#15803d',
-                          fontSize: '12px',
+                          fontSize: '11px',
                           fontWeight: 700,
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
-                          gap: 5
+                          gap: 4
                         }}
                         title={`Unlock copy-paste for ${selectedBatch ? `Batch ${selectedBatch}` : 'all batches'}`}
                       >
-                        <Unlock size={13} /> Unlock (All)
+                        <Unlock size={12} /> Unlock All
                       </button>
 
                       <button
                         onClick={() => handleBatchCopyPasteToggle(selectedBatch || 'all', false)}
                         style={{
-                          padding: '6px 14px',
+                          padding: '5px 10px',
                           borderRadius: 8,
                           border: '1px solid #fca5a5',
                           background: '#fff5f5',
                           color: '#dc2626',
-                          fontSize: '12px',
+                          fontSize: '11px',
                           fontWeight: 700,
                           cursor: 'pointer',
                           display: 'flex',
                           alignItems: 'center',
-                          gap: 5
+                          gap: 4
                         }}
                         title={`Block copy-paste for ${selectedBatch ? `Batch ${selectedBatch}` : 'all batches'}`}
                       >
-                        <Lock size={13} /> Block (All)
+                        <Lock size={12} /> Block All
+                      </button>
+                    </div>
+
+                    {/* Overall Account Status Controls */}
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: 'var(--bg-1)', padding: '4px 8px', borderRadius: 12, border: '1px solid var(--border-soft)' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.04em', marginRight: 2 }}>
+                        Account Login:
+                      </span>
+                      <button
+                        onClick={() => handleBatchBlockToggle(selectedBatch || 'all', true)}
+                        style={{
+                          padding: '5px 10px',
+                          borderRadius: 8,
+                          border: '1px solid #93c5fd',
+                          background: '#eff6ff',
+                          color: '#1d4ed8',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                        title={`Unblock/Activate login for ${selectedBatch ? `Batch ${selectedBatch}` : 'all batches'}`}
+                      >
+                        <Shield size={12} /> Activate All
+                      </button>
+
+                      <button
+                        onClick={() => handleBatchBlockToggle(selectedBatch || 'all', false)}
+                        style={{
+                          padding: '5px 10px',
+                          borderRadius: 8,
+                          border: '1px solid #fca5a5',
+                          background: '#fef2f2',
+                          color: '#991b1b',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4
+                        }}
+                        title={`Block login for ${selectedBatch ? `Batch ${selectedBatch}` : 'all batches'}`}
+                      >
+                        <ShieldOff size={12} /> Block All
                       </button>
                     </div>
 

@@ -75,6 +75,7 @@ from .views import (
     StudentBlockToggleView,
     StudentCopyPasteToggleView,
     BatchCopyPasteToggleView,
+    BatchBlockToggleView,
     StudentIndividualAnalyticsView,
     StudentSelfAnalyticsView,
     UpdateTrackedCompaniesView,
@@ -293,6 +294,7 @@ urlpatterns = [
     path("students/<str:register_number>/toggle-block/", StudentBlockToggleView.as_view(), name="student-toggle-block"),
     path("students/<str:register_number>/toggle-copy-paste/", StudentCopyPasteToggleView.as_view(), name="student-toggle-copy-paste"),
     path("batches/<str:batch_code>/toggle-copy-paste/", BatchCopyPasteToggleView.as_view(), name="batch-toggle-copy-paste"),
+    path("batches/<str:batch_code>/toggle-block/", BatchBlockToggleView.as_view(), name="batch-toggle-block"),
     path("students/<str:register_number>/analytics/", StudentIndividualAnalyticsView.as_view(), name="student-analytics"),
     path("student/analytics/", StudentSelfAnalyticsView.as_view(), name="student-self-analytics"),
 
