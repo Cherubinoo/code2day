@@ -7,6 +7,7 @@ import {
   ChevronDown, Calculator, Brain, MessageSquare, Sparkles, X,
 } from 'lucide-react';
 import { getCsrfToken } from '../../lib/appUtils';
+import FormattedText from '../common/FormattedText';
 
 function apiFetch(url, method, body) {
   const token = getCsrfToken();
@@ -685,7 +686,7 @@ function TopicQuestionsManager({ topic, onBack }) {
                         </td>
                         <td style={{ padding: '12px 16px', maxWidth: 420 }}>
                           <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                            {q.question_text}
+                            <FormattedText text={q.question_text} />
                           </div>
                         </td>
                         <td style={{ padding: '12px 16px', textAlign: 'center' }}>

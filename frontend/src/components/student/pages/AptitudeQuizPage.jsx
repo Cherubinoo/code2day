@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, Info, Brain, Clock, Award } from 'lucide-react';
 import { getCsrfToken, extractApiError } from '../../../lib/appUtils';
+import FormattedText from '../../common/FormattedText';
 
 const AptitudeQuizPage = ({ topicId, onBack }) => {
   const [questions, setQuestions] = useState([]);
@@ -391,7 +392,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
             </div>
 
             <h3 style={{ fontSize: '1.4rem', lineHeight: '1.5', fontWeight: '600', color: 'var(--text-main)', marginBottom: '32px' }}>
-              {currentQ.question_text}
+              <FormattedText text={currentQ.question_text} />
             </h3>
 
             <div style={{ display: 'grid', gap: '12px' }}>
@@ -445,7 +446,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
                     <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', fontWeight: '800', border: '1px solid var(--border-soft)' }}>
                       {opt.key}
                     </div>
-                    {opt.value}
+                    <FormattedText text={opt.value} />
                     <div style={{ marginLeft: 'auto' }}>
                       {revealed && opt.key === result.correct_option && <CheckCircle size={20} color="#22c55e" />}
                       {isSubmitted && selectedOption === opt.key && opt.key !== result.correct_option && <XCircle size={20} color="#ef4444" />}
@@ -500,7 +501,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
                   <div style={{ paddingLeft: '42px' }}>
                     <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Explanation:</h4>
                     <p style={{ color: 'var(--text-main)', margin: 0, fontSize: '1rem', lineHeight: '1.6', fontWeight: '500' }}>
-                      {result.explanation && result.explanation !== 'nan' ? result.explanation : "Analyze the question logic carefully. Review the core concepts for this topic if you're stuck!"}
+                      {result.explanation && result.explanation !== 'nan' ? <FormattedText text={result.explanation} /> : "Analyze the question logic carefully. Review the core concepts for this topic if you're stuck!"}
                     </p>
                   </div>
                 )}
