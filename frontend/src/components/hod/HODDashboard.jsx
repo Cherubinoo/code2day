@@ -445,6 +445,44 @@ const HODDashboard = ({ institutionId }) => {
     );
   }
 
+  const [downloadingReport, setDownloadingReport] = useState(false);
+
+  async function handleDownloadBatchReport(batchCode) {
+    if (!batchCode || batchCode === 'all') {
+      const availableBatches = Array.from(new Set(departmentStudents.map(s => s.batch).filter(Boolean)));
+      if (availableBatches.length > 0) {
+        batchCode = availableBatches[0];
+      } else {
+        alert("No specific batch available to download.");
+        return;
+      }
+    }
+
+    setDownloadingReport(true);
+    try {
+      const res = await fetch(`/api/batches/${encodeURIComponent(batchCode)}/report/`, {
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || err.detail || 'Failed to generate batch report');
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Batch_${batchCode}_Performance_Report.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err.message || 'Error downloading batch report PDF');
+    } finally {
+      setDownloadingReport(false);
+    }
+  }
+
   async function handleStudentClick(registerNumber) {
     setSelectedStudent(registerNumber);
     setStudentDetailLoading(true);
@@ -2134,11 +2172,32 @@ const HODDashboard = ({ institutionId }) => {
                         title={`Block login for ${selectedBatch ? `Batch ${selectedBatch}` : 'all batches'}`}
                       >
                         <ShieldOff size={12} /> Block All
-                      </button>
                     </div>
 
+                    {/* Batch Report Download Button */}
+                    <button
+                      onClick={() => handleDownloadBatchReport(selectedBatch || 'all')}
+                      disabled={downloadingReport}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: 12,
+                        border: '1px solid #059669',
+                        background: '#ecfdf5',
+                        color: '#047857',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: downloadingReport ? 'wait' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6
+                      }}
+                      title={`Download PDF report for ${selectedBatch ? `Batch ${selectedBatch}` : 'department batch'}`}
+                    >
+                      <Download size={14} /> {downloadingReport ? 'Downloading...' : 'Batch Report (PDF)'}
+                    </button>
+
                     {/* Search Input */}
-                    <div style={{ position: 'relative', width: '220px' }}>
+                    <div style={{ position: 'relative', width: '200px' }}>
                       <Search 
                         size={18} 
                         style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-soft)' }} 

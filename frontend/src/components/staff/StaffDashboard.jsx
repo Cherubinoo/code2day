@@ -1740,6 +1740,36 @@ function StaffAdvisorTab() {
     ? currentBatch.students.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.register_number.includes(search))
     : currentBatch?.students || [];
 
+  const [downloadingReport, setDownloadingReport] = useState(false);
+
+  async function handleDownloadBatchReport(batchCode, section = '') {
+    setDownloadingReport(true);
+    try {
+      const query = new URLSearchParams();
+      if (section) query.append('section', section);
+      const res = await fetch(`/api/batches/${encodeURIComponent(batchCode)}/report/?${query.toString()}`, {
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || err.detail || 'Failed to generate batch report');
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Batch_${batchCode}${section ? `_Sec_${section}` : ''}_Report.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err.message || 'Error downloading batch report PDF');
+    } finally {
+      setDownloadingReport(false);
+    }
+  }
+
   return (
     <div>
       {/* Batch/Section selector tabs */}
@@ -1792,7 +1822,29 @@ function StaffAdvisorTab() {
               <span style={{ fontWeight: 800, fontSize: 15, color: '#111827' }}>
                 Batch {currentBatch.batch}{currentBatch.section ? ` · Section ${currentBatch.section}` : ''} — {currentBatch.department}
               </span>
-              <span style={{ background: '#dbeafe', color: '#1e40af', padding: '3px 12px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{filteredStudents.length} students</span>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                <button
+                  onClick={() => handleDownloadBatchReport(currentBatch.batch, currentBatch.section)}
+                  disabled={downloadingReport}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: 10,
+                    border: '1px solid #059669',
+                    background: '#ecfdf5',
+                    color: '#047857',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: downloadingReport ? 'wait' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}
+                  title="Download PDF performance report for this batch/section"
+                >
+                  <Download size={14} /> {downloadingReport ? 'Downloading...' : 'Batch Report (PDF)'}
+                </button>
+                <span style={{ background: '#dbeafe', color: '#1e40af', padding: '3px 12px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{filteredStudents.length} students</span>
+              </div>
             </div>
             {filteredStudents.length === 0 ? (
               <div style={{ padding: 30, textAlign: 'center', color: '#9ca3af' }}>No students found.</div>
