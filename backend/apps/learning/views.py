@@ -10409,10 +10409,28 @@ class AdminAptitudeBulkUploadView(APIView):
             option_b = col(row, "option_b")
             option_c = col(row, "option_c")
             option_d = col(row, "option_d")
-            raw_answer = col(row, "correct_option", "answer", "correct_answer")
-            difficulty = col(row, "difficulty", "level") or "Easy"
-            if difficulty not in ("Easy", "Medium", "Hard"):
-                difficulty = "Easy"
+            raw_difficulty = col(row, "difficulty", "level", "difficulty_level", "diff", "complexity", "tier")
+            
+            # Robust difficulty parsing for Easy, Medium, Hard
+            def _clean_difficulty(raw_val):
+                if not raw_val:
+                    return "Easy"
+                val = str(raw_val).strip().strip('*_').strip().lower()
+                if val in ("easy", "e", "1", "basic", "simple", "beginner"):
+                    return "Easy"
+                if val in ("medium", "med", "m", "2", "moderate", "intermediate", "normal", "average"):
+                    return "Medium"
+                if val in ("hard", "h", "3", "difficult", "advanced", "complex"):
+                    return "Hard"
+                if "hard" in val or "diff" in val or "adv" in val:
+                    return "Hard"
+                if "med" in val or "mod" in val or "inter" in val:
+                    return "Medium"
+                if "easy" in val or "bas" in val or "simp" in val:
+                    return "Easy"
+                return "Easy"
+
+            difficulty = _clean_difficulty(raw_difficulty)
             explanation = col(row, "explanation")
 
             if not question_text or not all([option_a, option_b, option_c, option_d]):
@@ -10427,7 +10445,7 @@ class AdminAptitudeBulkUploadView(APIView):
                 )
                 continue
 
-            _, created = AptitudeQuestion.objects.get_or_create(
+            q, created = AptitudeQuestion.objects.get_or_create(
                 topic=topic, question_text=question_text,
                 defaults={
                     "option_a": option_a, "option_b": option_b, "option_c": option_c, "option_d": option_d,
@@ -10437,7 +10455,16 @@ class AdminAptitudeBulkUploadView(APIView):
             if created:
                 created_count += 1
             else:
-                skipped_count += 1
+                q.option_a = option_a
+                q.option_b = option_b
+                q.option_c = option_c
+                q.option_d = option_d
+                q.correct_option = correct_option
+                q.difficulty = difficulty
+                if explanation:
+                    q.explanation = explanation
+                q.save(update_fields=['option_a', 'option_b', 'option_c', 'option_d', 'correct_option', 'difficulty', 'explanation'])
+                created_count += 1
 
         return Response({
             "created_count": created_count,
