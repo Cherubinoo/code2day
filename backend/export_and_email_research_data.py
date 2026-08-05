@@ -433,11 +433,28 @@ def send_export_email(zip_path, summary_list):
     print(f"SUCCESS: Email sent successfully to {recipient_email} with attached ZIP!")
 
 
+def cleanup_exports(zip_path, export_subfolder):
+    """Clean up and remove generated export files and directories to keep disk space 100% clean."""
+    import shutil
+    print("\nCleaning up local generated export files...")
+    if os.path.exists(export_subfolder):
+        shutil.rmtree(export_subfolder, ignore_errors=True)
+        print(f"  [✓] Removed subfolder: {export_subfolder}")
+    if os.path.exists(zip_path):
+        try:
+            os.remove(zip_path)
+            print(f"  [✓] Removed zip file: {zip_path}")
+        except Exception:
+            pass
+    print("Cleanup completed successfully.")
+
+
 if __name__ == "__main__":
     try:
         print("=== Code2Day 13-Category Behavioral Research Exporter & Emailer ===")
         zip_path, export_subfolder, summary_list = export_all_database_tables()
         send_export_email(zip_path, summary_list)
+        cleanup_exports(zip_path, export_subfolder)
         print("\nAll 13-category behavioral research export tasks finished cleanly!")
     except Exception as e:
         print(f"\nERROR during export: {e}")
