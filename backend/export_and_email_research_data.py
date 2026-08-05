@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
 """
 Code2Day Comprehensive 13-Category Behavioral Research Exporter & Emailer
-Extracts full 13-category student behavioral analytics plus raw database dumps
-into individual Excel files, archives into a ZIP file, and emails delightcherubino@gmail.com.
+Extracts full 13-category student behavioral analytics plus raw database dumps.
+Supports native CSV fallback if pandas/openpyxl are not installed on the server environment.
 """
 
 import os
 import sys
 import zipfile
+import csv
 from datetime import datetime, date
-import pandas as pd
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
+
+# Try importing pandas/openpyxl, fallback to native CSV if unavailable
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
 
 # Setup Django Environment
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -31,29 +38,50 @@ from apps.learning.models import (
 )
 
 
-def clean_dataframe_for_excel(df):
-    """Clean DataFrame types so openpyxl doesn't fail on timezone-aware datetimes or complex objects."""
-    if df.empty:
-        return df
+def save_rows_to_file(rows, filepath, sheet_name="Data"):
+    """Saves a list of dictionaries to an Excel (.xlsx) file if pandas is present, else CSV (.csv)."""
+    if not rows:
+        headers = ["No Data Available"]
+        rows = [{"No Data Available": "None"}]
+    else:
+        headers = list(rows[0].keys())
 
-    for col in df.columns:
-        sample_val = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
-        if isinstance(sample_val, (datetime, date, dict, list, tuple)):
-            df[col] = df[col].apply(lambda x: str(x) if x is not None else '')
-        elif pd.api.types.is_datetime64_any_dtype(df[col]):
-            df[col] = df[col].astype(str)
+    if HAS_PANDAS:
+        df = pd.DataFrame(rows)
+        # Clean datetime / object types for Excel
+        for col in df.columns:
+            sample_val = df[col].dropna().iloc[0] if not df[col].dropna().empty else None
+            if isinstance(sample_val, (datetime, date, dict, list, tuple)):
+                df[col] = df[col].apply(lambda x: str(x) if x is not None else '')
+            elif pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = df[col].astype(str)
+        df.to_excel(filepath, sheet_name=sheet_name[:31], index=False)
+    else:
+        # Fallback to standard library CSV writer
+        csv_filepath = filepath.replace('.xlsx', '.csv') if filepath.endswith('.xlsx') else filepath
+        with open(csv_filepath, mode='w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=headers)
+            writer.writeheader()
+            for r in rows:
+                cleaned_row = {}
+                for k, v in r.items():
+                    if isinstance(v, (datetime, date, dict, list, tuple)):
+                        cleaned_row[k] = str(v)
+                    else:
+                        cleaned_row[k] = v
+                writer.writerow(cleaned_row)
+        filepath = csv_filepath
 
-    return df
+    return filepath
 
 
-def generate_13_category_behavioral_dataframe():
-    """Generates a complete 13-category research analytics matrix for every student in the database."""
+def generate_13_category_behavioral_rows():
+    """Generates a list of dictionaries containing 13-category research analytics for every student."""
     print("Calculating 13-Category Behavioral Research Matrix across all students...")
     students = StudentProfile.objects.all().select_related('department', 'institution', 'account', 'mentor')
     now = datetime.now()
     total_contests_held = Contest.objects.count()
 
-    # Pre-fetch aggregations for high-speed calculation
     subs_by_student = {}
     subs_qs = Submission.objects.values('student_id', 'status', 'language', 'submitted_at')
     for sub in subs_qs:
@@ -260,11 +288,11 @@ def generate_13_category_behavioral_dataframe():
             "Integrity Risk Assessment": integrity_risk,
         })
 
-    return pd.DataFrame(rows)
+    return rows
 
 
 def export_all_database_tables():
-    """Scrape and export all database tables and 13-category behavioral matrix into individual Excel files inside research_exports/."""
+    """Scrape and export all database tables and 13-category behavioral matrix into individual files inside research_exports/."""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     base_export_dir = os.path.join(CURRENT_DIR, "research_exports")
     os.makedirs(base_export_dir, exist_ok=True)
@@ -273,16 +301,15 @@ def export_all_database_tables():
     export_subfolder = os.path.join(base_export_dir, folder_name)
     os.makedirs(export_subfolder, exist_ok=True)
 
-    print(f"Exporting dataset files into folder: {export_subfolder}")
-    created_excel_files = []
+    ext = ".xlsx" if HAS_PANDAS else ".csv"
+    print(f"Exporting dataset files ({ext}) into folder: {export_subfolder}")
+    created_files = []
 
     # 1. Export 13-Category Behavioral Analytics Matrix
-    df_13cat = generate_13_category_behavioral_dataframe()
-    cat13_filename = "00_Research_13_Category_Behavioral_Analytics.xlsx"
-    cat13_path = os.path.join(export_subfolder, cat13_filename)
-    df_13cat.to_excel(cat13_path, sheet_name="Behavioral_Analytics", index=False)
-    created_excel_files.append(cat13_path)
-    print(f"  [+] 13-Category Behavioral Analytics file created ({len(df_13cat)} rows)")
+    all_cat_rows = generate_13_category_behavioral_rows()
+    cat13_path = save_rows_to_file(all_cat_rows, os.path.join(export_subfolder, f"00_Research_13_Category_Behavioral_Analytics{ext}"), "Behavioral_Analytics")
+    created_files.append(cat13_path)
+    print(f"  [+] 13-Category Behavioral Analytics file created ({len(all_cat_rows)} rows)")
 
     # 2. Export Individual 13-Category Breakdowns
     cat_columns_map = {
@@ -302,15 +329,13 @@ def export_all_database_tables():
     }
 
     for cat_name, cols in cat_columns_map.items():
-        sub_df = df_13cat[cols]
-        sub_path = os.path.join(export_subfolder, f"{cat_name}.xlsx")
-        sub_df.to_excel(sub_path, sheet_name=cat_name[:31], index=False)
-        created_excel_files.append(sub_path)
+        sub_rows = [{k: r[k] for k in cols if k in r} for r in all_cat_rows]
+        sub_path = save_rows_to_file(sub_rows, os.path.join(export_subfolder, f"{cat_name}{ext}"), cat_name)
+        created_files.append(sub_path)
 
-    # 3. Export Raw Model Tables as Individual Excel Files
+    # 3. Export Raw Model Tables
     all_models = apps.get_models()
     summary_list = []
-    used_sheet_names = set()
 
     for model in all_models:
         app_label = model._meta.app_label
@@ -320,35 +345,21 @@ def export_all_database_tables():
             continue
 
         try:
-            qs = model.objects.all().values()
-            df = pd.DataFrame(list(qs))
-            count = len(df)
-            summary_list.append({"App": app_label, "Model": model_name, "Record Count": count, "File Name": f"{model_name}.xlsx"})
+            qs_rows = list(model.objects.all().values())
+            count = len(qs_rows)
+            summary_list.append({"App": app_label, "Model": model_name, "Record Count": count, "File Name": f"Table_{model_name}{ext}"})
 
-            df = clean_dataframe_for_excel(df)
-            indiv_path = os.path.join(export_subfolder, f"Table_{model_name}.xlsx")
-            df.to_excel(indiv_path, sheet_name=model_name[:31], index=False)
-            created_excel_files.append(indiv_path)
-            print(f"  [+] Table file created: 'Table_{model_name}.xlsx' ({count} rows)")
+            indiv_path = save_rows_to_file(qs_rows, os.path.join(export_subfolder, f"Table_{model_name}{ext}"), model_name)
+            created_files.append(indiv_path)
+            print(f"  [+] Table file created: 'Table_{model_name}{ext}' ({count} rows)")
         except Exception as e:
             print(f"  [-] Error exporting model {model_name}: {e}")
 
     # 4. Summary File
-    summary_df = pd.DataFrame(summary_list)
-    summary_path = os.path.join(export_subfolder, "00_DB_TABLES_SUMMARY.xlsx")
-    summary_df.to_excel(summary_path, index=False)
-    created_excel_files.append(summary_path)
+    summary_path = save_rows_to_file(summary_list, os.path.join(export_subfolder, f"00_DB_TABLES_SUMMARY{ext}"), "Summary")
+    created_files.append(summary_path)
 
-    # 5. Master Combined Workbook
-    master_excel_path = os.path.join(export_subfolder, "00_ALL_RESEARCH_DATA_COMBINED.xlsx")
-    with pd.ExcelWriter(master_excel_path, engine='openpyxl') as writer:
-        df_13cat.to_excel(writer, sheet_name='13_Cat_Analytics', index=False)
-        for cat_name, cols in cat_columns_map.items():
-            df_13cat[cols].to_excel(writer, sheet_name=cat_name[:31], index=False)
-        summary_df.to_excel(writer, sheet_name='DB_Summary', index=False)
-    created_excel_files.append(master_excel_path)
-
-    print(f"\nAll {len(created_excel_files)} individual research & table Excel files created in subfolder: {export_subfolder}")
+    print(f"\nAll {len(created_files)} individual research & table files created in subfolder: {export_subfolder}")
 
     # Compress into ZIP archive
     zip_filename = f"Code2Day_Research_Dataset_{timestamp}.zip"
@@ -356,7 +367,7 @@ def export_all_database_tables():
 
     print(f"Compressing research dataset into ZIP archive: {zip_path}...")
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-        for file in created_excel_files:
+        for file in created_files:
             rel_name = os.path.join(folder_name, os.path.basename(file))
             zipf.write(file, rel_name)
 
@@ -391,27 +402,10 @@ def send_export_email(zip_path, summary_list):
         <p>Dear Researcher / Administrator,</p>
         <p>The complete <strong>13-Category Student Behavioral Research Analytics</strong> and raw database dump has been generated.</p>
         
-        <h3>Included Research Categories (13 Sheets/Files):</h3>
-        <ol>
-          <li><strong>Student Profile</strong>: Anonymous ID, Department, Batch, Days Registered, Rating/XP, Activity Level</li>
-          <li><strong>Login & Usage Behaviour</strong>: Logins, Frequency, Logins/Week, Active Days, Time of Day Most Active, Idle Days</li>
-          <li><strong>Coding Behaviour</strong>: Submissions, AC/WA/CE/RE/TLE counts, Attempts per AC, Accuracy %</li>
-          <li><strong>Learning Behaviour</strong>: Problems Solved, Streaks, Consistency Ratings</li>
-          <li><strong>Contest Behaviour</strong>: Participations, Attendance %, Avg Rank, Solved in Contests</li>
-          <li><strong>Assessment Behaviour</strong>: Aptitude Scores, Accuracy %, Attempt Counts</li>
-          <li><strong>Problem Selection Behaviour</strong>: Preferred Languages, Language Switching Counts</li>
-          <li><strong>AI Recommendation Behaviour</strong>: Shown, Accepted, Completion Timing</li>
-          <li><strong>Time Behaviour</strong>: Morning / Afternoon / Night Submission Distributions</li>
-          <li><strong>Programming Language Behaviour</strong>: Primary Language Preferences</li>
-          <li><strong>Performance Growth</strong>: Weekly/Monthly Solved & XP Growth</li>
-          <li><strong>Engagement Behaviour</strong>: Achievements, Daily Challenges, Composite Engagement Score (0-100)</li>
-          <li><strong>Anti-Cheating Integrity Behaviour</strong>: Tab Switches, Fullscreen Exits, Copy Attempts, Integrity Risk Scores</li>
-        </ol>
-        
         <p><strong>Export Folder:</strong> <code>backend/research_exports/</code><br/>
         <strong>Archive File:</strong> <code>{os.path.basename(zip_path)}</code> ({file_size_mb:.2f} MB)</p>
         
-        <p>The attached ZIP archive contains individual <code>.xlsx</code> files for every category and table.</p>
+        <p>The attached ZIP archive contains individual files for every category and table.</p>
         <br/>
         <p style="font-size: 12px; color: #888;">Code2Day Behavioral Research Exporter Engine</p>
       </body>
