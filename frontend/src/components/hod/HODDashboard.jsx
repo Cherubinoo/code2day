@@ -21,6 +21,7 @@ import { PerformanceDashboard } from '../common/PerformanceCharts';
 import { FlaskConical } from 'lucide-react';
 import { useTabNav } from '../../lib/useTabNav';
 import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
+import HourlyBatchReportModal from '../common/HourlyBatchReportModal';
 
 
 
@@ -63,6 +64,7 @@ const HODDashboard = ({ institutionId }) => {
   const [contestLoading, setContestLoading] = useState(false);
   const [selectedBatch, setSelectedBatch] = useState(null);
   const [selectedSection, setSelectedSection] = useState('');
+  const [isHourlyReportModalOpen, setIsHourlyReportModalOpen] = useState(false);
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [studentDetail, setStudentDetail] = useState(null);
@@ -2175,7 +2177,7 @@ const HODDashboard = ({ institutionId }) => {
                       </button>
                     </div>
 
-                    {/* Batch Report Download Button */}
+                    {/* Batch Report Download Buttons */}
                     <button
                       onClick={() => handleDownloadBatchReport(selectedBatch || 'all')}
                       disabled={downloadingReport}
@@ -2192,9 +2194,29 @@ const HODDashboard = ({ institutionId }) => {
                         alignItems: 'center',
                         gap: 6
                       }}
-                      title={`Download PDF report for ${selectedBatch ? `Batch ${selectedBatch}` : 'department batch'}`}
+                      title={`Download overall PDF report for ${selectedBatch ? `Batch ${selectedBatch}` : 'department batch'}`}
                     >
                       <Download size={14} /> {downloadingReport ? 'Downloading...' : 'Batch Report (PDF)'}
+                    </button>
+
+                    <button
+                      onClick={() => setIsHourlyReportModalOpen(true)}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: 12,
+                        border: '1px solid #0284c7',
+                        background: '#f0f9ff',
+                        color: '#0369a1',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6
+                      }}
+                      title="Select batch, section, date, and hour to generate session report PDF"
+                    >
+                      <Clock size={14} /> Hourly Report (PDF)
                     </button>
 
                     {/* Search Input */}
@@ -3074,6 +3096,12 @@ const HODDashboard = ({ institutionId }) => {
           onCancel={() => setConfirmState(prev => ({ ...prev, show: false }))}
         />
       )}
+
+      <HourlyBatchReportModal
+        isOpen={isHourlyReportModalOpen}
+        onClose={() => setIsHourlyReportModalOpen(false)}
+        availableBatches={Array.from(new Set((departmentStudents || []).map(s => s.batch).filter(Boolean))).sort()}
+      />
     </div>
   );
 };

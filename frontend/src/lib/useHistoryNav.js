@@ -70,6 +70,9 @@ export function appUrlForPage(page) {
       return new URL(`${path}?page=${savedPage}`, window.location.origin).href;
     }
   }
+  if (normalizePath(window.location.pathname) === path && window.location.search) {
+    return new URL(`${path}${window.location.search}`, window.location.origin).href;
+  }
   return new URL(path, window.location.origin).href;
 }
 
@@ -134,9 +137,10 @@ export function useHistoryNav(getInitialPage) {
   // even if the user landed via a bookmark or deep link.
   useEffect(() => {
     const page = pageFromCurrentPath();
-    const url = appUrlForPage(page);
-    // replaceState so we don't push an extra entry on the very first load
-    window.history.replaceState({ page }, "", url);
+    const search = window.location.search;
+    const path = PAGE_PATHS[page] ?? "/";
+    const fullUrl = new URL(`${path}${search}`, window.location.origin).href;
+    window.history.replaceState({ page }, "", fullUrl);
   }, []);
 
   return [activePage, navigate];

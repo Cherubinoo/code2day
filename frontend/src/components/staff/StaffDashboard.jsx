@@ -7,6 +7,7 @@ import ContestDetailModal from '../common/ContestDetailModal';
 import DiscussPage from '../student/pages/DiscussPage';
 import StaffLabPanel from './StaffLabPanel';
 import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
+import HourlyBatchReportModal from '../common/HourlyBatchReportModal';
 import { useTabNav } from '../../lib/useTabNav';
 
 const StaffDashboard = ({ institutionId }) => {
@@ -1770,6 +1771,8 @@ function StaffAdvisorTab() {
     }
   }
 
+  const [isHourlyReportModalOpen, setIsHourlyReportModalOpen] = useState(false);
+
   return (
     <div>
       {/* Batch/Section selector tabs */}
@@ -1822,7 +1825,7 @@ function StaffAdvisorTab() {
               <span style={{ fontWeight: 800, fontSize: 15, color: '#111827' }}>
                 Batch {currentBatch.batch}{currentBatch.section ? ` · Section ${currentBatch.section}` : ''} — {currentBatch.department}
               </span>
-              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <button
                   onClick={() => handleDownloadBatchReport(currentBatch.batch, currentBatch.section)}
                   disabled={downloadingReport}
@@ -1839,13 +1842,41 @@ function StaffAdvisorTab() {
                     alignItems: 'center',
                     gap: 6
                   }}
-                  title="Download PDF performance report for this batch/section"
+                  title="Download overall PDF performance report for this batch/section"
                 >
                   <Download size={14} /> {downloadingReport ? 'Downloading...' : 'Batch Report (PDF)'}
                 </button>
+
+                <button
+                  onClick={() => setIsHourlyReportModalOpen(true)}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: 10,
+                    border: '1px solid #0284c7',
+                    background: '#f0f9ff',
+                    color: '#0369a1',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}
+                  title="Select date and hour to generate session report PDF"
+                >
+                  <Calendar size={14} /> Hourly Report (PDF)
+                </button>
+
                 <span style={{ background: '#dbeafe', color: '#1e40af', padding: '3px 12px', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{filteredStudents.length} students</span>
               </div>
             </div>
+
+            <HourlyBatchReportModal
+              isOpen={isHourlyReportModalOpen}
+              onClose={() => setIsHourlyReportModalOpen(false)}
+              availableBatches={data.batches.map(b => b.batch).filter(Boolean)}
+              availableSections={['A', 'B', 'C', 'D']}
+            />
             {filteredStudents.length === 0 ? (
               <div style={{ padding: 30, textAlign: 'center', color: '#9ca3af' }}>No students found.</div>
             ) : (
