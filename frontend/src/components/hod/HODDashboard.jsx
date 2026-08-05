@@ -2172,6 +2172,7 @@ const HODDashboard = ({ institutionId }) => {
                         title={`Block login for ${selectedBatch ? `Batch ${selectedBatch}` : 'all batches'}`}
                       >
                         <ShieldOff size={12} /> Block All
+                      </button>
                     </div>
 
                     {/* Batch Report Download Button */}
