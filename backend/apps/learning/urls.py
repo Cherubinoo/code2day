@@ -120,6 +120,7 @@ from .views import (
     JAMentorListView,
     StaffMentorDashboardView,
     StaffClassAdvisorDashboardView,
+    StaffAdvisorDashboardView,
     StudentMentorAdvisorView,
     LabTopicListView,
     LabProblemListView,
@@ -291,6 +292,7 @@ urlpatterns = [
     path("departments/<int:dept_id>/details/", DepartmentDetailView.as_view(), name="department-detail"),
 
     # Staff Institution
+    path("staff/advisor/dashboard/", StaffAdvisorDashboardView.as_view(), name="staff-advisor-dashboard"),
     path("staff/institutions/<int:institution_id>/details/", StaffInstitutionDetailView.as_view(), name="staff-institution-detail"),
     path("staff/institutions/<int:institution_id>/performance/", StaffPerformanceView.as_view(), name="staff-performance"),
     path("staff/<str:faculty_id>/details/", StaffDetailView.as_view(), name="staff-detail"),
@@ -374,7 +376,6 @@ urlpatterns = [
     path("ja/mentors/assign/", JAMentorAssignView.as_view(), name="ja-mentor-assign"),
     # Staff — mentor & class advisor dashboards
     path("staff/mentor/dashboard/", StaffMentorDashboardView.as_view(), name="staff-mentor-dashboard"),
-    path("staff/advisor/dashboard/", StaffClassAdvisorDashboardView.as_view(), name="staff-advisor-dashboard"),
     # Student — mentor/advisor info
     path("student/mentor-advisor/", StudentMentorAdvisorView.as_view(), name="student-mentor-advisor"),
 

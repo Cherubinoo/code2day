@@ -493,7 +493,7 @@ const ContestDetailModal = ({ contestId, onClose }) => {
             ) : (
               <div style={{ display: 'grid', gap: 12, maxHeight: 400, overflowY: 'auto' }}>
                 {analytics.participants
-                  .filter(p => !unblockSearch || p.name.toLowerCase().includes(unblockSearch.toLowerCase()) || p.register_number.toLowerCase().includes(unblockSearch.toLowerCase()))
+                  .filter(p => !unblockSearch || (p.name || '').toLowerCase().includes(unblockSearch.toLowerCase()) || String(p.register_number || '').toLowerCase().includes(unblockSearch.toLowerCase()))
                   .map((participant) => {
                     const isLocked = participant.is_locked;
                     return (

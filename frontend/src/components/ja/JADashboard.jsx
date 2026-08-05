@@ -324,7 +324,7 @@ function BatchDetailView({ batchCode, jaInfo, onBack, onRefresh }) {
   }
 
   const filtered = students.filter(s =>
-    !search || s.name.toLowerCase().includes(search.toLowerCase()) || (s.register_number || '').includes(search)
+    !search || (s.name || '').toLowerCase().includes(search.toLowerCase()) || String(s.register_number || '').includes(search)
   );
 
   return (
@@ -713,7 +713,7 @@ function StudentsTab({ jaInfo }) {
   useEffect(() => { load(); loadBatchList(); }, [batchFilter]);
 
   const filtered = students.filter(s =>
-    !search || s.name.toLowerCase().includes(search.toLowerCase()) || (s.register_number || '').includes(search)
+    !search || (s.name || '').toLowerCase().includes(search.toLowerCase()) || String(s.register_number || '').includes(search)
   );
 
   async function handleAddStudent(e) {
@@ -1454,7 +1454,7 @@ function SectionAssignPanel({ jaInfo }) {
 
   // Only client-side search remains; batch+section now filtered server-side
   const displayed = students.filter(s => {
-    const searchMatch = !search || s.name.toLowerCase().includes(search.toLowerCase()) || s.register_number.includes(search);
+    const searchMatch = !search || (s.name || '').toLowerCase().includes(search.toLowerCase()) || String(s.register_number || '').includes(search);
     return searchMatch;
   });
 
@@ -1869,7 +1869,7 @@ function MentorPanel({ jaInfo }) {
     ...data.mentor_groups.flatMap(g => g.students),
   ];
   const filtered = search
-    ? allStudents.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.register_number.includes(search))
+    ? allStudents.filter(s => (s.name || '').toLowerCase().includes(search.toLowerCase()) || String(s.register_number || '').includes(search))
     : null;
 
   return (

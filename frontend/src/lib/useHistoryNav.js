@@ -47,9 +47,6 @@ export const PAGE_PATHS = {
   announcements: "/announcements",
   institution:   "/institution",
   developers:    "/developers",
-  profile:       "/profile",
-  batches:       "/batches",
-  analytics:     "/analytics",
 };
 
 /** Reverse map: URL paths → page IDs */

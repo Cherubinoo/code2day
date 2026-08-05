@@ -1257,7 +1257,7 @@ const AdminDashboard = () => {
                             {hubData.staff.filter(s => s.faculty_id !== '0001').filter(s => {
                               if (!staffSearch.trim()) return true;
                               const q = staffSearch.trim().toLowerCase();
-                              return s.name.toLowerCase().includes(q) || (s.faculty_id || '').toLowerCase().includes(q);
+                              return (s.name || '').toLowerCase().includes(q) || (s.faculty_id || '').toLowerCase().includes(q);
                             }).map(s => (
                               <tr key={s.id} style={{ background: 'var(--bg-2)' }}>
                                 <td style={{ padding: 24, borderRadius: '24px 0 0 24px' }}>

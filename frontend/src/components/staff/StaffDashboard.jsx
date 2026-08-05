@@ -142,22 +142,34 @@ const StaffDashboard = ({ institutionId }) => {
             setError(errorData.detail || 'Failed to load department details');
           }
         } else {
-          // For staff, try facultyId first, then registerNumber as fallback
-          const facultyId = data.user?.facultyId || data.user?.registerNumber;
+          const facultyId = data.user?.facultyId || data.user?.registerNumber || data.user?.username;
           
           if (facultyId) {
-            // Load detailed staff data
             const detailRes = await fetch(`/api/staff/${facultyId}/details/`, { credentials: 'include' });
             if (detailRes.ok) {
               const detailData = await detailRes.json();
-              console.log('Staff detail data:', detailData); // Debug log
               setStaffDetail(detailData);
             } else {
-              const errorData = await detailRes.json();
-              setError(errorData.detail || 'Failed to load staff details');
+              setStaffDetail({
+                staff: {
+                  name: data.user?.name || 'Staff Member',
+                  faculty_id: facultyId,
+                  department: data.user?.department || null,
+                  institution: data.user?.institution || null
+                },
+                analytics: {}
+              });
             }
           } else {
-            setError('Faculty ID not found in user data');
+            setStaffDetail({
+              staff: {
+                name: data.user?.name || 'Staff Member',
+                faculty_id: 'STAFF',
+                department: data.user?.department || null,
+                institution: data.user?.institution || null
+              },
+              analytics: {}
+            });
           }
         }
       } else {
@@ -219,7 +231,13 @@ const StaffDashboard = ({ institutionId }) => {
     );
   }
 
-  const { staff, analytics: rawAnalytics } = staffDetail;
+  const staff = staffDetail?.staff || {
+    name: 'Faculty Member',
+    faculty_id: 'STAFF',
+    department: null,
+    institution: null
+  };
+  const rawAnalytics = staffDetail?.analytics || {};
   const analytics = {
     top_performers: [],
     batch_wise: [],
@@ -1599,7 +1617,7 @@ function StaffMentorTab({ onViewProgress }) {
   }
 
   const filtered = search
-    ? data.mentees.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.register_number.includes(search))
+    ? data.mentees.filter(s => (s.name || '').toLowerCase().includes(search.toLowerCase()) || String(s.register_number || '').includes(search))
     : null;
 
   return (
@@ -1703,6 +1721,8 @@ function StaffAdvisorTab() {
   const [error, setError] = useState(null);
   const [selectedBatch, setSelectedBatch] = useState(null);
   const [search, setSearch] = useState('');
+  const [downloadingReport, setDownloadingReport] = useState(false);
+  const [isHourlyReportModalOpen, setIsHourlyReportModalOpen] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -1735,13 +1755,14 @@ function StaffAdvisorTab() {
     );
   }
 
-  const batchKey = b => `${b.batch}:${b.section}`;
-  const currentBatch = data.batches.find(b => batchKey(b) === selectedBatch);
+  const batchKey = b => b ? `${b.batch}:${b.section || ''}` : '';
+  const currentBatch = (data.batches || []).find(b => batchKey(b) === selectedBatch) || data.batches?.[0];
   const filteredStudents = search && currentBatch
-    ? currentBatch.students.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.register_number.includes(search))
+    ? currentBatch.students.filter(s => 
+        (s.name || '').toLowerCase().includes(search.toLowerCase()) || 
+        String(s.register_number || '').includes(search)
+      )
     : currentBatch?.students || [];
-
-  const [downloadingReport, setDownloadingReport] = useState(false);
 
   async function handleDownloadBatchReport(batchCode, section = '') {
     setDownloadingReport(true);
@@ -1771,7 +1792,15 @@ function StaffAdvisorTab() {
     }
   }
 
-  const [isHourlyReportModalOpen, setIsHourlyReportModalOpen] = useState(false);
+  if (!currentBatch || !data.batches || data.batches.length === 0) {
+    return (
+      <div style={{ padding: '60px 20px', textAlign: 'center', background: 'white', borderRadius: 16, border: '1px solid #e5e7eb' }}>
+        <GraduationCap size={48} style={{ marginBottom: 16, opacity: 0.3, color: '#2D6A4F' }} />
+        <h3 style={{ margin: '0 0 8px', color: '#111827', fontSize: 18, fontWeight: 700 }}>No Batch Data Available</h3>
+        <p style={{ margin: 0, fontSize: 14, color: '#6b7280' }}>There are currently no students or batches assigned to your department/section.</p>
+      </div>
+    );
+  }
 
   return (
     <div>

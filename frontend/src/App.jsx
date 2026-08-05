@@ -1,4 +1,36 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error("React ErrorBoundary caught error:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 40, textAlign: 'center', background: '#fef2f2', color: '#991b1b', margin: '40px auto', maxWidth: 800, borderRadius: 16, border: '1px solid #fecaca' }}>
+          <h2 style={{ margin: '0 0 12px' }}>Something went wrong loading this view</h2>
+          <p style={{ fontFamily: 'monospace', fontSize: 13, background: 'white', padding: 12, borderRadius: 8, textAlign: 'left', overflowX: 'auto' }}>
+            {this.state.error?.toString()}
+          </p>
+          <button 
+            onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+            style={{ padding: '10px 20px', background: '#dc2626', color: 'white', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 700, marginTop: 16 }}
+          >
+            Reload Page
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 import AdminDashboard from "./components/admin/AdminDashboard";
 import InstitutionDetail from "./components/admin/InstitutionDetail";
@@ -1436,7 +1468,7 @@ function App() {
       );
       break;
     case "staff":
-      activeView = userType === "staff" ? (
+      activeView = ["staff", "hod", "admin", "director", "tpu", "ja"].includes(userType) ? (
         <StaffDashboard institutionId={selectedInstitutionId} />
       ) : (
         <div style={{ padding: 40 }}>
@@ -1650,11 +1682,13 @@ function App() {
         />
       )}
       <main className="main-shell" style={!isLoggedIn ? { flex: 1, display: "flex", flexDirection: "column", minHeight: 0 } : {}}>
-        {activeView ?? (
-          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh", color: "var(--text-soft)" }}>
-            Loading…
-          </div>
-        )}
+        <ErrorBoundary key={activePage}>
+          {activeView ?? (
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "60vh", color: "var(--text-soft)" }}>
+              Loading…
+            </div>
+          )}
+        </ErrorBoundary>
       </main>
 
       <Footer onNavigate={navigate} />

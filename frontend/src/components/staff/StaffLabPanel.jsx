@@ -1035,7 +1035,7 @@ function StudentTable({ students, exercises, activeExIdx, labId }) {
 
   const filtered = rows.filter((r) => {
     const q = search.toLowerCase();
-    const matchSearch = !q || r.student_name.toLowerCase().includes(q) || r.register_number.toLowerCase().includes(q);
+    const matchSearch = !q || (r.student_name || '').toLowerCase().includes(q) || String(r.register_number || '').toLowerCase().includes(q);
     const matchFilter =
       filter === "all" ? true :
       filter === "done" ? r.completed :

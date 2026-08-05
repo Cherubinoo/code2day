@@ -7,7 +7,7 @@ import {
   Settings, Bell, MoreVertical, ExternalLink, Shield, ShieldOff,
   UserPlus, Check, X, FileText, Briefcase, Layout, UserCheck, Building2,
   Calendar, Lock, Unlock, CheckCircle, BarChart, XCircle, Activity, Brain, MessageSquare,
-  Pencil, Plus, Eye, EyeOff
+  Pencil, Plus, Eye, EyeOff, Download, Clock
 } from 'lucide-react';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import { getCsrfToken } from '../../lib/appUtils';
@@ -1795,6 +1795,90 @@ const HODDashboard = ({ institutionId }) => {
             </div>
           )}
 
+          {/* Batches Tab */}
+          {activeTab === 'batches' && (
+            <div className="batches-tab">
+              <div className="premium-card" style={{ marginBottom: 28 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 16 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>
+                      🏢 Department Batch Analytics & Reports
+                    </h3>
+                    <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '14px' }}>
+                      Overall batch management, bulk controls, and PDF performance report downloads.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                    <button
+                      onClick={() => handleDownloadBatchReport(selectedBatch || 'all')}
+                      disabled={downloadingReport}
+                      style={{
+                        padding: '8px 16px', borderRadius: 10, border: '1px solid #059669',
+                        background: '#ecfdf5', color: '#047857', fontSize: 13, fontWeight: 700,
+                        cursor: downloadingReport ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6
+                      }}
+                    >
+                      <Download size={15} /> {downloadingReport ? 'Downloading...' : 'Full Batch Report (PDF)'}
+                    </button>
+                    <button
+                      onClick={() => setIsHourlyReportModalOpen(true)}
+                      style={{
+                        padding: '8px 16px', borderRadius: 10, border: '1px solid #0284c7',
+                        background: '#f0f9ff', color: '#0369a1', fontSize: 13, fontWeight: 700,
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6
+                      }}
+                    >
+                      <Clock size={15} /> Hourly Report (PDF)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Batch List Cards */}
+                {(() => {
+                  const batches = Array.from(new Set((departmentStudents || []).map(s => s.batch).filter(Boolean))).sort();
+                  return batches.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#999', padding: '40px 0' }}>No batch data available.</div>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+                      {batches.map(bCode => {
+                        const batchStudents = departmentStudents.filter(s => s.batch === bCode);
+                        const activeCount = batchStudents.filter(s => s.current_streak > 0).length;
+                        return (
+                          <div key={bCode} style={{ background: 'var(--bg-1)', borderRadius: 14, padding: 18, border: '1px solid var(--border-soft)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                              <h4 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: 'var(--text-hard)' }}>Batch {bCode}</h4>
+                              <span style={{ background: '#dbeafe', color: '#1e40af', padding: '2px 10px', borderRadius: 12, fontSize: 12, fontWeight: 700 }}>
+                                {batchStudents.length} Students
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 13, color: 'var(--text-soft)', marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              <div>⚡ Active Students: <strong>{activeCount}</strong></div>
+                              <div>🏛️ Department: <strong>{department?.name || 'Department'}</strong></div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                              <button
+                                onClick={() => handleDownloadBatchReport(bCode)}
+                                style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #059669', background: 'white', color: '#047857', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                              >
+                                <Download size={12} /> Download PDF
+                              </button>
+                              <button
+                                onClick={() => { setSelectedBatch(bCode); setIsHourlyReportModalOpen(true); }}
+                                style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid #0284c7', background: 'white', color: '#0369a1', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
+                              >
+                                <Clock size={12} /> Hourly PDF
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+          )}
+
           {/* Contests Tab */}
           {activeTab === 'contests' && (
             <div className="contests-tab">
@@ -1832,7 +1916,7 @@ const HODDashboard = ({ institutionId }) => {
                 {(() => {
                   const filtered = contests.filter(c => {
                     const matchSearch = !hodContestSearch || 
-                      c.title.toLowerCase().includes(hodContestSearch.toLowerCase()) ||
+                      (c.title || '').toLowerCase().includes(hodContestSearch.toLowerCase()) ||
                       (c.description && c.description.toLowerCase().includes(hodContestSearch.toLowerCase())) ||
                       (c.created_by?.name && c.created_by.name.toLowerCase().includes(hodContestSearch.toLowerCase()));
                     
@@ -2267,8 +2351,8 @@ const HODDashboard = ({ institutionId }) => {
                         {departmentStudents
                           .filter(s => !selectedBatch || s.batch === selectedBatch)
                           .filter(s => 
-                            s.name?.toLowerCase().includes(studentSearchQuery.toLowerCase()) || 
-                            s.register_number?.includes(studentSearchQuery)
+                            (s.name || '').toLowerCase().includes(studentSearchQuery.toLowerCase()) || 
+                            String(s.register_number || '').includes(studentSearchQuery)
                           )
                           .map((student) => (
                           <tr key={student.register_number} style={{ borderBottom: '1px solid var(--bg-1)' }}>
@@ -2436,8 +2520,8 @@ const HODDashboard = ({ institutionId }) => {
                       // Filter students by search query and section
                       const students = allStudents
                         .filter(s => !studentSearchQuery || (
-                          (s.name && s.name.toLowerCase().includes(studentSearchQuery.toLowerCase())) ||
-                          (s.register_number && s.register_number.toLowerCase().includes(studentSearchQuery.toLowerCase()))
+                          (s.name || '').toLowerCase().includes(studentSearchQuery.toLowerCase()) ||
+                          String(s.register_number || '').toLowerCase().includes(studentSearchQuery.toLowerCase())
                         ))
                         .filter(s => selectedBatch !== batch || !selectedSection || s.section === selectedSection);
                       const isSelected = selectedBatch === batch || studentSearchQuery;
