@@ -34,12 +34,6 @@ echo "▶ [3/4] Collecting static files..."
 python manage.py collectstatic --noinput --clear > /dev/null 2>&1 || true
 echo "✓ Static files collected"
 
-# ── 3.5 Automated Research Export & Email ─────────────────────────────────────
-echo ""
-echo "▶ [3.5] Running Research Data Export & Emailer..."
-python export_and_email_research_data.py || true
-echo "✓ Research Data Export & Email completed"
-
 # ── 4. Start gunicorn ─────────────────────────────────────────────────────────
 echo ""
 echo "▶ [4/4] Starting gunicorn..."
