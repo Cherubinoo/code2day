@@ -7184,13 +7184,16 @@ class AdminDAUAnalyticsView(APIView):
 
             for dt in date_list:
                 active_students = student_qs.filter(
+                    Q(account__last_login__date=dt) |
                     Q(last_login_on=dt) |
                     Q(submissions__submitted_at__date=dt) |
-                    Q(contest_participations__started_at__date=dt)
+                    Q(contest_participations__started_at__date=dt) |
+                    Q(problem_sessions__started_at__date=dt)
                 ).distinct().count()
 
                 active_staff = staff_qs.filter(
-                    user__last_login__date=dt
+                    Q(account__last_login__date=dt) |
+                    Q(contests__created_at__date=dt)
                 ).distinct().count()
 
                 daily_data.append({
