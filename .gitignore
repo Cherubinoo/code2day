@@ -14,6 +14,9 @@ backend/staticfiles/
 backend/media/
 backend/__pycache__/
 backend/.env
+backend/research_exports/
+*.xlsx
+*.zip
 
 # ── Node / Frontend ───────────────────────────────────────────────────────────
 node_modules/
