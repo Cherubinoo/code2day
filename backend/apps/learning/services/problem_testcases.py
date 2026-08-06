@@ -71,6 +71,27 @@ def build_lab_runtime_test_cases(exercise, sample_only: bool = False) -> list[Ru
 
     stored_cases = list(LabExerciseTestCase.objects.filter(exercise=exercise).order_by("order", "id"))
     if not stored_cases:
+        try:
+            from .testcase_generator import generate_test_cases
+            generated = generate_test_cases(
+                title=exercise.title,
+                description=exercise.description,
+                difficulty=getattr(exercise, "difficulty", "Medium"),
+            )
+            for idx, tc_data in enumerate(generated, start=1):
+                LabExerciseTestCase.objects.create(
+                    exercise=exercise,
+                    stdin=tc_data.get("stdin", ""),
+                    expected_output=tc_data.get("expected_output", ""),
+                    is_sample=(idx <= 2),
+                    order=idx,
+                )
+            stored_cases = list(LabExerciseTestCase.objects.filter(exercise=exercise).order_by("order", "id"))
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Auto-generation of test cases for lab exercise %s skipped: %s", exercise.id, exc)
+
+    if not stored_cases:
         return []
 
     selected_cases = stored_cases
