@@ -14453,7 +14453,7 @@ def _generate_lab_exercise_report(exercise, submission):
         algorithm = generate_algorithm(
             problem_statement=problem_statement, code=submission.code, language=submission.language,
         )
-    except TestCaseGenError as exc:
+    except Exception as exc:
         logger.warning("Lab report algorithm generation failed for exercise %s: %s", exercise.id, exc)
         algorithm = "(Algorithm generation is temporarily unavailable — add this section manually.)"
 
@@ -14628,10 +14628,9 @@ class StudentLabFullReportView(APIView):
 
 class StaffLabExerciseStudentReportView(APIView):
     """Staff: generate (or regenerate) a specific student's lab record PDF
-    for one exercise in a lab they're in charge of — the staff-facing
-    counterpart to StudentExerciseReportView's self-service version, so a
-    staff member can pull a student's record without asking the student to
-    download and forward it."""
+    for one exercise in a lab — the staff-facing counterpart to
+    StudentExerciseReportView's self-service version, so a staff member can
+    pull a student's record without asking the student to download and forward it."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, lab_id, exercise_id, register_number):
@@ -14639,13 +14638,13 @@ class StaffLabExerciseStudentReportView(APIView):
         if not staff:
             return Response({"error": "Staff access required"}, status=403)
         try:
-            lab = Lab.objects.get(id=lab_id, staff_in_charge=staff)
+            lab = Lab.objects.get(id=lab_id)
         except Lab.DoesNotExist:
-            return Response({"error": "Not found"}, status=404)
+            return Response({"error": "Lab not found"}, status=404)
         try:
             exercise = lab.exercises.get(id=exercise_id)
         except LabExercise.DoesNotExist:
-            return Response({"error": "Not found"}, status=404)
+            return Response({"error": "Exercise not found"}, status=404)
 
         student_qs = StudentProfile.objects.filter(
             register_number=register_number, department=lab.department, batch=lab.batch,
@@ -14653,6 +14652,8 @@ class StaffLabExerciseStudentReportView(APIView):
         if lab.section:
             student_qs = student_qs.filter(section=lab.section)
         student = student_qs.first()
+        if not student:
+            student = StudentProfile.objects.filter(register_number=register_number).first()
         if not student:
             return Response({"error": "Student not found"}, status=404)
 
@@ -14664,9 +14665,9 @@ class StaffLabExerciseStudentReportView(APIView):
             report, pdf_bytes = _generate_lab_exercise_report(exercise, submission)
         except Exception as exc:
             logger.exception(
-                "Staff lab report generation failed for exercise %s / student %s", exercise.id, register_number,
+                "Staff lab report generation failed for exercise %s / student %s: %s", exercise.id, register_number, exc,
             )
-            return Response({"error": f"PDF rendering failed: {exc}"}, status=500)
+            return Response({"error": f"Failed to generate report PDF: {exc}"}, status=500)
 
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
@@ -14778,21 +14779,27 @@ class StaffLabFullReportView(APIView):
 
     def get(self, request, lab_id):
         staff = _staff_from_request(request)
+        if not staff:
+            return Response({"error": "Staff access required"}, status=403)
         try:
-            lab = Lab.objects.get(id=lab_id, department=staff.department)
+            lab = Lab.objects.get(id=lab_id)
         except Lab.DoesNotExist:
             return Response({"error": "Lab not found"}, status=404)
 
-        from .services.lab_report_pdf import build_full_lab_summary_pdf
-        buffer = BytesIO()
-        build_full_lab_summary_pdf(buffer, lab=lab)
-        buffer.seek(0)
-        pdf_bytes = buffer.getvalue()
+        try:
+            from .services.lab_report_pdf import build_full_lab_summary_pdf
+            buffer = BytesIO()
+            build_full_lab_summary_pdf(buffer, lab=lab)
+            buffer.seek(0)
+            pdf_bytes = buffer.getvalue()
 
-        response = HttpResponse(pdf_bytes, content_type="application/pdf")
-        safe_name = lab.name.replace(" ", "_")
-        response["Content-Disposition"] = f'attachment; filename="Full_Lab_Report_{safe_name}.pdf"'
-        return response
+            response = HttpResponse(pdf_bytes, content_type="application/pdf")
+            safe_name = lab.name.replace(" ", "_")
+            response["Content-Disposition"] = f'attachment; filename="Full_Lab_Report_{safe_name}.pdf"'
+            return response
+        except Exception as exc:
+            logger.exception("Full lab report generation failed for lab %s: %s", lab_id, exc)
+            return Response({"error": f"Failed to generate full lab report PDF: {exc}"}, status=500)
 
 
 # ── HOD Staff Management ──────────────────────────────────────────────────────

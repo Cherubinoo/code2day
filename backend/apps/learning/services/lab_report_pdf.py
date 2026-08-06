@@ -145,7 +145,7 @@ def reexecute_test_cases(exercise, code, language):
     for tc in test_cases:
         try:
             result = execute_submission(code, language_id, stdin=tc.stdin, timeout=10)
-        except ExecutorError as exc:
+        except Exception as exc:
             # Log the real (possibly infra-revealing) error server-side only —
             # the note below ends up in a student-facing PDF, so it stays generic.
             logger.warning("Lab test-case re-execution failed: %s", exc)
