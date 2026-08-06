@@ -1366,7 +1366,7 @@ function App() {
       );
       break;
     case "labs":
-      activeView = <LabsPage />;
+      activeView = <LabsPage dashboard={dashboard} />;
       break;
     case "aptitude":
       activeView = <AptitudePage onToggleWorkspace={setIsInsideWorkspace} />;

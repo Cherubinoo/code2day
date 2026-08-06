@@ -14563,6 +14563,69 @@ class StudentExerciseReportView(APIView):
         return response
 
 
+class StudentLabFullReportView(APIView):
+    """Student: download a single, combined Laboratory Record Notebook PDF
+    containing all their submitted exercise records for the specified lab."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, lab_id):
+        student = _student_from_request(request)
+        if not student:
+            return Response({"error": "Student profile required"}, status=403)
+
+        try:
+            lab = Lab.objects.get(
+                id=lab_id, department=student.department, batch=student.batch,
+            )
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        exercises = list(lab.exercises.all().order_by("order", "created_at"))
+        submissions = LabExerciseSubmission.objects.filter(
+            exercise__in=exercises, student=student,
+        ).select_related("exercise", "report")
+
+        sub_map = {sub.exercise_id: sub for sub in submissions}
+        reports_with_details = []
+
+        from .services.lab_report_pdf import build_student_full_lab_record_pdf, reexecute_test_cases
+
+        for ex in exercises:
+            sub = sub_map.get(ex.id)
+            if not sub or not (sub.code or "").strip():
+                continue
+            try:
+                report, _ = _generate_lab_exercise_report(ex, sub)
+                test_case_rows, all_passed, tc_note = reexecute_test_cases(ex, sub.code, sub.language)
+                passed_n = sum(1 for r in test_case_rows if r[3] == "Passed") if test_case_rows else 0
+                total_n = len(test_case_rows) if test_case_rows else 0
+
+                status_label = "Passed" if all_passed is True else ("Partially Passed" if passed_n else "Failed")
+                details = {
+                    "language": sub.language or "—",
+                    "status": status_label,
+                    "score": f"{passed_n}/{total_n}" if total_n else "—",
+                    "percentage": f"{round(passed_n / total_n * 100)}%" if total_n else "—",
+                    "submitted_at": sub.submitted_at,
+                }
+                reports_with_details.append((report, test_case_rows, tc_note, details))
+            except Exception as exc:
+                logger.exception("Failed generating exercise report for lab full report: %s", exc)
+
+        if not reports_with_details:
+            return Response({"error": "No submitted exercise records found for this lab."}, status=400)
+
+        buffer = BytesIO()
+        build_student_full_lab_record_pdf(buffer, student=student, lab=lab, reports_with_details=reports_with_details)
+        buffer.seek(0)
+        pdf_bytes = buffer.getvalue()
+
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        safe_lab_name = lab.name.replace(" ", "_")
+        response["Content-Disposition"] = f'attachment; filename="Lab_Record_Notebook_{safe_lab_name}_{student.register_number}.pdf"'
+        return response
+
+
 class StaffLabExerciseStudentReportView(APIView):
     """Staff: generate (or regenerate) a specific student's lab record PDF
     for one exercise in a lab they're in charge of — the staff-facing

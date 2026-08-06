@@ -231,7 +231,7 @@ function ProblemStatement({ text, explanation }) {
 }
 
 // ─── Exercise editor (mirrors the Problems page workspace + console) ─────────
-function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
+function ExerciseEditor({ lab, exercise, onBack, onSubmitted, dashboard }) {
   const allowedLanguages = lab.allowed_languages?.length ? lab.allowed_languages : LAB_LANGUAGES;
   const initialLang = exercise.language || allowedLanguages[0];
   const [code, setCode] = useState(exercise.code || starterCodeByLanguage[initialLang] || "");
@@ -344,6 +344,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
     };
   }, [lab.lab_type, lab.enable_fullscreen_lock, recordViolation]);
 
+  const timerRef = useRef(null);
   useEffect(() => () => clearInterval(timerRef.current), []);
 
   const monacoLang = editorLanguageMap[lang] || "plaintext";
@@ -353,6 +354,7 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
   // echo of our own setCode(...) calls, so nothing here can silently
   // overwrite code the student actually typed.
   const lastProgrammaticCodeRef = useRef(code);
+
   const userEditedCodeRef = useRef(false);
 
   const handleEditorCodeChange = useCallback((value) => {
@@ -707,12 +709,15 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted }) {
 }
 
 // ─── Lab detail (exercise list) ───────────────────────────────────────────────
-function LabDetail({ lab, onBack }) {
+function LabDetail({ lab, onBack, dashboard }) {
   const [exercises, setExercises] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeExercise, setActiveExercise] = useState(null);
   const [locked, setLocked] = useState(false);
   const [lockReason, setLockReason] = useState("");
+  const [downloadingReportId, setDownloadingReportId] = useState(null);
+  const [downloadingFullReport, setDownloadingFullReport] = useState(false);
+  const [reportErr, setReportErr] = useState("");
 
   useEffect(() => {
     fetch(`/api/lab/v2/${lab.id}/exercises/list/`, { credentials: "include" })
@@ -728,6 +733,64 @@ function LabDetail({ lab, onBack }) {
       })
       .catch(() => setLoading(false));
   }, [lab.id]);
+
+  async function handleDownloadExerciseReport(e, exId, title) {
+    e.stopPropagation();
+    setDownloadingReportId(exId);
+    setReportErr("");
+    try {
+      const token = getCsrfToken();
+      const res = await fetch(`/api/lab/v2/${lab.id}/exercises/${exId}/report/`, {
+        method: "POST",
+        headers: token ? { "X-CSRFToken": token } : {},
+        credentials: "include",
+      });
+      if (!res.ok) {
+        let msg = "Report download failed.";
+        try { msg = (await res.json()).error || msg; } catch {}
+        setReportErr(msg);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `lab_record_${title.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setReportErr("Network error downloading report.");
+    } finally {
+      setDownloadingReportId(null);
+    }
+  }
+
+  async function handleDownloadFullLabReport() {
+    setDownloadingFullReport(true);
+    setReportErr("");
+    try {
+      const res = await fetch(`/api/lab/v2/student/labs/${lab.id}/full-report/`, {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        let msg = "Full report download failed.";
+        try { msg = (await res.json()).error || msg; } catch {}
+        setReportErr(msg);
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Lab_Record_Notebook_${lab.name.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setReportErr("Network error downloading full report.");
+    } finally {
+      setDownloadingFullReport(false);
+    }
+  }
 
   function onSubmitted(exerciseId, { code, language, submitted_at }) {
     setExercises((prev) =>
@@ -762,6 +825,7 @@ function LabDetail({ lab, onBack }) {
       <ExerciseEditor
         lab={lab}
         exercise={activeExercise}
+        dashboard={dashboard}
         onBack={() => setActiveExercise(null)}
         onSubmitted={(id, data) => {
           onSubmitted(id, data);
@@ -779,13 +843,34 @@ function LabDetail({ lab, onBack }) {
         <ChevronLeft size={15} /> All Labs
       </button>
 
-      <div className="slab-lab-hdr">
-        <h2 className="slab-lab-title">{lab.name}</h2>
-        <p className="slab-lab-meta">
-          {lab.staff_in_charge ? `Staff: ${lab.staff_in_charge.name} · ` : ""}
-          {fmt(lab.start_date)} → {fmt(lab.end_date)}
-        </p>
+      <div className="slab-lab-hdr" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
+        <div>
+          <h2 className="slab-lab-title">{lab.name}</h2>
+          <p className="slab-lab-meta">
+            {lab.staff_in_charge ? `Staff: ${lab.staff_in_charge.name} · ` : ""}
+            {fmt(lab.start_date)} → {fmt(lab.end_date)}
+          </p>
+        </div>
+        {done > 0 && (
+          <button
+            type="button"
+            className="primary-button dense-action"
+            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            onClick={handleDownloadFullLabReport}
+            disabled={downloadingFullReport}
+            title="Download complete Laboratory Record Notebook PDF with all completed exercises"
+          >
+            {downloadingFullReport ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
+            {downloadingFullReport ? "Generating Notebook…" : "Download Full Lab Record Notebook (PDF)"}
+          </button>
+        )}
       </div>
+
+      {reportErr && (
+        <div style={{ padding: "8px 12px", background: "#fef2f2", color: "#dc2626", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+          {reportErr}
+        </div>
+      )}
 
       {exercises.length > 0 && (
         <div className="slab-overall">
@@ -821,9 +906,22 @@ function LabDetail({ lab, onBack }) {
                   </div>
                 )}
               </div>
-              <div className="slab-ex-right">
+              <div className="slab-ex-right" style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 {ex.submitted ? (
-                  <span className="slab-done-tag">Done</span>
+                  <>
+                    <span className="slab-done-tag">Done</span>
+                    <button
+                      type="button"
+                      className="ghost-button dense-action"
+                      style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "4px 10px", fontSize: 12 }}
+                      disabled={downloadingReportId === ex.id}
+                      onClick={(e) => handleDownloadExerciseReport(e, ex.id, ex.title)}
+                      title="Download exercise PDF report"
+                    >
+                      {downloadingReportId === ex.id ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
+                      {downloadingReportId === ex.id ? "…" : "Report"}
+                    </button>
+                  </>
                 ) : (
                   <span className="slab-open-tag">Open →</span>
                 )}
@@ -843,7 +941,7 @@ const LAB_TYPE_TABS = [
   { id: "company", label: "🏢 Company Based Lab" },
 ];
 
-export default function LabsPage() {
+export default function LabsPage({ dashboard }) {
   const [labs, setLabs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedLab, setSelectedLab] = useState(null);
@@ -857,7 +955,7 @@ export default function LabsPage() {
   }, []);
 
   if (selectedLab) {
-    return <LabDetail lab={selectedLab} onBack={() => setSelectedLab(null)} />;
+    return <LabDetail lab={selectedLab} dashboard={dashboard} onBack={() => setSelectedLab(null)} />;
   }
 
   const labsOfType = labs.filter((l) => (l.lab_type || "practical") === typeFilter);

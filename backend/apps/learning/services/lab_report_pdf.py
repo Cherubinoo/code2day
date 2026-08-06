@@ -15,7 +15,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.platypus import (
-    BaseDocTemplate, PageTemplate, Frame, Table, TableStyle, Paragraph, Spacer, Preformatted,
+    BaseDocTemplate, PageTemplate, Frame, Table, TableStyle, Paragraph, Spacer, Preformatted, PageBreak,
 )
 from reportlab.graphics.shapes import Drawing, Rect
 
@@ -419,3 +419,142 @@ def build_full_lab_summary_pdf(buffer, *, lab):
     ]))
     story.append(t_st)
     doc.build(story)
+
+
+def build_student_full_lab_record_pdf(buffer, *, student, lab, reports_with_details):
+    """
+    Generate a complete, publication-grade Laboratory Record Notebook PDF
+    for a student containing all their submitted exercise records for `lab`.
+    reports_with_details is a list of tuples:
+    (report, test_case_rows, test_case_note, details)
+    """
+    doc = RegisterWatermarkDocTemplate(
+        buffer,
+        register_number=student.register_number or "",
+        pagesize=A4,
+        leftMargin=0.7 * inch, rightMargin=0.7 * inch,
+        topMargin=0.7 * inch, bottomMargin=0.7 * inch,
+    )
+    story = []
+
+    # ── Cover / Header Page ──
+    institution = student.institution
+    department = student.department
+    inst_name = getattr(institution, "display_name", "") or getattr(institution, "name", "") if institution else "RAMCO INSTITUTE OF TECHNOLOGY"
+    dept_name = department.get_full_name() if department else "DEPARTMENT OF COMPUTER SCIENCE AND ENGINEERING"
+
+    story.append(Paragraph(_escape(inst_name), _INSTITUTION_STYLE))
+    story.append(Paragraph(_escape(dept_name), _DEPARTMENT_STYLE))
+    story.append(Paragraph("<b>LABORATORY PRACTICAL RECORD NOTEBOOK</b>", _TITLE_STYLE))
+    story.append(Spacer(1, 15))
+
+    sic_name = lab.staff_in_charge.name if lab.staff_in_charge else "Faculty in Charge"
+    meta_data = [
+        [Paragraph(f"<b>Student Name:</b> {student.name}", _BODY_STYLE), Paragraph(f"<b>Reg No:</b> {student.register_number}", _BODY_STYLE)],
+        [Paragraph(f"<b>Department:</b> {department.name if department else '—'}", _BODY_STYLE), Paragraph(f"<b>Batch / Sec:</b> {student.batch} ({student.section or 'A'})", _BODY_STYLE)],
+        [Paragraph(f"<b>Lab Name:</b> {lab.name}", _BODY_STYLE), Paragraph(f"<b>Staff in Charge:</b> {sic_name}", _BODY_STYLE)],
+    ]
+    t_meta = Table(meta_data, colWidths=[3.3 * inch, 3.3 * inch])
+    t_meta.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
+        ('BOX', (0,0), (-1,-1), 1, _BORDER),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, _BORDER),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+    ]))
+    story.append(t_meta)
+    story.append(Spacer(1, 16))
+
+    # ── Index / Table of Contents ──
+    story.append(Paragraph("<b>INDEX OF COMPLETED EXERCISES</b>", _HEADING_STYLE))
+    header_style = ParagraphStyle("THeaderStudent", parent=_BODY_STYLE, fontName="Helvetica-Bold", textColor=colors.white)
+    index_rows = [[
+        Paragraph("Exp No", header_style),
+        Paragraph("Exercise Title", header_style),
+        Paragraph("Date", header_style),
+        Paragraph("Status / Score", header_style),
+    ]]
+    for item in reports_with_details:
+        rep, _, _, det = item
+        date_str = rep.generated_at.strftime("%d-%m-%Y") if rep.generated_at else "—"
+        status_str = det.get("score") if det and det.get("score") != "—" else (det.get("status", "Completed") if det else "Completed")
+        index_rows.append([
+            Paragraph(str(rep.exp_no), _BODY_STYLE),
+            Paragraph(rep.exp_name, _BODY_STYLE),
+            Paragraph(date_str, _BODY_STYLE),
+            Paragraph(status_str, _BODY_STYLE),
+        ])
+
+    t_idx = Table(index_rows, colWidths=[0.8 * inch, 3.8 * inch, 1.0 * inch, 1.0 * inch])
+    t_idx.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#005696')),
+        ('BOX', (0,0), (-1,-1), 1, _BORDER),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, _BORDER),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+    ]))
+    story.append(t_idx)
+    story.append(PageBreak())
+
+    # ── Each Exercise Record ──
+    avail_width, avail_height = doc.width, doc.height
+    for idx, (report, test_case_rows, test_case_note, details) in enumerate(reports_with_details):
+        if idx > 0:
+            story.append(PageBreak())
+
+        date_str = report.generated_at.strftime("%d-%m-%Y") if report.generated_at else ""
+        top_row = Table(
+            [[
+                Paragraph(f"Exp No: {report.exp_no}", _CORNER_STYLE),
+                Paragraph(f"Date: {date_str}", ParagraphStyle("r", parent=_CORNER_STYLE, alignment=TA_RIGHT)),
+            ]],
+            colWidths=[3.3 * inch, 3.3 * inch],
+        )
+        top_row.setStyle(TableStyle([
+            ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ]))
+        story.append(top_row)
+        story.append(Paragraph(_escape(report.exp_name), _TITLE_STYLE))
+        story.append(Spacer(1, 12))
+
+        # Aim
+        story += _boxed_section("Aim", Paragraph(_pre(report.aim) or "—", _BODY_STYLE), avail_width, avail_height)
+        story.append(Spacer(1, 10))
+
+        # Algorithm
+        story += _boxed_section("Algorithm", Paragraph(_pre(report.algorithm) or "—", _BODY_STYLE), avail_width, avail_height)
+        story.append(Spacer(1, 10))
+
+        # Program
+        story += _boxed_section(
+            "Program", Preformatted(report.program or "—", _CODE_STYLE, maxLineLength=95), avail_width, avail_height,
+        )
+        story.append(Spacer(1, 10))
+
+        # Output
+        output_content = _test_case_table(test_case_rows) if test_case_rows else Paragraph(test_case_note or "—", _NOTE_STYLE)
+        story += _boxed_section("Output", output_content, avail_width, avail_height)
+        story.append(Spacer(1, 10))
+
+        # Details
+        if details:
+            story += _boxed_section("Details", _details_table(details), avail_width, avail_height)
+            story.append(Spacer(1, 10))
+
+        # Result
+        story += _boxed_section("Result", Paragraph(_pre(report.result) or "—", _BODY_STYLE), avail_width, avail_height)
+
+        # Signature
+        sig = _sig_block("Signature", 2.6 * inch)
+        footer = Table([["", sig]], colWidths=[3.8 * inch, 2.8 * inch])
+        footer.setStyle(TableStyle([
+            ("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+            ("ALIGN", (1, 0), (1, 0), "CENTER"),
+        ]))
+        story.append(Spacer(1, 20))
+        story.append(footer)
+
+    doc.build(story)
+
