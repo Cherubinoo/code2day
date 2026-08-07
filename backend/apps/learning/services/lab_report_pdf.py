@@ -118,10 +118,7 @@ class RegisterWatermarkDocTemplate(BaseDocTemplate):
 
 def reexecute_test_cases(exercise, code, language):
     """Best-effort: re-run `code` against this exercise's LabExerciseTestCase
-    rows to build a real Input/Expected/Received/Status table — the same
-    verification method used for Problems in the per-student contest report
-    (see pdf_reports.StudentContestReportPDFView._reexecute_test_cases),
-    applied to lab exercises the same way.
+    rows in parallel using ThreadPoolExecutor to build a real Input/Expected/Received/Status table.
 
     Returns (rows, all_passed, note):
       - rows: list of (stdin, expected, received, "Passed"/"Failed") tuples
@@ -129,7 +126,9 @@ def reexecute_test_cases(exercise, code, language):
       - note: explanation for why rows is empty/partial, else ""
     """
     import logging
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from .executor import execute_submission, get_language_id, ExecutorError
+    from .execution_adapter import normalize_comparable_output
 
     logger = logging.getLogger(__name__)
 
@@ -141,37 +140,39 @@ def reexecute_test_cases(exercise, code, language):
     except Exception:
         return [], None, f"Re-verification isn't available for language '{language}'."
 
-    rows = []
-    for tc in test_cases:
+    def _exec_single_tc(idx, tc):
         try:
-            result = execute_submission(code, language_id, stdin=tc.stdin, timeout=10)
+            result = execute_submission(code, language_id, stdin=tc.stdin, timeout=8)
+            received = (result.get("stdout") or "").strip()
+            expected = (tc.expected_output or "").strip()
+            passed = (
+                result.get("status") == "Accepted"
+                and normalize_comparable_output(received) == normalize_comparable_output(expected)
+            )
+            display_received = received
+            if not passed and not display_received:
+                display_received = result.get("output") or result.get("stderr") or result.get("compile_output") or ""
+            return idx, tc.stdin, expected, display_received, "Passed" if passed else "Failed", None
         except Exception as exc:
-            # Log the real (possibly infra-revealing) error server-side only —
-            # the note below ends up in a student-facing PDF, so it stays generic.
-            logger.warning("Lab test-case re-execution failed: %s", exc)
-            note = ("Stopped re-running test cases after an execution error." if rows
-                    else "Could not automatically verify this program's output — "
-                         "the code execution service was unavailable when this report was generated.")
-            return rows, (all(r[3] == "Passed" for r in rows) if rows else None), note
-        from .execution_adapter import normalize_comparable_output
+            return idx, tc.stdin, (tc.expected_output or "").strip(), "", "Failed", exc
 
-        received = (result.get("stdout") or "").strip()
-        expected = (tc.expected_output or "").strip()
-        passed = (
-            result.get("status") == "Accepted"
-            and normalize_comparable_output(received) == normalize_comparable_output(expected)
-        )
-        # On a failing case with no stdout at all (a crash, timeout, or
-        # compile error), show the real reason instead of a blank cell —
-        # executor._normalize_result's unified `output` field now includes
-        # a plain-English explanation for common crash signals (e.g. a
-        # SIGSEGV null-pointer dereference) rather than leaving this column
-        # empty with no indication anything went wrong.
-        display_received = received
-        if not passed and not display_received:
-            display_received = result.get("output") or result.get("stderr") or result.get("compile_output") or ""
-        rows.append((tc.stdin, expected, display_received, "Passed" if passed else "Failed"))
-    return rows, all(r[3] == "Passed" for r in rows), ""
+    results_by_idx = {}
+    error_occurred = False
+
+    workers = min(8, len(test_cases))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_exec_single_tc, i, tc) for i, tc in enumerate(test_cases)]
+        for future in as_completed(futures):
+            idx, stdin, expected, received, status_str, exc = future.result()
+            if exc:
+                logger.warning("Lab test-case re-execution failed: %s", exc)
+                error_occurred = True
+            results_by_idx[idx] = (stdin, expected, received, status_str)
+
+    rows = [results_by_idx[i] for i in range(len(test_cases)) if i in results_by_idx]
+    all_passed = all(r[3] == "Passed" for r in rows) if rows else None
+    note = "Could not automatically verify all outputs — code execution service had an issue." if (error_occurred and not rows) else ""
+    return rows, all_passed, note
 
 
 def _test_case_table(rows):

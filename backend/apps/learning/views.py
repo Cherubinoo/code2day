@@ -14427,6 +14427,15 @@ class StudentExerciseSubmitView(APIView):
             exercise=exercise, student=student,
             defaults={"code": code, "language": language},
         )
+
+        def _pregen():
+            try:
+                _generate_lab_exercise_report(exercise, sub)
+            except Exception as exc:
+                logger.warning("Async lab report pre-generation failed for sub %s: %s", sub.id, exc)
+
+        threading.Thread(target=_pregen, daemon=True).start()
+
         return Response({
             "submitted": True,
             "submitted_at": sub.submitted_at.isoformat(),
@@ -14476,11 +14485,17 @@ def _generate_lab_exercise_report(exercise, submission):
             algorithm = existing_report.algorithm
         else:
             try:
-                algorithm = generate_algorithm(
-                    problem_statement=problem_statement, code=submission.code, language=submission.language,
-                )
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(
+                        generate_algorithm,
+                        problem_statement=problem_statement,
+                        code=submission.code,
+                        language=submission.language,
+                    )
+                    algorithm = future.result(timeout=3.0)
             except Exception as exc:
-                logger.warning("Lab report algorithm generation failed for exercise %s: %s", exercise.id, exc)
+                logger.warning("Lab report LLM algorithm generation failed/timed out for exercise %s: %s", exercise.id, exc)
                 algorithm = _fallback_algorithm(exercise.title, submission.language)
 
         test_case_rows, all_passed, tc_note = reexecute_test_cases(exercise, submission.code, submission.language)
