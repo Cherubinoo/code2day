@@ -1333,13 +1333,6 @@ function LabDetail({ lab: initLab, onBack }) {
             </button>
           )}
 
-          <button
-            type="button"
-            style={{ background: "#005696", color: "white", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}
-            onClick={() => window.open(`/api/lab/v2/staff/labs/${lab.id}/full-report/`, '_blank')}
-          >
-            <Download size={14} /> Download Full Lab Report (PDF)
-          </button>
           <span className="slp2-chip"><BookOpen size={10} /> {exercises.length} exercises</span>
           <span className="slp2-chip"><Users size={10} /> {students.length} students</span>
         </div>

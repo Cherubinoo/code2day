@@ -716,7 +716,6 @@ function LabDetail({ lab, onBack, dashboard }) {
   const [locked, setLocked] = useState(false);
   const [lockReason, setLockReason] = useState("");
   const [downloadingReportId, setDownloadingReportId] = useState(null);
-  const [downloadingFullReport, setDownloadingFullReport] = useState(false);
   const [reportErr, setReportErr] = useState("");
 
   useEffect(() => {
@@ -762,33 +761,6 @@ function LabDetail({ lab, onBack, dashboard }) {
       setReportErr("Network error downloading report.");
     } finally {
       setDownloadingReportId(null);
-    }
-  }
-
-  async function handleDownloadFullLabReport() {
-    setDownloadingFullReport(true);
-    setReportErr("");
-    try {
-      const res = await fetch(`/api/lab/v2/student/labs/${lab.id}/full-report/`, {
-        credentials: "include",
-      });
-      if (!res.ok) {
-        let msg = "Full report download failed.";
-        try { msg = (await res.json()).error || msg; } catch {}
-        setReportErr(msg);
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `Lab_Record_Notebook_${lab.name.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch {
-      setReportErr("Network error downloading full report.");
-    } finally {
-      setDownloadingFullReport(false);
     }
   }
 
@@ -851,19 +823,6 @@ function LabDetail({ lab, onBack, dashboard }) {
             {fmt(lab.start_date)} → {fmt(lab.end_date)}
           </p>
         </div>
-        {done > 0 && (
-          <button
-            type="button"
-            className="primary-button dense-action"
-            style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-            onClick={handleDownloadFullLabReport}
-            disabled={downloadingFullReport}
-            title="Download complete Laboratory Record Notebook PDF with all completed exercises"
-          >
-            {downloadingFullReport ? <Loader2 size={14} className="spin" /> : <Download size={14} />}
-            {downloadingFullReport ? "Generating Notebook…" : "Download Full Lab Record Notebook (PDF)"}
-          </button>
-        )}
       </div>
 
       {reportErr && (

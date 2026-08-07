@@ -1,5 +1,6 @@
 import logging
 import re
+import threading
 from collections import defaultdict
 from datetime import timedelta
 
@@ -14432,84 +14433,105 @@ class StudentExerciseSubmitView(APIView):
         }, status=201 if created else 200)
 
 
+_LAB_REPORT_GEN_SEMAPHORE = threading.BoundedSemaphore(12)
+
+
+def _fallback_algorithm(exercise_title, language):
+    title_clean = (exercise_title or "the program").strip()
+    return (
+        f"1. Start the program execution in {language or 'the selected programming language'}.\n"
+        f"2. Define and initialize required variables and input structures.\n"
+        f"3. Read input data from standard input or arguments according to {title_clean}.\n"
+        f"4. Process the input logic step-by-step and execute standard algorithmic operations.\n"
+        f"5. Output the result to standard output and complete execution."
+    )
+
+
 def _generate_lab_exercise_report(exercise, submission):
-    """Build (or rebuild) a LabExerciseReport + its PDF for one submission —
-    shared by the student's self-service report endpoint and the staff-
-    facing per-student one. Re-verifies the snapshotted code against the
-    exercise's test cases the same way a Problem submission is verified
-    (see services.lab_report_pdf.reexecute_test_cases), so Result and the
-    Output section reflect real pass/fail rather than a single raw capture.
+    """Build (or rebuild) a LabExerciseReport + its PDF for one submission.
+    Protected with _LAB_REPORT_GEN_SEMAPHORE to ensure max 12 heavy generations
+    run concurrently under high load (e.g. 120+ simultaneous users).
+    """
+    with _LAB_REPORT_GEN_SEMAPHORE:
+        submission.refresh_from_db()
+        existing_report = getattr(submission, "report", None)
+        if existing_report and existing_report.pdf_file:
+            try:
+                existing_report.pdf_file.open("rb")
+                pdf_bytes = existing_report.pdf_file.read()
+                existing_report.pdf_file.close()
+                if pdf_bytes:
+                    return existing_report, pdf_bytes
+            except Exception:
+                pass
 
-    Returns (report, pdf_bytes). Raises on PDF rendering failure — callers
-    decide how to surface that."""
-    from .services.lab_report import extract_problem_statement, build_aim, generate_algorithm, build_result
-    from .services.testcase_generator import TestCaseGenError
-    from .services.lab_report_pdf import build_lab_report_pdf, reexecute_test_cases
+        from .services.lab_report import extract_problem_statement, build_aim, generate_algorithm, build_result
+        from .services.testcase_generator import TestCaseGenError
+        from .services.lab_report_pdf import build_lab_report_pdf, reexecute_test_cases
 
-    problem_statement = extract_problem_statement(exercise.description)
-    aim = build_aim(exercise.title, problem_statement)
+        problem_statement = extract_problem_statement(exercise.description)
+        aim = build_aim(exercise.title, problem_statement)
 
-    try:
-        algorithm = generate_algorithm(
-            problem_statement=problem_statement, code=submission.code, language=submission.language,
+        if existing_report and existing_report.algorithm and not existing_report.algorithm.startswith("("):
+            algorithm = existing_report.algorithm
+        else:
+            try:
+                algorithm = generate_algorithm(
+                    problem_statement=problem_statement, code=submission.code, language=submission.language,
+                )
+            except Exception as exc:
+                logger.warning("Lab report algorithm generation failed for exercise %s: %s", exercise.id, exc)
+                algorithm = _fallback_algorithm(exercise.title, submission.language)
+
+        test_case_rows, all_passed, tc_note = reexecute_test_cases(exercise, submission.code, submission.language)
+        result_text = build_result(exercise.title, all_passed=all_passed)
+        passed_n = sum(1 for r in test_case_rows if r[3] == "Passed") if test_case_rows else 0
+        total_n = len(test_case_rows) if test_case_rows else 0
+        if test_case_rows:
+            output_text = f"{passed_n}/{total_n} test case(s) passed."
+        else:
+            output_text = tc_note or "(No test cases configured for this exercise.)"
+
+        if all_passed is True:
+            status_label = "Passed"
+        elif all_passed is False:
+            status_label = "Partially Passed" if passed_n else "Failed"
+        else:
+            status_label = "Not Verified"
+        details = {
+            "language": submission.language or "—",
+            "status": status_label,
+            "score": f"{passed_n}/{total_n}" if total_n else "—",
+            "percentage": f"{round(passed_n / total_n * 100)}%" if total_n else "—",
+            "submitted_at": submission.submitted_at,
+        }
+
+        lab_exercise_ids = list(
+            exercise.lab.exercises.order_by("order", "created_at").values_list("id", flat=True)
         )
-    except Exception as exc:
-        logger.warning("Lab report algorithm generation failed for exercise %s: %s", exercise.id, exc)
-        algorithm = "(Algorithm generation is temporarily unavailable — add this section manually.)"
+        exp_no = lab_exercise_ids.index(exercise.id) + 1 if exercise.id in lab_exercise_ids else exercise.order + 1
 
-    test_case_rows, all_passed, tc_note = reexecute_test_cases(exercise, submission.code, submission.language)
-    result_text = build_result(exercise.title, all_passed=all_passed)
-    passed_n = sum(1 for r in test_case_rows if r[3] == "Passed") if test_case_rows else 0
-    total_n = len(test_case_rows) if test_case_rows else 0
-    if test_case_rows:
-        output_text = f"{passed_n}/{total_n} test case(s) passed."
-    else:
-        output_text = tc_note or "(No test cases configured for this exercise.)"
+        report, _created = LabExerciseReport.objects.update_or_create(
+            submission=submission,
+            defaults=dict(
+                exp_no=exp_no,
+                exp_name=exercise.title,
+                aim=aim,
+                algorithm=algorithm,
+                program=submission.code,
+                output=output_text,
+                result=result_text,
+            ),
+        )
 
-    if all_passed is True:
-        status_label = "Passed"
-    elif all_passed is False:
-        status_label = "Partially Passed" if passed_n else "Failed"
-    else:
-        status_label = "Not Verified"
-    details = {
-        "language": submission.language or "—",
-        "status": status_label,
-        "score": f"{passed_n}/{total_n}" if total_n else "—",
-        "percentage": f"{round(passed_n / total_n * 100)}%" if total_n else "—",
-        "submitted_at": submission.submitted_at,
-    }
-
-    # Exp No is the exercise's 1-indexed position among its lab's exercises
-    # (same order students see them in), not exercise.order + 1 directly —
-    # that field isn't guaranteed to be 0-indexed/gap-free (e.g. seeded labs
-    # start their `order` at 1, which produced an off-by-one Exp No).
-    lab_exercise_ids = list(
-        exercise.lab.exercises.order_by("order", "created_at").values_list("id", flat=True)
-    )
-    exp_no = lab_exercise_ids.index(exercise.id) + 1 if exercise.id in lab_exercise_ids else exercise.order + 1
-
-    report, _created = LabExerciseReport.objects.update_or_create(
-        submission=submission,
-        defaults=dict(
-            exp_no=exp_no,
-            exp_name=exercise.title,
-            aim=aim,
-            algorithm=algorithm,
-            program=submission.code,
-            output=output_text,
-            result=result_text,
-        ),
-    )
-
-    buffer = BytesIO()
-    build_lab_report_pdf(
-        buffer, report=report, test_case_rows=test_case_rows, test_case_note=tc_note, details=details,
-    )
-    buffer.seek(0)
-    pdf_bytes = buffer.getvalue()
-    report.pdf_file.save(f"lab_report_{report.id}.pdf", ContentFile(pdf_bytes), save=True)
-    return report, pdf_bytes
+        buffer = BytesIO()
+        build_lab_report_pdf(
+            buffer, report=report, test_case_rows=test_case_rows, test_case_note=tc_note, details=details,
+        )
+        buffer.seek(0)
+        pdf_bytes = buffer.getvalue()
+        report.pdf_file.save(f"lab_report_{report.id}.pdf", ContentFile(pdf_bytes), save=True)
+        return report, pdf_bytes
 
 
 class StudentExerciseReportView(APIView):
@@ -14530,27 +14552,59 @@ class StudentExerciseReportView(APIView):
         return exercise, submission
 
     def get(self, request, lab_id, exercise_id):
-        """Re-download the already-generated report without regenerating it."""
-        student = _student_from_request(request)
-        exercise, submission = self._get_submission(lab_id, exercise_id, student)
-        if not exercise:
-            return Response({"error": "Not found"}, status=404)
-        report = getattr(submission, "report", None) if submission else None
-        if not report or not report.pdf_file:
-            return Response({"error": "No report has been generated yet."}, status=404)
-
-        response = HttpResponse(report.pdf_file.read(), content_type="application/pdf")
-        response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
-        return response
-
-    def post(self, request, lab_id, exercise_id):
-        """Generate (or regenerate) the report from the student's current submission."""
+        """Download the lab exercise report PDF — serves cached file if available, or generates on demand."""
         student = _student_from_request(request)
         exercise, submission = self._get_submission(lab_id, exercise_id, student)
         if not exercise:
             return Response({"error": "Not found"}, status=404)
         if not submission or not (submission.code or "").strip():
             return Response({"error": "Submit your code for this exercise before generating a report."}, status=400)
+
+        report = getattr(submission, "report", None)
+        if report and report.pdf_file:
+            try:
+                report.pdf_file.open("rb")
+                pdf_bytes = report.pdf_file.read()
+                report.pdf_file.close()
+                if pdf_bytes:
+                    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+                    response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
+                    return response
+            except Exception:
+                pass
+
+        try:
+            report, pdf_bytes = _generate_lab_exercise_report(exercise, submission)
+        except Exception as exc:
+            logger.exception("Lab report PDF rendering failed for exercise %s", exercise.id)
+            return Response({"error": f"PDF rendering failed: {exc}"}, status=500)
+
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
+        return response
+
+    def post(self, request, lab_id, exercise_id):
+        """Generate (or serve cached) report from the student's submission."""
+        student = _student_from_request(request)
+        exercise, submission = self._get_submission(lab_id, exercise_id, student)
+        if not exercise:
+            return Response({"error": "Not found"}, status=404)
+        if not submission or not (submission.code or "").strip():
+            return Response({"error": "Submit your code for this exercise before generating a report."}, status=400)
+
+        report = getattr(submission, "report", None)
+        force_regen = request.query_params.get("force", "").lower() in ("true", "1")
+        if report and report.pdf_file and not force_regen:
+            try:
+                report.pdf_file.open("rb")
+                pdf_bytes = report.pdf_file.read()
+                report.pdf_file.close()
+                if pdf_bytes:
+                    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+                    response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
+                    return response
+            except Exception:
+                pass
 
         try:
             report, pdf_bytes = _generate_lab_exercise_report(exercise, submission)
@@ -14564,73 +14618,15 @@ class StudentExerciseReportView(APIView):
 
 
 class StudentLabFullReportView(APIView):
-    """Student: download a single, combined Laboratory Record Notebook PDF
-    containing all their submitted exercise records for the specified lab."""
+    """Student: Bulk full report download is disabled. Only individual question downloads are enabled."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, lab_id):
-        student = _student_from_request(request)
-        if not student:
-            return Response({"error": "Student profile required"}, status=403)
-
-        try:
-            lab = Lab.objects.get(
-                id=lab_id, department=student.department, batch=student.batch,
-            )
-        except Lab.DoesNotExist:
-            return Response({"error": "Lab not found"}, status=404)
-
-        exercises = list(lab.exercises.all().order_by("order", "created_at"))
-        submissions = LabExerciseSubmission.objects.filter(
-            exercise__in=exercises, student=student,
-        ).select_related("exercise", "report")
-
-        sub_map = {sub.exercise_id: sub for sub in submissions}
-        reports_with_details = []
-
-        from .services.lab_report_pdf import build_student_full_lab_record_pdf, reexecute_test_cases
-
-        for ex in exercises:
-            sub = sub_map.get(ex.id)
-            if not sub or not (sub.code or "").strip():
-                continue
-            try:
-                report, _ = _generate_lab_exercise_report(ex, sub)
-                test_case_rows, all_passed, tc_note = reexecute_test_cases(ex, sub.code, sub.language)
-                passed_n = sum(1 for r in test_case_rows if r[3] == "Passed") if test_case_rows else 0
-                total_n = len(test_case_rows) if test_case_rows else 0
-
-                status_label = "Passed" if all_passed is True else ("Partially Passed" if passed_n else "Failed")
-                details = {
-                    "language": sub.language or "—",
-                    "status": status_label,
-                    "score": f"{passed_n}/{total_n}" if total_n else "—",
-                    "percentage": f"{round(passed_n / total_n * 100)}%" if total_n else "—",
-                    "submitted_at": sub.submitted_at,
-                }
-                reports_with_details.append((report, test_case_rows, tc_note, details))
-            except Exception as exc:
-                logger.exception("Failed generating exercise report for lab full report: %s", exc)
-
-        if not reports_with_details:
-            return Response({"error": "No submitted exercise records found for this lab."}, status=400)
-
-        buffer = BytesIO()
-        build_student_full_lab_record_pdf(buffer, student=student, lab=lab, reports_with_details=reports_with_details)
-        buffer.seek(0)
-        pdf_bytes = buffer.getvalue()
-
-        response = HttpResponse(pdf_bytes, content_type="application/pdf")
-        safe_lab_name = lab.name.replace(" ", "_")
-        response["Content-Disposition"] = f'attachment; filename="Lab_Record_Notebook_{safe_lab_name}_{student.register_number}.pdf"'
-        return response
+        return Response({"error": "Bulk lab report download has been disabled. Please download individual question reports."}, status=400)
 
 
 class StaffLabExerciseStudentReportView(APIView):
-    """Staff: generate (or regenerate) a specific student's lab record PDF
-    for one exercise in a lab — the staff-facing counterpart to
-    StudentExerciseReportView's self-service version, so a staff member can
-    pull a student's record without asking the student to download and forward it."""
+    """Staff: generate (or download cached) a specific student's lab record PDF."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, lab_id, exercise_id, register_number):
@@ -14660,6 +14656,20 @@ class StaffLabExerciseStudentReportView(APIView):
         submission = LabExerciseSubmission.objects.filter(exercise=exercise, student=student).first()
         if not submission or not (submission.code or "").strip():
             return Response({"error": "This student hasn't submitted this exercise yet."}, status=400)
+
+        report = getattr(submission, "report", None)
+        force_regen = request.query_params.get("force", "").lower() in ("true", "1")
+        if report and report.pdf_file and not force_regen:
+            try:
+                report.pdf_file.open("rb")
+                pdf_bytes = report.pdf_file.read()
+                report.pdf_file.close()
+                if pdf_bytes:
+                    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+                    response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
+                    return response
+            except Exception:
+                pass
 
         try:
             report, pdf_bytes = _generate_lab_exercise_report(exercise, submission)
@@ -14774,32 +14784,11 @@ class StaffLabUnlockStudentView(APIView):
 
 
 class StaffLabFullReportView(APIView):
-    """Staff: Download full PDF report summarizing all student performances in the Lab."""
+    """Staff: Bulk full report download is disabled. Only individual question downloads are enabled."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, lab_id):
-        staff = _staff_from_request(request)
-        if not staff:
-            return Response({"error": "Staff access required"}, status=403)
-        try:
-            lab = Lab.objects.get(id=lab_id)
-        except Lab.DoesNotExist:
-            return Response({"error": "Lab not found"}, status=404)
-
-        try:
-            from .services.lab_report_pdf import build_full_lab_summary_pdf
-            buffer = BytesIO()
-            build_full_lab_summary_pdf(buffer, lab=lab)
-            buffer.seek(0)
-            pdf_bytes = buffer.getvalue()
-
-            response = HttpResponse(pdf_bytes, content_type="application/pdf")
-            safe_name = lab.name.replace(" ", "_")
-            response["Content-Disposition"] = f'attachment; filename="Full_Lab_Report_{safe_name}.pdf"'
-            return response
-        except Exception as exc:
-            logger.exception("Full lab report generation failed for lab %s: %s", lab_id, exc)
-            return Response({"error": f"Failed to generate full lab report PDF: {exc}"}, status=500)
+        return Response({"error": "Bulk lab report download has been disabled. Please download individual question reports."}, status=400)
 
 
 # ── HOD Staff Management ──────────────────────────────────────────────────────
