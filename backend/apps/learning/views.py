@@ -14252,21 +14252,24 @@ class StudentLabExercisesView(APIView):
                 "exercises": [],
             })
 
-        if lab.lab_type == "university" and lab.linked_lab:
+        if lab.lab_type == "university":
             if not session.allocated_exercises.exists():
-                pool = list(lab.linked_lab.exercises.all())
+                pool = list(lab.exercises.all())
+                if not pool and lab.linked_lab:
+                    pool = list(lab.linked_lab.exercises.all())
+                
                 valid_pairs = []
                 for i in range(len(pool)):
                     for j in range(i + 1, len(pool)):
                         ex1 = pool[i]
                         ex2 = pool[j]
-                        if ex1.difficulty == "Hard" and ex2.difficulty == "Hard":
+                        if ex1.difficulty and ex2.difficulty and str(ex1.difficulty).strip().lower() == str(ex2.difficulty).strip().lower():
                             continue
                         valid_pairs.append((ex1, ex2))
                 
                 if valid_pairs:
                     import random
-                    allocated = random.choice(valid_pairs)
+                    allocated = list(random.choice(valid_pairs))
                 else:
                     import random
                     allocated = random.sample(pool, min(2, len(pool)))
@@ -14288,6 +14291,7 @@ class StudentLabExercisesView(APIView):
                 "title": ex.title,
                 "description": ex.description,
                 "explanation": ex.explanation,
+                "difficulty": ex.difficulty,
                 "order": ex.order,
                 "submitted": sub is not None,
                 "submitted_at": sub.submitted_at.isoformat() if sub else None,
@@ -14319,11 +14323,11 @@ class StudentExerciseRunView(APIView):
             reason = session.lock_reason or "Your session is locked. Please contact staff to unlock."
             return Response({"error": reason, "is_locked": True, "lock_reason": reason}, status=403)
 
-        if lab.lab_type == "university" and lab.linked_lab:
-            if not session.allocated_exercises.filter(id=exercise_id).exists():
+        if lab.lab_type == "university":
+            if session.allocated_exercises.exists() and not session.allocated_exercises.filter(id=exercise_id).exists():
                 return Response({"error": "You are not allocated this exercise."}, status=403)
             try:
-                exercise = LabExercise.objects.get(id=exercise_id, lab=lab.linked_lab)
+                exercise = LabExercise.objects.get(id=exercise_id)
             except LabExercise.DoesNotExist:
                 return Response({"error": "Exercise not found"}, status=404)
         else:
@@ -14397,11 +14401,11 @@ class StudentExerciseSubmitView(APIView):
             reason = session.lock_reason or "Your session is locked. Please contact staff to unlock."
             return Response({"error": reason, "is_locked": True, "lock_reason": reason}, status=403)
 
-        if lab.lab_type == "university" and lab.linked_lab:
-            if not session.allocated_exercises.filter(id=exercise_id).exists():
+        if lab.lab_type == "university":
+            if session.allocated_exercises.exists() and not session.allocated_exercises.filter(id=exercise_id).exists():
                 return Response({"error": "You are not allocated this exercise."}, status=403)
             try:
-                exercise = LabExercise.objects.get(id=exercise_id, lab=lab.linked_lab)
+                exercise = LabExercise.objects.get(id=exercise_id)
             except LabExercise.DoesNotExist:
                 return Response({"error": "Exercise not found"}, status=404)
         else:

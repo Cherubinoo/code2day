@@ -231,7 +231,7 @@ function ProblemStatement({ text, explanation }) {
 }
 
 // ─── Exercise editor (mirrors the Problems page workspace + console) ─────────
-function ExerciseEditor({ lab, exercise, onBack, onSubmitted, dashboard, onLocked }) {
+function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, onBack, onSubmitted, dashboard, onLocked }) {
   const allowedLanguages = lab.allowed_languages?.length ? lab.allowed_languages : LAB_LANGUAGES;
   const initialLang = exercise.language || allowedLanguages[0];
   const [code, setCode] = useState(exercise.code || starterCodeByLanguage[initialLang] || "");
@@ -249,6 +249,18 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted, dashboard, onLocke
   const [elapsedTime, setElapsedTime] = useState(0);
   const [sessionLocked, setSessionLocked] = useState(false);
   const [sessionLockReason, setSessionLockReason] = useState("");
+
+  useEffect(() => {
+    const newLang = exercise.language || (lab.allowed_languages?.length ? lab.allowed_languages[0] : LAB_LANGUAGES[0]);
+    setLang(newLang);
+    setCode(exercise.code || starterCodeByLanguage[newLang] || "");
+    setSubmitted(exercise.submitted);
+    setSubmittedAt(exercise.submitted_at);
+    setSubmitErr("");
+    setOutputLog("Run your code to see output here.");
+    userEditedCodeRef.current = false;
+    lastProgrammaticCodeRef.current = exercise.code || starterCodeByLanguage[newLang] || "";
+  }, [exercise.id]);
 
   const recordViolation = useCallback(async (action, reason) => {
     try {
@@ -546,6 +558,61 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted, dashboard, onLocke
       {showSuccessAnimation && (
         <SuccessAnimation onDone={() => setShowSuccessAnimation(false)} />
       )}
+
+      {/* ── Question Switcher Bar for Allocated Questions ── */}
+      {allExercises && allExercises.length > 0 && (
+        <div style={{
+          background: "#0f172a", borderBottom: "1px solid #334155", padding: "10px 16px",
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap"
+        }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+            Allocated Questions ({allExercises.length}):
+          </span>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {allExercises.map((exItem, idx) => {
+              const isCurrent = exItem.id === exercise.id;
+              const diffColor =
+                exItem.difficulty === "Easy" ? "#4ade80" :
+                exItem.difficulty === "Medium" ? "#facc15" :
+                exItem.difficulty === "Hard" ? "#f87171" : "#a78bfa";
+
+              return (
+                <button
+                  key={exItem.id}
+                  type="button"
+                  onClick={() => onSelectExercise && onSelectExercise(exItem)}
+                  style={{
+                    padding: "6px 14px", borderRadius: 8, cursor: "pointer", fontSize: 13, fontWeight: 700,
+                    background: isCurrent ? "linear-gradient(135deg, #4c1d95, #6d28d9)" : "#1e293b",
+                    color: isCurrent ? "#ffffff" : "#cbd5e1",
+                    border: `1px solid ${isCurrent ? "#a78bfa" : "#334155"}`,
+                    boxShadow: isCurrent ? "0 2px 8px rgba(109,40,217,0.4)" : "none",
+                    display: "inline-flex", alignItems: "center", gap: 8, transition: "all 0.15s ease"
+                  }}
+                >
+                  <span>Q{idx + 1}: {exItem.title}</span>
+                  {exItem.difficulty && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 4,
+                      background: "rgba(15, 23, 42, 0.6)", color: diffColor, border: `1px solid ${diffColor}44`
+                    }}>
+                      {exItem.difficulty}
+                    </span>
+                  )}
+                  {exItem.submitted ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, color: "#4ade80", fontWeight: 700 }}>
+                      <CheckCircle2 size={13} /> Solved
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Pending</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── Workspace Header ── */}
       <section className="page-header compact-header problem-page-header">
         <div className="workspace-title-row">
@@ -817,6 +884,8 @@ function LabDetail({ lab, onBack, dashboard }) {
       <ExerciseEditor
         lab={lab}
         exercise={activeExercise}
+        allExercises={exercises}
+        onSelectExercise={(ex) => setActiveExercise(ex)}
         dashboard={dashboard}
         onLocked={(reason) => {
           setLocked(true);
