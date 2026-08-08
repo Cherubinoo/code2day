@@ -14487,6 +14487,15 @@ class StudentExerciseSubmitView(APIView):
 _LAB_REPORT_GEN_SEMAPHORE = threading.BoundedSemaphore(12)
 
 
+def _is_valid_algorithm(alg):
+    if not alg or not str(alg).strip():
+        return False
+    alg_str = str(alg).strip()
+    if alg_str.startswith("(") or alg_str == "—" or len(alg_str) < 15:
+        return False
+    return True
+
+
 def _fallback_algorithm(exercise_title, language):
     title_clean = (exercise_title or "the program").strip()
     return (
@@ -14506,7 +14515,7 @@ def _generate_lab_exercise_report(exercise, submission):
     with _LAB_REPORT_GEN_SEMAPHORE:
         submission.refresh_from_db()
         existing_report = getattr(submission, "report", None)
-        if existing_report and existing_report.pdf_file:
+        if existing_report and existing_report.pdf_file and _is_valid_algorithm(existing_report.algorithm):
             try:
                 existing_report.pdf_file.open("rb")
                 pdf_bytes = existing_report.pdf_file.read()
@@ -14516,29 +14525,17 @@ def _generate_lab_exercise_report(exercise, submission):
             except Exception:
                 pass
 
-        from .services.lab_report import extract_problem_statement, build_aim, generate_algorithm, build_result
+        from .services.lab_report import (
+            extract_problem_statement, build_aim, get_or_generate_question_algorithm, build_result,
+        )
         from .services.testcase_generator import TestCaseGenError
         from .services.lab_report_pdf import build_lab_report_pdf, reexecute_test_cases
 
         problem_statement = extract_problem_statement(exercise.description)
         aim = build_aim(exercise.title, problem_statement)
 
-        if existing_report and existing_report.algorithm and not existing_report.algorithm.startswith("("):
-            algorithm = existing_report.algorithm
-        else:
-            try:
-                from concurrent.futures import ThreadPoolExecutor
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(
-                        generate_algorithm,
-                        problem_statement=problem_statement,
-                        code=submission.code,
-                        language=submission.language,
-                    )
-                    algorithm = future.result(timeout=3.0)
-            except Exception as exc:
-                logger.warning("Lab report LLM algorithm generation failed/timed out for exercise %s: %s", exercise.id, exc)
-                algorithm = _fallback_algorithm(exercise.title, submission.language)
+        # Single canonical algorithm per Question (exercise), shared across all students
+        algorithm = get_or_generate_question_algorithm(exercise)
 
         test_case_rows, all_passed, tc_note = reexecute_test_cases(exercise, submission.code, submission.language)
         result_text = build_result(exercise.title, all_passed=all_passed)
@@ -14618,7 +14615,7 @@ class StudentExerciseReportView(APIView):
             return Response({"error": "Submit your code for this exercise before generating a report."}, status=400)
 
         report = getattr(submission, "report", None)
-        if report and report.pdf_file:
+        if report and report.pdf_file and _is_valid_algorithm(report.algorithm):
             try:
                 report.pdf_file.open("rb")
                 pdf_bytes = report.pdf_file.read()
@@ -14651,7 +14648,7 @@ class StudentExerciseReportView(APIView):
 
         report = getattr(submission, "report", None)
         force_regen = request.query_params.get("force", "").lower() in ("true", "1")
-        if report and report.pdf_file and not force_regen:
+        if report and report.pdf_file and _is_valid_algorithm(report.algorithm) and not force_regen:
             try:
                 report.pdf_file.open("rb")
                 pdf_bytes = report.pdf_file.read()
@@ -14716,7 +14713,7 @@ class StaffLabExerciseStudentReportView(APIView):
 
         report = getattr(submission, "report", None)
         force_regen = request.query_params.get("force", "").lower() in ("true", "1")
-        if report and report.pdf_file and not force_regen:
+        if report and report.pdf_file and _is_valid_algorithm(report.algorithm) and not force_regen:
             try:
                 report.pdf_file.open("rb")
                 pdf_bytes = report.pdf_file.read()
