@@ -14518,12 +14518,13 @@ def _generate_lab_exercise_report(exercise, submission):
         if existing_report and existing_report.pdf_file and _is_valid_algorithm(existing_report.algorithm):
             try:
                 existing_report.pdf_file.open("rb")
+                existing_report.pdf_file.seek(0)
                 pdf_bytes = existing_report.pdf_file.read()
                 existing_report.pdf_file.close()
-                if pdf_bytes:
+                if pdf_bytes and len(pdf_bytes) >= 1000:
                     return existing_report, pdf_bytes
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Failed reading cached PDF for report %s: %s, regenerating...", getattr(existing_report, "id", None), exc)
 
         from .services.lab_report import (
             extract_problem_statement, build_aim, get_or_generate_question_algorithm, build_result,
@@ -14618,10 +14619,12 @@ class StudentExerciseReportView(APIView):
         if report and report.pdf_file and _is_valid_algorithm(report.algorithm):
             try:
                 report.pdf_file.open("rb")
+                report.pdf_file.seek(0)
                 pdf_bytes = report.pdf_file.read()
                 report.pdf_file.close()
-                if pdf_bytes:
+                if pdf_bytes and len(pdf_bytes) >= 1000:
                     response = HttpResponse(pdf_bytes, content_type="application/pdf")
+                    response["Content-Length"] = str(len(pdf_bytes))
                     response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
                     return response
             except Exception:
@@ -14634,6 +14637,7 @@ class StudentExerciseReportView(APIView):
             return Response({"error": f"PDF rendering failed: {exc}"}, status=500)
 
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Length"] = str(len(pdf_bytes))
         response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
         return response
 
@@ -14651,10 +14655,12 @@ class StudentExerciseReportView(APIView):
         if report and report.pdf_file and _is_valid_algorithm(report.algorithm) and not force_regen:
             try:
                 report.pdf_file.open("rb")
+                report.pdf_file.seek(0)
                 pdf_bytes = report.pdf_file.read()
                 report.pdf_file.close()
-                if pdf_bytes:
+                if pdf_bytes and len(pdf_bytes) >= 1000:
                     response = HttpResponse(pdf_bytes, content_type="application/pdf")
+                    response["Content-Length"] = str(len(pdf_bytes))
                     response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
                     return response
             except Exception:
@@ -14667,6 +14673,7 @@ class StudentExerciseReportView(APIView):
             return Response({"error": f"PDF rendering failed: {exc}"}, status=500)
 
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Length"] = str(len(pdf_bytes))
         response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
         return response
 
@@ -14716,10 +14723,12 @@ class StaffLabExerciseStudentReportView(APIView):
         if report and report.pdf_file and _is_valid_algorithm(report.algorithm) and not force_regen:
             try:
                 report.pdf_file.open("rb")
+                report.pdf_file.seek(0)
                 pdf_bytes = report.pdf_file.read()
                 report.pdf_file.close()
-                if pdf_bytes:
+                if pdf_bytes and len(pdf_bytes) >= 1000:
                     response = HttpResponse(pdf_bytes, content_type="application/pdf")
+                    response["Content-Length"] = str(len(pdf_bytes))
                     response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
                     return response
             except Exception:
@@ -14734,6 +14743,7 @@ class StaffLabExerciseStudentReportView(APIView):
             return Response({"error": f"Failed to generate report PDF: {exc}"}, status=500)
 
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Length"] = str(len(pdf_bytes))
         response["Content-Disposition"] = f'attachment; filename="lab_record_{exercise.id}_{student.register_number}.pdf"'
         return response
 
