@@ -14316,7 +14316,8 @@ class StudentExerciseRunView(APIView):
 
         session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
         if session.is_locked:
-            return Response({"error": "Your session is locked due to proctoring violation. Please contact staff to unlock."}, status=403)
+            reason = session.lock_reason or "Your session is locked. Please contact staff to unlock."
+            return Response({"error": reason, "is_locked": True, "lock_reason": reason}, status=403)
 
         if lab.lab_type == "university" and lab.linked_lab:
             if not session.allocated_exercises.filter(id=exercise_id).exists():
@@ -14393,7 +14394,8 @@ class StudentExerciseSubmitView(APIView):
 
         session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
         if session.is_locked:
-            return Response({"error": "Your session is locked due to proctoring violation. Please contact staff to unlock."}, status=403)
+            reason = session.lock_reason or "Your session is locked. Please contact staff to unlock."
+            return Response({"error": reason, "is_locked": True, "lock_reason": reason}, status=403)
 
         if lab.lab_type == "university" and lab.linked_lab:
             if not session.allocated_exercises.filter(id=exercise_id).exists():

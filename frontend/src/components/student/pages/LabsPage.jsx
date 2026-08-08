@@ -231,7 +231,7 @@ function ProblemStatement({ text, explanation }) {
 }
 
 // ─── Exercise editor (mirrors the Problems page workspace + console) ─────────
-function ExerciseEditor({ lab, exercise, onBack, onSubmitted, dashboard }) {
+function ExerciseEditor({ lab, exercise, onBack, onSubmitted, dashboard, onLocked }) {
   const allowedLanguages = lab.allowed_languages?.length ? lab.allowed_languages : LAB_LANGUAGES;
   const initialLang = exercise.language || allowedLanguages[0];
   const [code, setCode] = useState(exercise.code || starterCodeByLanguage[initialLang] || "");
@@ -265,14 +265,16 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted, dashboard }) {
       if (res.ok) {
         const d = await res.json();
         if (d.is_locked) {
+          const lockMsg = d.lock_reason || "Security violation limit reached.";
           setSessionLocked(true);
-          setSessionLockReason(d.lock_reason || "Security violation limit reached.");
+          setSessionLockReason(lockMsg);
+          if (onLocked) onLocked(lockMsg);
         }
       }
     } catch (e) {
       console.error("Failed to record violation", e);
     }
-  }, [lab.id]);
+  }, [lab.id, onLocked]);
 
   const handleBack = () => {
     if (document.fullscreenElement) {
@@ -404,7 +406,13 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted, dashboard }) {
       });
       const result = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setOutputLog(result.detail || "Execution failed.");
+        if (result.is_locked || res.status === 403) {
+          const lMsg = result.lock_reason || result.error || "Session is locked.";
+          setSessionLocked(true);
+          setSessionLockReason(lMsg);
+          if (onLocked) onLocked(lMsg);
+        }
+        setOutputLog(result.detail || result.error || "Execution failed.");
         return;
       }
       let out = [
@@ -457,6 +465,12 @@ function ExerciseEditor({ lab, exercise, onBack, onSubmitted, dashboard }) {
         setShowSuccessAnimation(true);
         onSubmitted(exercise.id, { code, language: lang, submitted_at: d.submitted_at });
       } else {
+        if (d.is_locked || res.status === 403) {
+          const lMsg = d.lock_reason || d.error || "Session is locked.";
+          setSessionLocked(true);
+          setSessionLockReason(lMsg);
+          if (onLocked) onLocked(lMsg);
+        }
         setSubmitErr(d.error || "Submission failed. Please try again.");
         // Show the failing test cases in the console too, the same
         // Case-by-case breakdown the Run button shows, so the student can
@@ -718,20 +732,26 @@ function LabDetail({ lab, onBack, dashboard }) {
   const [downloadingReportId, setDownloadingReportId] = useState(null);
   const [reportErr, setReportErr] = useState("");
 
-  useEffect(() => {
+  const fetchLockAndExercises = useCallback(() => {
+    setLoading(true);
     fetch(`/api/lab/v2/${lab.id}/exercises/list/`, { credentials: "include" })
       .then((r) => r.json())
       .then((d) => {
         if (d.is_locked) {
           setLocked(true);
-          setLockReason(d.lock_reason || "Violation detected.");
+          setLockReason(d.lock_reason || "Lab session is locked by staff. Awaiting staff unlock for your batch.");
         } else {
+          setLocked(false);
           setExercises(d.exercises ?? []);
         }
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, [lab.id]);
+
+  useEffect(() => {
+    fetchLockAndExercises();
+  }, [fetchLockAndExercises, activeExercise]);
 
   async function handleDownloadExerciseReport(e, exId, title) {
     e.stopPropagation();
@@ -798,7 +818,14 @@ function LabDetail({ lab, onBack, dashboard }) {
         lab={lab}
         exercise={activeExercise}
         dashboard={dashboard}
-        onBack={() => setActiveExercise(null)}
+        onLocked={(reason) => {
+          setLocked(true);
+          setLockReason(reason);
+        }}
+        onBack={() => {
+          setActiveExercise(null);
+          fetchLockAndExercises();
+        }}
         onSubmitted={(id, data) => {
           onSubmitted(id, data);
           setActiveExercise((e) => e && e.id === id ? { ...e, ...data, submitted: true } : e);
@@ -914,7 +941,20 @@ export default function LabsPage({ dashboard }) {
   }, []);
 
   if (selectedLab) {
-    return <LabDetail lab={selectedLab} dashboard={dashboard} onBack={() => setSelectedLab(null)} />;
+    return (
+      <LabDetail
+        key={selectedLab.id}
+        lab={selectedLab}
+        dashboard={dashboard}
+        onBack={() => {
+          setSelectedLab(null);
+          fetch("/api/lab/v2/student/", { credentials: "include" })
+            .then((r) => r.json())
+            .then((d) => setLabs(Array.isArray(d) ? d : []))
+            .catch(() => {});
+        }}
+      />
+    );
   }
 
   const labsOfType = labs.filter((l) => (l.lab_type || "practical") === typeFilter);
