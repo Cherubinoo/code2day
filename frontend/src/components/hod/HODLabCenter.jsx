@@ -301,7 +301,18 @@ function LabCard({ lab, onManage, onDelete }) {
       <div className="hlc2-card-body">
         <div className="hlc2-card-top">
           <span className="hlc2-card-name">{lab.name}</span>
-          <span className={`hlc2-status${expired ? " expired" : " active"}`}>{expired ? "Expired" : "Active"}</span>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+            {lab.lab_type === "university" && (
+              <span style={{ padding: "2px 8px", borderRadius: 6, background: "#ede9fe", color: "#6d28d9", fontSize: 10, fontWeight: 700 }}>🏛️ Univ</span>
+            )}
+            {lab.lab_type === "university" && !lab.is_published && (
+              <span style={{ padding: "2px 8px", borderRadius: 6, background: "#fef3c7", color: "#92400e", fontSize: 10, fontWeight: 700 }}>⏳ Awaiting Staff</span>
+            )}
+            {lab.lab_type === "university" && lab.is_published && (
+              <span style={{ padding: "2px 8px", borderRadius: 6, background: "#dcfce7", color: "#166534", fontSize: 10, fontWeight: 700 }}>✅ Published</span>
+            )}
+            <span className={`hlc2-status${expired ? " expired" : " active"}`}>{expired ? "Expired" : "Active"}</span>
+          </div>
         </div>
         <div className="hlc2-card-chips">
           <span className="hlc2-chip"><Users size={10} /> {lab.batch}</span>
@@ -395,6 +406,22 @@ function ManagePage({ lab: init, staffList, onBack, onLabUpdated }) {
           {lab.is_expired ? "Expired" : "Active"}
         </span>
       </div>
+
+      {lab.lab_type === "university" && (
+        <div style={{ padding: "12px 16px", borderRadius: 8, marginBottom: 16, background: lab.is_published ? "#dcfce7" : "#fef3c7", border: `1px solid ${lab.is_published ? "#bbf7d0" : "#fde68a"}`, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 18 }}>{lab.is_published ? "✅" : "⏳"}</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: lab.is_published ? "#166534" : "#92400e" }}>
+              {lab.is_published ? "Published to Students" : "Awaiting Staff Setup"}
+            </div>
+            <div style={{ fontSize: 12, color: lab.is_published ? "#15803d" : "#a16207" }}>
+              {lab.is_published
+                ? "Students can access this university lab."
+                : "The assigned staff needs to select questions and publish this lab."}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="hlc2-manage-stats">
         <div className="hlc2-stat-box"><span className="hlc2-stat-n">{lab.exercise_count}</span><span>Exercises</span></div>

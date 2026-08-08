@@ -1846,6 +1846,7 @@ class LabStudentSession(models.Model):
     tab_switch_count = models.IntegerField(default=0)
     lock_reason      = models.CharField(max_length=255, blank=True, default="")
     locked_at        = models.DateTimeField(null=True, blank=True)
+    sub_batch        = models.CharField(max_length=50, blank=True, default="Batch 1")
     updated_at       = models.DateTimeField(auto_now=True)
     allocated_exercises = models.ManyToManyField(
         LabExercise, blank=True, related_name="allocated_sessions"

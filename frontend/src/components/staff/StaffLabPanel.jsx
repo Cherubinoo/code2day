@@ -4,7 +4,7 @@ import { getCsrfToken } from "../../lib/appUtils";
 import {
   FlaskConical, ChevronLeft, Plus, Users, Calendar, BookOpen,
   CheckCircle2, Circle, Pencil, Trash2, X, Save, Clock, UserCheck,
-  Search, TrendingUp, Upload, Download, AlertTriangle, Loader2,
+  Search, TrendingUp, Upload, Download, AlertTriangle, Loader2, Check,
 } from "lucide-react";
 
 function apiFetch(url, method, body) {
@@ -64,6 +64,12 @@ function LabCard({ lab, onClick }) {
           <span className="slp2-chip"><BookOpen size={10} /> {lab.exercise_count} exercises</span>
           {lab.lab_type === "company" && lab.company && (
             <span className="slp2-chip company">🏢 {lab.company.name}</span>
+          )}
+          {lab.lab_type === "university" && (
+            <span className="slp2-chip" style={{ background: "#ede9fe", color: "#6d28d9" }}>🏛️ University</span>
+          )}
+          {lab.lab_type === "university" && !lab.is_published && (
+            <span className="slp2-chip" style={{ background: "#fef3c7", color: "#92400e" }}>⏳ Unpublished</span>
           )}
         </div>
         <div className="slp2-card-dates">
@@ -992,10 +998,16 @@ function BulkImportModal({ labId, onImported, onClose }) {
 }
 
 // ─── Student completion table ─────────────────────────────────────────────────
-function StudentTable({ students, exercises, activeExIdx, labId }) {
+function StudentTable({ students, exercises, activeExIdx, labId, availableSubBatches = ["Batch 1"], onRefreshStudents, isUnivLab }) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
+  const [batchFilter, setBatchFilter] = useState("all");
+  const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
   const [downloading, setDownloading] = useState({});
+  const [unlocking, setUnlocking] = useState({});
+  const [batchActionBusy, setBatchActionBusy] = useState(false);
+  const [showAutoSplit, setShowAutoSplit] = useState(false);
+  const [numBatchesInput, setNumBatchesInput] = useState(2);
 
   if (!exercises.length) {
     return <div className="slp2-empty-msg">No exercises added yet.</div>;
@@ -1028,6 +1040,7 @@ function StudentTable({ students, exercises, activeExIdx, labId }) {
       setDownloading((d) => ({ ...d, [regNo]: false }));
     }
   }
+
   const rows = students.map((s) => {
     const stat = s.exercises[activeExIdx] ?? {};
     return { ...s, completed: stat.completed, submitted_at: stat.submitted_at, language: stat.language };
@@ -1040,31 +1053,369 @@ function StudentTable({ students, exercises, activeExIdx, labId }) {
       filter === "all" ? true :
       filter === "done" ? r.completed :
       !r.completed;
-    return matchSearch && matchFilter;
+    const matchBatch = batchFilter === "all" ? true : (r.sub_batch || "Batch 1") === batchFilter;
+    return matchSearch && matchFilter && matchBatch;
   });
 
   const doneCount = rows.filter((r) => r.completed).length;
   const pct = rows.length ? Math.round((doneCount / rows.length) * 100) : 0;
 
-  const [unlocking, setUnlocking] = useState({});
+  // Gather sub-batches list
+  const batchesList = Array.from(new Set([...availableSubBatches, ...rows.map(r => r.sub_batch || "Batch 1")]))
+    .sort((a, b) => {
+      const ma = String(a).match(/\d+/), mb = String(b).match(/\d+/);
+      return (ma && mb) ? (parseInt(ma[0]) - parseInt(mb[0])) : String(a).localeCompare(String(b));
+    });
 
-  async function handleUnlockStudent(regNo) {
-    setUnlocking((prev) => ({ ...prev, [regNo]: true }));
+  // Checkbox Selection logic
+  const allFilteredSelected = filtered.length > 0 && filtered.every(r => selectedStudentIds.has(r.student_id));
+
+  function toggleSelectAllFiltered() {
+    if (allFilteredSelected) {
+      setSelectedStudentIds(prev => {
+        const next = new Set(prev);
+        filtered.forEach(r => next.delete(r.student_id));
+        return next;
+      });
+    } else {
+      setSelectedStudentIds(prev => {
+        const next = new Set(prev);
+        filtered.forEach(r => next.add(r.student_id));
+        return next;
+      });
+    }
+  }
+
+  function toggleSelectStudent(studentId) {
+    setSelectedStudentIds(prev => {
+      const next = new Set(prev);
+      if (next.has(studentId)) next.delete(studentId); else next.add(studentId);
+      return next;
+    });
+  }
+
+  async function handleToggleStudentLock(studentId, currentIsLocked) {
+    setUnlocking((prev) => ({ ...prev, [studentId]: true }));
     try {
-      const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/student/${regNo}/unlock/`, "POST");
-      if (res.ok) {
-        alert(`✅ Student ${regNo} unlocked successfully!`);
-        window.location.reload();
+      const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/toggle-batch-lock/`, "POST", {
+        student_ids: [studentId],
+        is_locked: !currentIsLocked,
+      });
+      if (res.ok && onRefreshStudents) {
+        onRefreshStudents();
       }
     } catch {
-      alert("Failed to unlock student");
+      alert("Failed to change lock status");
     } finally {
-      setUnlocking((prev) => ({ ...prev, [regNo]: false }));
+      setUnlocking((prev) => ({ ...prev, [studentId]: false }));
+    }
+  }
+
+  async function handleToggleBatchLock(bName, shouldLock) {
+    setBatchActionBusy(true);
+    try {
+      const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/toggle-batch-lock/`, "POST", {
+        sub_batch: bName,
+        is_locked: shouldLock,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`✅ ${data.detail}`);
+        if (onRefreshStudents) onRefreshStudents();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || "Action failed");
+      }
+    } catch {
+      alert("Network error");
+    } finally {
+      setBatchActionBusy(false);
+    }
+  }
+
+  async function handleAutoSplitBatches(n) {
+    setBatchActionBusy(true);
+    try {
+      const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/assign-batches/`, "POST", {
+        num_batches: n,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`✅ ${data.detail}`);
+        setShowAutoSplit(false);
+        if (onRefreshStudents) onRefreshStudents();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error || "Failed to assign batches");
+      }
+    } catch {
+      alert("Network error");
+    } finally {
+      setBatchActionBusy(false);
+    }
+  }
+
+  async function handleAssignSingleStudentBatch(studentId, newBatchName) {
+    let targetName = newBatchName;
+    if (newBatchName === "__custom__") {
+      const custom = window.prompt("Enter new Batch name (e.g. Batch 3):");
+      if (!custom || !custom.trim()) return;
+      targetName = custom.trim();
+    }
+    try {
+      const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/assign-batches/`, "POST", {
+        student_batches: { [studentId]: targetName },
+      });
+      if (res.ok && onRefreshStudents) {
+        onRefreshStudents();
+      }
+    } catch {
+      alert("Failed to update student batch");
+    }
+  }
+
+  async function handleBulkAssignBatch(targetBatch) {
+    if (selectedStudentIds.size === 0) return;
+    let bName = targetBatch;
+    if (targetBatch === "__custom__") {
+      const custom = window.prompt("Enter new Batch name (e.g. Batch 3):");
+      if (!custom || !custom.trim()) return;
+      bName = custom.trim();
+    }
+    setBatchActionBusy(true);
+    try {
+      const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/assign-batches/`, "POST", {
+        student_ids: Array.from(selectedStudentIds),
+        sub_batch: bName,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`✅ ${data.detail}`);
+        setSelectedStudentIds(new Set());
+        if (onRefreshStudents) onRefreshStudents();
+      }
+    } catch {
+      alert("Failed to assign batch");
+    } finally {
+      setBatchActionBusy(false);
+    }
+  }
+
+  async function handleBulkLockToggle(shouldLock) {
+    if (selectedStudentIds.size === 0) return;
+    setBatchActionBusy(true);
+    try {
+      const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/toggle-batch-lock/`, "POST", {
+        student_ids: Array.from(selectedStudentIds),
+        is_locked: shouldLock,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`✅ ${data.detail}`);
+        if (onRefreshStudents) onRefreshStudents();
+      }
+    } catch {
+      alert("Failed to change lock status");
+    } finally {
+      setBatchActionBusy(false);
+    }
+  }
+
+  async function handleBulkPublishAndUnlock() {
+    if (selectedStudentIds.size === 0) return;
+    setBatchActionBusy(true);
+    try {
+      await apiFetch(`/api/lab/v2/staff/labs/${labId}/publish/`, "POST");
+      const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/toggle-batch-lock/`, "POST", {
+        student_ids: Array.from(selectedStudentIds),
+        is_locked: false,
+      });
+      if (res.ok) {
+        alert(`🟢 Lab published & unlocked for ${selectedStudentIds.size} selected student(s)!`);
+        if (onRefreshStudents) onRefreshStudents();
+      }
+    } catch {
+      alert("Failed to publish & unlock");
+    } finally {
+      setBatchActionBusy(false);
     }
   }
 
   return (
     <div className="slp2-student-section">
+      {/* ── Sub-Batch Management & Unlocking Header ── */}
+      <div style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 16 }}>🔑</span>
+            <strong style={{ fontSize: 14, color: "#1e293b" }}>Batch Access &amp; Unlocking Control</strong>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => setShowAutoSplit(!showAutoSplit)}
+              style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #cbd5e1", background: "white", color: "#334155", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            >
+              ⚙️ Auto-Split Batches
+            </button>
+            <button
+              type="button"
+              disabled={batchActionBusy}
+              onClick={() => handleToggleBatchLock("all", false)}
+              style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#10b981", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            >
+              🔓 Unlock All Students
+            </button>
+            <button
+              type="button"
+              disabled={batchActionBusy}
+              onClick={() => handleToggleBatchLock("all", true)}
+              style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#ef4444", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            >
+              🔒 Lock All Students
+            </button>
+          </div>
+        </div>
+
+        {/* Inline Auto-Split Configuration */}
+        {showAutoSplit && (
+          <div style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 8, padding: 12, marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: "#475569" }}>Divide {rows.length} students into:</span>
+            <div style={{ display: "flex", gap: 6 }}>
+              {[2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setNumBatchesInput(n)}
+                  style={{
+                    padding: "4px 10px", borderRadius: 6, border: "1px solid #cbd5e1",
+                    background: numBatchesInput === n ? "#6d28d9" : "#f1f5f9",
+                    color: numBatchesInput === n ? "white" : "#475569",
+                    fontWeight: 700, fontSize: 12, cursor: "pointer"
+                  }}
+                >
+                  {n} Batches
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              disabled={batchActionBusy}
+              onClick={() => handleAutoSplitBatches(numBatchesInput)}
+              style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#6d28d9", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            >
+              {batchActionBusy ? "Applying…" : `Apply (${numBatchesInput} Batches)`}
+            </button>
+          </div>
+        )}
+
+        {/* Sub-batch Status Cards Grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+          {batchesList.map((bName) => {
+            const bStudents = rows.filter(r => (r.sub_batch || "Batch 1") === bName);
+            const lockedCount = bStudents.filter(r => r.is_locked).length;
+            const isAllUnlocked = bStudents.length > 0 && lockedCount === 0;
+            const isAllLocked = bStudents.length > 0 && lockedCount === bStudents.length;
+
+            return (
+              <div key={bName} style={{
+                background: "white", border: `1px solid ${isAllUnlocked ? "#86efac" : isAllLocked ? "#fca5a5" : "#fed7aa"}`,
+                borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 8
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#1e293b" }}>📌 {bName}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: isAllUnlocked ? "#dcfce7" : isAllLocked ? "#fee2e2" : "#fff7ed", color: isAllUnlocked ? "#166534" : isAllLocked ? "#991b1b" : "#c2410c" }}>
+                    {isAllUnlocked ? "🔓 Unlocked" : isAllLocked ? "🔒 Locked" : `⚠️ ${lockedCount} Locked`}
+                  </span>
+                </div>
+
+                <div style={{ fontSize: 12, color: "#64748b" }}>
+                  {bStudents.length} student(s) assigned
+                </div>
+
+                <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                  <button
+                    type="button"
+                    disabled={batchActionBusy}
+                    onClick={() => handleToggleBatchLock(bName, false)}
+                    style={{ flex: 1, padding: "5px 8px", borderRadius: 6, border: "none", background: "#10b981", color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    🔓 Unlock {bName}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={batchActionBusy}
+                    onClick={() => handleToggleBatchLock(bName, true)}
+                    style={{ flex: 1, padding: "5px 8px", borderRadius: 6, border: "none", background: "#ef4444", color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                  >
+                    🔒 Lock
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Floating / Sticky Bulk Action Bar for Selected Students ── */}
+      {selectedStudentIds.size > 0 && (
+        <div style={{
+          background: "linear-gradient(135deg, #1e1b4b, #312e81)", color: "white",
+          borderRadius: 10, padding: "12px 18px", marginBottom: 16,
+          display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12,
+          boxShadow: "0 4px 14px rgba(0,0,0,0.2)"
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 18 }}>☑️</span>
+            <div>
+              <strong style={{ fontSize: 14 }}>{selectedStudentIds.size} student(s) selected</strong>
+              <div style={{ fontSize: 12, color: "#a5b4fc" }}>Perform bulk actions for selected batch of students</div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <select
+              style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #6366f1", background: "#0f172a", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              onChange={(e) => { if (e.target.value) { handleBulkAssignBatch(e.target.value); e.target.value = ""; } }}
+              value=""
+            >
+              <option value="" disabled>Move Selected to Batch…</option>
+              {batchesList.map((b) => (
+                <option key={b} value={b}>{b}</option>
+              ))}
+              <option value="__custom__">+ Custom Batch Name…</option>
+            </select>
+
+            <button
+              type="button"
+              disabled={batchActionBusy}
+              onClick={() => handleBulkLockToggle(false)}
+              style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#10b981", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            >
+              🔓 Unlock Selected ({selectedStudentIds.size})
+            </button>
+
+            <button
+              type="button"
+              disabled={batchActionBusy}
+              onClick={() => handleBulkLockToggle(true)}
+              style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#ef4444", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            >
+              🔒 Lock Selected ({selectedStudentIds.size})
+            </button>
+
+            <button
+              type="button"
+              disabled={batchActionBusy}
+              onClick={handleBulkPublishAndUnlock}
+              style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#8b5cf6", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+            >
+              🟢 Publish &amp; Unlock Selected
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Stats bar */}
       <div className="slp2-sub-stats">
         <div className="slp2-sub-stat done">
@@ -1084,19 +1435,38 @@ function StudentTable({ students, exercises, activeExIdx, labId }) {
       </div>
 
       {/* Search + filter */}
-      <div className="slp2-toolbar">
+      <div className="slp2-toolbar" style={{ flexWrap: "wrap", gap: 10 }}>
         <div className="slp2-search-wrap">
           <Search size={13} />
           <input className="slp2-search" placeholder="Search by name or reg. no…"
             value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <div className="slp2-filter-pills">
-          {[["all", "All"], ["done", "Completed"], ["pending", "Not Done"]].map(([k, l]) => (
+          {[["all", "All Status"], ["done", "Completed"], ["pending", "Not Done"]].map(([k, l]) => (
             <button key={k} type="button"
               className={`slp2-filter-pill${filter === k ? " active" : ""}`}
               onClick={() => setFilter(k)}>{l}</button>
           ))}
         </div>
+
+        {/* Sub-Batch filter pills */}
+        <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600, marginRight: 2 }}>Filter Batch:</span>
+          <button
+            type="button"
+            className={`slp2-filter-pill${batchFilter === "all" ? " active" : ""}`}
+            onClick={() => setBatchFilter("all")}
+          >All</button>
+          {batchesList.map((b) => (
+            <button
+              key={b}
+              type="button"
+              className={`slp2-filter-pill${batchFilter === b ? " active" : ""}`}
+              onClick={() => setBatchFilter(b)}
+            >{b}</button>
+          ))}
+        </div>
+
         <span className="slp2-count">{filtered.length} / {rows.length}</span>
       </div>
 
@@ -1105,58 +1475,91 @@ function StudentTable({ students, exercises, activeExIdx, labId }) {
         <table className="slp2-table">
           <thead>
             <tr>
+              <th style={{ width: 36, textAlign: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  onChange={toggleSelectAllFiltered}
+                  title="Select all filtered students"
+                />
+              </th>
               <th>#</th>
               <th>Student</th>
               <th>Reg. No.</th>
               <th>Section</th>
-              <th>Status / Security</th>
+              <th>Sub-Batch</th>
+              <th>Lab Access / Lock</th>
               <th>Language</th>
               <th>Submitted At</th>
               <th>Report</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r, i) => (
-              <tr key={r.student_id} className={r.completed ? "slp2-row-done" : ""}>
-                <td className="slp2-td-idx">{i + 1}</td>
-                <td className="slp2-td-name">{r.student_name}</td>
-                <td className="slp2-td-reg">{r.register_number || "—"}</td>
-                <td>{r.section || "—"}</td>
-                <td>
-                  {r.is_locked ? (
+            {filtered.map((r, i) => {
+              const isChecked = selectedStudentIds.has(r.student_id);
+              return (
+                <tr key={r.student_id} className={`${r.completed ? "slp2-row-done" : ""} ${isChecked ? "selected-row" : ""}`} style={isChecked ? { background: "#faf5ff" } : {}}>
+                  <td style={{ textAlign: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleSelectStudent(r.student_id)}
+                    />
+                  </td>
+                  <td className="slp2-td-idx">{i + 1}</td>
+                  <td className="slp2-td-name">{r.student_name}</td>
+                  <td className="slp2-td-reg">{r.register_number || "—"}</td>
+                  <td>{r.section || "—"}</td>
+                  <td>
+                    <select
+                      style={{ padding: "4px 8px", borderRadius: 6, border: "1px solid #cbd5e1", fontSize: 12, background: "white", fontWeight: 600, color: "#334155" }}
+                      value={r.sub_batch || "Batch 1"}
+                      onChange={(e) => handleAssignSingleStudentBatch(r.student_id, e.target.value)}
+                    >
+                      {batchesList.map((b) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                      <option value="__custom__">+ Custom Batch…</option>
+                    </select>
+                  </td>
+                  <td>
                     <button
                       type="button"
-                      style={{ padding: "4px 10px", fontSize: 12, background: "#fee2e2", color: "#991b1b", border: "1px solid #f87171", borderRadius: 6, cursor: "pointer", fontWeight: 700 }}
-                      disabled={!!unlocking[r.register_number]}
-                      onClick={() => handleUnlockStudent(r.register_number)}
+                      style={{
+                        padding: "4px 10px", fontSize: 12,
+                        background: r.is_locked ? "#fee2e2" : "#dcfce7",
+                        color: r.is_locked ? "#991b1b" : "#166534",
+                        border: `1px solid ${r.is_locked ? "#f87171" : "#86efac"}`,
+                        borderRadius: 6, cursor: "pointer", fontWeight: 700,
+                        display: "inline-flex", alignItems: "center", gap: 4
+                      }}
+                      disabled={!!unlocking[r.student_id]}
+                      onClick={() => handleToggleStudentLock(r.student_id, r.is_locked)}
+                      title={r.is_locked ? `Reason: ${r.lock_reason || "Locked"}. Click to unlock` : "Click to lock student"}
                     >
-                      🔓 {unlocking[r.register_number] ? "Unlocking…" : "Unlock Student"}
+                      {unlocking[r.student_id] ? "…" : r.is_locked ? "🔒 Locked (Click to Unlock)" : "🔓 Unlocked (Click to Lock)"}
                     </button>
-                  ) : r.completed ? (
-                    <span className="slp2-done-badge"><CheckCircle2 size={11} /> Done</span>
-                  ) : (
-                    <span className="slp2-pending-badge"><Circle size={11} /> Pending</span>
-                  )}
-                </td>
-                <td className="slp2-td-mono">{r.language || "—"}</td>
-                <td className="slp2-td-time">{r.submitted_at ? fmtDT(r.submitted_at) : "—"}</td>
-                <td>
-                  <button
-                    type="button"
-                    className="slp2-btn-ghost"
-                    disabled={!r.completed || !!downloading[r.register_number]}
-                    onClick={() => downloadReport(r)}
-                    title={r.completed ? "Download this student's lab record PDF" : "No submission yet"}
-                    style={{ padding: "5px 10px", fontSize: 12, opacity: r.completed ? 1 : 0.4 }}
-                  >
-                    {downloading[r.register_number] ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
-                    {downloading[r.register_number] ? "…" : "Report"}
-                  </button>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td className="slp2-td-mono">{r.language || "—"}</td>
+                  <td className="slp2-td-time">{r.submitted_at ? fmtDT(r.submitted_at) : "—"}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="slp2-btn-ghost"
+                      disabled={!r.completed || !!downloading[r.register_number]}
+                      onClick={() => downloadReport(r)}
+                      title={r.completed ? "Download this student's lab record PDF" : "No submission yet"}
+                      style={{ padding: "5px 10px", fontSize: 12, opacity: r.completed ? 1 : 0.4 }}
+                    >
+                      {downloading[r.register_number] ? <Loader2 size={12} className="spin" /> : <Download size={12} />}
+                      {downloading[r.register_number] ? "…" : "Report"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
             {filtered.length === 0 && (
-              <tr><td colSpan={8} className="slp2-empty-row">No students match this filter</td></tr>
+              <tr><td colSpan={10} className="slp2-empty-row">No students match this filter</td></tr>
             )}
           </tbody>
         </table>
@@ -1164,6 +1567,7 @@ function StudentTable({ students, exercises, activeExIdx, labId }) {
     </div>
   );
 }
+
 
 // ─── Lab detail page ──────────────────────────────────────────────────────────
 function LabDetail({ lab: initLab, onBack }) {
@@ -1177,13 +1581,80 @@ function LabDetail({ lab: initLab, onBack }) {
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [editExercise, setEditExercise] = useState(null);
   const [delEx, setDelEx] = useState(null);
-  const [tab, setTab] = useState("exercises"); // "exercises" | "students"
+  const [tab, setTab] = useState(
+    initLab.lab_type === "university" && !initLab.is_published ? "select" : "exercises"
+  ); // "select" | "exercises" | "students"
   const [genState, setGenState] = useState({}); // { [exerciseId]: { busy, msg } }
+
+  // ── University Lab exercise picker state ──
+  const isUnivLab = lab.lab_type === "university";
+  const [linkedExercises, setLinkedExercises] = useState([]);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [loadingLinked, setLoadingLinked] = useState(false);
+  const [submittingSelection, setSubmittingSelection] = useState(false);
+  const [linkedLabName, setLinkedLabName] = useState("");
+  const [pickerMsg, setPickerMsg] = useState("");
 
   useEffect(() => {
     fetchExercises();
     fetchStudents();
+    if (isUnivLab && !lab.is_published) fetchLinkedExercises();
   }, [lab.id]);
+
+  async function fetchLinkedExercises() {
+    setLoadingLinked(true);
+    try {
+      const res = await fetch(`/api/lab/v2/staff/labs/${lab.id}/select-exercises/`, { credentials: "include" });
+      if (res.ok) {
+        const d = await res.json();
+        setLinkedExercises(d.exercises || []);
+        setLinkedLabName(d.linked_lab_name || "");
+        // Pre-select already-selected exercises
+        const already = (d.exercises || []).filter(e => e.already_selected).map(e => e.id);
+        setSelectedIds(new Set(already));
+      }
+    } catch { /* ignore */ }
+    setLoadingLinked(false);
+  }
+
+  function toggleExercise(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    const alreadySelected = new Set(linkedExercises.filter(e => e.already_selected).map(e => e.id));
+    const available = linkedExercises.filter(e => !e.already_selected).map(e => e.id);
+    setSelectedIds(new Set([...alreadySelected, ...available]));
+  }
+
+  function deselectAll() {
+    const alreadySelected = new Set(linkedExercises.filter(e => e.already_selected).map(e => e.id));
+    setSelectedIds(alreadySelected);
+  }
+
+  async function submitExerciseSelection() {
+    const newIds = [...selectedIds].filter(id => !linkedExercises.find(e => e.id === id && e.already_selected));
+    if (newIds.length === 0) { setPickerMsg("No new exercises selected"); return; }
+    setSubmittingSelection(true); setPickerMsg("");
+    try {
+      const res = await apiFetch(`/api/lab/v2/staff/labs/${lab.id}/select-exercises/`, "POST", { exercise_ids: newIds });
+      if (res.ok) {
+        const d = await res.json();
+        setPickerMsg(`✅ ${d.count} exercise(s) added successfully!`);
+        await fetchExercises();
+        await fetchLinkedExercises();
+      } else {
+        const d = await res.json();
+        setPickerMsg(d.error || "Failed to add exercises");
+      }
+    } catch { setPickerMsg("Network error"); }
+    setSubmittingSelection(false);
+  }
+
 
   async function generateTestCases(ex, force) {
     setGenState((s) => ({ ...s, [ex.id]: { busy: true, msg: "" } }));
@@ -1230,10 +1701,18 @@ function LabDetail({ lab: initLab, onBack }) {
     setLoadingEx(false);
   }
 
+  const [availableSubBatches, setAvailableSubBatches] = useState(["Batch 1"]);
+
   async function fetchStudents() {
     setLoadingSt(true);
     const res = await fetch(`/api/lab/v2/${lab.id}/students/`, { credentials: "include" });
-    if (res.ok) { const d = await res.json(); setStudents(d.students ?? []); }
+    if (res.ok) {
+      const d = await res.json();
+      setStudents(d.students ?? []);
+      if (d.available_sub_batches?.length) {
+        setAvailableSubBatches(d.available_sub_batches);
+      }
+    }
     setLoadingSt(false);
   }
 
@@ -1285,9 +1764,14 @@ function LabDetail({ lab: initLab, onBack }) {
                 ⏳ Pending HOD Approval
               </span>
             )}
-            {lab.approval_status === "approved" && (
+            {lab.approval_status === "approved" && !lab.is_published && (
+              <span style={{ padding: "3px 10px", borderRadius: 8, background: "#dbeafe", color: "#1e40af", fontSize: 11, fontWeight: 700 }}>
+                📋 Setup Required
+              </span>
+            )}
+            {lab.approval_status === "approved" && lab.is_published && (
               <span style={{ padding: "3px 10px", borderRadius: 8, background: "#dcfce7", color: "#166534", fontSize: 11, fontWeight: 700 }}>
-                ✅ HOD Approved
+                ✅ Published
               </span>
             )}
           </div>
@@ -1319,7 +1803,14 @@ function LabDetail({ lab: initLab, onBack }) {
           {lab.approval_status === "approved" && !lab.is_published && (
             <button
               type="button"
-              style={{ background: "#2563eb", color: "white", border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+              style={{
+                background: exercises.length === 0 ? "#94a3b8" : "#2563eb",
+                color: "white", border: "none", borderRadius: 8, padding: "8px 14px",
+                fontSize: 13, fontWeight: 700, cursor: exercises.length === 0 ? "not-allowed" : "pointer",
+                opacity: exercises.length === 0 ? 0.7 : 1,
+              }}
+              disabled={exercises.length === 0}
+              title={exercises.length === 0 ? "Add exercises first before publishing" : "Publish this lab to students"}
               onClick={async () => {
                 const res = await apiFetch(`/api/lab/v2/staff/labs/${lab.id}/publish/`, "POST");
                 if (res.ok) {
@@ -1338,15 +1829,143 @@ function LabDetail({ lab: initLab, onBack }) {
         </div>
       </div>
 
+      {/* ── University Lab workflow banner ── */}
+      {isUnivLab && !lab.is_published && (
+        <div style={{
+          padding: "14px 18px", borderRadius: 10, marginBottom: 18,
+          background: exercises.length === 0 ? "linear-gradient(135deg, #fef3c7, #fff7ed)" : "linear-gradient(135deg, #dbeafe, #ede9fe)",
+          border: `1px solid ${exercises.length === 0 ? "#fde68a" : "#bfdbfe"}`,
+          display: "flex", alignItems: "center", gap: 12,
+        }}>
+          <span style={{ fontSize: 22 }}>{exercises.length === 0 ? "📋" : "🚀"}</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: exercises.length === 0 ? "#92400e" : "#1e40af" }}>
+              {exercises.length === 0
+                ? "Step 1: Select Questions from Practice Lab"
+                : "Step 2: Review & Publish to Students"}
+            </div>
+            <div style={{ fontSize: 12, color: exercises.length === 0 ? "#a16207" : "#3b82f6", marginTop: 2 }}>
+              {exercises.length === 0
+                ? `Use the "Select Questions" tab below to pick exercises from the linked practice lab "${linkedLabName}".`
+                : `${exercises.length} exercise(s) ready. Click "Publish to Students" above to make this lab visible to students.`}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tab bar */}
       <div className="slp2-tabs">
+        {isUnivLab && !lab.is_published && (
+          <button type="button" className={`slp2-tab${tab === "select" ? " active" : ""}`}
+            onClick={() => setTab("select")}
+            style={tab === "select" ? { background: "#6d28d9", color: "white" } : {}}
+          >🏛️ Select Questions{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}</button>
+        )}
         <button type="button" className={`slp2-tab${tab === "exercises" ? " active" : ""}`}
           onClick={() => setTab("exercises")}>Exercises</button>
         <button type="button" className={`slp2-tab${tab === "students" ? " active" : ""}`}
           onClick={() => setTab("students")}>Student Submissions</button>
       </div>
 
+      {/* ── SELECT QUESTIONS TAB (University Lab only) ── */}
+      {tab === "select" && isUnivLab && (
+        <div style={{ padding: "16px 0" }}>
+          {loadingLinked ? (
+            <div className="slp2-loading">Loading exercises from practice lab…</div>
+          ) : linkedExercises.length === 0 ? (
+            <div className="slp2-empty">
+              <BookOpen size={36} />
+              <p>No exercises found in the linked practice lab. Ask the HOD to add exercises to the practice lab first.</p>
+            </div>
+          ) : (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
+                <div style={{ fontSize: 13, color: "#64748b" }}>
+                  Showing exercises from <strong style={{ color: "#1e293b" }}>{linkedLabName}</strong> — select the ones to include in this university lab.
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" onClick={selectAll}
+                    style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: 12, cursor: "pointer", fontWeight: 600, color: "#475569" }}>
+                    Select All
+                  </button>
+                  <button type="button" onClick={deselectAll}
+                    style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #e2e8f0", background: "#f8fafc", fontSize: 12, cursor: "pointer", fontWeight: 600, color: "#475569" }}>
+                    Deselect All
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {linkedExercises.map((ex, i) => {
+                  const isSelected = selectedIds.has(ex.id);
+                  const isAlready = ex.already_selected;
+                  return (
+                    <div
+                      key={ex.id}
+                      onClick={() => { if (!isAlready) toggleExercise(ex.id); }}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", borderRadius: 10,
+                        border: `2px solid ${isAlready ? "#86efac" : isSelected ? "#6d28d9" : "#e2e8f0"}`,
+                        background: isAlready ? "#f0fdf4" : isSelected ? "#faf5ff" : "#ffffff",
+                        cursor: isAlready ? "default" : "pointer",
+                        transition: "all 0.15s ease", opacity: isAlready ? 0.8 : 1,
+                      }}
+                    >
+                      <div style={{
+                        width: 28, height: 28, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center",
+                        background: isAlready ? "#22c55e" : isSelected ? "#6d28d9" : "#f1f5f9",
+                        color: (isAlready || isSelected) ? "white" : "#94a3b8",
+                        flexShrink: 0, transition: "all 0.15s ease",
+                      }}>
+                        {(isAlready || isSelected) ? <Check size={16} /> : <span style={{ fontSize: 13, fontWeight: 700 }}>{i + 1}</span>}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: "#1e293b" }}>{ex.title}</div>
+                        {ex.description && (
+                          <div style={{ fontSize: 12, color: "#64748b", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {ex.description.slice(0, 100)}{ex.description.length > 100 ? "…" : ""}
+                          </div>
+                        )}
+                        <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+                          <span className="slp2-chip">{ex.difficulty}</span>
+                          <span className="slp2-chip">{ex.test_case_count} test case{ex.test_case_count !== 1 ? "s" : ""}</span>
+                          {isAlready && <span className="slp2-chip" style={{ background: "#dcfce7", color: "#166534" }}>✓ Already added</span>}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {pickerMsg && (
+                <div style={{ marginTop: 12, padding: "8px 14px", borderRadius: 8, background: pickerMsg.includes("✅") ? "#dcfce7" : "#fef2f2", color: pickerMsg.includes("✅") ? "#166534" : "#991b1b", fontSize: 13, fontWeight: 600 }}>
+                  {pickerMsg}
+                </div>
+              )}
+
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16, gap: 10 }}>
+                <button
+                  type="button"
+                  disabled={submittingSelection || [...selectedIds].filter(id => !linkedExercises.find(e => e.id === id && e.already_selected)).length === 0}
+                  onClick={submitExerciseSelection}
+                  style={{
+                    padding: "10px 20px", borderRadius: 8, border: "none",
+                    background: "#6d28d9", color: "white", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                    opacity: submittingSelection ? 0.7 : 1,
+                    display: "flex", alignItems: "center", gap: 8,
+                  }}
+                >
+                  {submittingSelection ? <Loader2 size={14} className="spin" /> : <Check size={14} />}
+                  {submittingSelection ? "Adding…" : `Add ${[...selectedIds].filter(id => !linkedExercises.find(e => e.id === id && e.already_selected)).length} Exercise(s)`}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
       {/* ── EXERCISES TAB ── */}
+
       {tab === "exercises" && (
         <div className="slp2-ex-panel">
           <div className="slp2-ex-toolbar">
@@ -1465,7 +2084,15 @@ function LabDetail({ lab: initLab, onBack }) {
           {loadingSt ? (
             <div className="slp2-loading">Loading students…</div>
           ) : (
-            <StudentTable students={students} exercises={exercises} activeExIdx={activeEx} labId={lab.id} />
+            <StudentTable
+              students={students}
+              exercises={exercises}
+              activeExIdx={activeEx}
+              labId={lab.id}
+              availableSubBatches={availableSubBatches}
+              onRefreshStudents={fetchStudents}
+              isUnivLab={isUnivLab}
+            />
           )}
         </div>
       )}

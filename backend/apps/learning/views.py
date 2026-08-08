@@ -13201,6 +13201,8 @@ def _serialize_lab_v2(lab, student=None):
             "name": lab.created_by.name,
         } if lab.created_by else None,
         "linked_lab_id": lab.linked_lab_id,
+        "approval_status": lab.approval_status,
+        "is_published": lab.is_published,
         "enable_tab_switch_check": lab.enable_tab_switch_check,
         "max_tab_switches": lab.max_tab_switches,
         "enable_fullscreen_lock": lab.enable_fullscreen_lock,
@@ -13493,7 +13495,7 @@ class HODLabListView(APIView):
             created_by=staff,
             lab_type=lab_type,
             approval_status="approved",
-            is_published=data.get("is_published", True),
+            is_published=False if lab_type == "university" else data.get("is_published", True),
             enable_tab_switch_check=bool(data.get("enable_tab_switch_check", False)) if is_univ else False,
             max_tab_switches=int(data.get("max_tab_switches", 3)) if is_univ else 3,
             enable_fullscreen_lock=bool(data.get("enable_fullscreen_lock", False)) if is_univ else False,
@@ -14149,13 +14151,30 @@ class StaffLabStudentsView(APIView):
         )
         if lab.section:
             student_qs = student_qs.filter(section=lab.section)
-        students = list(student_qs.order_by("name"))
+        students = list(student_qs.order_by("register_number", "name"))
 
         subs = LabExerciseSubmission.objects.filter(exercise__lab=lab).select_related("student", "exercise")
         sub_map = {(s.student_id, s.exercise_id): s for s in subs}
 
+        session_qs = LabStudentSession.objects.filter(lab=lab)
+        session_map = {s.student_id: s for s in session_qs}
+
         student_rows = []
+        all_sub_batches = set()
+
         for student in students:
+            session = session_map.get(student.id)
+            if not session:
+                is_locked = (lab.lab_type == "university")
+                lock_reason = "Lab session is locked by staff. Awaiting staff unlock for your batch." if is_locked else ""
+                session = LabStudentSession.objects.create(
+                    lab=lab, student=student, is_locked=is_locked, lock_reason=lock_reason, sub_batch="Batch 1"
+                )
+                session_map[student.id] = session
+
+            sub_b = session.sub_batch or "Batch 1"
+            all_sub_batches.add(sub_b)
+
             ex_status = []
             for ex in exercises:
                 sub = sub_map.get((student.id, ex.id))
@@ -14171,16 +14190,28 @@ class StaffLabStudentsView(APIView):
                 "student_name": student.name,
                 "register_number": student.register_number or "",
                 "section": student.section or "",
+                "sub_batch": sub_b,
+                "is_locked": session.is_locked,
+                "lock_reason": session.lock_reason or "",
+                "tab_switch_count": session.tab_switch_count,
                 "exercises": ex_status,
                 "completed": done,
                 "total": len(exercises),
             })
 
+        def _sort_key(batch_name):
+            match = re.search(r'\d+', str(batch_name))
+            return int(match.group()) if match else 999
+
+        sorted_batches = sorted(list(all_sub_batches), key=_sort_key) if all_sub_batches else ["Batch 1"]
+
         return Response({
             "lab": _serialize_lab_v2(lab),
             "exercises": [{"id": e.id, "title": e.title} for e in exercises],
             "students": student_rows,
+            "available_sub_batches": sorted_batches,
         })
+
 
 
 class StudentLabListView(APIView):
@@ -14189,7 +14220,7 @@ class StudentLabListView(APIView):
     def get(self, request):
         student = _student_from_request(request)
         labs = Lab.objects.filter(
-            department=student.department, batch=student.batch, is_active=True
+            department=student.department, batch=student.batch, is_active=True, is_published=True
         )
         if student.section:
             labs = labs.filter(Q(section="") | Q(section=student.section))
@@ -14203,16 +14234,21 @@ class StudentLabExercisesView(APIView):
     def get(self, request, lab_id):
         student = _student_from_request(request)
         try:
-            lab = Lab.objects.get(id=lab_id, department=student.department, batch=student.batch, is_active=True)
+            lab = Lab.objects.get(id=lab_id, department=student.department, batch=student.batch, is_active=True, is_published=True)
         except Lab.DoesNotExist:
             return Response({"error": "Not found"}, status=404)
         
-        session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
+        session, created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
+        if created and lab.lab_type == "university":
+            session.is_locked = True
+            session.lock_reason = "Lab session is locked by staff. Awaiting staff unlock for your batch."
+            session.save(update_fields=["is_locked", "lock_reason"])
+
         if session.is_locked:
             return Response({
                 "lab": _serialize_lab_v2(lab, student=student),
                 "is_locked": True,
-                "lock_reason": session.lock_reason,
+                "lock_reason": session.lock_reason or "Lab session is locked by staff. Awaiting staff unlock for your batch.",
                 "exercises": [],
             })
 
@@ -14736,6 +14772,216 @@ class StaffLabPublishView(APIView):
         lab.is_active = True
         lab.save(update_fields=["is_published", "is_active"])
         return Response({"detail": "Lab published to students successfully!", "lab": _serialize_lab_v2(lab)})
+
+
+class StaffLabSelectExercisesView(APIView):
+    """Staff: Select exercises from the linked practice lab and copy them into a university lab."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, lab_id):
+        """Return exercises from the linked practice lab that staff can pick from."""
+        staff = _staff_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id, staff_in_charge=staff, lab_type="university")
+        except Lab.DoesNotExist:
+            return Response({"error": "University lab not found"}, status=404)
+
+        if not lab.linked_lab_id:
+            return Response({"error": "No linked practice lab"}, status=400)
+
+        linked_exercises = LabExercise.objects.filter(lab_id=lab.linked_lab_id).order_by("order", "created_at")
+        already_selected = set(lab.exercises.values_list("title", flat=True))
+
+        return Response({
+            "linked_lab_name": lab.linked_lab.name if lab.linked_lab else "",
+            "exercises": [
+                {
+                    "id": ex.id,
+                    "title": ex.title,
+                    "description": ex.description,
+                    "difficulty": ex.difficulty,
+                    "order": ex.order,
+                    "test_case_count": ex.test_cases.count(),
+                    "already_selected": ex.title in already_selected,
+                }
+                for ex in linked_exercises
+            ],
+        })
+
+    def post(self, request, lab_id):
+        """Copy selected exercises (and their test cases) from the linked lab into this university lab."""
+        staff = _staff_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id, staff_in_charge=staff, lab_type="university")
+        except Lab.DoesNotExist:
+            return Response({"error": "University lab not found"}, status=404)
+
+        if not lab.linked_lab_id:
+            return Response({"error": "No linked practice lab"}, status=400)
+
+        exercise_ids = request.data.get("exercise_ids", [])
+        if not isinstance(exercise_ids, list) or not exercise_ids:
+            return Response({"error": "exercise_ids must be a non-empty list"}, status=400)
+
+        source_exercises = LabExercise.objects.filter(
+            id__in=exercise_ids, lab_id=lab.linked_lab_id
+        ).prefetch_related("test_cases")
+
+        if not source_exercises.exists():
+            return Response({"error": "No valid exercises found in the linked lab"}, status=400)
+
+        created = []
+        next_order = lab.exercises.count()
+        with transaction.atomic():
+            for src_ex in source_exercises:
+                new_ex = LabExercise.objects.create(
+                    lab=lab,
+                    title=src_ex.title,
+                    description=src_ex.description,
+                    explanation=src_ex.explanation,
+                    order=next_order,
+                    difficulty=src_ex.difficulty,
+                    added_by=staff,
+                )
+                next_order += 1
+
+                # Copy test cases
+                for tc in src_ex.test_cases.all():
+                    LabExerciseTestCase.objects.create(
+                        exercise=new_ex,
+                        stdin=tc.stdin,
+                        expected_output=tc.expected_output,
+                        is_sample=tc.is_sample,
+                        order=tc.order,
+                    )
+                created.append(_serialize_exercise(new_ex))
+
+        return Response({"created": created, "count": len(created)}, status=201)
+
+
+class StaffLabAssignBatchesView(APIView):
+    """Staff: Divide/assign students into sub-batches (Batch 1 to Batch N) for a Lab."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id):
+        staff = _staff_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id, staff_in_charge=staff)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        num_batches = request.data.get("num_batches")
+        student_batches = request.data.get("student_batches")  # e.g. { "10": "Batch 1", "12": "Batch 2" }
+        student_ids = request.data.get("student_ids")          # list of student IDs
+        sub_batch = request.data.get("sub_batch")              # target sub_batch name
+
+        student_qs = StudentProfile.objects.filter(department=lab.department, batch=lab.batch)
+        if lab.section:
+            student_qs = student_qs.filter(section=lab.section)
+        students = list(student_qs.order_by("register_number", "name"))
+
+        if student_ids and isinstance(student_ids, list) and sub_batch:
+            b_name = str(sub_batch).strip() or "Batch 1"
+            count = 0
+            with transaction.atomic():
+                for s_id in student_ids:
+                    try:
+                        session, _created = LabStudentSession.objects.get_or_create(lab=lab, student_id=int(s_id))
+                        session.sub_batch = b_name
+                        session.save(update_fields=["sub_batch"])
+                        count += 1
+                    except Exception:
+                        pass
+            return Response({"detail": f"Assigned {count} student(s) to '{b_name}'."})
+
+        if num_batches is not None:
+            try:
+                N = int(num_batches)
+                if N < 1 or N > 20:
+                    return Response({"error": "Number of batches must be between 1 and 20"}, status=400)
+            except ValueError:
+                return Response({"error": "Invalid num_batches"}, status=400)
+
+            total = len(students)
+            if total == 0:
+                return Response({"error": "No students in this lab section to divide"}, status=400)
+
+            with transaction.atomic():
+                for idx, student in enumerate(students):
+                    batch_num = (idx * N) // total + 1
+                    batch_name = f"Batch {batch_num}"
+                    session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
+                    session.sub_batch = batch_name
+                    session.save(update_fields=["sub_batch"])
+
+            return Response({"detail": f"Successfully split {total} students into {N} batch(es)."})
+
+        elif student_batches and isinstance(student_batches, dict):
+            count = 0
+            with transaction.atomic():
+                for student_id_str, b_name in student_batches.items():
+                    try:
+                        s_id = int(student_id_str)
+                        session, _created = LabStudentSession.objects.get_or_create(lab=lab, student_id=s_id)
+                        session.sub_batch = str(b_name).strip() or "Batch 1"
+                        session.save(update_fields=["sub_batch"])
+                        count += 1
+                    except Exception:
+                        pass
+            return Response({"detail": f"Updated batch assignment for {count} student(s)."})
+
+        else:
+            return Response({"error": "Provide num_batches or student_batches dictionary"}, status=400)
+
+
+class StaffLabBatchLockToggleView(APIView):
+    """Staff: Unlock or Lock a specific sub-batch (or all students/selected students) for a Lab."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id):
+        staff = _staff_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id, staff_in_charge=staff)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        sub_batch = request.data.get("sub_batch")  # e.g. "Batch 1" or "all"
+        student_ids = request.data.get("student_ids")  # optional list of student_ids
+        is_locked = bool(request.data.get("is_locked", False))  # False = unlock, True = lock
+        lock_reason = request.data.get("lock_reason", "Locked by staff" if is_locked else "")
+
+        # Pre-create sessions for all eligible students if missing
+        student_qs = StudentProfile.objects.filter(department=lab.department, batch=lab.batch)
+        if lab.section:
+            student_qs = student_qs.filter(section=lab.section)
+        students = list(student_qs)
+        for s in students:
+            sess, _created = LabStudentSession.objects.get_or_create(lab=lab, student=s)
+            if _created and lab.lab_type == "university":
+                sess.is_locked = True
+                sess.lock_reason = "Lab session is locked by staff. Awaiting staff unlock for your batch."
+                sess.save(update_fields=["is_locked", "lock_reason"])
+
+        sessions = LabStudentSession.objects.filter(lab=lab)
+        if student_ids and isinstance(student_ids, list):
+            sessions = sessions.filter(student_id__in=student_ids)
+        elif sub_batch and sub_batch != "all":
+            sessions = sessions.filter(sub_batch=sub_batch)
+
+        updated_count = 0
+        with transaction.atomic():
+            for sess in sessions:
+                sess.is_locked = is_locked
+                sess.lock_reason = lock_reason if is_locked else ""
+                sess.locked_at = timezone.now() if is_locked else None
+                if not is_locked:
+                    sess.tab_switch_count = 0  # reset violations on unlock
+                sess.save(update_fields=["is_locked", "lock_reason", "locked_at", "tab_switch_count"])
+                updated_count += 1
+
+        status_str = "locked" if is_locked else "unlocked"
+        target_str = f"Batch '{sub_batch}'" if sub_batch and sub_batch != "all" else f"{updated_count} student(s)"
+        return Response({"detail": f"Successfully {status_str} {target_str} ({updated_count} students affected)."})
 
 
 class StudentLabViolationView(APIView):
