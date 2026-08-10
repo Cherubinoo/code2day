@@ -1241,6 +1241,52 @@ function StudentTable({ students, exercises, activeExIdx, labId, availableSubBat
     }
   }
 
+  async function handleAllocateQuestions() {
+    setBatchActionBusy(true);
+    try {
+      const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/allocate-questions/`, "POST");
+      if (res.ok) {
+        const data = await res.json();
+        alert(`🎲 ${data.detail}\nDifficulty Rules Applied:\n• 1 Hard Question (alone)\n• 1 Easy + 1 Medium Question\n• 2 Medium Questions`);
+        if (onRefreshStudents) onRefreshStudents();
+      } else {
+        const err = await res.json();
+        alert(`Allocation failed: ${err.error || "Unknown error"}`);
+      }
+    } catch {
+      alert("Failed to allocate questions.");
+    } finally {
+      setBatchActionBusy(false);
+    }
+  }
+
+  async function handleDownloadAllocationPDF() {
+    setBatchActionBusy(true);
+    try {
+      const token = localStorage.getItem("token") || sessionStorage.getItem("token") || "";
+      const res = await fetch(`/api/lab/v2/staff/labs/${labId}/allocation-pdf/`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        alert("Failed to download Allocation Sheet PDF.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Question_Allocation_Lab_${labId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      alert("Error downloading allocation PDF.");
+    } finally {
+      setBatchActionBusy(false);
+    }
+  }
+
   return (
     <div className="slp2-student-section">
       {/* ── Sub-Batch Management & Unlocking Header ── */}
@@ -1251,6 +1297,24 @@ function StudentTable({ students, exercises, activeExIdx, labId, availableSubBat
             <strong style={{ fontSize: 14, color: "#1e293b" }}>Batch Access &amp; Unlocking Control</strong>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              disabled={batchActionBusy}
+              onClick={handleAllocateQuestions}
+              style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #c084fc", background: "#f3e8ff", color: "#6b21a8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              title="Randomly allocate questions per student using difficulty rules (1 Hard alone | 1 Easy + 1 Medium | 2 Mediums)"
+            >
+              🎲 Allocate Questions
+            </button>
+            <button
+              type="button"
+              disabled={batchActionBusy}
+              onClick={handleDownloadAllocationPDF}
+              style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #818cf8", background: "#e0e7ff", color: "#3730a3", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              title="Download Question Allocation Sheet PDF"
+            >
+              📄 Allocation Sheet (PDF)
+            </button>
             <button
               type="button"
               onClick={() => setShowAutoSplit(!showAutoSplit)}
@@ -1436,11 +1500,37 @@ function StudentTable({ students, exercises, activeExIdx, labId, availableSubBat
 
       {/* Search + filter */}
       <div className="slp2-toolbar" style={{ flexWrap: "wrap", gap: 10 }}>
-        <div className="slp2-search-wrap">
-          <Search size={13} />
-          <input className="slp2-search" placeholder="Search by name or reg. no…"
-            value={search} onChange={(e) => setSearch(e.target.value)} />
+        <div className="slp2-search-wrap" style={{ minWidth: 280, display: "flex", alignItems: "center" }}>
+          <Search size={14} style={{ color: "#6366f1", marginRight: 6 }} />
+          <input
+            className="slp2-search"
+            placeholder="🔍 Search student name or register number…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: "100%" }}
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              title="Clear search"
+              style={{ border: "none", background: "transparent", color: "#94a3b8", cursor: "pointer", fontSize: 12, padding: "0 6px" }}
+            >
+              ✕
+            </button>
+          )}
         </div>
+
+        {search && (
+          <button
+            type="button"
+            onClick={toggleSelectAllFiltered}
+            style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #c084fc", background: "#f3e8ff", color: "#7e22ce", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+          >
+            {allFilteredSelected ? `Deselect ${filtered.length} Matches` : `☑️ Select ${filtered.length} Search Matches`}
+          </button>
+        )}
+
         <div className="slp2-filter-pills">
           {[["all", "All Status"], ["done", "Completed"], ["pending", "Not Done"]].map(([k, l]) => (
             <button key={k} type="button"
@@ -1488,6 +1578,7 @@ function StudentTable({ students, exercises, activeExIdx, labId, availableSubBat
               <th>Reg. No.</th>
               <th>Section</th>
               <th>Sub-Batch</th>
+              <th>Allocated Questions</th>
               <th>Lab Access / Lock</th>
               <th>Language</th>
               <th>Submitted At</th>
@@ -1521,6 +1612,33 @@ function StudentTable({ students, exercises, activeExIdx, labId, availableSubBat
                       ))}
                       <option value="__custom__">+ Custom Batch…</option>
                     </select>
+                  </td>
+                  <td>
+                    {r.allocated_exercises && r.allocated_exercises.length > 0 ? (
+                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", maxWidth: 220 }}>
+                        {r.allocated_exercises.map((ax, idx) => {
+                          const diff = (ax.difficulty || "Medium").toLowerCase();
+                          const bg = diff === "easy" ? "#dcfce7" : diff === "hard" ? "#fee2e2" : "#fef3c7";
+                          const color = diff === "easy" ? "#15803d" : diff === "hard" ? "#b91c1c" : "#b45309";
+                          const border = diff === "easy" ? "#86efac" : diff === "hard" ? "#fca5a5" : "#fde68a";
+                          const orderText = ax.order !== undefined ? `Q${ax.order + 1}` : `Q${idx + 1}`;
+                          return (
+                            <span
+                              key={ax.id || idx}
+                              title={`${ax.title} (${(ax.difficulty || "Medium").toUpperCase()})`}
+                              style={{
+                                padding: "2px 6px", borderRadius: 4, fontSize: 11, fontWeight: 700,
+                                background: bg, color: color, border: `1px solid ${border}`, whiteSpace: "nowrap"
+                              }}
+                            >
+                              {orderText}: {ax.title.length > 16 ? ax.title.slice(0, 14) + "…" : ax.title}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: 11, color: "#94a3b8", fontStyle: "italic" }}>All / Default</span>
+                    )}
                   </td>
                   <td>
                     <button
@@ -1559,7 +1677,7 @@ function StudentTable({ students, exercises, activeExIdx, labId, availableSubBat
               );
             })}
             {filtered.length === 0 && (
-              <tr><td colSpan={10} className="slp2-empty-row">No students match this filter</td></tr>
+              <tr><td colSpan={11} className="slp2-empty-row">No students match this filter</td></tr>
             )}
           </tbody>
         </table>

@@ -160,6 +160,8 @@ from .views import (
     StaffLabUnlockStudentView,
     StaffLabFullReportView,
     StudentLabFullReportView,
+    StaffLabAllocateQuestionsView,
+    StaffLabAllocationPDFView,
     StaffLookupView,
     StaffFirstLoginView,
     StaffLoginView,
@@ -432,6 +434,8 @@ urlpatterns = [
     path("lab/v2/staff/labs/<int:lab_id>/student/<str:register_number>/unlock/", StaffLabUnlockStudentView.as_view(), name="staff-lab-student-unlock"),
     path("lab/v2/staff/labs/<int:lab_id>/full-report/", StaffLabFullReportView.as_view(), name="staff-lab-full-report"),
     path("lab/v2/student/labs/<int:lab_id>/full-report/", StudentLabFullReportView.as_view(), name="student-lab-full-report"),
+    path("lab/v2/staff/labs/<int:lab_id>/allocate-questions/", StaffLabAllocateQuestionsView.as_view(), name="staff-lab-allocate-questions"),
+    path("lab/v2/staff/labs/<int:lab_id>/allocation-pdf/", StaffLabAllocationPDFView.as_view(), name="staff-lab-allocation-pdf"),
 
     # ── HOD Staff Management ─────────────────────────────────────────────────
     path("hod/staff/",                  HODManageStaffView.as_view(),       name="hod-manage-staff"),

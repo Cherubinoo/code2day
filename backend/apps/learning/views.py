@@ -14156,7 +14156,7 @@ class StaffLabStudentsView(APIView):
         subs = LabExerciseSubmission.objects.filter(exercise__lab=lab).select_related("student", "exercise")
         sub_map = {(s.student_id, s.exercise_id): s for s in subs}
 
-        session_qs = LabStudentSession.objects.filter(lab=lab)
+        session_qs = LabStudentSession.objects.filter(lab=lab).prefetch_related("allocated_exercises")
         session_map = {s.student_id: s for s in session_qs}
 
         student_rows = []
@@ -14185,6 +14185,17 @@ class StaffLabStudentsView(APIView):
                     "language": sub.language if sub else None,
                 })
             done = sum(1 for s in ex_status if s["completed"])
+
+            allocated_list = [
+                {
+                    "id": ax.id,
+                    "title": ax.title,
+                    "difficulty": ax.difficulty,
+                    "order": ax.order,
+                }
+                for ax in session.allocated_exercises.all()
+            ]
+
             student_rows.append({
                 "student_id": student.id,
                 "student_name": student.name,
@@ -14195,6 +14206,7 @@ class StaffLabStudentsView(APIView):
                 "lock_reason": session.lock_reason or "",
                 "tab_switch_count": session.tab_switch_count,
                 "exercises": ex_status,
+                "allocated_exercises": allocated_list,
                 "completed": done,
                 "total": len(exercises),
             })
@@ -14252,29 +14264,12 @@ class StudentLabExercisesView(APIView):
                 "exercises": [],
             })
 
-        if lab.lab_type == "university":
-            if not session.allocated_exercises.exists():
-                pool = list(lab.exercises.all())
-                if not pool and lab.linked_lab:
-                    pool = list(lab.linked_lab.exercises.all())
-                
-                valid_pairs = []
-                for i in range(len(pool)):
-                    for j in range(i + 1, len(pool)):
-                        ex1 = pool[i]
-                        ex2 = pool[j]
-                        if ex1.difficulty and ex2.difficulty and str(ex1.difficulty).strip().lower() == str(ex2.difficulty).strip().lower():
-                            continue
-                        valid_pairs.append((ex1, ex2))
-                
-                if valid_pairs:
-                    import random
-                    allocated = list(random.choice(valid_pairs))
-                else:
-                    import random
-                    allocated = random.sample(pool, min(2, len(pool)))
-                
-                session.allocated_exercises.set(allocated)
+        if not session.allocated_exercises.exists():
+            from .services.lab_allocation import allocate_lab_questions_for_students
+            allocate_lab_questions_for_students(lab)
+            session.refresh_from_db()
+
+        if session.allocated_exercises.exists():
             exercises = session.allocated_exercises.all()
         else:
             exercises = lab.exercises.all()
@@ -15063,6 +15058,76 @@ class StaffLabFullReportView(APIView):
 
     def get(self, request, lab_id):
         return Response({"error": "Bulk lab report download has been disabled. Please download individual question reports."}, status=400)
+
+
+class StaffLabAllocateQuestionsView(APIView):
+    """Staff: Trigger or re-run random difficulty-based question allocation for all students in a Lab."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, lab_id):
+        staff = _staff_from_request(request)
+        try:
+            lab = Lab.objects.get(id=lab_id)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        from .services.lab_allocation import allocate_lab_questions_for_students
+        stats = allocate_lab_questions_for_students(lab)
+        return Response({
+            "detail": f"Question allocation completed for {stats.get('allocated_count', 0)} student(s).",
+            "stats": stats,
+        })
+
+
+class StaffLabAllocationPDFView(APIView):
+    """Staff: Generate and download PDF Question Allocation Sheet for a Lab."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, lab_id):
+        staff = _staff_from_request(request)
+        try:
+            lab = Lab.objects.select_related("department", "staff_in_charge").get(id=lab_id)
+        except Lab.DoesNotExist:
+            return Response({"error": "Lab not found"}, status=404)
+
+        # Make sure questions are allocated first if not yet allocated
+        sessions = list(
+            LabStudentSession.objects.filter(lab=lab)
+            .select_related("student")
+            .prefetch_related("allocated_exercises")
+            .order_by("student__register_number", "student__name")
+        )
+
+        has_allocations = any(s.allocated_exercises.exists() for s in sessions)
+        if not has_allocations or not sessions:
+            from .services.lab_allocation import allocate_lab_questions_for_students
+            allocate_lab_questions_for_students(lab)
+            sessions = list(
+                LabStudentSession.objects.filter(lab=lab)
+                .select_related("student")
+                .prefetch_related("allocated_exercises")
+                .order_by("student__register_number", "student__name")
+            )
+
+        if not sessions:
+            return Response({"error": "No students found enrolled in this lab section to generate allocation sheet."}, status=400)
+
+        from .services.lab_allocation_pdf import build_lab_allocation_pdf
+        buffer = BytesIO()
+        try:
+            build_lab_allocation_pdf(buffer, lab=lab, sessions=sessions)
+        except Exception as exc:
+            logger.exception("Failed to render lab allocation PDF for lab %s", lab_id)
+            return Response({"error": f"Failed to render allocation PDF: {exc}"}, status=500)
+
+        buffer.seek(0)
+        pdf_bytes = buffer.getvalue()
+
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Length"] = str(len(pdf_bytes))
+        clean_lab_name = re.sub(r'[^\w\-]', '_', lab.name)
+        response["Content-Disposition"] = f'attachment; filename="question_allocation_{clean_lab_name}.pdf"'
+        return response
 
 
 # ── HOD Staff Management ──────────────────────────────────────────────────────
