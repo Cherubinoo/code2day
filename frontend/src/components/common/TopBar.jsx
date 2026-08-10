@@ -24,9 +24,14 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
   const adminNavItems = [{ id: "admin", label: "Dashboard", icon: LayoutGrid }];
   const hodNavItems = [{ id: "hod", label: "Dashboard", icon: LayoutGrid }];
   const staffNavItems = [{ id: "staff", label: "Dashboard", icon: LayoutGrid }];
+  const academicsNavItems = [
+    { id: "hod", label: "HOD Dashboard", icon: LayoutGrid },
+    { id: "staff", label: "Staff Dashboard", icon: LayoutGrid },
+  ];
 
   const getNavItems = () => {
     if (userType === "admin") return adminNavItems;
+    if (userType === "academics") return academicsNavItems;
     if (userType === "hod") return hodNavItems;
     if (userType === "staff" || userType === "director" || userType === "tpu" || userType === "ja") return staffNavItems;
     return navItems;

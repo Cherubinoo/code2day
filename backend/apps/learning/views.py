@@ -2913,10 +2913,17 @@ class StaffLoginView(APIView):
         # Get institution_id for response
         institution_id = profile.institution.institution_id if profile.institution else None
         
+        # Ensure faculty_id 0001 is assigned academics role
+        if profile.faculty_id == "0001" and profile.role != "academics":
+            profile.role = "academics"
+            profile.save(update_fields=["role"])
+
+        user_type = "academics" if (profile.faculty_id == "0001" or profile.role == "academics") else profile.role
+
         # Return response based on staff role
         response_data = {
             "detail": "Login successful.",
-            "user_type": profile.role,  # staff, hod, or admin
+            "user_type": user_type,
             "institution_id": institution_id,
         }
         
@@ -2929,8 +2936,13 @@ class StaffLoginView(APIView):
         
         if profile.role == "admin":
             response_data["admin"] = user_data
+        elif user_type == "academics":
+            response_data["academics"] = user_data
+            response_data["hod"] = user_data
+            response_data["staff"] = user_data
         elif profile.role == "hod":
             response_data["hod"] = user_data
+            response_data["staff"] = user_data
         else:
             response_data["staff"] = user_data
         
@@ -14744,15 +14756,18 @@ class StaffLabExerciseStudentReportView(APIView):
 
 
 class HODLabApproveView(APIView):
-    """HOD: Approve a pending University Lab practical."""
+    """HOD / Academic Coordinator: Approve a pending University Lab practical."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, lab_id):
         staff = _staff_from_request(request)
         if not staff or not getattr(staff, 'is_hod', False):
-            return Response({"error": "HOD access required"}, status=403)
+            return Response({"error": "HOD or Academic Coordinator access required"}, status=403)
         try:
-            lab = Lab.objects.get(id=lab_id, department=staff.department)
+            if getattr(staff, "is_academic_coordinator", False):
+                lab = Lab.objects.get(id=lab_id)
+            else:
+                lab = Lab.objects.get(id=lab_id, department=staff.department)
         except Lab.DoesNotExist:
             return Response({"error": "Lab not found"}, status=404)
 

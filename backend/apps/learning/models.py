@@ -856,6 +856,7 @@ class StaffProfile(models.Model):
     ROLE_CHOICES = (
         ("staff", "Staff"),
         ("hod", "Head of Department"),
+        ("academics", "Academic Coordinator"),
         ("tpu", "TPU (Training & Placement)"),
         ("director", "Director"),
         ("ja", "Junior Admin (JA)"),
@@ -894,6 +895,14 @@ class StaffProfile(models.Model):
 
     def __str__(self):
         return f"{self.faculty_id} - {self.name} ({self.get_role_display()})"
+
+    @property
+    def is_hod(self):
+        return self.role in ("hod", "academics", "admin") or self.faculty_id == "0001"
+
+    @property
+    def is_academic_coordinator(self):
+        return self.role == "academics" or self.faculty_id == "0001"
 
     @property
     def password_is_set(self):

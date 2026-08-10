@@ -37,7 +37,7 @@ if not DEBUG and not _SECRET_KEY_ENV:
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.getenv(
-        "DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver"
+        "DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver,code2day.ramcoad.com,*"
     ).split(",")
     if host.strip()
 ]
@@ -170,14 +170,15 @@ CSRF_COOKIE_HTTPONLY = True
 
 _cors_raw = os.getenv(
     "CORS_ALLOWED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,https://code2day.ramcoad.com,http://code2day.ramcoad.com",
 )
 CORS_ALLOWED_ORIGINS = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "True").lower() in ("true", "1")
 
 _csrf_raw = os.getenv(
     "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174",
+    "http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,https://code2day.ramcoad.com,http://code2day.ramcoad.com",
 )
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_raw.split(",") if o.strip()]
 
@@ -186,6 +187,8 @@ _production_origins = ["https://code2day.ramcoad.com", "http://code2day.ramcoad.
 for _origin in _production_origins:
     if _origin not in CSRF_TRUSTED_ORIGINS:
         CSRF_TRUSTED_ORIGINS.append(_origin)
+    if _origin not in CORS_ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(_origin)
 
 # ---------------------------------------------------------------------------
 # Static files

@@ -907,9 +907,8 @@ function App() {
       
       // Navigate to role-specific dashboard
       const targetPage = type === "admin" ? "admin" :
-                         (type === "director" || type === "tpu") ? "hod" :
+                         (type === "director" || type === "tpu" || type === "hod" || type === "academics") ? "hod" :
                          type === "ja" ? "ja" :
-                         type === "hod" ? "hod" :
                          type === "staff" ? "staff" : "explore";
       navigate(targetPage, { replace: true });
     } catch (error) {
@@ -1448,7 +1447,7 @@ function App() {
       );
       break;
     case "hod":
-      activeView = (userType === "hod" || userType === "director" || userType === "tpu") ? (
+      activeView = (userType === "hod" || userType === "director" || userType === "tpu" || userType === "academics") ? (
         <HODDashboard institutionId={selectedInstitutionId} />
       ) : (
         <div style={{ padding: 40 }}>
@@ -1468,7 +1467,7 @@ function App() {
       );
       break;
     case "staff":
-      activeView = ["staff", "hod", "admin", "director", "tpu", "ja"].includes(userType) ? (
+      activeView = ["staff", "hod", "admin", "director", "tpu", "ja", "academics"].includes(userType) ? (
         <StaffDashboard institutionId={selectedInstitutionId} />
       ) : (
         <div style={{ padding: 40 }}>
@@ -1530,7 +1529,7 @@ function App() {
         navigate("admin", { replace: true });
         break;
       }
-      if (userType === "hod" || userType === "director" || userType === "tpu") {
+      if (userType === "hod" || userType === "director" || userType === "tpu" || userType === "academics") {
         navigate("hod", { replace: true });
         break;
       }
