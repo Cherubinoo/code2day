@@ -2925,7 +2925,16 @@ class StaffLoginView(APIView):
         # Include appropriate data based on role
         user_data = {
             "id": profile.faculty_id,
+            "faculty_id": profile.faculty_id,
             "name": profile.name,
+            "role": profile.role,
+            "department": {
+                "id": profile.department.id,
+                "name": profile.department.name,
+                "code": profile.department.code,
+            } if profile.department else None,
+            "department_id": profile.department_id,
+            "department_name": profile.department.name if profile.department else "N/A",
             "institution_id": institution_id,
         }
         
@@ -2976,8 +2985,8 @@ class StaffInstitutionDetailView(APIView):
         user_role = user_profile.role if user_profile else None
         user_department = user_profile.department if user_profile else None
 
-        # For HOD, filter students by department
-        if user_profile and user_profile.role == "hod" and user_profile.department:
+        # For HOD / Academic Coordinator, filter students by department
+        if user_profile and user_profile.role in ("hod", "academics") and user_profile.department:
             students_qs = StudentProfile.objects.filter(
                 institution=institution,
                 department=user_profile.department
@@ -3003,8 +3012,8 @@ class StaffInstitutionDetailView(APIView):
                 "is_active": student.account.is_active if student.account else True,
             })
 
-        # Get staff (filter by department for HOD, all for admin/staff)
-        if user_role == "hod" and user_department:
+        # Get staff (filter by department for HOD/Academics, all for admin/staff)
+        if user_role in ("hod", "academics") and user_department:
             staff = StaffProfile.objects.filter(institution=institution, department=user_department)
         else:
             staff = StaffProfile.objects.filter(institution=institution)
@@ -3049,8 +3058,8 @@ class StaffInstitutionDetailView(APIView):
             },
         }
         
-        # Add department info for HOD users
-        if user_role == "hod" and user_department:
+        # Add department info for HOD / Academic Coordinator users
+        if user_role in ("hod", "academics") and user_department:
             response_data["department"] = {
                 "id": user_department.id,
                 "code": user_department.code,

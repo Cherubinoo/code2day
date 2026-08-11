@@ -894,7 +894,7 @@ function App() {
       // Preserve user_type in authStudent by spreading existing authStudent first
       setAuthStudent({
         ...authStudent,
-        ...(payload.student || payload.staff || payload.hod || payload.admin),
+        ...(payload.academics || payload.hod || payload.staff || payload.admin || payload.student),
         user_type: type,
         institution_id: payload.institution_id,
       });
