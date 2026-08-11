@@ -12820,7 +12820,7 @@ class HODDeptStaffView(APIView):
 
     def get(self, request):
         staff = _staff_from_request(request)
-        if not staff or staff.role not in ("hod", "admin"):
+        if not staff or staff.role not in ("hod", "academics", "admin"):
             return Response({"error": "HOD access required"}, status=403)
         dept_staff = StaffProfile.objects.filter(department=staff.department).values(
             "id", "name", "faculty_id", "role"
@@ -12833,7 +12833,7 @@ class HODDeptInfoView(APIView):
 
     def get(self, request):
         staff = _staff_from_request(request)
-        if not staff or staff.role not in ("hod", "admin"):
+        if not staff or staff.role not in ("hod", "academics", "admin"):
             return Response({"error": "HOD access required"}, status=403)
 
         stu_qs = StudentProfile.objects.filter(department=staff.department)
@@ -12858,7 +12858,7 @@ class HODLabAssignmentView(APIView):
 
     def _get_hod(self, request):
         staff = _staff_from_request(request)
-        if not staff or staff.role not in ("hod", "admin"):
+        if not staff or staff.role not in ("hod", "academics", "admin"):
             return None
         return staff
 
@@ -12945,7 +12945,7 @@ class HODLabAssignmentDeleteView(APIView):
 
     def delete(self, request, assignment_id):
         staff = _staff_from_request(request)
-        if not staff or staff.role not in ("hod", "admin"):
+        if not staff or staff.role not in ("hod", "academics", "admin"):
             return Response({"error": "HOD access required"}, status=403)
         try:
             a = LabAssignment.objects.get(id=assignment_id, department=staff.department)
@@ -15157,7 +15157,7 @@ class HODManageStaffView(APIView):
 
     def post(self, request):
         hod = _staff_from_request(request)
-        if not hod or hod.role not in ("hod", "admin"):
+        if not hod or hod.role not in ("hod", "academics", "admin"):
             return Response({"error": "HOD access required"}, status=403)
         if not hod.department or not hod.institution:
             return Response({"error": "HOD has no department assigned"}, status=400)
@@ -15172,7 +15172,7 @@ class HODManageStaffView(APIView):
             return Response({"error": "Faculty ID is required"}, status=400)
         if not name:
             return Response({"error": "Name is required"}, status=400)
-        if role not in ("staff", "hod", "tpu", "ja"):
+        if role not in ("staff", "hod", "academics", "tpu", "ja"):
             role = "staff"
 
         if StaffProfile.objects.filter(faculty_id=faculty_id).exists():
@@ -15202,7 +15202,7 @@ class HODManageStaffDetailView(APIView):
 
     def put(self, request, faculty_id):
         hod = _staff_from_request(request)
-        if not hod or hod.role not in ("hod", "admin"):
+        if not hod or hod.role not in ("hod", "academics", "admin"):
             return Response({"error": "HOD access required"}, status=403)
 
         try:
