@@ -898,11 +898,11 @@ class StaffProfile(models.Model):
 
     @property
     def is_hod(self):
-        return self.role in ("hod", "academics", "admin") or self.faculty_id == "0001"
+        return self.role in ("hod", "academics", "admin")
 
     @property
     def is_academic_coordinator(self):
-        return self.role == "academics" or self.faculty_id == "0001"
+        return self.role == "academics"
 
     @property
     def password_is_set(self):

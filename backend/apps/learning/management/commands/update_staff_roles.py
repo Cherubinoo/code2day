@@ -58,8 +58,8 @@ class Command(BaseCommand):
         self.stdout.write("UPDATING STAFF ROLES")
         self.stdout.write("=" * 50)
 
-        # Step 1: Update 0001 to admin (no department)
-        self.stdout.write("\n1. Setting 0001 as Admin (no department)...")
+        # Step 1: Update 0001 to admin (Node Admin)
+        self.stdout.write("\n1. Setting 0001 as Admin (admin)...")
         admin_user, _ = User.objects.get_or_create(
             username="staff_0001",
             defaults={
@@ -73,14 +73,13 @@ class Command(BaseCommand):
             defaults={
                 "account": admin_user,
                 "institution": institution,
-                "department": None,  # No department for admin
                 "name": "Administrator",
                 "role": "admin",
             },
         )
         action = "Created" if created else "Updated"
         self.stdout.write(
-            self.style.SUCCESS(f"  {action}: 0001 - Administrator (admin, no dept)")
+            self.style.SUCCESS(f"  {action}: 0001 - Administrator (admin)")
         )
 
         # Step 2: Update AD staff to role='staff' with AD department, keep existing names

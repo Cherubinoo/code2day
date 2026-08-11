@@ -1284,6 +1284,7 @@ const AdminDashboard = () => {
                                   >
                                     <option value="staff">Staff Member</option>
                                     <option value="hod">Dept. Head (HOD)</option>
+                                    <option value="academics">Academic Coordinator</option>
                                     <option value="tpu">TPU Coordinator</option>
                                     <option value="director">Director</option>
                                     <option value="ja">Junior Admin (JA)</option>

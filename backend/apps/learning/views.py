@@ -2913,12 +2913,7 @@ class StaffLoginView(APIView):
         # Get institution_id for response
         institution_id = profile.institution.institution_id if profile.institution else None
         
-        # Ensure faculty_id 0001 is assigned academics role
-        if profile.faculty_id == "0001" and profile.role != "academics":
-            profile.role = "academics"
-            profile.save(update_fields=["role"])
-
-        user_type = "academics" if (profile.faculty_id == "0001" or profile.role == "academics") else profile.role
+        user_type = profile.role
 
         # Return response based on staff role
         response_data = {
@@ -9133,8 +9128,8 @@ class InstitutionDetailManagementView(APIView):
         # Get actual student count
         students_count = StudentProfile.objects.filter(institution=institution).count()
         
-        # Get staff and HODs (Excluding default administrator '0001')
-        staff_list = StaffProfile.objects.filter(institution=institution).exclude(faculty_id='0001').values(
+        # Get staff, HODs, and Academic Coordinator (0001)
+        staff_list = StaffProfile.objects.filter(institution=institution).values(
             'id', 'faculty_id', 'name', 'role', 'department__name', 'department__id', 'department__code'
         )
         

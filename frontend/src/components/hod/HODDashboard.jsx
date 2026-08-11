@@ -1285,7 +1285,7 @@ const HODDashboard = ({ institutionId }) => {
                       Role
                     </label>
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      {[{ value: 'staff', label: 'Staff' }, { value: 'hod', label: 'Head of Department' }].map(({ value, label }) => (
+                      {[{ value: 'staff', label: 'Staff' }, { value: 'hod', label: 'Head of Department' }, { value: 'academics', label: 'Academic Coordinator' }].map(({ value, label }) => (
                         <button
                           key={value}
                           type="button"
@@ -1417,7 +1417,7 @@ const HODDashboard = ({ institutionId }) => {
                       <div>
                         <h2 style={{ margin: 0, marginBottom: 8 }}>{staffDetail.staff.name}</h2>
                         <p style={{ margin: 0, color: '#666' }}>
-                          {staffDetail.staff.role === 'hod' ? 'Head of Department' : 'Staff'} • {staffDetail.staff.faculty_id}
+                          {staffDetail.staff.role === 'hod' ? 'Head of Department' : staffDetail.staff.role === 'academics' ? 'Academic Coordinator' : 'Staff'} • {staffDetail.staff.faculty_id}
                         </p>
                         {staffDetail.staff.department && (
                           <p style={{ margin: '4px 0 0 0', color: '#666', fontSize: 14 }}>
