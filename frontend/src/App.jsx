@@ -838,7 +838,7 @@ function App() {
         admin_id: registerNumber.trim(),
         password,
       };
-    } else if (authStudent?.user_type === "staff" || authStudent?.user_type === "hod" || authStudent?.user_type === "director" || authStudent?.user_type === "tpu" || authStudent?.user_type === "ja") {
+    } else if (loginType === "staff" || ["staff", "hod", "academics", "director", "tpu", "ja"].includes(authStudent?.user_type)) {
       endpoint = isFirstLogin ? "/api/auth/staff/first-login/" : "/api/auth/staff/login/";
       requestBody = {
         faculty_id: registerNumber.trim(),
