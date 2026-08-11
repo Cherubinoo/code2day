@@ -1,12 +1,13 @@
 """
 Lab Question Allocation Service.
 
-Handles single-question allocation for lab practicals.
+Handles random difficulty-based exercise allocation for lab practicals.
 
 Allocation Rules:
-1. Exactly 1 Question Rule: Every enrolled student gets allocated EXACTLY 1 question from the lab's exercise pool.
-2. Re-allocation Support: Triggering allocation re-shuffles the exercise pool and re-assigns 1 question per student, replacing previous allocations.
-3. Even Distribution: Exercises are distributed evenly round-robin across enrolled students.
+1. Hard Question Rule: If a Hard question is assigned, allocate ONLY 1 Hard question (Total: 1 question).
+2. Easy Question Rule: If an Easy question is assigned, pair with 2 Easy questions OR 1 Easy + 1 Medium question (Total: 2 questions).
+3. Medium Question Rule: If a Medium question is assigned, pair with 1 Medium + 1 Easy question OR 2 Medium questions (Total: 2 questions).
+4. Re-allocation Support: Triggering allocation re-shuffles valid difficulty combinations and overwrites previous allocations.
 """
 
 import logging
@@ -18,26 +19,70 @@ logger = logging.getLogger(__name__)
 
 def allocate_lab_questions_for_students(lab):
     """
-    Randomly allocates EXACTLY 1 exercise from `lab.exercises` (or `lab.linked_lab.exercises`)
-    to each enrolled student in the lab's department, batch, and section.
+    Randomly allocates exercises from `lab.exercises` (or `lab.linked_lab.exercises`)
+    to each enrolled student in the lab's department, batch, and section, adhering
+    strictly to difficulty pairing constraints.
 
-    Re-running this service re-shuffles the exercise pool and overwrites previous allocations
-    so that every student receives a fresh 1-question allocation.
+    Re-running this service re-shuffles valid combinations and overwrites previous allocations.
 
     Returns dict with summary statistics.
     """
-    exercises = list(lab.exercises.all().order_by("order", "created_at"))
+    exercises = list(lab.exercises.all())
     if not exercises and lab.linked_lab_id:
-        exercises = list(lab.linked_lab.exercises.all().order_by("order", "created_at"))
+        exercises = list(lab.linked_lab.exercises.all())
 
     if not exercises:
         return {
             "allocated_count": 0,
             "total_students": 0,
             "total_exercises_pool": 0,
-            "questions_per_student": 1,
             "detail": "No exercises found in lab.",
         }
+
+    # Group exercises by difficulty (case-insensitive)
+    easy_pool = []
+    medium_pool = []
+    hard_pool = []
+    other_pool = []
+
+    for ex in exercises:
+        diff = (ex.difficulty or "").strip().lower()
+        if diff == "easy":
+            easy_pool.append(ex)
+        elif diff == "medium":
+            medium_pool.append(ex)
+        elif diff == "hard":
+            hard_pool.append(ex)
+        else:
+            other_pool.append(ex)
+
+    valid_combos = []
+
+    # Rule 1: HARD -> ONLY 1 Hard question
+    for h in hard_pool:
+        valid_combos.append([h])
+
+    # Rule 2: EASY -> 2 Easy OR 1 Easy + 1 Medium
+    for i in range(len(easy_pool)):
+        for j in range(i + 1, len(easy_pool)):
+            valid_combos.append([easy_pool[i], easy_pool[j]])
+    for e in easy_pool:
+        for m in medium_pool:
+            valid_combos.append([e, m])
+
+    # Rule 3: MEDIUM -> 1 Medium + 1 Easy OR 2 Mediums
+    for i in range(len(medium_pool)):
+        for j in range(i + 1, len(medium_pool)):
+            valid_combos.append([medium_pool[i], medium_pool[j]])
+
+    # Fallbacks if valid_combos is empty due to non-standard exercise pool
+    if not valid_combos:
+        if len(exercises) >= 2:
+            for i in range(len(exercises)):
+                for j in range(i + 1, len(exercises)):
+                    valid_combos.append([exercises[i], exercises[j]])
+        else:
+            valid_combos = [[ex] for ex in exercises]
 
     student_qs = StudentProfile.objects.filter(department=lab.department, batch=lab.batch)
     if lab.section:
@@ -49,25 +94,25 @@ def allocate_lab_questions_for_students(lab):
             "allocated_count": 0,
             "total_students": 0,
             "total_exercises_pool": len(exercises),
-            "questions_per_student": 1,
             "detail": "No enrolled students found in lab section.",
         }
 
-    # Shuffle exercise pool to ensure random & even distribution across students
-    shuffled_exercises = list(exercises)
-    random.shuffle(shuffled_exercises)
+    # Shuffle valid combinations to ensure random distribution across students
+    random.shuffle(valid_combos)
 
     allocated_count = 0
     for idx, student in enumerate(students):
         session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
-        # Allocate exactly 1 question for this student using round-robin over shuffled exercise pool
-        chosen_exercise = shuffled_exercises[idx % len(shuffled_exercises)]
-        session.allocated_exercises.set([chosen_exercise])
+        chosen_combo = valid_combos[idx % len(valid_combos)]
+        session.allocated_exercises.set(chosen_combo)
         allocated_count += 1
 
     return {
         "allocated_count": allocated_count,
         "total_students": len(students),
         "total_exercises_pool": len(exercises),
-        "questions_per_student": 1,
+        "combos_available": len(valid_combos),
+        "easy_count": len(easy_pool),
+        "medium_count": len(medium_pool),
+        "hard_count": len(hard_pool),
     }

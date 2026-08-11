@@ -1247,7 +1247,7 @@ function StudentTable({ students, exercises, activeExIdx, labId, availableSubBat
       const res = await apiFetch(`/api/lab/v2/staff/labs/${labId}/allocate-questions/`, "POST");
       if (res.ok) {
         const data = await res.json();
-        alert(`🎲 ${data.detail}\nDifficulty Rules Applied:\n• 1 Hard Question (alone)\n• 1 Easy + 1 Medium Question\n• 2 Medium Questions`);
+        alert(`🎲 ${data.detail}\nDifficulty Rules Applied:\n• Hard: 1 Hard question (alone)\n• Easy: 2 Easy OR 1 Easy + 1 Medium\n• Medium: 1 Medium + 1 Easy OR 2 Mediums`);
         if (onRefreshStudents) onRefreshStudents();
       } else {
         const err = await res.json();
