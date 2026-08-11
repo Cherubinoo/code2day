@@ -58,26 +58,28 @@ def allocate_lab_questions_for_students(lab):
 
     valid_combos = []
 
-    # Rule 1: HARD -> ONLY 1 Hard question
+    # Rule 1: HARD -> ONLY 1 Hard question (Total: 1 question)
     for h in hard_pool:
         valid_combos.append([h])
 
-    # Rule 2: EASY -> 2 Easy OR 1 Easy + 1 Medium
+    # Rule 2: EASY -> 2 Easy questions
     for i in range(len(easy_pool)):
         for j in range(i + 1, len(easy_pool)):
             valid_combos.append([easy_pool[i], easy_pool[j]])
+
+    # Rule 3: MIXED (1 Easy + 1 Medium)
+    # Medium is strictly paired with Easy (NO 2-Medium combos allowed!)
     for e in easy_pool:
         for m in medium_pool:
             valid_combos.append([e, m])
 
-    # Rule 3: MEDIUM -> 1 Medium + 1 Easy OR 2 Mediums
-    for i in range(len(medium_pool)):
-        for j in range(i + 1, len(medium_pool)):
-            valid_combos.append([medium_pool[i], medium_pool[j]])
-
-    # Fallbacks if valid_combos is empty due to non-standard exercise pool
+    # Fallback ONLY IF exercise pool has no Easy/Hard questions
     if not valid_combos:
-        if len(exercises) >= 2:
+        if len(medium_pool) >= 2:
+            for i in range(len(medium_pool)):
+                for j in range(i + 1, len(medium_pool)):
+                    valid_combos.append([medium_pool[i], medium_pool[j]])
+        elif len(exercises) >= 2:
             for i in range(len(exercises)):
                 for j in range(i + 1, len(exercises)):
                     valid_combos.append([exercises[i], exercises[j]])
