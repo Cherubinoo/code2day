@@ -814,8 +814,8 @@ class DashboardView(UnifiedAuthMixin, APIView):
 
         problems = Problem.objects.all()
         
-        # Handle staff/hod/admin/director/tpu/ja users differently
-        if profile_type in ["staff", "hod", "admin", "director", "tpu", "ja"]:
+        # Handle staff/hod/academics/admin/director/tpu/ja users differently
+        if profile_type in ["staff", "hod", "academics", "admin", "director", "tpu", "ja"]:
             # Get profile details
             profile_obj = profile if profile else None
             user_department = getattr(profile_obj, 'department', None) if profile_obj else None
@@ -823,8 +823,8 @@ class DashboardView(UnifiedAuthMixin, APIView):
             # Filter by institution for multi-tenant support
             inst = getattr(profile_obj, 'institution', None)
             
-            # Filter student count by department for HOD, all for admin/staff within institution
-            if profile_type == "hod" and user_department:
+            # Filter student count by department for HOD / Academic Coordinator, all for admin/staff within institution
+            if profile_type in ["hod", "academics"] and user_department:
                 students_qs = StudentProfile.objects.filter(department=user_department, institution=inst)
                 student_count = students_qs.count()
                 dept_contests = Contest.objects.filter(department=user_department, institution=inst)
@@ -973,7 +973,7 @@ class DashboardView(UnifiedAuthMixin, APIView):
             
             # For HOD and Institutional roles, include top performers
             leaderboard = []
-            if profile_type == "hod" and user_department:
+            if profile_type in ["hod", "academics"] and user_department:
                 top_students = students_qs.annotate(
                     solved=Count('solved_problems', distinct=True)
                 ).order_by('-solved')[:10]
@@ -1013,7 +1013,7 @@ class DashboardView(UnifiedAuthMixin, APIView):
                 "editor": FALLBACK_DASHBOARD["editor"],
                 "recentActivity": recent_activity,
                 "engagementSummary": engagement_summary,
-                "staff": StaffProfileSerializer(profile).data if profile and profile_type in ["staff", "hod"] else None,
+                "staff": StaffProfileSerializer(profile).data if profile and profile_type in ["staff", "hod", "academics"] else None,
             })
 
         # Student dashboard (original logic)
@@ -3091,8 +3091,8 @@ class StaffPerformanceView(APIView):
         if user_profile.institution != institution:
             return Response({"detail": "You do not have access to this institution."}, status=status.HTTP_403_FORBIDDEN)
 
-        # Filter by department for HOD, all for staff/admin
-        if user_role == "hod" and user_department:
+        # Filter by department for HOD / Academics, all for staff/admin
+        if user_role in ("hod", "academics") and user_department:
             staff_qs = StaffProfile.objects.filter(institution=institution, department=user_department)
         else:
             staff_qs = StaffProfile.objects.filter(institution=institution)
@@ -3402,7 +3402,7 @@ class DepartmentDetailView(APIView):
         
         # Check permissions: Institutional roles can view any department in their institution
         if is_staff:
-            if user_role == "hod" and dept != user_profile.department:
+            if user_role in ("hod", "academics") and dept != user_profile.department:
                 return Response({"detail": "You can only view your own department."}, status=status.HTTP_403_FORBIDDEN)
             if dept.institution != inst:
                 return Response({"detail": "You do not have access to this department."}, status=status.HTTP_403_FORBIDDEN)
@@ -3559,7 +3559,7 @@ class ContestListCreateView(APIView):
             ).order_by('-created_at')
         elif hasattr(request.user, 'staff_profile'):
             profile = request.user.staff_profile
-            if profile.role == "hod" and profile.department:
+            if profile.role in ("hod", "academics") and profile.department:
                 contests = Contest.objects.filter(department=profile.department).select_related(
                     'created_by', 'department', 'approved_by'
                 ).order_by('-created_at')
@@ -4752,9 +4752,9 @@ class StaffLockToggleView(APIView):
             hod_profile.faculty_id, hod_profile.role, hod_profile.department_id, faculty_id
         )
 
-        if hod_profile.role != 'hod':
+        if not getattr(hod_profile, 'is_hod', False) and hod_profile.role not in ('hod', 'academics', 'admin'):
             return Response(
-                {"detail": f"Only HOD can lock/unlock staff. Your role: {hod_profile.role}"},
+                {"detail": f"Only HOD or Academic Coordinator can lock/unlock staff. Your role: {hod_profile.role}"},
                 status=status.HTTP_403_FORBIDDEN
             )
 
