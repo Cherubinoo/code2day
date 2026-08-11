@@ -215,8 +215,8 @@ def build_lab_allocation_pdf(buffer: BytesIO, *, lab, sessions):
         Paragraph("Register No", th_style),
         Paragraph("Student Name", th_style),
         Paragraph("Sub-Batch", th_style),
-        Paragraph("Allocated Question(s)", th_style),
-        Paragraph("Difficulty Pair", th_style),
+        Paragraph("Allocated Question", th_style),
+        Paragraph("Difficulty", th_style),
     ]]
 
     for idx, sess in enumerate(sessions, start=1):
