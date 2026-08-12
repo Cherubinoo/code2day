@@ -232,9 +232,16 @@ def build_lab_allocation_pdf(buffer: BytesIO, *, lab, sessions):
             diff_labels = []
             for ex in alloc_exercises:
                 order_label = f"Q{ex.order + 1}" if ex.order is not None else "Q"
-                diff = (ex.difficulty or "Medium").capitalize()
+                d_raw = (ex.difficulty or "Medium").strip().lower()
+                if "easy" in d_raw or d_raw in ("1", "level 1", "level1"):
+                    diff_name = "Level 1 (Easy)"
+                elif "hard" in d_raw or d_raw in ("3", "level 3", "level3"):
+                    diff_name = "Level 3 (Hard)"
+                else:
+                    diff_name = "Level 2 (Medium)"
+
                 q_titles.append(f"<b>{order_label}:</b> {ex.title}")
-                diff_labels.append(f"{order_label} ({diff})")
+                diff_labels.append(f"{order_label} ({diff_name})")
 
             q_text = "<br/>".join(q_titles)
             diff_text = ", ".join(diff_labels)

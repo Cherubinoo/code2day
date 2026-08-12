@@ -78,6 +78,20 @@ def allocate_lab_questions_for_students(lab):
             hard_pool = [sorted_all[1]]
             medium_pool = [sorted_all[0]]
 
+        # Persist updated difficulty level choices (Easy, Medium, Hard) on exercises
+        for ex in easy_pool:
+            if ex.difficulty != "Easy":
+                ex.difficulty = "Easy"
+                ex.save(update_fields=["difficulty"])
+        for ex in medium_pool:
+            if ex.difficulty != "Medium":
+                ex.difficulty = "Medium"
+                ex.save(update_fields=["difficulty"])
+        for ex in hard_pool:
+            if ex.difficulty != "Hard":
+                ex.difficulty = "Hard"
+                ex.save(update_fields=["difficulty"])
+
     # Shuffle each difficulty pool independently
     random.shuffle(easy_pool)
     random.shuffle(medium_pool)
