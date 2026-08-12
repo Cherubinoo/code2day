@@ -1289,137 +1289,139 @@ function StudentTable({ students, exercises, activeExIdx, labId, availableSubBat
 
   return (
     <div className="slp2-student-section">
-      {/* ── Sub-Batch Management & Unlocking Header ── */}
-      <div style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 16 }}>🔑</span>
-            <strong style={{ fontSize: 14, color: "#1e293b" }}>Batch Access &amp; Unlocking Control</strong>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <button
-              type="button"
-              disabled={batchActionBusy}
-              onClick={handleAllocateQuestions}
-              style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #c084fc", background: "#f3e8ff", color: "#6b21a8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-              title="Randomly allocate questions per student using difficulty rules (1 Hard alone | 1 Easy + 1 Medium | 2 Mediums)"
-            >
-              🎲 Allocate Questions
-            </button>
-            <button
-              type="button"
-              disabled={batchActionBusy}
-              onClick={handleDownloadAllocationPDF}
-              style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #818cf8", background: "#e0e7ff", color: "#3730a3", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-              title="Download Question Allocation Sheet PDF"
-            >
-              📄 Allocation Sheet (PDF)
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowAutoSplit(!showAutoSplit)}
-              style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #cbd5e1", background: "white", color: "#334155", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-            >
-              ⚙️ Auto-Split Batches
-            </button>
-            <button
-              type="button"
-              disabled={batchActionBusy}
-              onClick={() => handleToggleBatchLock("all", false)}
-              style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#10b981", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-            >
-              🔓 Unlock All Students
-            </button>
-            <button
-              type="button"
-              disabled={batchActionBusy}
-              onClick={() => handleToggleBatchLock("all", true)}
-              style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#ef4444", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-            >
-              🔒 Lock All Students
-            </button>
-          </div>
-        </div>
-
-        {/* Inline Auto-Split Configuration */}
-        {showAutoSplit && (
-          <div style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 8, padding: 12, marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: "#475569" }}>Divide {rows.length} students into:</span>
-            <div style={{ display: "flex", gap: 6 }}>
-              {[2, 3, 4, 5].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setNumBatchesInput(n)}
-                  style={{
-                    padding: "4px 10px", borderRadius: 6, border: "1px solid #cbd5e1",
-                    background: numBatchesInput === n ? "#6d28d9" : "#f1f5f9",
-                    color: numBatchesInput === n ? "white" : "#475569",
-                    fontWeight: 700, fontSize: 12, cursor: "pointer"
-                  }}
-                >
-                  {n} Batches
-                </button>
-              ))}
+      {/* ── Sub-Batch Management & Unlocking Header (University Lab Only) ── */}
+      {isUnivLab && (
+        <div style={{ background: "#f8fafc", border: "1px solid #cbd5e1", borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 16 }}>🔑</span>
+              <strong style={{ fontSize: 14, color: "#1e293b" }}>Batch Access &amp; Unlocking Control</strong>
             </div>
-            <button
-              type="button"
-              disabled={batchActionBusy}
-              onClick={() => handleAutoSplitBatches(numBatchesInput)}
-              style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#6d28d9", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
-            >
-              {batchActionBusy ? "Applying…" : `Apply (${numBatchesInput} Batches)`}
-            </button>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                disabled={batchActionBusy}
+                onClick={handleAllocateQuestions}
+                style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #c084fc", background: "#f3e8ff", color: "#6b21a8", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                title="Randomly allocate questions per student using difficulty rules (1 Hard alone | 1 Easy + 1 Medium | 2 Mediums)"
+              >
+                🎲 Allocate Questions
+              </button>
+              <button
+                type="button"
+                disabled={batchActionBusy}
+                onClick={handleDownloadAllocationPDF}
+                style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #818cf8", background: "#e0e7ff", color: "#3730a3", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                title="Download Question Allocation Sheet PDF"
+              >
+                📄 Allocation Sheet (PDF)
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAutoSplit(!showAutoSplit)}
+                style={{ padding: "6px 12px", borderRadius: 6, border: "1px solid #cbd5e1", background: "white", color: "#334155", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              >
+                ⚙️ Auto-Split Batches
+              </button>
+              <button
+                type="button"
+                disabled={batchActionBusy}
+                onClick={() => handleToggleBatchLock("all", false)}
+                style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#10b981", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              >
+                🔓 Unlock All Students
+              </button>
+              <button
+                type="button"
+                disabled={batchActionBusy}
+                onClick={() => handleToggleBatchLock("all", true)}
+                style={{ padding: "6px 12px", borderRadius: 6, border: "none", background: "#ef4444", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              >
+                🔒 Lock All Students
+              </button>
+            </div>
           </div>
-        )}
 
-        {/* Sub-batch Status Cards Grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
-          {batchesList.map((bName) => {
-            const bStudents = rows.filter(r => (r.sub_batch || "Batch 1") === bName);
-            const lockedCount = bStudents.filter(r => r.is_locked).length;
-            const isAllUnlocked = bStudents.length > 0 && lockedCount === 0;
-            const isAllLocked = bStudents.length > 0 && lockedCount === bStudents.length;
-
-            return (
-              <div key={bName} style={{
-                background: "white", border: `1px solid ${isAllUnlocked ? "#86efac" : isAllLocked ? "#fca5a5" : "#fed7aa"}`,
-                borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 8
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "#1e293b" }}>📌 {bName}</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: isAllUnlocked ? "#dcfce7" : isAllLocked ? "#fee2e2" : "#fff7ed", color: isAllUnlocked ? "#166534" : isAllLocked ? "#991b1b" : "#c2410c" }}>
-                    {isAllUnlocked ? "🔓 Unlocked" : isAllLocked ? "🔒 Locked" : `⚠️ ${lockedCount} Locked`}
-                  </span>
-                </div>
-
-                <div style={{ fontSize: 12, color: "#64748b" }}>
-                  {bStudents.length} student(s) assigned
-                </div>
-
-                <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+          {/* Inline Auto-Split Configuration */}
+          {showAutoSplit && (
+            <div style={{ background: "#ffffff", border: "1px solid #cbd5e1", borderRadius: 8, padding: 12, marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: "#475569" }}>Divide {rows.length} students into:</span>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[2, 3, 4, 5].map((n) => (
                   <button
+                    key={n}
                     type="button"
-                    disabled={batchActionBusy}
-                    onClick={() => handleToggleBatchLock(bName, false)}
-                    style={{ flex: 1, padding: "5px 8px", borderRadius: 6, border: "none", background: "#10b981", color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                    onClick={() => setNumBatchesInput(n)}
+                    style={{
+                      padding: "4px 10px", borderRadius: 6, border: "1px solid #cbd5e1",
+                      background: numBatchesInput === n ? "#6d28d9" : "#f1f5f9",
+                      color: numBatchesInput === n ? "white" : "#475569",
+                      fontWeight: 700, fontSize: 12, cursor: "pointer"
+                    }}
                   >
-                    🔓 Unlock {bName}
+                    {n} Batches
                   </button>
-                  <button
-                    type="button"
-                    disabled={batchActionBusy}
-                    onClick={() => handleToggleBatchLock(bName, true)}
-                    style={{ flex: 1, padding: "5px 8px", borderRadius: 6, border: "none", background: "#ef4444", color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
-                  >
-                    🔒 Lock
-                  </button>
-                </div>
+                ))}
               </div>
-            );
-          })}
+              <button
+                type="button"
+                disabled={batchActionBusy}
+                onClick={() => handleAutoSplitBatches(numBatchesInput)}
+                style={{ padding: "6px 14px", borderRadius: 6, border: "none", background: "#6d28d9", color: "white", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+              >
+                {batchActionBusy ? "Applying…" : `Apply (${numBatchesInput} Batches)`}
+              </button>
+            </div>
+          )}
+
+          {/* Sub-batch Status Cards Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+            {batchesList.map((bName) => {
+              const bStudents = rows.filter(r => (r.sub_batch || "Batch 1") === bName);
+              const lockedCount = bStudents.filter(r => r.is_locked).length;
+              const isAllUnlocked = bStudents.length > 0 && lockedCount === 0;
+              const isAllLocked = bStudents.length > 0 && lockedCount === bStudents.length;
+
+              return (
+                <div key={bName} style={{
+                  background: "white", border: `1px solid ${isAllUnlocked ? "#86efac" : isAllLocked ? "#fca5a5" : "#fed7aa"}`,
+                  borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", justifyContent: "space-between", gap: 8
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: "#1e293b" }}>📌 {bName}</span>
+                    <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: isAllUnlocked ? "#dcfce7" : isAllLocked ? "#fee2e2" : "#fff7ed", color: isAllUnlocked ? "#166534" : isAllLocked ? "#991b1b" : "#c2410c" }}>
+                      {isAllUnlocked ? "🔓 Unlocked" : isAllLocked ? "🔒 Locked" : `⚠️ ${lockedCount} Locked`}
+                    </span>
+                  </div>
+
+                  <div style={{ fontSize: 12, color: "#64748b" }}>
+                    {bStudents.length} student(s) assigned
+                  </div>
+
+                  <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                    <button
+                      type="button"
+                      disabled={batchActionBusy}
+                      onClick={() => handleToggleBatchLock(bName, false)}
+                      style={{ flex: 1, padding: "5px 8px", borderRadius: 6, border: "none", background: "#10b981", color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                    >
+                      🔓 Unlock {bName}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={batchActionBusy}
+                      onClick={() => handleToggleBatchLock(bName, true)}
+                      style={{ flex: 1, padding: "5px 8px", borderRadius: 6, border: "none", background: "#ef4444", color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                    >
+                      🔒 Lock
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Floating / Sticky Bulk Action Bar for Selected Students ── */}
       {selectedStudentIds.size > 0 && (

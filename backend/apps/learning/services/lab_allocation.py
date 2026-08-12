@@ -30,8 +30,11 @@ def allocate_lab_questions_for_students(lab):
 
     Returns dict with summary statistics.
     """
+    # Use ONLY the exercises that were explicitly added or selected for this lab
     exercises = list(lab.exercises.all())
-    if not exercises and lab.linked_lab_id:
+
+    # Fallback to linked_lab ONLY if not a university lab and lab.exercises is empty
+    if not exercises and lab.linked_lab_id and getattr(lab, "lab_type", "") != "university":
         exercises = list(lab.linked_lab.exercises.all())
 
     if not exercises:
@@ -39,7 +42,7 @@ def allocate_lab_questions_for_students(lab):
             "allocated_count": 0,
             "total_students": 0,
             "total_exercises_pool": 0,
-            "detail": "No exercises found in lab.",
+            "detail": "No selected exercises found in lab. Please select exercises before allocating.",
         }
 
     # Group exercises by difficulty (case-insensitive)
@@ -160,6 +163,11 @@ def allocate_lab_questions_for_students(lab):
         chosen_combo = master_combos[idx % len(master_combos)]
         session.allocated_exercises.set(chosen_combo)
         allocated_count += 1
+
+    # Ensure lab is published so students can see it in their student lab list
+    if not lab.is_published:
+        lab.is_published = True
+        lab.save(update_fields=["is_published"])
 
     return {
         "allocated_count": allocated_count,

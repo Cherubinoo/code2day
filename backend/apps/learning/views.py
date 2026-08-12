@@ -15090,6 +15090,10 @@ class StaffLabAllocateQuestionsView(APIView):
         except Lab.DoesNotExist:
             return Response({"error": "Lab not found"}, status=404)
 
+        if not lab.is_published:
+            lab.is_published = True
+            lab.save(update_fields=["is_published"])
+
         from .services.lab_allocation import allocate_lab_questions_for_students
         stats = allocate_lab_questions_for_students(lab)
         return Response({
