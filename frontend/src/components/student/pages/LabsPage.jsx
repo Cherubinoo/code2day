@@ -9,7 +9,7 @@ import SuccessAnimation from "../../common/SuccessAnimation";
 import {
   FlaskConical, ChevronLeft, BookOpen, CheckCircle2,
   Circle, Clock, Calendar, UserCheck,
-  ChevronDown, ChevronUp, Download, Loader2, AlertCircle,
+  ChevronDown, ChevronUp, Download, Loader2, AlertCircle, AlertTriangle,
 } from "lucide-react";
 
 // Use the bundled ESM Monaco build instead of the AMD loader path.
@@ -249,6 +249,10 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
   const [elapsedTime, setElapsedTime] = useState(0);
   const [sessionLocked, setSessionLocked] = useState(false);
   const [sessionLockReason, setSessionLockReason] = useState("");
+  const [violationModalOpen, setViolationModalOpen] = useState(false);
+  const [violationStrike, setViolationStrike] = useState(0);
+  const [countdown, setCountdown] = useState(10);
+  const [countdownActive, setCountdownActive] = useState(false);
 
   useEffect(() => {
     const newLang = exercise.language || (lab.allowed_languages?.length ? lab.allowed_languages[0] : LAB_LANGUAGES[0]);
@@ -312,51 +316,98 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
     };
   }, [lab.lab_type, lab.enable_copy_paste_lock]);
 
-  // 2. Tab switch check
+  // 2. 10-Second countdown effect for violation modal
   useEffect(() => {
-    if (lab.lab_type !== "university" || !lab.enable_tab_switch_check) return;
+    let timer = null;
+    if (countdownActive && countdown > 0) {
+      timer = setInterval(() => {
+        setCountdown((prev) => prev - 1);
+      }, 1000);
+    } else if (countdown === 0) {
+      setCountdownActive(false);
+    }
+    return () => clearInterval(timer);
+  }, [countdownActive, countdown]);
+
+  // 3. Proctored Security Violation Enforcement for University Labs (3 Strikes + 10s Countdown)
+  const triggerStrikeViolation = useCallback((reason) => {
+    if (sessionLocked || lab.lab_type !== "university") return;
+
+    setViolationStrike((prev) => {
+      const nextStrike = prev + 1;
+      if (nextStrike >= 3) {
+        // Strike 3: Block access completely and lock session in DB
+        recordViolation("lock", "Lab session locked due to repeated security violations (3 strikes). Please contact staff to unlock.");
+        setSessionLocked(true);
+        setSessionLockReason("Lab session locked due to 3 security violations (tab switch / window minimization). Please contact staff to unlock.");
+        setViolationModalOpen(false);
+        return 3;
+      } else {
+        // Strike 1 or Strike 2: Record violation and trigger 10-second countdown modal
+        recordViolation("tab_switch", reason);
+        setViolationModalOpen(true);
+        setCountdown(10);
+        setCountdownActive(true);
+        return nextStrike;
+      }
+    });
+  }, [lab.lab_type, sessionLocked, recordViolation]);
+
+  useEffect(() => {
+    if (lab.lab_type !== "university") return;
+
     const handleVisibility = () => {
       if (document.hidden) {
-        recordViolation("tab_switch", "Tab switched or browser minimized");
+        triggerStrikeViolation("Tab switched or browser minimized");
       }
     };
+
     const handleBlur = () => {
-      recordViolation("tab_switch", "Window lost focus");
+      triggerStrikeViolation("Window lost focus or browser minimized");
     };
+
+    const handleFullscreen = () => {
+      const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      if (!isFull) {
+        triggerStrikeViolation("Exited full screen mode");
+      }
+    };
+
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = "University Practical Exam is in progress. Are you sure you want to leave?";
+      return e.returnValue;
+    };
+
     document.addEventListener("visibilitychange", handleVisibility);
     window.addEventListener("blur", handleBlur);
+    document.addEventListener("fullscreenchange", handleFullscreen);
+    document.addEventListener("webkitfullscreenchange", handleFullscreen);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    // Request initial fullscreen for University Practical Lab
+    const el = document.documentElement;
+    if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => {});
+    }
+
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
       window.removeEventListener("blur", handleBlur);
+      document.removeEventListener("fullscreenchange", handleFullscreen);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreen);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
     };
-  }, [lab.lab_type, lab.enable_tab_switch_check, recordViolation]);
+  }, [lab.lab_type, triggerStrikeViolation]);
 
-  // 3. Fullscreen lock
-  useEffect(() => {
-    if (lab.lab_type !== "university" || !lab.enable_fullscreen_lock) return;
-    
-    const checkFullscreen = () => {
-      const isFull = !!(document.fullscreenElement || document.webkitFullscreenElement);
-      if (!isFull) {
-        recordViolation("fullscreen_exit", "Exited fullscreen mode");
-      }
-    };
-
+  const handleReturnToExam = () => {
+    if (countdown > 0) return;
+    setViolationModalOpen(false);
     const el = document.documentElement;
-    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
-    
-    const handleFullscreenChange = () => {
-      checkFullscreen();
-    };
-
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
-
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
-    };
-  }, [lab.lab_type, lab.enable_fullscreen_lock, recordViolation]);
+    if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => {});
+    }
+  };
 
   const timerRef = useRef(null);
   useEffect(() => () => clearInterval(timerRef.current), []);
@@ -555,6 +606,67 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
 
   return (
     <div className="page-stack problem-page">
+      {/* ── 3-Strike 10-Second Countdown Security Warning Modal for University Labs ── */}
+      {violationModalOpen && (
+        <div style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(15, 23, 42, 0.95)", backdropFilter: "blur(12px)",
+          zIndex: 99999, display: "flex", alignItems: "center", justifyContent: "center", padding: 20
+        }}>
+          <div style={{
+            background: "#1e1b4b", border: "2px solid #ef4444", borderRadius: 16,
+            maxWidth: 480, width: "100%", padding: "32px 28px", textAlign: "center",
+            boxShadow: "0 25px 50px -12px rgba(239, 68, 68, 0.25)"
+          }}>
+            <div style={{
+              width: 64, height: 64, borderRadius: "50%", background: "rgba(239, 68, 68, 0.15)",
+              color: "#ef4444", display: "flex", alignItems: "center", justifyContent: "center",
+              margin: "0 auto 16px"
+            }}>
+              <AlertTriangle size={36} />
+            </div>
+
+            <h2 style={{ fontSize: 22, fontWeight: 800, color: "#ffffff", marginBottom: 8 }}>
+              Security Warning: Strike {violationStrike} of 3
+            </h2>
+
+            <p style={{ fontSize: 14, color: "#cbd5e1", lineHeight: 1.6, marginBottom: 24 }}>
+              Switching tabs, minimizing the browser, or exiting full screen is strictly prohibited during University Practical Exams.
+            </p>
+
+            <div style={{
+              background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.3)",
+              borderRadius: 12, padding: "16px", marginBottom: 24
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#fca5a5", textTransform: "uppercase", letterSpacing: "1px", marginBottom: 4 }}>
+                Required Wait Time
+              </div>
+              <div style={{ fontSize: 36, fontWeight: 900, color: "#ef4444", fontFamily: "monospace" }}>
+                {countdown > 0 ? `${countdown}s` : "0s"}
+              </div>
+              <div style={{ fontSize: 12, color: "#cbd5e1", marginTop: 4 }}>
+                {countdown > 0 ? "You must wait before resuming your exam." : "You may now return to your exam."}
+              </div>
+            </div>
+
+            <button
+              type="button"
+              disabled={countdown > 0}
+              onClick={handleReturnToExam}
+              style={{
+                width: "100%", padding: "12px 20px", borderRadius: 10, border: "none",
+                background: countdown > 0 ? "#475569" : "#ef4444",
+                color: "white", fontSize: 15, fontWeight: 700,
+                cursor: countdown > 0 ? "not-allowed" : "pointer",
+                transition: "all 0.2s ease"
+              }}
+            >
+              {countdown > 0 ? `Wait ${countdown}s to Resume` : "Return to Exam"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {showSuccessAnimation && (
         <SuccessAnimation onDone={() => setShowSuccessAnimation(false)} />
       )}
@@ -616,9 +728,11 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
       {/* ── Workspace Header ── */}
       <section className="page-header compact-header problem-page-header">
         <div className="workspace-title-row">
-          <button type="button" className="back-to-list-btn" onClick={handleBack}>
-            ← All Exercises
-          </button>
+          {lab.lab_type !== "university" && (
+            <button type="button" className="back-to-list-btn" onClick={handleBack}>
+              ← All Exercises
+            </button>
+          )}
           <div>
             <p className="kicker">{lab.name}</p>
             <h1>{exercise.title}</h1>
