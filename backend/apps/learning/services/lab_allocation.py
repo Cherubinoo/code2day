@@ -7,8 +7,9 @@ Allocation Rules:
 1. Hard Allocation Rule: 1 Hard question alone (Total: 1 question).
 2. Mixed Allocation Rule: 1 Easy + 1 Medium question (Total: 2 questions).
 3. Easy Allocation Rule: 2 Easy questions (Total: 2 questions).
-4. Category Interleaving: Hard, Mixed (Easy+Medium), and Easy combinations are interleaved round-robin so every lab allocation features a balanced mix of Hard, Medium, and Easy questions across the enrolled students.
-5. Re-allocation Support: Re-running this service re-shuffles all difficulty pools and overwrites previous allocations.
+4. Category Interleaving: Hard, Mixed (Easy+Medium), and Easy combinations are interleaved round-robin so every lab allocation features a balanced mix of Hard, Medium, and Easy questions across enrolled students.
+5. Single-Difficulty / Fallback Randomization: If the lab pool has only Medium (or non-standard) exercises, questions are randomly paired and shuffled so no single question dominates the roster.
+6. Re-allocation Support: Re-running this service re-shuffles all pools and overwrites previous student allocations.
 """
 
 import logging
@@ -25,7 +26,7 @@ def allocate_lab_questions_for_students(lab):
 
     Difficulty categories (Hard, Mixed Easy+Medium, 2-Easy) are shuffled independently
     and interleaved round-robin so that every class allocation features a balanced,
-    fair distribution of Hard, Medium, and Easy questions across the students.
+    fair distribution of Hard, Medium, and Easy questions across students.
 
     Returns dict with summary statistics.
     """
@@ -58,6 +59,12 @@ def allocate_lab_questions_for_students(lab):
         else:
             other_pool.append(ex)
 
+    # Shuffle each difficulty pool independently
+    random.shuffle(easy_pool)
+    random.shuffle(medium_pool)
+    random.shuffle(hard_pool)
+    random.shuffle(other_pool)
+
     # 1. HARD COMBOS: 1 Hard question alone
     hard_combos = [[h] for h in hard_pool]
     random.shuffle(hard_combos)
@@ -86,18 +93,20 @@ def allocate_lab_questions_for_students(lab):
             for c in category_lists:
                 master_combos.append(c[i % len(c)])
 
-    # Fallbacks if master_combos is empty due to non-standard exercise pool (e.g. only medium questions)
+    # Fallbacks if master_combos is empty (e.g. exercise pool contains only Medium questions)
     if not master_combos:
-        if len(medium_pool) >= 2:
-            for i in range(len(medium_pool)):
-                for j in range(i + 1, len(medium_pool)):
-                    master_combos.append([medium_pool[i], medium_pool[j]])
-        elif len(exercises) >= 2:
-            for i in range(len(exercises)):
-                for j in range(i + 1, len(exercises)):
-                    master_combos.append([exercises[i], exercises[j]])
+        shuffled_all = list(exercises)
+        random.shuffle(shuffled_all)
+        if len(shuffled_all) >= 2:
+            # Create distinct pairs randomly without duplicating Q1 across all students
+            for i in range(len(shuffled_all)):
+                j = (i + 1) % len(shuffled_all)
+                master_combos.append([shuffled_all[i], shuffled_all[j]])
         else:
             master_combos = [[ex] for ex in exercises]
+
+    # Always shuffle master_combos for maximum randomness before assigning to students
+    random.shuffle(master_combos)
 
     student_qs = StudentProfile.objects.filter(department=lab.department, batch=lab.batch)
     if lab.section:
