@@ -59,6 +59,25 @@ def allocate_lab_questions_for_students(lab):
         else:
             other_pool.append(ex)
 
+    # If exercise pool lacks explicit Easy or Hard tags (e.g., all exercises are tagged Medium),
+    # auto-stratify the pool into 3 tiers (Easy, Medium, Hard) so every lab allocation is guaranteed
+    # to feature Hard (1 question), Mixed (1 Easy + 1 Medium), and Easy (2 Easy) combos!
+    if (not easy_pool or not hard_pool or not medium_pool) and len(exercises) >= 2:
+        sorted_all = list(exercises)
+        sorted_all.sort(key=lambda x: (x.order if x.order is not None else 999, x.id))
+        total = len(sorted_all)
+        if total >= 3:
+            chunk = max(1, total // 3)
+            easy_pool = sorted_all[:chunk]
+            hard_pool = sorted_all[-chunk:]
+            medium_pool = sorted_all[chunk:-chunk]
+            if not medium_pool:
+                medium_pool = sorted_all
+        elif total == 2:
+            easy_pool = [sorted_all[0]]
+            hard_pool = [sorted_all[1]]
+            medium_pool = [sorted_all[0]]
+
     # Shuffle each difficulty pool independently
     random.shuffle(easy_pool)
     random.shuffle(medium_pool)
