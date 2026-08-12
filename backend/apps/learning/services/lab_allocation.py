@@ -1,13 +1,14 @@
 """
 Lab Question Allocation Service.
 
-Handles random difficulty-based exercise allocation for lab practicals.
+Handles difficulty-balanced exercise allocation for lab practicals.
 
 Allocation Rules:
-1. Hard Question Rule: If a Hard question is assigned, allocate ONLY 1 Hard question (Total: 1 question).
-2. Easy Question Rule: If an Easy question is assigned, pair with 2 Easy questions OR 1 Easy + 1 Medium question (Total: 2 questions).
-3. Medium Question Rule: If a Medium question is assigned, pair with 1 Medium + 1 Easy question OR 2 Medium questions (Total: 2 questions).
-4. Re-allocation Support: Triggering allocation re-shuffles valid difficulty combinations and overwrites previous allocations.
+1. Hard Allocation Rule: 1 Hard question alone (Total: 1 question).
+2. Mixed Allocation Rule: 1 Easy + 1 Medium question (Total: 2 questions).
+3. Easy Allocation Rule: 2 Easy questions (Total: 2 questions).
+4. Category Interleaving: Hard, Mixed (Easy+Medium), and Easy combinations are interleaved round-robin so every lab allocation features a balanced mix of Hard, Medium, and Easy questions across the enrolled students.
+5. Re-allocation Support: Re-running this service re-shuffles all difficulty pools and overwrites previous allocations.
 """
 
 import logging
@@ -19,11 +20,12 @@ logger = logging.getLogger(__name__)
 
 def allocate_lab_questions_for_students(lab):
     """
-    Randomly allocates exercises from `lab.exercises` (or `lab.linked_lab.exercises`)
-    to each enrolled student in the lab's department, batch, and section, adhering
-    strictly to difficulty pairing constraints.
+    Allocates exercises from `lab.exercises` (or `lab.linked_lab.exercises`)
+    to each enrolled student in the lab's department, batch, and section.
 
-    Re-running this service re-shuffles valid combinations and overwrites previous allocations.
+    Difficulty categories (Hard, Mixed Easy+Medium, 2-Easy) are shuffled independently
+    and interleaved round-robin so that every class allocation features a balanced,
+    fair distribution of Hard, Medium, and Easy questions across the students.
 
     Returns dict with summary statistics.
     """
@@ -56,35 +58,46 @@ def allocate_lab_questions_for_students(lab):
         else:
             other_pool.append(ex)
 
-    valid_combos = []
+    # 1. HARD COMBOS: 1 Hard question alone
+    hard_combos = [[h] for h in hard_pool]
+    random.shuffle(hard_combos)
 
-    # Rule 1: HARD -> ONLY 1 Hard question (Total: 1 question)
-    for h in hard_pool:
-        valid_combos.append([h])
-
-    # Rule 2: EASY -> 2 Easy questions
-    for i in range(len(easy_pool)):
-        for j in range(i + 1, len(easy_pool)):
-            valid_combos.append([easy_pool[i], easy_pool[j]])
-
-    # Rule 3: MIXED (1 Easy + 1 Medium)
-    # Medium is strictly paired with Easy (NO 2-Medium combos allowed!)
+    # 2. MIXED COMBOS: 1 Easy + 1 Medium
+    mixed_combos = []
     for e in easy_pool:
         for m in medium_pool:
-            valid_combos.append([e, m])
+            mixed_combos.append([e, m])
+    random.shuffle(mixed_combos)
 
-    # Fallback ONLY IF exercise pool has no Easy/Hard questions
-    if not valid_combos:
+    # 3. EASY COMBOS: 2 Easy questions
+    easy_combos = []
+    for i in range(len(easy_pool)):
+        for j in range(i + 1, len(easy_pool)):
+            easy_combos.append([easy_pool[i], easy_pool[j]])
+    random.shuffle(easy_combos)
+
+    # Collect available non-empty difficulty category lists
+    category_lists = [c for c in [hard_combos, mixed_combos, easy_combos] if c]
+
+    master_combos = []
+    if category_lists:
+        max_cat_len = max(len(c) for c in category_lists)
+        for i in range(max_cat_len):
+            for c in category_lists:
+                master_combos.append(c[i % len(c)])
+
+    # Fallbacks if master_combos is empty due to non-standard exercise pool (e.g. only medium questions)
+    if not master_combos:
         if len(medium_pool) >= 2:
             for i in range(len(medium_pool)):
                 for j in range(i + 1, len(medium_pool)):
-                    valid_combos.append([medium_pool[i], medium_pool[j]])
+                    master_combos.append([medium_pool[i], medium_pool[j]])
         elif len(exercises) >= 2:
             for i in range(len(exercises)):
                 for j in range(i + 1, len(exercises)):
-                    valid_combos.append([exercises[i], exercises[j]])
+                    master_combos.append([exercises[i], exercises[j]])
         else:
-            valid_combos = [[ex] for ex in exercises]
+            master_combos = [[ex] for ex in exercises]
 
     student_qs = StudentProfile.objects.filter(department=lab.department, batch=lab.batch)
     if lab.section:
@@ -99,13 +112,10 @@ def allocate_lab_questions_for_students(lab):
             "detail": "No enrolled students found in lab section.",
         }
 
-    # Shuffle valid combinations to ensure random distribution across students
-    random.shuffle(valid_combos)
-
     allocated_count = 0
     for idx, student in enumerate(students):
         session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
-        chosen_combo = valid_combos[idx % len(valid_combos)]
+        chosen_combo = master_combos[idx % len(master_combos)]
         session.allocated_exercises.set(chosen_combo)
         allocated_count += 1
 
@@ -113,7 +123,7 @@ def allocate_lab_questions_for_students(lab):
         "allocated_count": allocated_count,
         "total_students": len(students),
         "total_exercises_pool": len(exercises),
-        "combos_available": len(valid_combos),
+        "combos_available": len(master_combos),
         "easy_count": len(easy_pool),
         "medium_count": len(medium_pool),
         "hard_count": len(hard_pool),
