@@ -120,7 +120,6 @@ from .views import (
     JAMentorListView,
     StaffMentorDashboardView,
     StaffClassAdvisorDashboardView,
-    StaffAdvisorDashboardView,
     StudentMentorAdvisorView,
     LabTopicListView,
     LabProblemListView,
@@ -243,6 +242,7 @@ urlpatterns = [
     path("contests/", ContestListCreateView.as_view(), name="contest-list-create"),
     path("contests/<int:pk>/", ContestDetailView.as_view(), name="contest-detail"),
     path("contests/<int:pk>/analytics/", ContestAnalyticsView.as_view(), name="contest-analytics"),
+    path("contests/<int:contest_id>/approve/", ContestApprovalView.as_view(), name="contest-approve"),
 
     # Code execution
     path("run/", CodeRunView.as_view(), name="code-run"),
@@ -298,7 +298,7 @@ urlpatterns = [
     path("departments/<int:dept_id>/details/", DepartmentDetailView.as_view(), name="department-detail"),
 
     # Staff Institution
-    path("staff/advisor/dashboard/", StaffAdvisorDashboardView.as_view(), name="staff-advisor-dashboard"),
+    path("staff/advisor/dashboard/", StaffClassAdvisorDashboardView.as_view(), name="staff-advisor-dashboard"),
     path("staff/institutions/<int:institution_id>/details/", StaffInstitutionDetailView.as_view(), name="staff-institution-detail"),
     path("staff/institutions/<int:institution_id>/performance/", StaffPerformanceView.as_view(), name="staff-performance"),
     path("staff/<str:faculty_id>/details/", StaffDetailView.as_view(), name="staff-detail"),
@@ -309,6 +309,7 @@ urlpatterns = [
     path("students/<str:register_number>/details/", StudentDetailView.as_view(), name="student-detail"),
     path("students/<str:register_number>/toggle-block/", StudentBlockToggleView.as_view(), name="student-toggle-block"),
     path("students/<str:register_number>/toggle-copy-paste/", StudentCopyPasteToggleView.as_view(), name="student-toggle-copy-paste"),
+    path("batches/", BatchListView.as_view(), name="batch-list"),
     path("batches/<str:batch_code>/toggle-copy-paste/", BatchCopyPasteToggleView.as_view(), name="batch-toggle-copy-paste"),
     path("batches/<str:batch_code>/toggle-block/", BatchBlockToggleView.as_view(), name="batch-toggle-block"),
     path("students/<str:register_number>/analytics/", StudentIndividualAnalyticsView.as_view(), name="student-analytics"),

@@ -254,6 +254,14 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
   const [countdown, setCountdown] = useState(10);
   const [countdownActive, setCountdownActive] = useState(false);
 
+  // Hide hamburger menu while taking lab test
+  useEffect(() => {
+    document.body.classList.add("in-lab-exam");
+    return () => {
+      document.body.classList.remove("in-lab-exam");
+    };
+  }, []);
+
   useEffect(() => {
     const newLang = exercise.language || (lab.allowed_languages?.length ? lab.allowed_languages[0] : LAB_LANGUAGES[0]);
     setLang(newLang);

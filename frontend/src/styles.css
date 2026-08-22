@@ -8519,9 +8519,14 @@ html.discuss-page {
 .slp-td-time { font-size: 12px; color: #64748b; white-space: nowrap; }
 .slp-detail-info { flex: 1; }
 
-/* ═══════════════════════════════════════════════════════════════
-   HAMBURGER NAV DRAWER
-   ═══════════════════════════════════════════════════════════════ */
+/* Hide hamburger navigation during active lab exams */
+body.in-lab-exam .hamburger-btn,
+body.in-lab-exam .hamburger-drawer,
+body.in-lab-exam .hamburger-overlay {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
 
 /* Hamburger toggle button in TopBar */
 .hamburger-btn {

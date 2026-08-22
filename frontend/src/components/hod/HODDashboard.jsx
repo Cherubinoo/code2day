@@ -13,6 +13,7 @@ import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import { getCsrfToken } from '../../lib/appUtils';
 import ContestApprovalPanel from './ContestApprovalPanel';
 import ContestDetailModal from '../common/ContestDetailModal';
+import EnhancedContestCreator from '../staff/EnhancedContestCreator';
 import DiscussPage from '../student/pages/DiscussPage';
 import HODLabCenter from './HODLabCenter';
 import HODCompanyCenter from './HODCompanyCenter';
@@ -53,6 +54,7 @@ const HODDashboard = ({ institutionId }) => {
   const [department, setDepartment] = useState(null);
   const [departmentStudents, setDepartmentStudents] = useState([]);
   const [contests, setContests] = useState([]);
+  const [showContestCreator, setShowContestCreator] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedStaff, setSelectedStaff] = useState(null);
@@ -244,6 +246,16 @@ const HODDashboard = ({ institutionId }) => {
   function closeStaffDetail() {
     setSelectedStaff(null);
     setStaffDetail(null);
+  }
+
+  function refreshContests() {
+    fetch(`/api/contests/`, { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => {
+        setContests(data.contests || []);
+        const pendingCount = (data.contests || []).filter(c => c.status === 'pending_approval').length;
+        setStats(prev => ({ ...prev, pendingApprovals: pendingCount, totalContests: (data.contests || []).length }));
+      });
   }
 
   async function handleContestClick(contestId) {
@@ -601,6 +613,14 @@ const HODDashboard = ({ institutionId }) => {
         <ContestDetailModal
           contestId={showContestDetail}
           onClose={() => setShowContestDetail(null)}
+        />
+      )}
+
+      {showContestCreator && (
+        <EnhancedContestCreator
+          onClose={() => setShowContestCreator(false)}
+          onSuccess={() => { setShowContestCreator(false); refreshContests(); }}
+          initialType={showContestCreator.type || 'programming'}
         />
       )}
 
@@ -1897,18 +1917,10 @@ const HODDashboard = ({ institutionId }) => {
                   )}
                 </div>
                 
-                <ContestApprovalPanel 
+                <ContestApprovalPanel
                   contests={contests}
                   onView={setShowContestDetail}
-                  onRefresh={() => {
-                    fetch(`/api/contests/`, { credentials: 'include' })
-                      .then(res => res.json())
-                      .then(data => {
-                        setContests(data.contests || []);
-                        const pendingCount = (data.contests || []).filter(c => c.status === 'pending_approval').length;
-                        setStats(prev => ({ ...prev, pendingApprovals: pendingCount }));
-                      });
-                  }}
+                  onRefresh={refreshContests}
                 />
               </div>
 
@@ -1938,6 +1950,24 @@ const HODDashboard = ({ institutionId }) => {
                           </p>
                         </div>
                         <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <button
+                            onClick={() => setShowContestCreator({ type: 'programming' })}
+                            style={{
+                              padding: '10px 18px',
+                              borderRadius: '10px',
+                              border: 'none',
+                              background: '#2563eb',
+                              color: 'white',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              fontSize: '13px',
+                              fontWeight: '700',
+                            }}
+                          >
+                            <Plus size={16} /> Create Contest
+                          </button>
                           <input
                             type="text"
                             placeholder="🔍 Search contests..."

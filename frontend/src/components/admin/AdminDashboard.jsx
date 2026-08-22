@@ -29,6 +29,7 @@ const AdminDashboard = () => {
   const [activeTab, setActiveTab] = useTabNav('dashboard');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+  const [showAddStaffModal, setShowAddStaffModal] = useState(false);
   
   // System State (Global)
   const [metrics, setMetrics] = useState({ total_users: 0, total_staff: 0, total_problems: 0, total_aptitude: 0 });
@@ -59,6 +60,7 @@ const AdminDashboard = () => {
 
   const [newInstitution, setNewInstitution] = useState({ institution_id: '', name: '', short_code: '', address: '', contact_email: '', contact_phone: '' });
   const [newDept, setNewDept] = useState({ name: '', code: '' });
+  const [newStaff, setNewStaff] = useState({ faculty_id: '', name: '', role: 'staff', dept_id: '' });
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('');
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -215,6 +217,24 @@ const AdminDashboard = () => {
       });
     } catch (err) {
       alert("Department update failed");
+    }
+  };
+
+  const handleAddStaff = async () => {
+    if (!newStaff.faculty_id.trim() || !newStaff.name.trim()) return;
+    try {
+      await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, {
+        action: 'create_staff',
+        faculty_id: newStaff.faculty_id.trim(),
+        name: newStaff.name.trim(),
+        role: newStaff.role,
+        dept_id: newStaff.dept_id || null,
+      });
+      setShowAddStaffModal(false);
+      setNewStaff({ faculty_id: '', name: '', role: 'staff', dept_id: '' });
+      fetchInstitutionHub(selectedInstitution);
+    } catch (err) {
+      alert("Failed to add staff: " + (err.response?.data?.error || err.message));
     }
   };
 
@@ -1234,14 +1254,23 @@ const AdminDashboard = () => {
                           <h3 style={{ fontSize: '1.8rem', fontWeight: 900, color: 'var(--olive-950)', margin: 0 }}>Personnel Orchestration</h3>
                           <p style={{ color: 'var(--text-soft)', marginTop: 4 }}>Manage faculty roles and departments.</p>
                         </div>
-                        <div style={{ position: 'relative', minWidth: 280 }}>
-                          <Search size={18} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-soft)' }} />
-                          <input
-                            placeholder="Search by name or faculty ID..."
-                            value={staffSearch}
-                            onChange={e => setStaffSearch(e.target.value)}
-                            style={{ width: '100%', padding: '12px 16px 12px 48px', borderRadius: 14, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }}
-                          />
+                        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <div style={{ position: 'relative', minWidth: 280 }}>
+                            <Search size={18} style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-soft)' }} />
+                            <input
+                              placeholder="Search by name or faculty ID..."
+                              value={staffSearch}
+                              onChange={e => setStaffSearch(e.target.value)}
+                              style={{ width: '100%', padding: '12px 16px 12px 48px', borderRadius: 14, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }}
+                            />
+                          </div>
+                          <button
+                            onClick={() => setShowAddStaffModal(true)}
+                            className="primary-button"
+                            style={{ padding: '12px 20px', borderRadius: 14, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap' }}
+                          >
+                            <Plus size={18} /> Add Staff
+                          </button>
                         </div>
                       </div>
                       <div style={{ overflowX: 'auto' }}>
@@ -1503,6 +1532,38 @@ const AdminDashboard = () => {
               <div style={{ display: 'flex', gap: 16, marginTop: 40 }}>
                 <button onClick={() => setShowCreateModal(false)} style={{ flex: 1, padding: '18px', borderRadius: 18, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontWeight: 800 }}>Cancel</button>
                 <button onClick={handleCreateInstitution} className="primary-button" style={{ flex: 1, borderRadius: 18, fontWeight: 800 }}>Start Provisioning</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showAddStaffModal && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(10px)' }}>
+            <div style={{ background: 'white', borderRadius: 32, padding: 40, width: '90%', maxWidth: 420, boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
+              <h3 style={{ fontSize: '2rem', fontWeight: 950, marginBottom: 8, color: 'var(--olive-950)' }}>Add Staff</h3>
+              <p style={{ color: 'var(--text-soft)', marginBottom: 36 }}>Onboard a new faculty member to {selectedInstitution?.name}. They'll set their own password on first login using this Faculty ID.</p>
+              <div style={{ display: 'grid', gap: 24 }}>
+                <input type="text" placeholder="Faculty ID" value={newStaff.faculty_id} onChange={(e) => setNewStaff({ ...newStaff, faculty_id: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }} />
+                <input type="text" placeholder="Full Name" value={newStaff.name} onChange={(e) => setNewStaff({ ...newStaff, name: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }} />
+                <select value={newStaff.role} onChange={(e) => setNewStaff({ ...newStaff, role: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 700, boxSizing: 'border-box' }}>
+                  <option value="staff">Staff Member</option>
+                  <option value="hod">Dept. Head (HOD)</option>
+                  <option value="academics">Academic Coordinator</option>
+                  <option value="tpu">TPU Coordinator</option>
+                  <option value="director">Director</option>
+                  <option value="ja">Junior Admin (JA)</option>
+                  <option value="admin">Node Admin</option>
+                </select>
+                <select value={newStaff.dept_id} onChange={(e) => setNewStaff({ ...newStaff, dept_id: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 700, boxSizing: 'border-box' }}>
+                  <option value="">Unassigned Department</option>
+                  {hubData.departments.map(d => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: 16, marginTop: 40 }}>
+                <button onClick={() => { setShowAddStaffModal(false); setNewStaff({ faculty_id: '', name: '', role: 'staff', dept_id: '' }); }} style={{ flex: 1, padding: '18px', borderRadius: 18, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontWeight: 800 }}>Cancel</button>
+                <button onClick={handleAddStaff} className="primary-button" style={{ flex: 1, borderRadius: 18, fontWeight: 800 }}>Add Staff</button>
               </div>
             </div>
           </div>

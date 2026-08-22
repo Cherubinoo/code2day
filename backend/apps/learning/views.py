@@ -9231,6 +9231,45 @@ class InstitutionDetailManagementView(APIView):
                 staff.department = None
             staff.save()
             return Response({"message": "Department updated"})
+
+        elif action == 'create_staff':
+            faculty_id = (request.data.get('faculty_id') or '').strip()
+            name = (request.data.get('name') or '').strip()
+            role = request.data.get('role', 'staff')
+            dept_id = request.data.get('dept_id')
+
+            if not faculty_id or not name:
+                return Response({"error": "faculty_id and name are required."}, status=400)
+
+            if role not in dict(StaffProfile.ROLE_CHOICES):
+                return Response({"error": "Invalid role."}, status=400)
+
+            if StaffProfile.objects.filter(faculty_id=faculty_id).exists():
+                return Response({"error": "A staff member with this faculty ID already exists."}, status=400)
+
+            department = None
+            if dept_id:
+                department = get_object_or_404(Department, id=dept_id, institution=institution)
+
+            staff = StaffProfile.objects.create(
+                faculty_id=faculty_id,
+                name=name,
+                role=role,
+                department=department,
+                institution=institution,
+            )
+            return Response({
+                "message": "Staff created successfully",
+                "staff": {
+                    "id": staff.id,
+                    "faculty_id": staff.faculty_id,
+                    "name": staff.name,
+                    "role": staff.role,
+                    "department__id": staff.department_id,
+                    "department__name": staff.department.name if staff.department else None,
+                    "department__code": staff.department.code if staff.department else None,
+                },
+            }, status=201)
             
         elif action == 'toggle_student_lock':
             student_id = request.data.get('student_id')
@@ -15315,110 +15354,4 @@ class TempDataDiagnosticsView(APIView):
             "DB_USER": os.getenv("DB_USER"),
             "DB_PORT": os.getenv("DB_PORT"),
         }
-        return Response(report)
-
-
-class StaffAdvisorDashboardView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def get(self, request):
-        profile = getattr(request.user, 'staff_profile', None)
-        if not profile and not request.user.is_superuser:
-            profile = StaffProfile.objects.filter(institution__isnull=False).first()
-
-        advisor_assignments = BatchAdvisor.objects.filter(advisor=profile) if profile else BatchAdvisor.objects.none()
-
-        students_qs = StudentProfile.objects.all().select_related('department', 'institution', 'account', 'mentor')
-        if advisor_assignments.exists():
-            dept_ids = advisor_assignments.values_list('department_id', flat=True)
-            batches = advisor_assignments.values_list('batch', flat=True)
-            students_qs = students_qs.filter(department_id__in=dept_ids, batch__in=batches)
-        elif profile and profile.department:
-            students_qs = students_qs.filter(department=profile.department)
-        elif profile and profile.institution:
-            students_qs = students_qs.filter(institution=profile.institution)
-
-        students_list = list(students_qs)
-        if not students_list:
-            students_list = list(StudentProfile.objects.all().select_related('department', 'institution', 'account', 'mentor')[:200])
-
-        student_ids = [s.id for s in students_list]
-        from .models import Submission
-        solved_counts_qs = (
-            Submission.objects.filter(student_id__in=student_ids, status='Accepted')
-            .values('student_id', 'problem_id')
-            .distinct()
-        )
-        solved_map = {}
-        for row in solved_counts_qs:
-            sid = row['student_id']
-            solved_map[sid] = solved_map.get(sid, 0) + 1
-
-        batches_map = {}
-        for s in students_list:
-            b_code = s.batch or "2022-2026"
-            sec_code = s.section or "A"
-            key = (b_code, sec_code)
-            if key not in batches_map:
-                batches_map[key] = {
-                    "batch": b_code,
-                    "section": sec_code,
-                    "department": s.department.name if (s.department and s.department.name) else (s.department.code if s.department else "Dept"),
-                    "students": [],
-                }
-
-            solved_count = solved_map.get(s.id, 0)
-            streak = getattr(s, 'current_streak', 0) or 0
-            last_active = "—"
-            if getattr(s, 'last_login_on', None):
-                last_active = s.last_login_on.strftime("%Y-%m-%d")
-            elif s.account and s.account.last_login:
-                last_active = s.account.last_login.strftime("%Y-%m-%d")
-
-            batches_map[key]["students"].append({
-                "register_number": str(s.register_number or f"STU{s.id:04d}"),
-                "name": s.name or "Student",
-                "section": s.section or sec_code,
-                "solved_count": solved_count,
-                "current_streak": streak,
-                "last_active": last_active,
-                "mentor": {"name": s.mentor.name} if getattr(s, 'mentor', None) else None,
-                "is_active": getattr(s.account, 'is_active', True) if s.account else True,
-            })
-
-        batches_data = []
-        for key, bdata in batches_map.items():
-            st_list = bdata["students"]
-            total = len(st_list)
-            active = sum(1 for st in st_list if st["current_streak"] > 0 or st["solved_count"] > 0)
-            avg_solved = round(sum(st["solved_count"] for st in st_list) / max(1, total), 1)
-            avg_streak = round(sum(st["current_streak"] for st in st_list) / max(1, total), 1)
-            batches_data.append({
-                "batch": bdata["batch"],
-                "section": bdata["section"],
-                "department": bdata["department"],
-                "total_students": total,
-                "active_students": active,
-                "avg_solved": avg_solved,
-                "avg_streak": avg_streak,
-                "students": st_list,
-            })
-
-        if not batches_data:
-            batches_data = [{
-                "batch": "2022-2026",
-                "section": "A",
-                "department": getattr(profile.department, 'name', 'CSE') if profile and profile.department else "CSE",
-                "total_students": 0,
-                "active_students": 0,
-                "avg_solved": 0,
-                "avg_streak": 0,
-                "students": [],
-            }]
-
-        return Response({
-            "is_class_advisor": True,
-            "batches": batches_data,
-        })
-
         return Response(report)
