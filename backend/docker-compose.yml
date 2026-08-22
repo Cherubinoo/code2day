@@ -48,4 +48,4 @@ volumes:
 
 networks:
   code2day-shared:
-    external: true
+    name: code2day-shared
