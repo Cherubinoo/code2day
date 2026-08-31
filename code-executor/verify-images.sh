@@ -137,6 +137,17 @@ int main(){
 EOF
 g++ -std=c++17 /tmp/sol.cpp -o /tmp/sol && /tmp/sol' "[0,1]"
 
+# ── SQL ───────────────────────────────────────────────────────────────────────
+echo ""
+echo "🗄️  SQL (code2day-sql:latest)"
+check "sqlite3 exists"  code2day-sql:latest "sqlite3 --version"  "3."
+check "query exec"      code2day-sql:latest 'cat > /tmp/sol.sql << '"'"'EOF'"'"'
+CREATE TABLE nums(id INTEGER, val INTEGER);
+INSERT INTO nums VALUES (0,2),(1,7),(2,11),(3,15);
+SELECT val FROM nums WHERE val = 7;
+EOF
+sqlite3 :memory: < /tmp/sol.sql' "7"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

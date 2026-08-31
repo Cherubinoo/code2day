@@ -37,6 +37,7 @@ build "C / C++"    "code2day-c:latest"       "$DIR/images/c-cpp"
 $DOCKER tag code2day-c:latest code2day-cpp:latest
 echo -e "${GREEN}✓ code2day-cpp:latest tagged from c-cpp${NC}"
 echo ""
+build "SQL"        "code2day-sql:latest"     "$DIR/images/sql"
 
 echo -e "${BLUE}→ Running verification...${NC}"
 bash "$DIR/verify-images.sh"

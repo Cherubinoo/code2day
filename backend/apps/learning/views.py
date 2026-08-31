@@ -7614,6 +7614,75 @@ class AptitudeQuestionSubmitView(APIView):
         })
 
 
+class ReadingPassageListView(UnifiedAuthMixin, APIView):
+    """List Reading Comprehension passages with question/solved counts —
+    the Reading Comprehension section of the student Aptitude page."""
+    def get(self, request):
+        profile, _, _ = self.get_authenticated_profile(request)
+        is_student = hasattr(profile, 'register_number')
+
+        solved_counts = {}
+        if is_student:
+            solved_qs = (
+                SolvedAptitude.objects.filter(student=profile, question__passage__isnull=False)
+                .values('question__passage_id').annotate(count=Count('id'))
+            )
+            solved_counts = {item['question__passage_id']: item['count'] for item in solved_qs}
+
+        passages = ReadingPassage.objects.annotate(question_count=Count("questions")).order_by("-id")
+        data = [{
+            "id": p.id,
+            "title": p.title,
+            "difficulty": p.difficulty,
+            "question_count": p.question_count,
+            "solved_count": solved_counts.get(p.id, 0),
+        } for p in passages]
+        return Response({"passages": data})
+
+
+class ReadingPassageDetailView(UnifiedAuthMixin, APIView):
+    """Get one Reading Comprehension passage's text and its questions —
+    never includes correct_option for a student, mirroring
+    AptitudeQuestionListView's answer-leak protection."""
+    def get(self, request, passage_id):
+        profile, _, _ = self.get_authenticated_profile(request)
+        is_student = hasattr(profile, 'register_number')
+
+        passage = ReadingPassage.objects.filter(id=passage_id).first()
+        if not passage:
+            return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        solved_ids = []
+        if is_student:
+            solved_ids = list(
+                SolvedAptitude.objects.filter(student=profile, question__passage=passage)
+                .values_list('question_id', flat=True)
+            )
+
+        questions = []
+        for q in passage.questions.all().order_by("id"):
+            questions.append({
+                "id": q.id,
+                "question_text": q.question_text,
+                "question_image": q.question_image,
+                "option_a": q.option_a, "option_a_image": q.option_a_image,
+                "option_b": q.option_b, "option_b_image": q.option_b_image,
+                "option_c": q.option_c, "option_c_image": q.option_c_image,
+                "option_d": q.option_d, "option_d_image": q.option_d_image,
+                "difficulty": q.difficulty,
+                **({} if is_student else {"correct_option": q.correct_option}),
+                "is_solved": q.id in solved_ids,
+            })
+
+        return Response({
+            "id": passage.id,
+            "title": passage.title,
+            "passage_text": passage.passage_text,
+            "difficulty": passage.difficulty,
+            "questions": questions,
+        })
+
+
 # ---------------------------------------------------------------------------
 # PDF Report Generation
 # ---------------------------------------------------------------------------
@@ -10259,10 +10328,13 @@ class AdminAptitudeBankView(APIView):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
-        qs = AptitudeQuestion.objects.select_related("topic").order_by("-id")
+        qs = AptitudeQuestion.objects.select_related("topic", "passage").order_by("-id")
 
         topic_id = request.query_params.get("topic_id")
-        if topic_id:
+        passage_id = request.query_params.get("passage_id")
+        if passage_id:
+            qs = qs.filter(passage_id=passage_id)
+        elif topic_id:
             # topic_id is normally a Main Topic id here, which has no
             # children of its own — but if it's ever a Category id, include
             # its Main Topics too so selecting the whole category still
@@ -10280,6 +10352,8 @@ class AdminAptitudeBankView(APIView):
             "id": q.id,
             "topic_id": q.topic_id,
             "topic": q.topic.title if q.topic else "",
+            "passage_id": q.passage_id,
+            "passage": q.passage.title if q.passage else "",
             "question_type": q.question_type,
             "question_text": q.question_text,
             "question_image": q.question_image,
@@ -10303,6 +10377,7 @@ class AdminAptitudeBankView(APIView):
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
         topic_id = request.data.get("topic_id")
+        passage_id = request.data.get("passage_id")
         question_text = (request.data.get("question_text") or "").strip()
         question_image = (request.data.get("question_image") or "").strip()
         option_a = (request.data.get("option_a") or "").strip()
@@ -10317,11 +10392,19 @@ class AdminAptitudeBankView(APIView):
         difficulty = request.data.get("difficulty") or "Easy"
         explanation = request.data.get("explanation") or ""
 
-        if not topic_id:
-            return Response({"error": "topic_id is required"}, status=400)
-        topic = AptitudeTopic.objects.filter(id=topic_id).first()
-        if not topic:
-            return Response({"error": "Topic not found"}, status=404)
+        topic = None
+        passage = None
+        if passage_id:
+            passage = ReadingPassage.objects.filter(id=passage_id).first()
+            if not passage:
+                return Response({"error": "Passage not found"}, status=404)
+        elif topic_id:
+            topic = AptitudeTopic.objects.filter(id=topic_id).first()
+            if not topic:
+                return Response({"error": "Topic not found"}, status=404)
+        else:
+            return Response({"error": "topic_id or passage_id is required"}, status=400)
+
         if not question_text:
             return Response({"error": "question_text is required"}, status=400)
         if not all([option_a, option_b, option_c, option_d]):
@@ -10337,7 +10420,9 @@ class AdminAptitudeBankView(APIView):
             }, status=400)
 
         q = AptitudeQuestion.objects.create(
-            topic=topic, question_text=question_text, question_image=question_image,
+            topic=topic, passage=passage,
+            question_type="RC" if passage else "MCQ",
+            question_text=question_text, question_image=question_image,
             option_a=option_a, option_a_image=option_a_image,
             option_b=option_b, option_b_image=option_b_image,
             option_c=option_c, option_c_image=option_c_image,
@@ -10345,7 +10430,9 @@ class AdminAptitudeBankView(APIView):
             correct_option=correct_option, difficulty=difficulty, explanation=explanation,
         )
         return Response({
-            "id": q.id, "topic_id": q.topic_id, "topic": topic.title,
+            "id": q.id,
+            "topic_id": q.topic_id, "topic": topic.title if topic else "",
+            "passage_id": q.passage_id, "passage": passage.title if passage else "",
             "question_type": q.question_type,
             "question_text": q.question_text, "question_image": q.question_image,
             "option_a": q.option_a, "option_a_image": q.option_a_image,
@@ -10374,6 +10461,14 @@ class AdminAptitudeQuestionDetailView(APIView):
             if not topic:
                 return Response({"error": "Topic not found"}, status=404)
             q.topic = topic
+
+        passage_id = request.data.get("passage_id")
+        if passage_id:
+            passage = ReadingPassage.objects.filter(id=passage_id).first()
+            if not passage:
+                return Response({"error": "Passage not found"}, status=404)
+            q.passage = passage
+            q.question_type = "RC"
 
         question_text = request.data.get("question_text")
         if question_text is not None:
@@ -10422,6 +10517,7 @@ class AdminAptitudeQuestionDetailView(APIView):
         q.save()
         return Response({
             "id": q.id, "topic_id": q.topic_id, "topic": q.topic.title if q.topic else "",
+            "passage_id": q.passage_id, "passage": q.passage.title if q.passage else "",
             "question_type": q.question_type,
             "question_text": q.question_text, "question_image": q.question_image,
             "option_a": q.option_a, "option_a_image": q.option_a_image,
@@ -10710,6 +10806,96 @@ class AdminAptitudeBulkUploadView(APIView):
             return []
         header = [h.strip().lower().replace(" ", "_") for h in raw_rows[0]]
         return [header] + raw_rows[1:]
+
+
+class AdminReadingPassageListCreateView(APIView):
+    """System Admin: list every Reading Comprehension passage (with its
+    question count) and create a new one."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        passages = ReadingPassage.objects.annotate(question_count=Count("questions")).order_by("-id")
+        data = [{
+            "id": p.id,
+            "title": p.title,
+            "passage_text": p.passage_text,
+            "difficulty": p.difficulty,
+            "question_count": p.question_count,
+        } for p in passages]
+        return Response({"passages": data, "total": len(data)})
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        title = (request.data.get("title") or "").strip()
+        passage_text = (request.data.get("passage_text") or "").strip()
+        difficulty = request.data.get("difficulty") or "Medium"
+
+        if not title:
+            return Response({"error": "title is required"}, status=400)
+        if not passage_text:
+            return Response({"error": "passage_text is required"}, status=400)
+        if difficulty not in ("Easy", "Medium", "Hard"):
+            return Response({"error": "difficulty must be Easy, Medium, or Hard"}, status=400)
+
+        passage = ReadingPassage.objects.create(title=title, passage_text=passage_text, difficulty=difficulty)
+        return Response({
+            "id": passage.id, "title": passage.title, "passage_text": passage.passage_text,
+            "difficulty": passage.difficulty, "question_count": 0,
+        }, status=201)
+
+
+class AdminReadingPassageDetailView(APIView):
+    """System Admin: edit or delete a single Reading Comprehension passage."""
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, passage_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        passage = ReadingPassage.objects.filter(id=passage_id).first()
+        if not passage:
+            return Response({"error": "Not found"}, status=404)
+
+        title = request.data.get("title")
+        if title is not None:
+            title = title.strip()
+            if not title:
+                return Response({"error": "title cannot be empty"}, status=400)
+            passage.title = title
+
+        passage_text = request.data.get("passage_text")
+        if passage_text is not None:
+            passage_text = passage_text.strip()
+            if not passage_text:
+                return Response({"error": "passage_text cannot be empty"}, status=400)
+            passage.passage_text = passage_text
+
+        difficulty = request.data.get("difficulty")
+        if difficulty is not None:
+            if difficulty not in ("Easy", "Medium", "Hard"):
+                return Response({"error": "difficulty must be Easy, Medium, or Hard"}, status=400)
+            passage.difficulty = difficulty
+
+        passage.save()
+        return Response({
+            "id": passage.id, "title": passage.title, "passage_text": passage.passage_text,
+            "difficulty": passage.difficulty,
+        })
+
+    def delete(self, request, passage_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        passage = ReadingPassage.objects.filter(id=passage_id).first()
+        if not passage:
+            return Response({"error": "Not found"}, status=404)
+        passage.delete()
+        return Response(status=204)
 
 
 class InstitutionBrandingPreviewView(APIView):

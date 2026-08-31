@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Brain, Calculator, MessageSquare, ChevronDown } from 'lucide-react';
+import { Brain, Calculator, MessageSquare, ChevronDown, BookOpen } from 'lucide-react';
 import AptitudeQuizPage from './AptitudeQuizPage';
+import ReadingComprehensionPage from './ReadingComprehensionPage';
 
 export default function AptitudePage({ onToggleWorkspace }) {
+  const [activeSection, setActiveSection] = useState('topics');
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCats, setExpandedCats] = useState({});
@@ -73,6 +75,44 @@ export default function AptitudePage({ onToggleWorkspace }) {
     return <AptitudeQuizPage topicId={practiceTopicId} onBack={() => setPracticeTopicId(null)} />;
   }
 
+  const sectionTabs = (
+    <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginBottom: 32 }}>
+      <button
+        onClick={() => setActiveSection('topics')}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', borderRadius: 14,
+          border: activeSection === 'topics' ? 'none' : '1px solid var(--border-soft)',
+          background: activeSection === 'topics' ? 'var(--olive-900)' : 'var(--bg-1)',
+          color: activeSection === 'topics' ? '#fff' : 'var(--olive-900)',
+          fontWeight: 700, cursor: 'pointer',
+        }}
+      >
+        <Brain size={16} /> Practice Topics
+      </button>
+      <button
+        onClick={() => setActiveSection('reading')}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', borderRadius: 14,
+          border: activeSection === 'reading' ? 'none' : '1px solid var(--border-soft)',
+          background: activeSection === 'reading' ? 'var(--olive-900)' : 'var(--bg-1)',
+          color: activeSection === 'reading' ? '#fff' : 'var(--olive-900)',
+          fontWeight: 700, cursor: 'pointer',
+        }}
+      >
+        <BookOpen size={16} /> Reading Comprehension
+      </button>
+    </div>
+  );
+
+  if (activeSection === 'reading') {
+    return (
+      <div className="aptitude-page" style={{ padding: '24px 24px 0', width: '100%', margin: '0' }}>
+        {sectionTabs}
+        <ReadingComprehensionPage />
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="loading-container" style={{ padding: '60px', textAlign: 'center' }}>
@@ -84,6 +124,7 @@ export default function AptitudePage({ onToggleWorkspace }) {
 
   return (
     <div className="aptitude-page" style={{ padding: '24px', width: '100%', margin: '0' }}>
+      {sectionTabs}
       <header className="page-header" style={{ marginBottom: '40px', textAlign: 'center' }}>
         <h1 style={{ 
           fontSize: '2.8rem', 

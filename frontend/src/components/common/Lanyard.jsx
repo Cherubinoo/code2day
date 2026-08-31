@@ -1,5 +1,5 @@
 /* eslint-disable react/no-unknown-property */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, extend, useFrame } from '@react-three/fiber';
 import { Environment, Lightformer, useTexture } from '@react-three/drei';
 import { BallCollider, CuboidCollider, Physics, RigidBody, useRopeJoint, useSphericalJoint } from '@react-three/rapier';
@@ -21,6 +21,11 @@ function fitTexture(texture, faceAspect, fit = 'cover', position = 'top') {
   next.wrapS = THREE.ClampToEdgeWrapping;
   next.wrapT = THREE.ClampToEdgeWrapping;
   next.colorSpace = THREE.SRGBColorSpace;
+  // Flat UI card face, not a mipmapped 3D asset — generating mipmaps for a
+  // large source image is what was producing WebGL texSubImage2D upload
+  // failures on some drivers, especially on a cold load.
+  next.generateMipmaps = false;
+  next.minFilter = THREE.LinearFilter;
 
   if (fit === 'contain') {
     if (imageAspect > faceAspect) {
@@ -71,17 +76,19 @@ export default function Lanyard({
         onCreated={({ gl }) => gl.setClearColor(new THREE.Color(0x000000), transparent ? 0 : 1)}
       >
         <ambientLight intensity={Math.PI * 0.85} />
-        <Physics gravity={gravity} timeStep={isMobile ? 1 / 30 : 1 / 60}>
-          <Band
-            isMobile={isMobile}
-            frontImage={frontImage}
-            backImage={backImage || frontImage}
-            imageFit={imageFit}
-            imagePosition={imagePosition}
-            lanyardImage={lanyardImage}
-            lanyardWidth={lanyardWidth}
-          />
-        </Physics>
+        <Suspense fallback={null}>
+          <Physics gravity={gravity} timeStep={isMobile ? 1 / 30 : 1 / 60}>
+            <Band
+              isMobile={isMobile}
+              frontImage={frontImage}
+              backImage={backImage || frontImage}
+              imageFit={imageFit}
+              imagePosition={imagePosition}
+              lanyardImage={lanyardImage}
+              lanyardWidth={lanyardWidth}
+            />
+          </Physics>
+        </Suspense>
         <Environment blur={0.65}>
           <Lightformer intensity={2} color="white" position={[0, -1, 5]} rotation={[0, 0, Math.PI / 3]} scale={[100, 0.1, 1]} />
           <Lightformer intensity={3} color="white" position={[-1, -1, 1]} rotation={[0, 0, Math.PI / 3]} scale={[100, 0.1, 1]} />

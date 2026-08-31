@@ -380,6 +380,8 @@ function QuestionForm({ initial, topicOptions, showTopicSelect, busy, error, onC
 
 // ── Questions for ONE topic — add/edit/delete/bulk-upload, scoped ─────────────
 function TopicQuestionsManager({ topic, onBack }) {
+  const isPassage = topic.kind === 'passage';
+  const parentField = isPassage ? 'passage_id' : 'topic_id';
   const [loading, setLoading] = useState(true);
   const [questions, setQuestions] = useState([]);
   const [topicOptions, setTopicOptions] = useState([]);
@@ -405,14 +407,14 @@ function TopicQuestionsManager({ topic, onBack }) {
   const fileInputRef = useRef(null);
   const PAGE_SIZE = 50;
 
-  useEffect(() => { load(); loadTopics(); }, [topic.id]);
+  useEffect(() => { load(); if (!isPassage) loadTopics(); }, [topic.id]);
 
   async function load() {
     setLoading(true);
     setError('');
     setSelectedIds(new Set());
     try {
-      const res = await apiFetch(`/api/admin/v2/aptitude-bank/?topic_id=${topic.id}`, 'GET');
+      const res = await apiFetch(`/api/admin/v2/aptitude-bank/?${parentField}=${topic.id}`, 'GET');
       if (!res.ok) throw new Error('Failed to load questions');
       const data = await res.json();
       setQuestions(data.questions || []);
@@ -467,7 +469,7 @@ function TopicQuestionsManager({ topic, onBack }) {
   async function createQuestion(form) {
     setAddBusy(true); setAddError('');
     try {
-      const res = await apiFetch('/api/admin/v2/aptitude-bank/', 'POST', { ...form, topic_id: topic.id });
+      const res = await apiFetch('/api/admin/v2/aptitude-bank/', 'POST', { ...form, [parentField]: topic.id });
       const data = await res.json();
       if (!res.ok) { setAddError(data.error || 'Failed to create question.'); return; }
       setQuestions((prev) => [data, ...prev]);
@@ -485,8 +487,8 @@ function TopicQuestionsManager({ topic, onBack }) {
       const res = await apiFetch(`/api/admin/v2/aptitude-bank/${id}/`, 'PUT', form);
       const data = await res.json();
       if (!res.ok) { setEditError(data.error || 'Failed to save.'); return; }
-      if (String(data.topic_id) !== String(topic.id)) {
-        // Moved to a different topic — no longer belongs in this scoped list.
+      if (String(data[parentField]) !== String(topic.id)) {
+        // Moved to a different topic/passage — no longer belongs in this scoped list.
         setQuestions((prev) => prev.filter((q) => q.id !== id));
       } else {
         setQuestions((prev) => prev.map((q) => (q.id === id ? data : q)));
@@ -584,7 +586,7 @@ function TopicQuestionsManager({ topic, onBack }) {
         <div>
           <h2 style={{ fontSize: '1.3rem', fontWeight: 900, color: 'var(--olive-950)', margin: 0 }}>{topic.label}</h2>
           <p style={{ color: 'var(--text-soft)', margin: '4px 0 0', fontSize: '0.9rem' }}>
-            {questions.length} question{questions.length !== 1 ? 's' : ''} in this topic
+            {questions.length} question{questions.length !== 1 ? 's' : ''} in this {isPassage ? 'passage' : 'topic'}
           </p>
         </div>
         {selectedIds.size > 0 && (
@@ -598,10 +600,12 @@ function TopicQuestionsManager({ topic, onBack }) {
           style={{ marginLeft: selectedIds.size > 0 ? 0 : 'auto', background: 'var(--olive-900)', border: 'none', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'white', fontWeight: 700 }}>
           <Plus size={16} /> Add Question
         </button>
-        <button onClick={() => { setShowBulkUpload((v) => !v); setBulkError(''); setBulkResult(null); }}
-          style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
-          <Upload size={16} /> Bulk Upload
-        </button>
+        {!isPassage && (
+          <button onClick={() => { setShowBulkUpload((v) => !v); setBulkError(''); setBulkResult(null); }}
+            style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
+            <Upload size={16} /> Bulk Upload
+          </button>
+        )}
         <button onClick={load} disabled={loading}
           style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
           <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
@@ -747,7 +751,7 @@ function TopicQuestionsManager({ topic, onBack }) {
                                 correct_option: q.correct_option, difficulty: q.difficulty, explanation: q.explanation || '',
                               }}
                               topicOptions={topicOptions}
-                              showTopicSelect
+                              showTopicSelect={!isPassage}
                               busy={editBusy}
                               error={editError}
                               onCancel={() => setEditingId(null)}
@@ -783,11 +787,151 @@ function TopicQuestionsManager({ topic, onBack }) {
   );
 }
 
+function PassageList({ onSelect, onBack }) {
+  const [passages, setPassages] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
+  const [newPassage, setNewPassage] = useState({ title: '', passage_text: '', difficulty: 'Medium' });
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState('');
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true); setError('');
+    try {
+      const res = await apiFetch('/api/admin/v2/reading-passages/', 'GET');
+      if (!res.ok) throw new Error('Failed to load passages');
+      const data = await res.json();
+      setPassages(data.passages || []);
+    } catch (err) {
+      setError(err.message || 'Failed to load passages');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function createPassage() {
+    if (!newPassage.title.trim() || !newPassage.passage_text.trim()) {
+      setAddError('Title and passage text are required.');
+      return;
+    }
+    setAddBusy(true); setAddError('');
+    try {
+      const res = await apiFetch('/api/admin/v2/reading-passages/', 'POST', newPassage);
+      const data = await res.json();
+      if (!res.ok) { setAddError(data.error || 'Failed to create passage.'); return; }
+      setPassages((prev) => [data, ...prev]);
+      setShowAdd(false);
+      setNewPassage({ title: '', passage_text: '', difficulty: 'Medium' });
+    } catch {
+      setAddError('Network error.');
+    } finally {
+      setAddBusy(false);
+    }
+  }
+
+  async function deletePassage(p) {
+    if (!window.confirm(`Delete "${p.title}" and all ${p.question_count} of its questions? This cannot be undone.`)) return;
+    try {
+      const res = await apiFetch(`/api/admin/v2/reading-passages/${p.id}/`, 'DELETE');
+      if (!res.ok && res.status !== 204) { setError('Failed to delete passage.'); return; }
+      setPassages((prev) => prev.filter((x) => x.id !== p.id));
+    } catch {
+      setError('Network error while deleting.');
+    }
+  }
+
+  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}><Loader2 size={20} className="spin" /></div>;
+
+  return (
+    <div className="animate-fade-in">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
+        <button onClick={onBack} style={{ background: 'white', border: '1px solid var(--border-soft)', width: 44, height: 44, borderRadius: 14, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--olive-900)', boxShadow: 'var(--shadow-soft)' }}>
+          <ArrowLeft size={20} />
+        </button>
+        <h2 style={{ fontSize: '1.3rem', fontWeight: 900, color: 'var(--olive-950)', margin: 0 }}>Reading Passages</h2>
+        <button onClick={() => { setShowAdd((v) => !v); setAddError(''); }}
+          style={{ marginLeft: 'auto', background: 'var(--olive-900)', border: 'none', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'white', fontWeight: 700 }}>
+          <Plus size={16} /> Add Passage
+        </button>
+      </div>
+
+      {error && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 16 }}>{error}</div>}
+
+      {showAdd && (
+        <div style={{ padding: 20, background: 'white', borderRadius: 12, border: '1px solid var(--border-soft)', marginBottom: 20 }}>
+          <input placeholder="Passage title" value={newPassage.title}
+            onChange={(e) => setNewPassage((p) => ({ ...p, title: e.target.value }))}
+            style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13, marginBottom: 10, boxSizing: 'border-box' }} />
+          <textarea placeholder="Passage text" value={newPassage.passage_text} rows={6}
+            onChange={(e) => setNewPassage((p) => ({ ...p, passage_text: e.target.value }))}
+            style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13, marginBottom: 10, boxSizing: 'border-box' }} />
+          <select value={newPassage.difficulty} onChange={(e) => setNewPassage((p) => ({ ...p, difficulty: e.target.value }))}
+            style={{ padding: 10, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13, marginBottom: 12 }}>
+            <option value="Easy">Easy</option>
+            <option value="Medium">Medium</option>
+            <option value="Hard">Hard</option>
+          </select>
+          {addError && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{addError}</div>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button type="button" onClick={() => setShowAdd(false)} style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>Cancel</button>
+            <button type="button" onClick={createPassage} disabled={addBusy}
+              style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: 'var(--olive-900)', color: 'white', cursor: addBusy ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: 13 }}>
+              {addBusy ? 'Creating…' : 'Create Passage'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {passages.length === 0 ? (
+        <p style={{ color: 'var(--text-soft)', textAlign: 'center', padding: 40 }}>No passages yet — add one, or run the SQuAD import management command.</p>
+      ) : (
+        <div style={{ display: 'grid', gap: 12 }}>
+          {passages.map((p) => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: 16, background: 'white', borderRadius: 14, border: '1px solid var(--border-soft)' }}>
+              <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => onSelect(p.id, p.title)}>
+                <div style={{ fontWeight: 700, color: 'var(--olive-900)' }}>{p.title}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-soft)', marginTop: 2 }}>{p.question_count} question(s) · {p.difficulty}</div>
+              </div>
+              <button onClick={() => deletePassage(p)} style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: 8, cursor: 'pointer', color: '#dc2626' }}>
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AptitudeBankView({ onBack }) {
-  const [selectedTopic, setSelectedTopic] = useState(null); // { id, label }
+  const [mode, setMode] = useState('topics'); // 'topics' | 'passages'
+  const [selectedTopic, setSelectedTopic] = useState(null); // { id, label, kind? }
 
   if (selectedTopic) {
     return <TopicQuestionsManager topic={selectedTopic} onBack={() => setSelectedTopic(null)} />;
   }
-  return <TopicTree onSelect={(id, label) => setSelectedTopic({ id, label })} onBack={onBack} />;
+
+  if (mode === 'passages') {
+    return (
+      <PassageList
+        onSelect={(id, label) => setSelectedTopic({ id, label, kind: 'passage' })}
+        onBack={() => setMode('topics')}
+      />
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+        <button onClick={() => setMode('passages')}
+          style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', fontWeight: 700, color: 'var(--olive-900)' }}>
+          Reading Passages →
+        </button>
+      </div>
+      <TopicTree onSelect={(id, label) => setSelectedTopic({ id, label, kind: 'topic' })} onBack={onBack} />
+    </div>
+  );
 }

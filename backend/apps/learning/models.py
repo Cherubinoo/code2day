@@ -503,12 +503,28 @@ class AptitudeTopic(models.Model):
         return self.title
 
 
+class ReadingPassage(models.Model):
+    """A passage of text for the Reading Comprehension aptitude section —
+    students read the passage, then answer several MCQ questions tied to
+    it (AptitudeQuestion.passage), reusing the same question/answer/
+    grading machinery as every other aptitude question."""
+    title = models.CharField(max_length=255)
+    passage_text = models.TextField()
+    difficulty = models.CharField(max_length=20, choices=(('Easy', 'Easy'), ('Medium', 'Medium'), ('Hard', 'Hard')), default='Medium')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.title
+
+
 class AptitudeQuestion(models.Model):
     QUESTION_TYPE_CHOICES = (
         ('MCQ', 'Multiple Choice'),
+        ('RC', 'Reading Comprehension'),
     )
 
-    topic = models.ForeignKey(AptitudeTopic, on_delete=models.CASCADE, related_name='questions')
+    topic = models.ForeignKey(AptitudeTopic, on_delete=models.CASCADE, related_name='questions', null=True, blank=True)
+    passage = models.ForeignKey(ReadingPassage, on_delete=models.CASCADE, related_name='questions', null=True, blank=True)
     question_type = models.CharField(max_length=20, choices=QUESTION_TYPE_CHOICES, default='MCQ')
     question_text = models.TextField()
     question_image = models.URLField(max_length=1000, blank=True, default='')
@@ -526,7 +542,8 @@ class AptitudeQuestion(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.topic.title} - {self.question_text[:50]}..."
+        parent = self.topic.title if self.topic else (self.passage.title if self.passage else "Unfiled")
+        return f"{parent} - {self.question_text[:50]}..."
 
 
 class Achievement(models.Model):

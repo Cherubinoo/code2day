@@ -49,6 +49,8 @@ LANGUAGES = {
     50: {"image": "code2day-c:latest",       "ext": "c",    "cmd": ["sh", "-c", "gcc /code/solution.c -o /code/solution -lm 2>&1 && /code/solution"]},
     # C++
     54: {"image": "code2day-cpp:latest",     "ext": "cpp",  "cmd": ["sh", "-c", "g++ /code/solution.cpp -o /code/solution -std=c++17 2>&1 && /code/solution"]},
+    # SQL (SQLite 3)
+    82: {"image": "code2day-sql:latest",     "ext": "sql",  "cmd": ["sh", "-c", "sqlite3 :memory: < /code/solution.sql"]},
 }
 
 CPU_TIME_LIMIT = int(os.getenv("CPU_TIME_LIMIT", "10"))
@@ -329,5 +331,6 @@ async def languages():
         62: "Java (OpenJDK 17)",
         50: "C (GCC 12)",
         54: "C++ (GCC 12)",
+        82: "SQL (SQLite 3)",
     }
     return [{"id": k, "name": v} for k, v in lang_names.items()]
