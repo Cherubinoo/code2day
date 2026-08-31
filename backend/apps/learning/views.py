@@ -10319,6 +10319,21 @@ class AdminAptitudeTopicDetailView(APIView):
         topic.save()
         return Response({"id": topic.id, "title": topic.title, "parent_id": topic.parent_id})
 
+    def delete(self, request, topic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        topic = AptitudeTopic.objects.filter(id=topic_id).first()
+        if not topic:
+            return Response({"error": "Not found"}, status=404)
+
+        # Cascades to subtopics and their questions (AptitudeTopic.parent
+        # and AptitudeQuestion.topic are both on_delete=CASCADE) — the
+        # frontend confirm dialog is expected to warn about this before
+        # calling delete.
+        topic.delete()
+        return Response(status=204)
+
 
 class AdminAptitudeBankView(APIView):
     """System Admin: list every aptitude question (with topic + correct

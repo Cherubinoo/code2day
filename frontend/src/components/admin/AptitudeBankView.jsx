@@ -169,6 +169,24 @@ function TopicTree({ onSelect, onBack }) {
     }
   }
 
+  async function deleteTopic(node, isCategory) {
+    const warning = isCategory
+      ? `Delete category "${node.title}"? This also deletes all ${node.subcategories.length} sub-topic(s) under it and every question in them. This cannot be undone.`
+      : `Delete topic "${node.title}" and all ${node.question_count} question(s) in it? This cannot be undone.`;
+    if (!window.confirm(warning)) return;
+    try {
+      const res = await apiFetch(`/api/admin/v2/aptitude-topics/${node.id}/`, 'DELETE');
+      if (!res.ok && res.status !== 204) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || 'Failed to delete.');
+        return;
+      }
+      load();
+    } catch {
+      setError('Network error while deleting.');
+    }
+  }
+
   const catIcon = (title) => (
     title.includes('QUANT') ? <Calculator size={22} /> : title.includes('LOGIC') ? <Brain size={22} /> : <MessageSquare size={22} />
   );
@@ -239,6 +257,10 @@ function TopicTree({ onSelect, onBack }) {
                           style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--olive-600)', display: 'flex' }}>
                           <Pencil size={13} />
                         </button>
+                        <button onClick={(e) => { e.stopPropagation(); deleteTopic(cat, true); }} title="Delete category"
+                          style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: '#dc2626', display: 'flex' }}>
+                          <Trash2 size={13} />
+                        </button>
                       </div>
                     )}
                     <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>
@@ -272,6 +294,10 @@ function TopicTree({ onSelect, onBack }) {
                           <button onClick={() => startRename(sub.id, sub.title)} title="Rename topic"
                             style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: 'var(--olive-600)', flexShrink: 0, display: 'flex' }}>
                             <Pencil size={14} />
+                          </button>
+                          <button onClick={() => deleteTopic(sub, false)} title="Delete topic"
+                            style={{ padding: 4, border: 'none', background: 'none', cursor: 'pointer', color: '#dc2626', flexShrink: 0, display: 'flex' }}>
+                            <Trash2 size={14} />
                           </button>
                         </>
                       )}
