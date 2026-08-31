@@ -46,6 +46,7 @@ from .models import (
     SystemUpdate,
     AptitudeTopic,
     AptitudeQuestion,
+    ReadingPassage,
     Achievement,
     UserAchievement,
     SystemConfiguration,
