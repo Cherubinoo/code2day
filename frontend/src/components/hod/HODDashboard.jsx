@@ -1966,7 +1966,25 @@ const HODDashboard = ({ institutionId }) => {
                               fontWeight: '700',
                             }}
                           >
-                            <Plus size={16} /> Create Contest
+                            <Plus size={16} /> New Coding Contest
+                          </button>
+                          <button
+                            onClick={() => setShowContestCreator({ type: 'aptitude' })}
+                            style={{
+                              padding: '10px 18px',
+                              borderRadius: '10px',
+                              border: 'none',
+                              background: '#7c3aed',
+                              color: 'white',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              fontSize: '13px',
+                              fontWeight: '700',
+                            }}
+                          >
+                            <Plus size={16} /> New Aptitude Contest
                           </button>
                           <input
                             type="text"

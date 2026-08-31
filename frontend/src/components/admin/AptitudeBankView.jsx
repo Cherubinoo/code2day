@@ -25,7 +25,11 @@ function apiFetchForm(url, formData) {
 }
 
 const BLANK_FORM = {
-  question_text: '', option_a: '', option_b: '', option_c: '', option_d: '',
+  question_text: '', question_image: '',
+  option_a: '', option_a_image: '',
+  option_b: '', option_b_image: '',
+  option_c: '', option_c_image: '',
+  option_d: '', option_d_image: '',
   correct_option: 'A', difficulty: 'Easy', explanation: '',
 };
 
@@ -326,20 +330,34 @@ function QuestionForm({ initial, topicOptions, showTopicSelect, busy, error, onC
         </select>
       </div>
       <textarea placeholder="Question text" value={form.question_text} onChange={(e) => set('question_text', e.target.value)}
-        rows={2} style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13, marginBottom: 12, boxSizing: 'border-box' }} />
+        rows={2} style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13, marginBottom: 8, boxSizing: 'border-box' }} />
+      <input
+        placeholder="Question image URL (optional)"
+        value={form.question_image || ''}
+        onChange={(e) => set('question_image', e.target.value)}
+        style={{ width: '100%', padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 12, marginBottom: 12, boxSizing: 'border-box' }}
+      />
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         {['A', 'B', 'C', 'D'].map((key) => (
-          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-              <input type="radio" name="correct_option" checked={form.correct_option === key}
-                onChange={() => set('correct_option', key)} />
-              {key}
-            </label>
+          <div key={key} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                <input type="radio" name="correct_option" checked={form.correct_option === key}
+                  onChange={() => set('correct_option', key)} />
+                {key}
+              </label>
+              <input
+                placeholder={`Option ${key}`}
+                value={form[`option_${key.toLowerCase()}`]}
+                onChange={(e) => set(`option_${key.toLowerCase()}`, e.target.value)}
+                style={{ flex: 1, padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13 }}
+              />
+            </div>
             <input
-              placeholder={`Option ${key}`}
-              value={form[`option_${key.toLowerCase()}`]}
-              onChange={(e) => set(`option_${key.toLowerCase()}`, e.target.value)}
-              style={{ flex: 1, padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13 }}
+              placeholder={`Option ${key} image URL (optional)`}
+              value={form[`option_${key.toLowerCase()}_image`] || ''}
+              onChange={(e) => set(`option_${key.toLowerCase()}_image`, e.target.value)}
+              style={{ padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 12, marginLeft: 26 }}
             />
           </div>
         ))}
@@ -721,7 +739,11 @@ function TopicQuestionsManager({ topic, onBack }) {
                             <QuestionForm
                               initial={{
                                 topic_id: String(q.topic_id || ''), question_text: q.question_text,
-                                option_a: q.option_a, option_b: q.option_b, option_c: q.option_c, option_d: q.option_d,
+                                question_image: q.question_image || '',
+                                option_a: q.option_a, option_a_image: q.option_a_image || '',
+                                option_b: q.option_b, option_b_image: q.option_b_image || '',
+                                option_c: q.option_c, option_c_image: q.option_c_image || '',
+                                option_d: q.option_d, option_d_image: q.option_d_image || '',
                                 correct_option: q.correct_option, difficulty: q.difficulty, explanation: q.explanation || '',
                               }}
                               topicOptions={topicOptions}

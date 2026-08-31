@@ -746,17 +746,26 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
                   lineHeight: 1.6,
                   color: '#1e293b',
                   fontWeight: 500,
-                  marginBottom: 40,
+                  marginBottom: currentQuestion.question_image ? 16 : 40,
                   whiteSpace: 'pre-wrap'
                 }}>
                   {currentQuestion.question_text}
                 </div>
+
+                {currentQuestion.question_image && (
+                  <img
+                    src={currentQuestion.question_image}
+                    alt="Question"
+                    style={{ maxWidth: '100%', maxHeight: 360, borderRadius: 12, marginBottom: 40, display: 'block' }}
+                  />
+                )}
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   {['A', 'B', 'C', 'D'].map((opt) => {
                     const isSelected = answers[currentQuestion.id] === opt;
                     const optionKey = `option_${opt.toLowerCase()}`;
                     const optionText = currentQuestion[optionKey];
+                    const optionImage = currentQuestion[`${optionKey}_image`];
 
                     return (
                       <button
@@ -792,13 +801,18 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
                         }}>
                           {opt}
                         </div>
-                        <span style={{
-                          fontSize: 16,
-                          color: isSelected ? '#1e40af' : '#475569',
-                          fontWeight: isSelected ? 600 : 400
-                        }}>
-                          {optionText}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          <span style={{
+                            fontSize: 16,
+                            color: isSelected ? '#1e40af' : '#475569',
+                            fontWeight: isSelected ? 600 : 400
+                          }}>
+                            {optionText}
+                          </span>
+                          {optionImage && (
+                            <img src={optionImage} alt={`Option ${opt}`} style={{ maxWidth: '100%', maxHeight: 160, borderRadius: 8, display: 'block' }} />
+                          )}
+                        </div>
                         {isSelected && <CheckCircle size={20} style={{ marginLeft: 'auto', color: '#4f46e5' }} />}
                       </button>
                     );

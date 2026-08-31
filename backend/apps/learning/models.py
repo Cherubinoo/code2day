@@ -504,12 +504,22 @@ class AptitudeTopic(models.Model):
 
 
 class AptitudeQuestion(models.Model):
+    QUESTION_TYPE_CHOICES = (
+        ('MCQ', 'Multiple Choice'),
+    )
+
     topic = models.ForeignKey(AptitudeTopic, on_delete=models.CASCADE, related_name='questions')
+    question_type = models.CharField(max_length=20, choices=QUESTION_TYPE_CHOICES, default='MCQ')
     question_text = models.TextField()
+    question_image = models.URLField(max_length=1000, blank=True, default='')
     option_a = models.CharField(max_length=500)
+    option_a_image = models.URLField(max_length=1000, blank=True, default='')
     option_b = models.CharField(max_length=500)
+    option_b_image = models.URLField(max_length=1000, blank=True, default='')
     option_c = models.CharField(max_length=500)
+    option_c_image = models.URLField(max_length=1000, blank=True, default='')
     option_d = models.CharField(max_length=500)
+    option_d_image = models.URLField(max_length=1000, blank=True, default='')
     correct_option = models.CharField(max_length=1)  # A, B, C, or D
     explanation = models.TextField(blank=True, null=True)
     difficulty = models.CharField(max_length=20, choices=(('Easy', 'Easy'), ('Medium', 'Medium'), ('Hard', 'Hard')), default='Easy')

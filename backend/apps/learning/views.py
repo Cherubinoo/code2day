@@ -3189,7 +3189,7 @@ class StaffDetailView(APIView):
 
         # Check permissions: HOD can only view staff in their department, staff can view anyone in their institution
         if is_staff:
-            if user_role == "hod" and target_staff.department != user_department:
+            if user_role in ("hod", "academics") and target_staff.department != user_department:
                 return Response({"detail": "You can only view staff in your department."}, status=status.HTTP_403_FORBIDDEN)
             if target_staff.institution != user_profile.institution:
                 return Response({"detail": "You do not have access to this staff member."}, status=status.HTTP_403_FORBIDDEN)
@@ -3799,7 +3799,7 @@ class ContestDetailView(APIView):
             return Response({"detail": "Contest not found."}, status=status.HTTP_404_NOT_FOUND)
 
         # Check permissions
-        if not is_admin and profile and profile.role == "hod" and profile.department and contest.department != profile.department:
+        if not is_admin and profile and profile.role in ("hod", "academics") and profile.department and contest.department != profile.department:
             return Response({"detail": "You can only view contests in your department."}, status=status.HTTP_403_FORBIDDEN)
 
         problems_data = []
@@ -3815,13 +3815,19 @@ class ContestDetailView(APIView):
             for q in contest.aptitude_questions.all():
                 problems_data.append({
                     "id": q.id,
+                    "question_type": q.question_type,
                     "question_text": q.question_text,
+                    "question_image": q.question_image,
                     "topic": q.topic.title if q.topic else "General",
                     "difficulty": q.difficulty,
                     "option_a": q.option_a,
+                    "option_a_image": q.option_a_image,
                     "option_b": q.option_b,
+                    "option_b_image": q.option_b_image,
                     "option_c": q.option_c,
+                    "option_c_image": q.option_c_image,
                     "option_d": q.option_d,
+                    "option_d_image": q.option_d_image,
                     "correct_option": q.correct_option,
                 })
         
@@ -3866,7 +3872,7 @@ class ContestAnalyticsView(APIView):
             return Response({"detail": "Contest not found."}, status=status.HTTP_404_NOT_FOUND)
 
         # Check permissions
-        if not is_admin and profile and profile.role == "hod" and profile.department and contest.department != profile.department:
+        if not is_admin and profile and profile.role in ("hod", "academics") and profile.department and contest.department != profile.department:
             return Response({"detail": "You can only view contests in your department."}, status=status.HTTP_403_FORBIDDEN)
 
         # Get submission stats based on contest type
@@ -4231,8 +4237,8 @@ class ContestStudentSubmissionsView(APIView):
         # Check permissions
         if profile.role == "staff" and contest.created_by != profile:
             return Response({"detail": "You can only view your own contests."}, status=status.HTTP_403_FORBIDDEN)
-        
-        if profile.role == "hod" and contest.department != profile.department:
+
+        if profile.role in ("hod", "academics") and contest.department != profile.department:
             return Response({"detail": "You can only view contests in your department."}, status=status.HTTP_403_FORBIDDEN)
 
         # Get student
@@ -5908,7 +5914,7 @@ class StudentSelfAnalyticsView(APIView):
 
 
 class ContestApprovalView(APIView):
-    """HOD can approve or reject contests"""
+    """HOD or Academic Coordinator can approve or reject contests"""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, contest_id):
@@ -5919,11 +5925,11 @@ class ContestApprovalView(APIView):
             )
 
         profile = request.user.staff_profile
-        
-        # Only HOD can approve contests
-        if profile.role != "hod":
+
+        # Only HOD/Academic Coordinator can approve contests
+        if profile.role not in ("hod", "academics"):
             return Response(
-                {"detail": "Only HOD can approve contests."},
+                {"detail": "Only HOD or Academic Coordinator can approve contests."},
                 status=status.HTTP_403_FORBIDDEN
             )
 
@@ -6038,13 +6044,13 @@ class ContestPublishView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # Check permissions - HOD or contest creator can publish
-        if profile.role == "hod" and contest.department != profile.department:
+        # Check permissions - HOD/Academic Coordinator or contest creator can publish
+        if profile.role in ("hod", "academics") and contest.department != profile.department:
             return Response(
                 {"detail": "You can only publish contests in your department."},
                 status=status.HTTP_403_FORBIDDEN
             )
-        
+
         if profile.role == "staff" and contest.created_by != profile:
             return Response(
                 {"detail": "You can only publish your own contests."},
@@ -6332,11 +6338,17 @@ class StudentContestDetailView(APIView):
 
                 problems_data.append({
                     "id": q.id,
+                    "question_type": q.question_type,
                     "question_text": q.question_text,
+                    "question_image": q.question_image,
                     "option_a": q.option_a,
+                    "option_a_image": q.option_a_image,
                     "option_b": q.option_b,
+                    "option_b_image": q.option_b_image,
                     "option_c": q.option_c,
+                    "option_c_image": q.option_c_image,
                     "option_d": q.option_d,
+                    "option_d_image": q.option_d_image,
                     "explanation": q.explanation,
                     "difficulty": q.difficulty,
                     "is_solved": submission is not None,
@@ -7450,12 +7462,18 @@ class AptitudeQuestionListView(UnifiedAuthMixin, APIView):
                 "id": q.id,
                 "topic": q.topic.title,
                 "topic_id": q.topic.id,
+                "question_type": q.question_type,
                 "question_text": q.question_text,
+                "question_image": q.question_image,
                 "difficulty": q.difficulty,
                 "option_a": q.option_a,
+                "option_a_image": q.option_a_image,
                 "option_b": q.option_b,
+                "option_b_image": q.option_b_image,
                 "option_c": q.option_c,
+                "option_c_image": q.option_c_image,
                 "option_d": q.option_d,
+                "option_d_image": q.option_d_image,
                 # Only staff/HOD building a contest get to see the answer — never
                 # send this to a student, who fetches this same endpoint to take
                 # the quiz itself, or it would leak the answer via the network tab.
@@ -7566,7 +7584,7 @@ class StudentReportPDFView(APIView):
         # Access control
         if student.institution != staff_profile.institution:
             return Response({"detail": "Access denied."}, status=403)
-        if staff_profile.role == 'hod' and student.department != staff_profile.department:
+        if staff_profile.role in ('hod', 'academics') and student.department != staff_profile.department:
             return Response({"detail": "Access denied (Department mismatch)."}, status=403)
 
         report_type = request.GET.get('type', 'overall')
@@ -8542,7 +8560,7 @@ class StaffReportPDFView(APIView):
         target_staff = get_object_or_404(StaffProfile, faculty_id=faculty_id)
 
         # Access control
-        if user_profile.role == 'hod' and target_staff.department != user_profile.department:
+        if user_profile.role in ('hod', 'academics') and target_staff.department != user_profile.department:
             return Response({"detail": "Access denied."}, status=403)
         if target_staff.institution != user_profile.institution:
             return Response({"detail": "Access denied."}, status=403)
@@ -10197,11 +10215,17 @@ class AdminAptitudeBankView(APIView):
             "id": q.id,
             "topic_id": q.topic_id,
             "topic": q.topic.title if q.topic else "",
+            "question_type": q.question_type,
             "question_text": q.question_text,
+            "question_image": q.question_image,
             "option_a": q.option_a,
+            "option_a_image": q.option_a_image,
             "option_b": q.option_b,
+            "option_b_image": q.option_b_image,
             "option_c": q.option_c,
+            "option_c_image": q.option_c_image,
             "option_d": q.option_d,
+            "option_d_image": q.option_d_image,
             "correct_option": q.correct_option,
             "explanation": q.explanation or "",
             "difficulty": q.difficulty,
@@ -10215,10 +10239,15 @@ class AdminAptitudeBankView(APIView):
 
         topic_id = request.data.get("topic_id")
         question_text = (request.data.get("question_text") or "").strip()
+        question_image = (request.data.get("question_image") or "").strip()
         option_a = (request.data.get("option_a") or "").strip()
+        option_a_image = (request.data.get("option_a_image") or "").strip()
         option_b = (request.data.get("option_b") or "").strip()
+        option_b_image = (request.data.get("option_b_image") or "").strip()
         option_c = (request.data.get("option_c") or "").strip()
+        option_c_image = (request.data.get("option_c_image") or "").strip()
         option_d = (request.data.get("option_d") or "").strip()
+        option_d_image = (request.data.get("option_d_image") or "").strip()
         raw_answer = request.data.get("correct_option") or ""
         difficulty = request.data.get("difficulty") or "Easy"
         explanation = request.data.get("explanation") or ""
@@ -10243,14 +10272,21 @@ class AdminAptitudeBankView(APIView):
             }, status=400)
 
         q = AptitudeQuestion.objects.create(
-            topic=topic, question_text=question_text,
-            option_a=option_a, option_b=option_b, option_c=option_c, option_d=option_d,
+            topic=topic, question_text=question_text, question_image=question_image,
+            option_a=option_a, option_a_image=option_a_image,
+            option_b=option_b, option_b_image=option_b_image,
+            option_c=option_c, option_c_image=option_c_image,
+            option_d=option_d, option_d_image=option_d_image,
             correct_option=correct_option, difficulty=difficulty, explanation=explanation,
         )
         return Response({
             "id": q.id, "topic_id": q.topic_id, "topic": topic.title,
-            "question_text": q.question_text,
-            "option_a": q.option_a, "option_b": q.option_b, "option_c": q.option_c, "option_d": q.option_d,
+            "question_type": q.question_type,
+            "question_text": q.question_text, "question_image": q.question_image,
+            "option_a": q.option_a, "option_a_image": q.option_a_image,
+            "option_b": q.option_b, "option_b_image": q.option_b_image,
+            "option_c": q.option_c, "option_c_image": q.option_c_image,
+            "option_d": q.option_d, "option_d_image": q.option_d_image,
             "correct_option": q.correct_option, "explanation": q.explanation, "difficulty": q.difficulty,
         }, status=201)
 
@@ -10281,6 +10317,10 @@ class AdminAptitudeQuestionDetailView(APIView):
                 return Response({"error": "question_text cannot be empty"}, status=400)
             q.question_text = question_text
 
+        question_image = request.data.get("question_image")
+        if question_image is not None:
+            q.question_image = question_image.strip()
+
         for field in ("option_a", "option_b", "option_c", "option_d"):
             val = request.data.get(field)
             if val is not None:
@@ -10288,6 +10328,11 @@ class AdminAptitudeQuestionDetailView(APIView):
                 if not val:
                     return Response({"error": f"{field} cannot be empty"}, status=400)
                 setattr(q, field, val)
+
+        for field in ("option_a_image", "option_b_image", "option_c_image", "option_d_image"):
+            val = request.data.get(field)
+            if val is not None:
+                setattr(q, field, val.strip())
 
         raw_answer = request.data.get("correct_option")
         if raw_answer is not None:
@@ -10312,8 +10357,12 @@ class AdminAptitudeQuestionDetailView(APIView):
         q.save()
         return Response({
             "id": q.id, "topic_id": q.topic_id, "topic": q.topic.title if q.topic else "",
-            "question_text": q.question_text,
-            "option_a": q.option_a, "option_b": q.option_b, "option_c": q.option_c, "option_d": q.option_d,
+            "question_type": q.question_type,
+            "question_text": q.question_text, "question_image": q.question_image,
+            "option_a": q.option_a, "option_a_image": q.option_a_image,
+            "option_b": q.option_b, "option_b_image": q.option_b_image,
+            "option_c": q.option_c, "option_c_image": q.option_c_image,
+            "option_d": q.option_d, "option_d_image": q.option_d_image,
             "correct_option": q.correct_option, "explanation": q.explanation, "difficulty": q.difficulty,
         })
 
@@ -10405,7 +10454,9 @@ class AdminAptitudeBulkUploadView(APIView):
     same column names used by the original load_aptitude.py Excel imports
     (Question / Option A-D / Answer / Level / Explanation) as well as the
     admin form's own field names (question_text / option_a-d /
-    correct_option / difficulty / explanation)."""
+    correct_option / difficulty / explanation). Also accepts the optional
+    Question Type and Question/Option A-D Image columns from the
+    Aptitude Bank Excel Template (image cells hold image URLs)."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
@@ -10470,12 +10521,19 @@ class AdminAptitudeBulkUploadView(APIView):
             if not any(row):
                 continue
             question_text = col(row, "question_text", "question")
+            question_type = col(row, "question_type") or "MCQ"
+            question_image = col(row, "question_image")
             option_a = col(row, "option_a")
+            option_a_image = col(row, "option_a_image")
             option_b = col(row, "option_b")
+            option_b_image = col(row, "option_b_image")
             option_c = col(row, "option_c")
+            option_c_image = col(row, "option_c_image")
             option_d = col(row, "option_d")
+            option_d_image = col(row, "option_d_image")
+            raw_answer = col(row, "correct_option", "answer", "correct_answer")
             raw_difficulty = col(row, "difficulty", "level", "difficulty_level", "diff", "complexity", "tier")
-            
+
             # Robust difficulty parsing for Easy, Medium, Hard
             def _clean_difficulty(raw_val):
                 if not raw_val:
@@ -10513,22 +10571,37 @@ class AdminAptitudeBulkUploadView(APIView):
             q, created = AptitudeQuestion.objects.get_or_create(
                 topic=topic, question_text=question_text,
                 defaults={
-                    "option_a": option_a, "option_b": option_b, "option_c": option_c, "option_d": option_d,
+                    "question_type": question_type, "question_image": question_image,
+                    "option_a": option_a, "option_a_image": option_a_image,
+                    "option_b": option_b, "option_b_image": option_b_image,
+                    "option_c": option_c, "option_c_image": option_c_image,
+                    "option_d": option_d, "option_d_image": option_d_image,
                     "correct_option": correct_option, "difficulty": difficulty, "explanation": explanation,
                 },
             )
             if created:
                 created_count += 1
             else:
+                q.question_type = question_type
+                q.question_image = question_image
                 q.option_a = option_a
+                q.option_a_image = option_a_image
                 q.option_b = option_b
+                q.option_b_image = option_b_image
                 q.option_c = option_c
+                q.option_c_image = option_c_image
                 q.option_d = option_d
+                q.option_d_image = option_d_image
                 q.correct_option = correct_option
                 q.difficulty = difficulty
                 if explanation:
                     q.explanation = explanation
-                q.save(update_fields=['option_a', 'option_b', 'option_c', 'option_d', 'correct_option', 'difficulty', 'explanation'])
+                q.save(update_fields=[
+                    'question_type', 'question_image',
+                    'option_a', 'option_a_image', 'option_b', 'option_b_image',
+                    'option_c', 'option_c_image', 'option_d', 'option_d_image',
+                    'correct_option', 'difficulty', 'explanation',
+                ])
                 created_count += 1
 
         return Response({

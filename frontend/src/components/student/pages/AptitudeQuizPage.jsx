@@ -230,10 +230,10 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
 
   const currentQ = questions[currentIndex] || {};
   const options = currentQ.id ? [
-    { key: 'A', value: currentQ.option_a },
-    { key: 'B', value: currentQ.option_b },
-    { key: 'C', value: currentQ.option_c },
-    { key: 'D', value: currentQ.option_d }
+    { key: 'A', value: currentQ.option_a, image: currentQ.option_a_image },
+    { key: 'B', value: currentQ.option_b, image: currentQ.option_b_image },
+    { key: 'C', value: currentQ.option_c, image: currentQ.option_c_image },
+    { key: 'D', value: currentQ.option_d, image: currentQ.option_d_image }
   ] : [];
 
   const progress = questions.length > 0 ? ((currentIndex + 1) / questions.length) * 100 : 0;
@@ -391,9 +391,17 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
               </span>
             </div>
 
-            <h3 style={{ fontSize: '1.4rem', lineHeight: '1.5', fontWeight: '600', color: 'var(--text-main)', marginBottom: '32px' }}>
+            <h3 style={{ fontSize: '1.4rem', lineHeight: '1.5', fontWeight: '600', color: 'var(--text-main)', marginBottom: currentQ.question_image ? '16px' : '32px' }}>
               <FormattedText text={currentQ.question_text} />
             </h3>
+
+            {currentQ.question_image && (
+              <img
+                src={currentQ.question_image}
+                alt="Question"
+                style={{ maxWidth: '100%', maxHeight: '360px', borderRadius: '12px', marginBottom: '32px', display: 'block' }}
+              />
+            )}
 
             <div style={{ display: 'grid', gap: '12px' }}>
               {options.map((opt) => {
@@ -443,10 +451,15 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
                       fontWeight: '500'
                     }}
                   >
-                    <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', fontWeight: '800', border: '1px solid var(--border-soft)' }}>
+                    <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.9rem', fontWeight: '800', border: '1px solid var(--border-soft)', flexShrink: 0 }}>
                       {opt.key}
                     </div>
-                    <FormattedText text={opt.value} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <FormattedText text={opt.value} />
+                      {opt.image && (
+                        <img src={opt.image} alt={`Option ${opt.key}`} style={{ maxWidth: '100%', maxHeight: '160px', borderRadius: '8px', display: 'block' }} />
+                      )}
+                    </div>
                     <div style={{ marginLeft: 'auto' }}>
                       {revealed && opt.key === result.correct_option && <CheckCircle size={20} color="#22c55e" />}
                       {isSubmitted && selectedOption === opt.key && opt.key !== result.correct_option && <XCircle size={20} color="#ef4444" />}
