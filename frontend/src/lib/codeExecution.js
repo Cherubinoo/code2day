@@ -72,3 +72,47 @@ export async function runCodeExecution({
 
   return payload;
 }
+
+// Free-form execution for the Code Playground — no problem, no grading,
+// just runs whatever source/stdin is given via a separate backend endpoint.
+export async function runPlaygroundCode({ sourceCode, language, stdin = "" }) {
+  const languageId = getLanguageIdForChoice(language);
+
+  if (!languageId) {
+    return {
+      status: "Unsupported Language",
+      stdout: "",
+      stderr: "",
+      compile_output: "",
+      output: `Execution is not available for ${language} yet.`,
+      time: "",
+      memory: "",
+    };
+  }
+
+  const response = await fetch(
+    "/api/playground/run/",
+    buildJsonPostOptions({
+      source_code: sourceCode,
+      language_id: languageId,
+      stdin,
+      language,
+    }),
+  );
+
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) {
+    if (response.status >= 500) {
+      throw new Error("The execution server is temporarily unavailable. Please try again in a moment.");
+    }
+    throw new Error(`Execution failed (HTTP ${response.status}). Please try again.`);
+  }
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(extractApiError(payload, "Execution failed."));
+  }
+
+  return payload;
+}

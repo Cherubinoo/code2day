@@ -741,6 +741,7 @@ export const navItems = [
   { id: "explore",  label: "Explore",   icon: LayoutGrid },
   { id: "roadmaps", label: "Roadmaps",  icon: Map },
   { id: "problems", label: "Problems",  icon: Code2 },
+  { id: "playground", label: "Playground", icon: Terminal },
   { id: "labs",     label: "Labs",      icon: FlaskConical },
   { id: "company",  label: "Companies", icon: Building2 },
   { id: "aptitude", label: "Aptitude",  icon: Brain },

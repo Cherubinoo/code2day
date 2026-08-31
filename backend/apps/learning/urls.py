@@ -61,6 +61,7 @@ from .views import (
     ProblemSessionEndView,
     ProblemsByTopicView,
     CodeRunView,
+    PlaygroundRunView,
     RegisterNumberListView,
     StudentContestDetailView,
     StudentContestListView,
@@ -246,6 +247,7 @@ urlpatterns = [
 
     # Code execution
     path("run/", CodeRunView.as_view(), name="code-run"),
+    path("playground/run/", PlaygroundRunView.as_view(), name="playground-run"),
 
     # Editor bootstrap
     path("editor/bootstrap/", EditorBootstrapView.as_view(), name="editor-bootstrap"),

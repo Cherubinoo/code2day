@@ -34,6 +34,7 @@ export const PAGE_PATHS = {
   explore:       "/",
   roadmaps:      "/roadmaps",
   problems:      "/problems",
+  playground:    "/playground",
   labs:          "/labs",
   contest:       "/contest",
   progress:      "/progress",

@@ -47,6 +47,7 @@ import AptitudePage from "./components/student/pages/AptitudePage";
 import DiscussPage from "./components/student/pages/DiscussPage";
 import ExplorePage from "./components/student/pages/ExplorePage";
 import ProblemsPage from "./components/student/pages/ProblemsPage";
+import PlaygroundPage from "./components/student/pages/PlaygroundPage";
 import CompanyPage from "./components/student/pages/CompanyPage";
 import ProgressPage from "./components/student/pages/ProgressPage";
 import RoadmapsPage from "./components/student/pages/RoadmapsPage";
@@ -1366,6 +1367,9 @@ function App() {
       break;
     case "labs":
       activeView = <LabsPage dashboard={dashboard} />;
+      break;
+    case "playground":
+      activeView = <PlaygroundPage />;
       break;
     case "aptitude":
       activeView = <AptitudePage onToggleWorkspace={setIsInsideWorkspace} />;

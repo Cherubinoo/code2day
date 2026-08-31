@@ -1643,6 +1643,71 @@ class CodeRunView(StudentAuthMixin, APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 
+class PlaygroundRunView(StudentAuthMixin, APIView):
+    """Free-form code execution for the student Code Playground — no
+    problem/test-case grading, no driver-injection rewriting of the
+    source (unlike CodeRunView's LeetCode-style submission flow), and
+    no code-content restrictions beyond the sandbox itself (the
+    executor already runs every submission network-isolated with
+    CPU/memory/pid limits). Rate-limited since there's no natural
+    per-problem request ceiling here."""
+
+    def post(self, request):
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        try:
+            check_rate_limit(request, "playground-run", max_attempts=30, window_seconds=60)
+        except RateLimitExceeded as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            )
+
+        serializer = CodeRunSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        validated = serializer.validated_data
+        stdin = validated.get("stdin", "")
+
+        try:
+            result = execute_judge0_submission(
+                source_code=validated["source_code"],
+                language_id=validated["language_id"],
+                stdin=stdin,
+            )
+        except ExecutorTimeoutError as exc:
+            logger.error("Playground executor timeout: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+        except ExecutorServiceError as exc:
+            logger.error("Playground executor service error: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        except Exception as exc:
+            logger.error("Unexpected playground execution error: %s", exc, exc_info=True)
+            return Response({"detail": f"Execution error: {exc}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        try:
+            ExecutionRecord.objects.create(
+                student=profile,
+                problem=None,
+                language=validated.get("language") or str(validated["language_id"]),
+                language_id=validated["language_id"],
+                source_code=validated["source_code"],
+                stdin=stdin,
+                stdout=result["stdout"],
+                stderr=result["stderr"],
+                compile_output=result["compile_output"],
+                status_description=result["status"],
+                execution_time=str(result["time"] or ""),
+                memory=str(result["memory"] or ""),
+            )
+        except Exception as exc:
+            logger.error("Error creating playground ExecutionRecord: %s", exc, exc_info=True)
+
+        return Response(result, status=status.HTTP_200_OK)
+
+
 @method_decorator(ensure_csrf_cookie, name="dispatch")
 class CampusRankingView(APIView):
     """Get campus-wide student rankings based on problems solved."""
