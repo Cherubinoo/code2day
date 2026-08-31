@@ -796,6 +796,15 @@ function PassageList({ onSelect, onBack }) {
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState('');
 
+  const [showImport, setShowImport] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importLimit, setImportLimit] = useState(20);
+  const [importDifficulty, setImportDifficulty] = useState('Medium');
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState('');
+  const [importResult, setImportResult] = useState(null);
+  const importFileRef = useRef(null);
+
   useEffect(() => { load(); }, []);
 
   async function load() {
@@ -832,6 +841,28 @@ function PassageList({ onSelect, onBack }) {
     }
   }
 
+  async function importSquad() {
+    if (!importFile) { setImportError('Choose a .json file first.'); return; }
+    setImportBusy(true); setImportError(''); setImportResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', importFile);
+      formData.append('limit', String(importLimit));
+      formData.append('difficulty', importDifficulty);
+      const res = await apiFetchForm('/api/admin/v2/reading-passages/import-squad/', formData);
+      const data = await res.json();
+      if (!res.ok) { setImportError(data.error || 'Import failed.'); return; }
+      setImportResult(data);
+      setImportFile(null);
+      if (importFileRef.current) importFileRef.current.value = '';
+      load();
+    } catch {
+      setImportError('Network error during import.');
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   async function deletePassage(p) {
     if (!window.confirm(`Delete "${p.title}" and all ${p.question_count} of its questions? This cannot be undone.`)) return;
     try {
@@ -852,13 +883,55 @@ function PassageList({ onSelect, onBack }) {
           <ArrowLeft size={20} />
         </button>
         <h2 style={{ fontSize: '1.3rem', fontWeight: 900, color: 'var(--olive-950)', margin: 0 }}>Reading Passages</h2>
+        <button onClick={() => { setShowImport((v) => !v); setImportError(''); setImportResult(null); }}
+          style={{ marginLeft: 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
+          <Upload size={16} /> Import SQuAD JSON
+        </button>
         <button onClick={() => { setShowAdd((v) => !v); setAddError(''); }}
-          style={{ marginLeft: 'auto', background: 'var(--olive-900)', border: 'none', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'white', fontWeight: 700 }}>
+          style={{ background: 'var(--olive-900)', border: 'none', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'white', fontWeight: 700 }}>
           <Plus size={16} /> Add Passage
         </button>
       </div>
 
       {error && <div style={{ color: '#dc2626', fontSize: 13, marginBottom: 16 }}>{error}</div>}
+
+      {showImport && (
+        <div style={{ padding: 20, background: 'white', borderRadius: 12, border: '1px solid var(--border-soft)', marginBottom: 20 }}>
+          <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-soft)' }}>
+            Upload a SQuAD-format JSON file (e.g. <code>dev-v1.1.json</code> / <code>train-v1.1.json</code>) —
+            each paragraph becomes a passage, each question becomes an MCQ with distractors drawn from other
+            real answers in the same paragraph. Large files: import in batches using the limit below rather
+            than all at once, to avoid the request timing out.
+          </p>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+            <input ref={importFileRef} type="file" accept=".json"
+              onChange={(e) => setImportFile(e.target.files?.[0] || null)} style={{ fontSize: 13 }} />
+            <label style={{ fontSize: 13, color: 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              Paragraphs:
+              <input type="number" min={1} max={2000} value={importLimit}
+                onChange={(e) => setImportLimit(e.target.value)}
+                style={{ width: 70, padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: 13 }} />
+            </label>
+            <select value={importDifficulty} onChange={(e) => setImportDifficulty(e.target.value)}
+              style={{ padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: 13 }}>
+              <option value="Easy">Easy</option>
+              <option value="Medium">Medium</option>
+              <option value="Hard">Hard</option>
+            </select>
+            <button type="button" onClick={importSquad} disabled={importBusy}
+              style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: 'var(--olive-900)', color: 'white', cursor: importBusy ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+              {importBusy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />} Import
+            </button>
+          </div>
+          {importError && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{importError}</div>}
+          {importResult && (
+            <div style={{ fontSize: 12, color: '#166534', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: 10 }}>
+              Created {importResult.passages_created} passage(s), {importResult.questions_created} question(s).
+              Skipped {importResult.questions_skipped} question(s) without enough distractors.
+            </div>
+          )}
+        </div>
+      )}
 
       {showAdd && (
         <div style={{ padding: 20, background: 'white', borderRadius: 12, border: '1px solid var(--border-soft)', marginBottom: 20 }}>

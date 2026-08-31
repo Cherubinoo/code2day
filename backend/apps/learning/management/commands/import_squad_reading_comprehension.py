@@ -1,15 +1,8 @@
 """
 Import a SQuAD-format JSON file (e.g. train-v1.1.json / dev-v1.1.json) into
-the Reading Comprehension aptitude section — one ReadingPassage per SQuAD
-paragraph, with its questions turned into 4-option MCQs.
-
-SQuAD only gives a correct answer span per question, no wrong options, so
-each question's 3 distractors are drawn from the *other* correct answers
-in the same paragraph (they're real, contextually-plausible text pulled
-from the same passage — just wrong for this specific question). A
-question is skipped if its paragraph doesn't have at least 3 other
-distinct answers to draw from, rather than inventing a low-quality
-distractor.
+the Reading Comprehension aptitude section. See
+apps.learning.services.squad_import for how paragraphs/questions/
+distractors are derived.
 
 This is meant to be run manually, not wired into `migrate`. Defaults to a
 dry run; pass --apply to actually write.
@@ -17,17 +10,18 @@ dry run; pass --apply to actually write.
 Usage:
     python manage.py import_squad_reading_comprehension --file dev-v1.1.json                 # dry run, first 20 paragraphs
     python manage.py import_squad_reading_comprehension --file dev-v1.1.json --limit 100 --apply
+
+The same import is also available to admins from the dashboard (Aptitude
+Bank -> Reading Passages -> Import SQuAD JSON), for datasets small enough
+to upload through the browser without needing server access.
 """
 
 import json
-import random
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from apps.learning.models import AptitudeQuestion, ReadingPassage
-
-OPTION_LETTERS = ["A", "B", "C", "D"]
+from apps.learning.services.squad_import import create_passages_in_db, parse_squad_to_passages
 
 
 class Command(BaseCommand):
@@ -45,7 +39,7 @@ class Command(BaseCommand):
         limit = options["limit"]
         difficulty = options["difficulty"]
         apply_changes = options["apply"]
-        rng = random.Random(options["seed"])
+        seed = options["seed"]
 
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -55,93 +49,23 @@ class Command(BaseCommand):
         except json.JSONDecodeError as exc:
             raise CommandError(f"Not valid JSON: {exc}")
 
-        articles = data.get("data", [])
-        if not articles:
-            raise CommandError("No articles found under a top-level 'data' key — is this a SQuAD v1.1 file?")
+        try:
+            passages, questions_skipped = parse_squad_to_passages(data, limit=limit, difficulty=difficulty, seed=seed)
+        except ValueError as exc:
+            raise CommandError(str(exc))
 
-        self.stdout.write(f"{'APPLYING' if apply_changes else 'DRY RUN'} — scanning up to {limit} paragraph(s) from {len(articles)} article(s).\n")
+        self.stdout.write(f"{'APPLYING' if apply_changes else 'DRY RUN'} — scanning up to {limit} paragraph(s).\n")
+        for p in passages:
+            skipped_here = p["qas_in_paragraph"] - len(p["questions"])
+            self.stdout.write(f"  Passage: {p['title']!r} — {len(p['questions'])} question(s) ({skipped_here} skipped, not enough distractors)")
 
-        passages_created = 0
-        questions_created = 0
-        questions_skipped = 0
-        paragraphs_seen = 0
-
-        with transaction.atomic():
-            for article in articles:
-                article_title = article.get("title", "Untitled").replace("_", " ")
-                for paragraph in article.get("paragraphs", []):
-                    if paragraphs_seen >= limit:
-                        break
-                    paragraphs_seen += 1
-
-                    context = (paragraph.get("context") or "").strip()
-                    qas = paragraph.get("qas", [])
-                    if not context or not qas:
-                        continue
-
-                    # Every distinct correct-answer text in this paragraph —
-                    # the pool distractors get drawn from.
-                    answers_by_qid = {}
-                    for qa in qas:
-                        answers = qa.get("answers") or []
-                        if not answers:
-                            continue
-                        answers_by_qid[qa["id"]] = answers[0]["text"].strip()
-
-                    distinct_answers = list(dict.fromkeys(answers_by_qid.values()))  # de-dup, keep order
-
-                    passage_questions = []
-                    for qa in qas:
-                        qid = qa.get("id")
-                        correct = answers_by_qid.get(qid)
-                        if not correct:
-                            continue
-
-                        distractor_pool = [a for a in distinct_answers if a != correct]
-                        if len(distractor_pool) < 3:
-                            questions_skipped += 1
-                            continue
-
-                        distractors = rng.sample(distractor_pool, 3)
-                        options = distractors + [correct]
-                        rng.shuffle(options)
-                        correct_letter = OPTION_LETTERS[options.index(correct)]
-
-                        passage_questions.append({
-                            "question_text": qa.get("question", "").strip(),
-                            "options": options,
-                            "correct_option": correct_letter,
-                        })
-
-                    if not passage_questions:
-                        continue
-
-                    title = f"{article_title} ({paragraphs_seen})"
-                    self.stdout.write(f"  Passage: {title!r} — {len(passage_questions)} question(s) "
-                                       f"({len(qas) - len(passage_questions)} skipped, not enough distractors)")
-
-                    if apply_changes:
-                        passage = ReadingPassage.objects.create(
-                            title=title, passage_text=context, difficulty=difficulty,
-                        )
-                        for pq in passage_questions:
-                            AptitudeQuestion.objects.create(
-                                passage=passage,
-                                question_type="RC",
-                                question_text=pq["question_text"],
-                                option_a=pq["options"][0], option_b=pq["options"][1],
-                                option_c=pq["options"][2], option_d=pq["options"][3],
-                                correct_option=pq["correct_option"],
-                                difficulty=difficulty,
-                            )
-                    passages_created += 1
-                    questions_created += len(passage_questions)
-
-                if paragraphs_seen >= limit:
-                    break
-
-            if not apply_changes:
-                transaction.set_rollback(True)
+        passages_created = questions_created = 0
+        if apply_changes:
+            with transaction.atomic():
+                passages_created, questions_created = create_passages_in_db(passages)
+        else:
+            passages_created = len(passages)
+            questions_created = sum(len(p["questions"]) for p in passages)
 
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS(

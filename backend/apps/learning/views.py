@@ -88,6 +88,7 @@ from .services.judge0 import (
     Judge0TimeoutError as ExecutorTimeoutError,
     execute_judge0_submission,
 )
+from .services.squad_import import create_passages_in_db, parse_squad_to_passages
 from .services.execution_adapter import (
     normalize_comparable_output,
     prepare_execution_payload,
@@ -10896,6 +10897,59 @@ class AdminReadingPassageDetailView(APIView):
             return Response({"error": "Not found"}, status=404)
         passage.delete()
         return Response(status=204)
+
+
+class AdminReadingPassageSquadImportView(APIView):
+    """System Admin: upload a SQuAD-format JSON file straight from the
+    dashboard and load it into Reading Comprehension passages/questions —
+    the point-and-click equivalent of the import_squad_reading_comprehension
+    management command, for datasets small enough to upload through the
+    browser without needing server access."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response({"error": "No file uploaded."}, status=400)
+        if not upload.name.lower().endswith(".json"):
+            return Response({"error": "Only .json files are supported."}, status=400)
+
+        try:
+            limit = int(request.data.get("limit") or 20)
+        except (TypeError, ValueError):
+            return Response({"error": "limit must be a number."}, status=400)
+        if limit < 1 or limit > 2000:
+            return Response({"error": "limit must be between 1 and 2000 (large batches risk the request timing out — import in smaller runs)."}, status=400)
+
+        difficulty = request.data.get("difficulty") or "Medium"
+        if difficulty not in ("Easy", "Medium", "Hard"):
+            return Response({"error": "difficulty must be Easy, Medium, or Hard"}, status=400)
+
+        import json
+        try:
+            data = json.loads(upload.read().decode("utf-8"))
+        except UnicodeDecodeError:
+            return Response({"error": "File is not valid UTF-8 text."}, status=400)
+        except json.JSONDecodeError as exc:
+            return Response({"error": f"Not valid JSON: {exc}"}, status=400)
+
+        try:
+            passages, questions_skipped = parse_squad_to_passages(data, limit=limit, difficulty=difficulty)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
+
+        with transaction.atomic():
+            passages_created, questions_created = create_passages_in_db(passages)
+
+        return Response({
+            "passages_created": passages_created,
+            "questions_created": questions_created,
+            "questions_skipped": questions_skipped,
+            "passages": [{"title": p["title"], "question_count": len(p["questions"])} for p in passages],
+        }, status=201)
 
 
 class InstitutionBrandingPreviewView(APIView):
