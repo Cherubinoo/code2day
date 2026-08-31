@@ -1,0 +1,22 @@
+# SQL Support Fix for Judge0
+# Fixes the SQLite permission denied errors by updating the SQL executor
+
+FROM code2day-judge0:cgv2
+
+USER root
+
+# Update the SQL language configuration to use in-memory database
+# This fixes "access permission denied" errors when executing SQL
+RUN cd /api && sed -i \
+  's|sqlite3 db.sqlite|sqlite3 :memory:|g' \
+  /api/db/languages/active.rb
+
+# Verify the fix was applied
+RUN grep -A 2 "id: 82" /api/db/languages/active.rb
+
+# Switch back to judge0 user
+USER judge0
+
+# Keep original entrypoint
+ENTRYPOINT ["/api/docker-entrypoint.sh"]
+CMD ["/api/scripts/server"]
