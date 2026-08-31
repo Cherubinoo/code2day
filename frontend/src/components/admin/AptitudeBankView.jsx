@@ -815,10 +815,12 @@ function TopicQuestionsManager({ topic, onBack }) {
 
 function PassageList({ onSelect, onBack }) {
   const [passages, setPassages] = useState([]);
+  const [topicOptions, setTopicOptions] = useState([]);
+  const [topicFilter, setTopicFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showAdd, setShowAdd] = useState(false);
-  const [newPassage, setNewPassage] = useState({ title: '', passage_text: '', difficulty: 'Medium' });
+  const [newPassage, setNewPassage] = useState({ title: '', passage_text: '', difficulty: 'Medium', topic_id: '' });
   const [addBusy, setAddBusy] = useState(false);
   const [addError, setAddError] = useState('');
 
@@ -826,17 +828,19 @@ function PassageList({ onSelect, onBack }) {
   const [importFile, setImportFile] = useState(null);
   const [importLimit, setImportLimit] = useState(20);
   const [importDifficulty, setImportDifficulty] = useState('Medium');
+  const [importTopicId, setImportTopicId] = useState('');
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState('');
   const [importResult, setImportResult] = useState(null);
   const importFileRef = useRef(null);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadTopics(); }, [topicFilter]);
 
   async function load() {
     setLoading(true); setError('');
     try {
-      const res = await apiFetch('/api/admin/v2/reading-passages/', 'GET');
+      const qs = topicFilter ? `?topic_id=${topicFilter}` : '';
+      const res = await apiFetch(`/api/admin/v2/reading-passages/${qs}`, 'GET');
       if (!res.ok) throw new Error('Failed to load passages');
       const data = await res.json();
       setPassages(data.passages || []);
@@ -845,6 +849,15 @@ function PassageList({ onSelect, onBack }) {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function loadTopics() {
+    try {
+      const res = await apiFetch('/api/aptitude/topics/', 'GET');
+      if (!res.ok) return;
+      const data = await res.json();
+      setTopicOptions(flattenTopics(data.categories));
+    } catch { /* non-fatal */ }
   }
 
   async function createPassage() {
@@ -859,7 +872,7 @@ function PassageList({ onSelect, onBack }) {
       if (!res.ok) { setAddError(data.error || 'Failed to create passage.'); return; }
       setPassages((prev) => [data, ...prev]);
       setShowAdd(false);
-      setNewPassage({ title: '', passage_text: '', difficulty: 'Medium' });
+      setNewPassage({ title: '', passage_text: '', difficulty: 'Medium', topic_id: '' });
     } catch {
       setAddError('Network error.');
     } finally {
@@ -875,6 +888,7 @@ function PassageList({ onSelect, onBack }) {
       formData.append('file', importFile);
       formData.append('limit', String(importLimit));
       formData.append('difficulty', importDifficulty);
+      if (importTopicId) formData.append('topic_id', importTopicId);
       const res = await apiFetchForm('/api/admin/v2/reading-passages/import-squad/', formData);
       const data = await res.json();
       if (!res.ok) { setImportError(data.error || 'Import failed.'); return; }
@@ -900,7 +914,8 @@ function PassageList({ onSelect, onBack }) {
     }
   }
 
-  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}><Loader2 size={20} className="spin" /></div>;
+  const diffColor = (d) => (d === 'Easy' ? '#166534' : d === 'Medium' ? '#92400e' : '#991b1b');
+  const diffBg = (d) => (d === 'Easy' ? '#dcfce7' : d === 'Medium' ? '#fef3c7' : '#fee2e2');
 
   return (
     <div className="animate-fade-in">
@@ -909,6 +924,11 @@ function PassageList({ onSelect, onBack }) {
           <ArrowLeft size={20} />
         </button>
         <h2 style={{ fontSize: '1.3rem', fontWeight: 900, color: 'var(--olive-950)', margin: 0 }}>Reading Passages</h2>
+        <select value={topicFilter} onChange={(e) => setTopicFilter(e.target.value)}
+          style={{ padding: '8px 12px', borderRadius: 10, border: '1px solid var(--border-soft)', fontSize: 13, color: 'var(--olive-900)' }}>
+          <option value="">All topics</option>
+          {topicOptions.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+        </select>
         <button onClick={() => { setShowImport((v) => !v); setImportError(''); setImportResult(null); }}
           style={{ marginLeft: 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
           <Upload size={16} /> Import SQuAD JSON
@@ -944,6 +964,11 @@ function PassageList({ onSelect, onBack }) {
               <option value="Medium">Medium</option>
               <option value="Hard">Hard</option>
             </select>
+            <select value={importTopicId} onChange={(e) => setImportTopicId(e.target.value)}
+              style={{ padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: 13 }}>
+              <option value="">No topic (unfiled)</option>
+              {topicOptions.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
             <button type="button" onClick={importSquad} disabled={importBusy}
               style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: 'var(--olive-900)', color: 'white', cursor: importBusy ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
               {importBusy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />} Import
@@ -967,12 +992,19 @@ function PassageList({ onSelect, onBack }) {
           <textarea placeholder="Passage text" value={newPassage.passage_text} rows={6}
             onChange={(e) => setNewPassage((p) => ({ ...p, passage_text: e.target.value }))}
             style={{ width: '100%', padding: 10, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13, marginBottom: 10, boxSizing: 'border-box' }} />
-          <select value={newPassage.difficulty} onChange={(e) => setNewPassage((p) => ({ ...p, difficulty: e.target.value }))}
-            style={{ padding: 10, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13, marginBottom: 12 }}>
-            <option value="Easy">Easy</option>
-            <option value="Medium">Medium</option>
-            <option value="Hard">Hard</option>
-          </select>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+            <select value={newPassage.difficulty} onChange={(e) => setNewPassage((p) => ({ ...p, difficulty: e.target.value }))}
+              style={{ padding: 10, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13 }}>
+              <option value="Easy">Easy</option>
+              <option value="Medium">Medium</option>
+              <option value="Hard">Hard</option>
+            </select>
+            <select value={newPassage.topic_id} onChange={(e) => setNewPassage((p) => ({ ...p, topic_id: e.target.value }))}
+              style={{ padding: 10, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: 13, flex: 1 }}>
+              <option value="">No topic (unfiled)</option>
+              {topicOptions.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
+          </div>
           {addError && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{addError}</div>}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button type="button" onClick={() => setShowAdd(false)} style={{ padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>Cancel</button>
@@ -984,19 +1016,31 @@ function PassageList({ onSelect, onBack }) {
         </div>
       )}
 
-      {passages.length === 0 ? (
-        <p style={{ color: 'var(--text-soft)', textAlign: 'center', padding: 40 }}>No passages yet — add one, or run the SQuAD import management command.</p>
+      {loading ? (
+        <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}><Loader2 size={20} className="spin" /></div>
+      ) : passages.length === 0 ? (
+        <p style={{ color: 'var(--text-soft)', textAlign: 'center', padding: 40 }}>No passages yet — add one, or import a SQuAD JSON file.</p>
       ) : (
-        <div style={{ display: 'grid', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
           {passages.map((p) => (
-            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 16, padding: 16, background: 'white', borderRadius: 14, border: '1px solid var(--border-soft)' }}>
-              <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => onSelect(p.id, p.title)}>
-                <div style={{ fontWeight: 700, color: 'var(--olive-900)' }}>{p.title}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-soft)', marginTop: 2 }}>{p.question_count} question(s) · {p.difficulty}</div>
+            <div key={p.id} style={{
+              background: 'white', borderRadius: 18, border: '1px solid var(--border-soft)', padding: 18,
+              cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 10, position: 'relative',
+            }} onClick={() => onSelect(p.id, p.title)}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <span style={{ background: diffBg(p.difficulty), color: diffColor(p.difficulty), padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
+                  {p.difficulty}
+                </span>
+                <button onClick={(e) => { e.stopPropagation(); deletePassage(p); }} title="Delete passage"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 2 }}>
+                  <Trash2 size={15} />
+                </button>
               </div>
-              <button onClick={() => deletePassage(p)} style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, padding: 8, cursor: 'pointer', color: '#dc2626' }}>
-                <Trash2 size={16} />
-              </button>
+              <div style={{ fontWeight: 800, color: 'var(--olive-950)', fontSize: 15, lineHeight: 1.3 }}>{p.title}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>
+                {p.question_count} question{p.question_count !== 1 ? 's' : ''}
+                {p.topic ? ` · ${p.topic}` : ' · Unfiled'}
+              </div>
             </div>
           ))}
         </div>

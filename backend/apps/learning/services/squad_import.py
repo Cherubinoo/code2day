@@ -106,18 +106,19 @@ def parse_squad_to_passages(data, limit=20, difficulty="Medium", seed=42):
     return passages, questions_skipped
 
 
-def create_passages_in_db(passages):
+def create_passages_in_db(passages, topic=None):
     """Persist a `passages` list (from parse_squad_to_passages) as
-    ReadingPassage + AptitudeQuestion rows. Returns (passages_created,
-    questions_created). Caller is responsible for wrapping in a
-    transaction if atomicity across the whole batch is desired."""
+    ReadingPassage + AptitudeQuestion rows, optionally filed under an
+    AptitudeTopic. Returns (passages_created, questions_created). Caller
+    is responsible for wrapping in a transaction if atomicity across the
+    whole batch is desired."""
     from apps.learning.models import AptitudeQuestion, ReadingPassage
 
     passages_created = 0
     questions_created = 0
     for p in passages:
         passage = ReadingPassage.objects.create(
-            title=p["title"], passage_text=p["passage_text"], difficulty=p["difficulty"],
+            title=p["title"], passage_text=p["passage_text"], difficulty=p["difficulty"], topic=topic,
         )
         for pq in p["questions"]:
             AptitudeQuestion.objects.create(

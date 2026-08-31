@@ -10833,11 +10833,16 @@ class AdminReadingPassageListCreateView(APIView):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
-        passages = ReadingPassage.objects.annotate(question_count=Count("questions")).order_by("-id")
+        passages = ReadingPassage.objects.select_related("topic").annotate(question_count=Count("questions")).order_by("-id")
+        topic_id = request.query_params.get("topic_id")
+        if topic_id:
+            passages = passages.filter(topic_id=topic_id)
         data = [{
             "id": p.id,
             "title": p.title,
             "passage_text": p.passage_text,
+            "topic_id": p.topic_id,
+            "topic": p.topic.title if p.topic else "",
             "difficulty": p.difficulty,
             "question_count": p.question_count,
         } for p in passages]
@@ -10850,6 +10855,7 @@ class AdminReadingPassageListCreateView(APIView):
         title = (request.data.get("title") or "").strip()
         passage_text = (request.data.get("passage_text") or "").strip()
         difficulty = request.data.get("difficulty") or "Medium"
+        topic_id = request.data.get("topic_id")
 
         if not title:
             return Response({"error": "title is required"}, status=400)
@@ -10858,9 +10864,16 @@ class AdminReadingPassageListCreateView(APIView):
         if difficulty not in ("Easy", "Medium", "Hard"):
             return Response({"error": "difficulty must be Easy, Medium, or Hard"}, status=400)
 
-        passage = ReadingPassage.objects.create(title=title, passage_text=passage_text, difficulty=difficulty)
+        topic = None
+        if topic_id:
+            topic = AptitudeTopic.objects.filter(id=topic_id).first()
+            if not topic:
+                return Response({"error": "Topic not found"}, status=404)
+
+        passage = ReadingPassage.objects.create(title=title, passage_text=passage_text, difficulty=difficulty, topic=topic)
         return Response({
             "id": passage.id, "title": passage.title, "passage_text": passage.passage_text,
+            "topic_id": passage.topic_id, "topic": topic.title if topic else "",
             "difficulty": passage.difficulty, "question_count": 0,
         }, status=201)
 
@@ -10897,9 +10910,20 @@ class AdminReadingPassageDetailView(APIView):
                 return Response({"error": "difficulty must be Easy, Medium, or Hard"}, status=400)
             passage.difficulty = difficulty
 
+        if "topic_id" in request.data:
+            topic_id = request.data.get("topic_id")
+            if topic_id:
+                topic = AptitudeTopic.objects.filter(id=topic_id).first()
+                if not topic:
+                    return Response({"error": "Topic not found"}, status=404)
+                passage.topic = topic
+            else:
+                passage.topic = None
+
         passage.save()
         return Response({
             "id": passage.id, "title": passage.title, "passage_text": passage.passage_text,
+            "topic_id": passage.topic_id, "topic": passage.topic.title if passage.topic else "",
             "difficulty": passage.difficulty,
         })
 
@@ -10943,6 +10967,13 @@ class AdminReadingPassageSquadImportView(APIView):
         if difficulty not in ("Easy", "Medium", "Hard"):
             return Response({"error": "difficulty must be Easy, Medium, or Hard"}, status=400)
 
+        topic = None
+        topic_id = request.data.get("topic_id")
+        if topic_id:
+            topic = AptitudeTopic.objects.filter(id=topic_id).first()
+            if not topic:
+                return Response({"error": "Topic not found"}, status=404)
+
         import json
         try:
             data = json.loads(upload.read().decode("utf-8"))
@@ -10957,7 +10988,7 @@ class AdminReadingPassageSquadImportView(APIView):
             return Response({"error": str(exc)}, status=400)
 
         with transaction.atomic():
-            passages_created, questions_created = create_passages_in_db(passages)
+            passages_created, questions_created = create_passages_in_db(passages, topic=topic)
 
         return Response({
             "passages_created": passages_created,

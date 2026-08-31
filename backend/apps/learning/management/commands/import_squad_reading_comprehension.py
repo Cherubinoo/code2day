@@ -33,6 +33,7 @@ class Command(BaseCommand):
         parser.add_argument("--difficulty", default="Medium", choices=["Easy", "Medium", "Hard"], help="Difficulty to assign to every imported question (default: Medium).")
         parser.add_argument("--apply", action="store_true", help="Actually write the changes. Without this flag, only a preview is printed.")
         parser.add_argument("--seed", type=int, default=42, help="Random seed for shuffling distractors/options (default: 42, for reproducible imports).")
+        parser.add_argument("--topic-id", type=int, default=None, help="AptitudeTopic id to file every imported passage under (optional — passages can also be left unfiled/topicless).")
 
     def handle(self, *args, **options):
         file_path = options["file"]
@@ -40,6 +41,14 @@ class Command(BaseCommand):
         difficulty = options["difficulty"]
         apply_changes = options["apply"]
         seed = options["seed"]
+        topic_id = options["topic_id"]
+
+        topic = None
+        if topic_id:
+            from apps.learning.models import AptitudeTopic
+            topic = AptitudeTopic.objects.filter(id=topic_id).first()
+            if not topic:
+                raise CommandError(f"No AptitudeTopic with id={topic_id}")
 
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -62,7 +71,7 @@ class Command(BaseCommand):
         passages_created = questions_created = 0
         if apply_changes:
             with transaction.atomic():
-                passages_created, questions_created = create_passages_in_db(passages)
+                passages_created, questions_created = create_passages_in_db(passages, topic=topic)
         else:
             passages_created = len(passages)
             questions_created = sum(len(p["questions"]) for p in passages)

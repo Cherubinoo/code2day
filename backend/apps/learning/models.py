@@ -507,9 +507,13 @@ class ReadingPassage(models.Model):
     """A passage of text for the Reading Comprehension aptitude section —
     students read the passage, then answer several MCQ questions tied to
     it (AptitudeQuestion.passage), reusing the same question/answer/
-    grading machinery as every other aptitude question."""
+    grading machinery as every other aptitude question. Optionally filed
+    under a node in the same Category > Topic tree as regular aptitude
+    questions, so passages can be organized/browsed alongside them
+    instead of only as one flat list."""
     title = models.CharField(max_length=255)
     passage_text = models.TextField()
+    topic = models.ForeignKey(AptitudeTopic, on_delete=models.SET_NULL, related_name='reading_passages', null=True, blank=True)
     difficulty = models.CharField(max_length=20, choices=(('Easy', 'Easy'), ('Medium', 'Medium'), ('Hard', 'Hard')), default='Medium')
     created_at = models.DateTimeField(auto_now_add=True)
 
