@@ -1,0 +1,56 @@
+version: "3.8"
+
+services:
+  judge0-db:
+    image: postgres:13
+    container_name: judge0-db
+    environment:
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: code2dayJudge2024
+    volumes:
+      - judge0-db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  judge0-redis:
+    image: redis:6
+    container_name: judge0-redis
+    restart: unless-stopped
+
+  judge0-server:
+    image: code2day-judge0:sql-fixed
+    container_name: judge0-server
+    depends_on:
+      - judge0-db
+      - judge0-redis
+    environment:
+      POSTGRES_HOST: judge0-db
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: code2dayJudge2024
+      REDIS_HOST: judge0-redis
+      REDIS_PASSWORD: code2dayRedis2024
+    ports:
+      - "2358:2358"
+    privileged: true
+    restart: unless-stopped
+
+  judge0-workers:
+    image: code2day-judge0:sql-fixed
+    container_name: judge0-workers
+    command: /api/scripts/workers
+    depends_on:
+      - judge0-db
+      - judge0-redis
+    environment:
+      POSTGRES_HOST: judge0-db
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: code2dayJudge2024
+      REDIS_HOST: judge0-redis
+      REDIS_PASSWORD: code2dayRedis2024
+    privileged: true
+    restart: unless-stopped
+
+volumes:
+  judge0-db-data:
