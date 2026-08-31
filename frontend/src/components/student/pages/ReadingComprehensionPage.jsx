@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
+import { buildJsonPostOptions } from '../../../lib/appUtils';
 
 function PassageList({ onSelect }) {
   const [passages, setPassages] = useState([]);
@@ -85,12 +86,9 @@ function QuestionCard({ question, index }) {
     setSelected(optionKey);
     setBusy(true);
     try {
-      const res = await fetch('/api/aptitude/questions/submit/', {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question_id: question.id, selected_option: optionKey }),
-      });
+      const res = await fetch('/api/aptitude/questions/submit/', buildJsonPostOptions({
+        question_id: question.id, selected_option: optionKey,
+      }));
       const data = await res.json();
       setResult(data);
     } catch {
