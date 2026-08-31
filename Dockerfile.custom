@@ -44,8 +44,14 @@ RUN echo "Custom Judge0 with packages - Built $(date)" > /custom-packages-instal
 RUN echo "=== Python Packages ===" && python3 -m pip list || true
 RUN echo "=== Node.js Packages ===" && npm list -g --depth=0 || true
 
-# Switch back to judge0 user for security
-USER judge0
+# Stay on root. Judge0's isolate sandbox needs root to manage per-submission
+# cgroups/namespaces and box-directory permissions — switching to a
+# non-root user here (as this image used to, "for security") breaks
+# exactly the kind of operation that needs to CREATE a new file with
+# specific permissions inside the box, e.g. SQLite creating its database
+# file, which is why every SQL statement failed with "access permission
+# denied" while other languages mostly limped along. The official
+# judge0/judge0 base image already runs as root for this reason.
 
 # Keep the original Judge0 entrypoint
 # No need to override CMD or ENTRYPOINT
