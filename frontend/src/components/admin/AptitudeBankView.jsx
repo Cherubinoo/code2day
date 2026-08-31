@@ -827,6 +827,7 @@ function PassageList({ onSelect, onBack }) {
   const [showImport, setShowImport] = useState(false);
   const [importFile, setImportFile] = useState(null);
   const [importLimit, setImportLimit] = useState(20);
+  const [importQuestionsPerPassage, setImportQuestionsPerPassage] = useState(10);
   const [importDifficulty, setImportDifficulty] = useState('Medium');
   const [importTopicId, setImportTopicId] = useState('');
   const [importBusy, setImportBusy] = useState(false);
@@ -880,16 +881,17 @@ function PassageList({ onSelect, onBack }) {
     }
   }
 
-  async function importSquad() {
-    if (!importFile) { setImportError('Choose a .json file first.'); return; }
+  async function importQADataset() {
+    if (!importFile) { setImportError('Choose a .xlsx file first.'); return; }
     setImportBusy(true); setImportError(''); setImportResult(null);
     try {
       const formData = new FormData();
       formData.append('file', importFile);
       formData.append('limit', String(importLimit));
+      formData.append('questions_per_passage', String(importQuestionsPerPassage));
       formData.append('difficulty', importDifficulty);
       if (importTopicId) formData.append('topic_id', importTopicId);
-      const res = await apiFetchForm('/api/admin/v2/reading-passages/import-squad/', formData);
+      const res = await apiFetchForm('/api/admin/v2/reading-passages/import-qa/', formData);
       const data = await res.json();
       if (!res.ok) { setImportError(data.error || 'Import failed.'); return; }
       setImportResult(data);
@@ -931,7 +933,7 @@ function PassageList({ onSelect, onBack }) {
         </select>
         <button onClick={() => { setShowImport((v) => !v); setImportError(''); setImportResult(null); }}
           style={{ marginLeft: 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
-          <Upload size={16} /> Import SQuAD JSON
+          <Upload size={16} /> Import Reading Q&A Excel
         </button>
         <button onClick={() => { setShowAdd((v) => !v); setAddError(''); }}
           style={{ background: 'var(--olive-900)', border: 'none', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'white', fontWeight: 700 }}>
@@ -944,18 +946,26 @@ function PassageList({ onSelect, onBack }) {
       {showImport && (
         <div style={{ padding: 20, background: 'white', borderRadius: 12, border: '1px solid var(--border-soft)', marginBottom: 20 }}>
           <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--text-soft)' }}>
-            Upload a SQuAD-format JSON file (e.g. <code>dev-v1.1.json</code> / <code>train-v1.1.json</code>) —
-            each paragraph becomes a passage, each question becomes an MCQ with distractors drawn from other
-            real answers in the same paragraph. Large files: import in batches using the limit below rather
-            than all at once, to avoid the request timing out.
+            Upload the merged reading QA dataset (.xlsx with a "Reading Passages" sheet and a
+            "Questions & Answers" sheet) — each row in the first sheet becomes one passage, and a
+            capped number of its questions (source data can have hundreds per passage) becomes MCQs
+            with distractors drawn from other real answers under the same passage. Large files:
+            import in batches using the limit below rather than all at once, to avoid the request
+            timing out.
           </p>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-            <input ref={importFileRef} type="file" accept=".json"
+            <input ref={importFileRef} type="file" accept=".xlsx,.xls"
               onChange={(e) => setImportFile(e.target.files?.[0] || null)} style={{ fontSize: 13 }} />
             <label style={{ fontSize: 13, color: 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              Paragraphs:
-              <input type="number" min={1} max={2000} value={importLimit}
+              Passages:
+              <input type="number" min={1} max={500} value={importLimit}
                 onChange={(e) => setImportLimit(e.target.value)}
+                style={{ width: 70, padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: 13 }} />
+            </label>
+            <label style={{ fontSize: 13, color: 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              Questions/passage:
+              <input type="number" min={1} max={100} value={importQuestionsPerPassage}
+                onChange={(e) => setImportQuestionsPerPassage(e.target.value)}
                 style={{ width: 70, padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: 13 }} />
             </label>
             <select value={importDifficulty} onChange={(e) => setImportDifficulty(e.target.value)}
@@ -969,7 +979,7 @@ function PassageList({ onSelect, onBack }) {
               <option value="">No topic (unfiled)</option>
               {topicOptions.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
             </select>
-            <button type="button" onClick={importSquad} disabled={importBusy}
+            <button type="button" onClick={importQADataset} disabled={importBusy}
               style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: 'var(--olive-900)', color: 'white', cursor: importBusy ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
               {importBusy ? <Loader2 size={13} className="spin" /> : <Upload size={13} />} Import
             </button>
@@ -1019,7 +1029,7 @@ function PassageList({ onSelect, onBack }) {
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: '#9ca3af' }}><Loader2 size={20} className="spin" /></div>
       ) : passages.length === 0 ? (
-        <p style={{ color: 'var(--text-soft)', textAlign: 'center', padding: 40 }}>No passages yet — add one, or import a SQuAD JSON file.</p>
+        <p style={{ color: 'var(--text-soft)', textAlign: 'center', padding: 40 }}>No passages yet — add one, or import a reading QA Excel file.</p>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
           {passages.map((p) => (

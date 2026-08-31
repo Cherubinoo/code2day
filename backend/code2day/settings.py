@@ -219,8 +219,8 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
-# Admin-only bulk dataset uploads (e.g. SQuAD-format Reading Comprehension
-# import) can be tens of MB — raise Django's 2.5MB default for this.
+# Admin-only bulk dataset uploads (e.g. the Reading Comprehension QA
+# dataset import) can be tens of MB — raise Django's 2.5MB default for this.
 DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
 FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
 

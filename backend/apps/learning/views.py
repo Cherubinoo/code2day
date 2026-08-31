@@ -89,7 +89,7 @@ from .services.judge0 import (
     Judge0TimeoutError as ExecutorTimeoutError,
     execute_judge0_submission,
 )
-from .services.squad_import import create_passages_in_db, parse_squad_to_passages
+from .services.reading_qa_import import create_passages_in_db, parse_workbook_to_passages
 from .services.execution_adapter import (
     normalize_comparable_output,
     prepare_execution_payload,
@@ -10939,10 +10939,11 @@ class AdminReadingPassageDetailView(APIView):
         return Response(status=204)
 
 
-class AdminReadingPassageSquadImportView(APIView):
-    """System Admin: upload a SQuAD-format JSON file straight from the
+class AdminReadingPassageQAImportView(APIView):
+    """System Admin: upload the merged reading QA dataset Excel file
+    (sheets "Reading Passages" + "Questions & Answers") straight from the
     dashboard and load it into Reading Comprehension passages/questions —
-    the point-and-click equivalent of the import_squad_reading_comprehension
+    the point-and-click equivalent of the import_reading_qa_dataset
     management command, for datasets small enough to upload through the
     browser without needing server access."""
     permission_classes = [IsAuthenticated]
@@ -10954,15 +10955,22 @@ class AdminReadingPassageSquadImportView(APIView):
         upload = request.FILES.get("file")
         if not upload:
             return Response({"error": "No file uploaded."}, status=400)
-        if not upload.name.lower().endswith(".json"):
-            return Response({"error": "Only .json files are supported."}, status=400)
+        if not upload.name.lower().endswith((".xlsx", ".xls")):
+            return Response({"error": "Only .xlsx or .xls files are supported."}, status=400)
 
         try:
             limit = int(request.data.get("limit") or 20)
         except (TypeError, ValueError):
             return Response({"error": "limit must be a number."}, status=400)
-        if limit < 1 or limit > 2000:
-            return Response({"error": "limit must be between 1 and 2000 (large batches risk the request timing out — import in smaller runs)."}, status=400)
+        if limit < 1 or limit > 500:
+            return Response({"error": "limit must be between 1 and 500 (large batches risk the request timing out — import in smaller runs)."}, status=400)
+
+        try:
+            questions_per_passage = int(request.data.get("questions_per_passage") or 10)
+        except (TypeError, ValueError):
+            return Response({"error": "questions_per_passage must be a number."}, status=400)
+        if questions_per_passage < 1 or questions_per_passage > 100:
+            return Response({"error": "questions_per_passage must be between 1 and 100."}, status=400)
 
         difficulty = request.data.get("difficulty") or "Medium"
         if difficulty not in ("Easy", "Medium", "Hard"):
@@ -10975,16 +10983,16 @@ class AdminReadingPassageSquadImportView(APIView):
             if not topic:
                 return Response({"error": "Topic not found"}, status=404)
 
-        import json
         try:
-            data = json.loads(upload.read().decode("utf-8"))
-        except UnicodeDecodeError:
-            return Response({"error": "File is not valid UTF-8 text."}, status=400)
-        except json.JSONDecodeError as exc:
-            return Response({"error": f"Not valid JSON: {exc}"}, status=400)
+            import openpyxl
+            wb = openpyxl.load_workbook(upload, data_only=True)
+        except Exception as exc:
+            return Response({"error": f"Could not read workbook: {exc}"}, status=400)
 
         try:
-            passages, questions_skipped = parse_squad_to_passages(data, limit=limit, difficulty=difficulty)
+            passages, questions_skipped = parse_workbook_to_passages(
+                wb, limit=limit, questions_per_passage=questions_per_passage, difficulty=difficulty,
+            )
         except ValueError as exc:
             return Response({"error": str(exc)}, status=400)
 
