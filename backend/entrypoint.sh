@@ -43,7 +43,7 @@ echo ""
 exec gunicorn code2day.wsgi:application \
     --bind 0.0.0.0:8000 \
     --workers 12 \
-    --timeout 120 \
+    --timeout 300 \
     --max-requests 1000 \
     --max-requests-jitter 100 \
     --access-logfile - \
