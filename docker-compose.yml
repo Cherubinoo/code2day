@@ -27,7 +27,5 @@ services:
 networks:
   code2day-shared:
     name: code2day-shared
-  dokploy-network:
-    external: true
 
-# webhook auto-deploy verification test 3
+# webhook auto-deploy verification test 4
