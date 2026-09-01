@@ -34,6 +34,15 @@
 13. [Screenshots](#13-screenshots)
 14. [Security Notes](#14-security-notes)
 15. [Contributing](#15-contributing)
+16. [Recent Platform Additions](#16-recent-platform-additions)
+    - [Labs Module (Lab V2)](#161-labs-module-lab-v2)
+    - [Code Playground](#162-code-playground)
+    - [Combined Contests](#163-combined-contests-coding--aptitude--reading)
+    - [Aptitude — Google Drive Import & Local Image Cache](#164-aptitude--google-drive-question-import--local-image-cache)
+    - [Institution Module Lock System](#165-institution-module-lock-system)
+    - [Interview Practice](#166-interview-practice)
+    - [Discuss Forum Fixes](#167-discuss-forum--section-chat--unread-badges)
+    - [System Updates Overlay](#168-system-updates--dashboard-overlay)
 
 ---
 
@@ -1313,6 +1322,98 @@ Open a Pull Request against `main`. Ensure all automated build checks pass befor
 3. Export the view class from `urls.py`'s import block.
 4. If the endpoint changes a model, write and apply the migration.
 5. Document the new endpoint in this README under the appropriate role section.
+
+---
+
+## 16. Recent Platform Additions
+
+This section documents features added after the initial platform build, in the same level of detail as the rest of this document. Where a feature extends something already described above (e.g. the Contest system or the Aptitude module), treat this section as the authoritative, up-to-date version.
+
+### 16.1 Labs Module (Lab V2)
+
+A structured practical-lab system, separate from the general Problem bank, built for HOD-approved, staff-run lab sessions with anti-cheat controls. Routed under `/api/lab/v2/*`.
+
+**`Lab` model** — one record per lab session:
+
+| Field | Purpose |
+|---|---|
+| `lab_type` | `practical` (standard lab), `company` (tied 1:1 to a `Company` record — "Company Based Lab Practical"), or `university` (linked back to a source lab via a self-referential `linked_lab` FK) |
+| `department`, `batch`, `section` | Scope — who the lab is for |
+| `staff_in_charge`, `created_by` | Staff ownership |
+| `approval_status` | `pending_approval` → `approved` / `rejected` (HOD gate, mirrors the Contest approval workflow) |
+| `is_published`, `is_active`, `is_expired` (property, `now() > end_date`) | Visibility/lifecycle |
+| `allowed_languages` | JSON list, defaults to `["Python", "C", "C++", "Java"]` |
+| `pass_threshold_percent` | Minimum % of an exercise's test cases that must pass for a submission to count as accepted (default 70) |
+| `enable_tab_switch_check` / `max_tab_switches`, `enable_fullscreen_lock`, `enable_copy_paste_lock` | Anti-cheat toggles, staff-configurable per lab |
+
+**Supporting models**: `LabExercise` (a problem statement added by staff, with an optional LLM-generated `explanation` of the approach), `LabExerciseTestCase`, `LabExerciseSubmission` (per-student, unique per exercise+student, stores `passed_cases`/`total_cases`/`test_results`), `LabExerciseReport` (generates a formal "lab record" PDF — Exp No / Aim / Algorithm / Program / Output / Result — snapshotted at generation time so it doesn't change if the submission is edited later), `LabStudentSession` (anti-cheat state per student: `is_locked`, `tab_switch_count`, `lock_reason`, plus `allocated_exercises` for per-student question allocation).
+
+**Workflow**: HOD creates/approves a lab → staff adds exercises (manually, or LLM-assisted test-case/explanation generation) → staff publishes and assigns batches → students run/submit exercises inside a locked-down workspace → staff can allocate different exercise subsets to different students, unlock a student who tripped the tab-switch/fullscreen guard, and pull a full-lab or per-student PDF report.
+
+> Note: an older, separate DSA-topic-bucketed lab system (`LabTopic` / `LabProblem` / `LabAssignment`) also exists in the codebase as a distinct, earlier feature — not to be confused with Lab V2 above, which is what "Labs" refers to everywhere else in this README and in the student/staff/HOD UI today.
+
+### 16.2 Code Playground
+
+A free-form "run any code" scratch space — no problems, no grading, no test cases. Students pick a language and just write/run code, same execution pipeline as everywhere else in the platform.
+
+| Language | Execution engine ID |
+|---|---|
+| C | 50 |
+| C++ | 54 |
+| Java | 62 |
+| Python | 71 |
+| SQL | 82 |
+
+Endpoint: `POST /api/playground/run/`. Each language can be individually locked per institution (see [16.5](#165-institution-module-lock-system)) — the lock is enforced on the request body's `language_id`, since Playground has no URL-visible object to key off of the way Labs/Contests do.
+
+### 16.3 Combined Contests (Coding + Aptitude + Reading)
+
+A third `Contest.contest_type` alongside `programming` and `aptitude`: `combined`, which bundles a coding section, an MCQ aptitude section, and a reading-comprehension section into one timed session with staff-defined weighting.
+
+- **Weighting**: `coding_weight_percent`, `aptitude_weight_percent`, `reading_weight_percent` on `Contest`, defaulting to 34/33/33 and enforced to sum to exactly 100 at creation time. Staff sets these via a "Section Weights" panel in the contest creator; the Next/Publish step is blocked until the three percentages add up to 100.
+- **Content model**: Reading-comprehension questions are not a separate content type — they're `AptitudeQuestion` rows with `question_type="RC"`, riding in the same `aptitude_questions` M2M as regular MCQs, grouped by `passage_id` on the student side.
+- **Student experience** (`CombinedContestWorkspacePage.jsx`): a single tabbed workspace (Coding / Aptitude / Reading — a tab only appears if that section has content) under one shared countdown timer for the whole session. Coding problems use the normal Monaco editor + per-problem Run/Submit against the standard contest coding-submission endpoint. Aptitude and Reading questions autosave per-answer as soon as an option is picked. One "Finish & Submit" action ends all three sections at once, after a confirmation summary showing attempted/solved counts per section. Anti-cheat (fullscreen lock, tab-switch/paste tracking, optional webcam proctoring) applies uniformly across the whole session, not per-section.
+
+### 16.4 Aptitude — Google Drive Question Import & Local Image Cache
+
+**Bulk upload** (`POST /api/admin/v2/aptitude-bank/bulk-upload/`, superuser-only) accepts an `.xlsx`/`.xls`/`.csv` file against one target topic. Column names are matched flexibly (`question_text`/`Question`, `option_a`–`option_d`, `correct_option`/`answer`, optional `difficulty`, `explanation`, `question_type`), including four optional image columns (`question_image`, `option_a_image`…`option_d_image`) that each accept either a ready-made image URL or a bare Google Drive file ID.
+
+- **Drive ID resolution**: a bare Drive file ID in an image column is rewritten to the local caching proxy URL (`/api/aptitude/drive-image/<id>/`) rather than stored as a raw `drive.google.com` link, so nothing at request time depends on Drive being reachable.
+- **Dedup fix**: the bulk-upload's duplicate check keys on `(topic, question_text, question_image)`, not `question_text` alone — Drive "Figure Series" style imports commonly reuse identical instructional boilerplate text across many rows, with the actual question content only in the image, so text-only dedup was silently collapsing hundreds of distinct questions into one.
+- **Local image cache** (`drive_image_cache.py`): images live under `media/aptitude_drive_cache/`, one file per Drive ID. `aptitude_drive_image_proxy` (public, no auth) checks the local cache first and only reaches out to `https://drive.google.com/thumbnail?id=<id>&sz=w2000` on a cache miss, then serves the result with a one-year immutable `Cache-Control` header.
+- **Cache warming**: two management commands keep the cache populated ahead of a student ever loading a question — `backfill_drive_image_proxy` (one-time, rewrites any pre-existing raw Drive URLs stored on `AptitudeQuestion` rows into proxy URLs) and `pull_drive_images` (eagerly downloads every Drive-hosted image referenced anywhere in the aptitude bank, skipping already-cached IDs). `pull_drive_images` runs automatically on every deploy, as a **backgrounded, timeout-capped** step in `entrypoint.sh` — it must never be allowed to block gunicorn from starting, since a slow/unreachable path to Drive from the production network once did exactly that and caused a real outage before this was fixed.
+
+### 16.5 Institution Module Lock System
+
+A per-institution kill switch, one layer more granular than the existing global/institution maintenance-mode flags: instead of taking down a whole role's portal, an admin can hide one feature area — from navigation *and* the API — for every role at that institution, with no per-role split.
+
+- **Top-level modules**: Problems, Playground, Labs, Companies, Aptitude, Contest, Discuss, Interview Practice.
+- **Sub-module locks**, three different mechanisms depending on how the sub-type is distinguishable:
+  - *Prefix-based* — Aptitude Practice vs. Reading Comprehension (different URL prefixes under `/api/aptitude/`).
+  - *Typed, by DB object* — Labs (`practical`/`company`/`university`, keyed on `Lab.lab_type`) and Contests (`programming`/`aptitude`/`combined`, keyed on `Contest.contest_type`), where the sub-type isn't visible in the URL itself, only on the object the URL's numeric ID refers to.
+  - *Body-field based* — Code Playground's five per-language locks, keyed on the POST body's `language_id`, since Playground has no database object or URL-visible ID to type-check against at all.
+- Locking a parent module locks every child under it regardless of the children's own lock state; locking a single child leaves its siblings and the rest of the parent untouched.
+- Enforced centrally in `MaintenanceMiddleware` (same middleware that already handled maintenance mode), returning a distinct `403 module_locked` (vs. maintenance's `503`) so the frontend doesn't trigger a full maintenance takeover screen for what's really just one hidden feature.
+- The admin UI (Institution → Structure → Module Locks) is driven entirely by the backend's module registry — adding a new lockable module/sub-module to the registry is enough for its toggle to appear automatically, no frontend list to keep in sync.
+
+### 16.6 Interview Practice
+
+A new student-facing module preparing the ground for department-specific interview question banks (the question content itself is a follow-up — this lays the foundation: navigation, grouping, and admin control).
+
+- Departments are grouped into **tracks** that will eventually share one question bank: Civil, Mechanical, EEE, and ECE each default to their own individual track; every CS-family department (CSE, IT, AI&DS, CSBS, CSE-AIML) defaults to one shared `cs_common` track, since their technical interviews cover largely the same ground.
+- The grouping is a plain, admin-editable field (`Department.interview_track`) rather than a fixed enum — an admin can regroup any department into any track at any time from the Structure tab (e.g. split ECE onto its own track, or fold a branch into the common pool), and departments sharing a value will share whatever content is added later.
+- Fully wired into the module lock system like every other module — lockable/unlockable per institution.
+
+### 16.7 Discuss Forum — Section Chat & Unread Badges
+
+Two functional bugs fixed in the existing Discuss module:
+
+- **Section Chat was unusable for staff/HOD.** The channel was visible in the sidebar, but there was no UI to pick a *section* — only a batch — so every staff/HOD request was missing the field the backend requires, silently returning nothing on read and rejecting posts outright. Fixed with a proper section dropdown (sourced from the same batch/section data already used elsewhere in staff tooling) alongside the existing batch dropdown.
+- **Unread indicator dots never lit up** for General, Section, or Mentor Group chat, because the frontend's "is this unread" check compared against a notification link that never included the batch/section/mentor identifiers the backend actually attaches — so the comparison always failed. Fixed to build the same link shape the backend generates, per channel type.
+
+### 16.8 System Updates — Dashboard Overlay
+
+The "what's new" widget that surfaces `SystemUpdate` announcements to students moved from an inline banner on the Progress page to a proper fixed-position modal overlay shown on the student Dashboard (Explore page) — the first place a student lands after logging in. Clicking "OK" dismisses that update permanently (tracked client-side in `localStorage`, unchanged from before) and, if more than one update is queued, immediately surfaces the next one.
 
 ---
 
