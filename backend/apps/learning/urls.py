@@ -52,6 +52,7 @@ from .views import (
     AdminExaminationDetailView,
     AdminExaminationSyllabusView,
     AdminExaminationSyllabusUploadView,
+    AdminSyllabusTopicResourcesView,
     CompetitiveExaminationListView,
     CompetitiveExaminationSyllabusView,
     DiscussionThreadListView,
@@ -320,6 +321,7 @@ urlpatterns = [
     path("admin/v2/examinations/<int:exam_id>/", AdminExaminationDetailView.as_view(), name="admin-examination-detail"),
     path("admin/v2/examinations/<int:exam_id>/syllabus/", AdminExaminationSyllabusView.as_view(), name="admin-examination-syllabus"),
     path("admin/v2/examinations/<int:exam_id>/syllabus/upload/", AdminExaminationSyllabusUploadView.as_view(), name="admin-examination-syllabus-upload"),
+    path("admin/v2/examinations/topics/<int:topic_id>/resources/", AdminSyllabusTopicResourcesView.as_view(), name="admin-syllabus-topic-resources"),
 
     # Staff Institution
     path("staff/advisor/dashboard/", StaffClassAdvisorDashboardView.as_view(), name="staff-advisor-dashboard"),

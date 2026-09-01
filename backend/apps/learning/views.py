@@ -2730,6 +2730,29 @@ class InterviewTrackView(UnifiedAuthMixin, APIView):
         })
 
 
+def _resolve_resource_display(resource_links):
+    """Attach friendly display fields (title/difficulty) to each resource
+    item — the stored item only carries ids/slugs, so this fills in
+    what's needed to render it without an extra round trip per item."""
+    items = [r for r in (resource_links or []) if isinstance(r, dict)]
+    apt_ids = [r['aptitude_topic_id'] for r in items if r.get('type') == 'aptitude_topic' and r.get('aptitude_topic_id')]
+    slugs = [r['problem_slug'] for r in items if r.get('type') == 'problem' and r.get('problem_slug')]
+    apt_titles = dict(AptitudeTopic.objects.filter(id__in=apt_ids).values_list('id', 'title')) if apt_ids else {}
+    problems = {p.slug: p for p in Problem.objects.filter(slug__in=slugs)} if slugs else {}
+
+    out = []
+    for r in items:
+        item = dict(r)
+        if item.get('type') == 'aptitude_topic':
+            item['aptitude_topic_title'] = apt_titles.get(item.get('aptitude_topic_id'), 'Unknown topic')
+        elif item.get('type') == 'problem':
+            p = problems.get(item.get('problem_slug'))
+            item['problem_title'] = p.title if p else 'Unknown problem'
+            item['problem_difficulty'] = p.difficulty if p else ''
+        out.append(item)
+    return out
+
+
 def _serialize_examination_syllabus(examination):
     """Full Section > Topic > Subtopic tree for one examination — shared by
     the admin management view and the student-facing browse view."""
@@ -2740,7 +2763,7 @@ def _serialize_examination_syllabus(examination):
             topics.append({
                 "id": topic.id,
                 "title": topic.title,
-                "resource_links": topic.resource_links or [],
+                "resource_links": _resolve_resource_display(topic.resource_links),
                 "subtopics": [{"id": st.id, "title": st.title} for st in topic.subtopics.all()],
             })
         sections.append({"id": section.id, "title": section.title, "topics": topics})
@@ -2931,6 +2954,59 @@ class AdminExaminationSyllabusUploadView(APIView):
         import io
         text = upload.read().decode("utf-8-sig")
         return list(csv.reader(io.StringIO(text)))
+
+
+class AdminSyllabusTopicResourcesView(APIView):
+    """System Admin: replace the resource list attached to one syllabus
+    topic. Each resource is either an external link (rendered as a
+    YouTube embed automatically if the URL is one — the frontend's call,
+    this just stores it) or a pointer at existing platform content: an
+    Aptitude topic or a coding Problem, so a Competitive Practice topic
+    can point straight at question banks that already exist instead of
+    duplicating content."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, topic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        topic = get_object_or_404(SyllabusTopic, id=topic_id)
+
+        raw_items = request.data.get('resource_links')
+        if not isinstance(raw_items, list):
+            return Response({"error": "resource_links must be a list."}, status=400)
+
+        cleaned = []
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get('type')
+            label = (item.get('label') or '').strip()
+
+            if item_type == 'link':
+                url = (item.get('url') or '').strip()
+                if not url:
+                    continue
+                cleaned.append({"type": "link", "label": label, "url": url})
+
+            elif item_type == 'aptitude_topic':
+                apt_id = item.get('aptitude_topic_id')
+                try:
+                    apt_id = int(apt_id)
+                except (TypeError, ValueError):
+                    continue
+                if not AptitudeTopic.objects.filter(id=apt_id).exists():
+                    continue
+                cleaned.append({"type": "aptitude_topic", "label": label, "aptitude_topic_id": apt_id})
+
+            elif item_type == 'problem':
+                slug = (item.get('problem_slug') or '').strip()
+                if not slug or not Problem.objects.filter(slug=slug).exists():
+                    continue
+                cleaned.append({"type": "problem", "label": label, "problem_slug": slug})
+
+        topic.resource_links = cleaned
+        topic.save(update_fields=['resource_links'])
+        return Response({"message": "Resources updated", "resource_links": _resolve_resource_display(cleaned)})
 
 
 class CompetitiveExaminationListView(APIView):

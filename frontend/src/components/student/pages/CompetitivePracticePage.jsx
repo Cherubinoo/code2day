@@ -1,5 +1,111 @@
 import React, { useState, useEffect } from "react";
-import { Swords, ChevronLeft, ChevronDown, ChevronRight, Link2, Loader2 } from "lucide-react";
+import { Swords, ChevronLeft, ChevronDown, ChevronRight, Link2, Loader2, BookOpen, Code2, ExternalLink } from "lucide-react";
+import { getYoutubeEmbedUrl } from "../../../lib/appUtils";
+
+function ResourceCard({ item }) {
+  if (item.type === "aptitude_topic") {
+    return (
+      <a href={`/aptitude?topic=${item.aptitude_topic_id}`} className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
+        <div style={{ width: 36, height: 36, borderRadius: 10, background: "#f5f3ff", color: "#7c3aed", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <BookOpen size={18} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: "0.7rem", fontWeight: 800, color: "#7c3aed", textTransform: "uppercase", letterSpacing: "0.04em" }}>Aptitude Practice</div>
+          <div style={{ fontWeight: 700, color: "var(--text-hard)" }}>{item.label || item.aptitude_topic_title}</div>
+        </div>
+        <ExternalLink size={14} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
+      </a>
+    );
+  }
+
+  if (item.type === "problem") {
+    return (
+      <a href={`/problems?slug=${encodeURIComponent(item.problem_slug)}`} className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
+        <div style={{ width: 36, height: 36, borderRadius: 10, background: "#e0f2fe", color: "#0891b2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Code2 size={18} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: "0.7rem", fontWeight: 800, color: "#0891b2", textTransform: "uppercase", letterSpacing: "0.04em" }}>Coding Problem · {item.problem_difficulty}</div>
+          <div style={{ fontWeight: 700, color: "var(--text-hard)" }}>{item.label || item.problem_title}</div>
+        </div>
+        <ExternalLink size={14} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
+      </a>
+    );
+  }
+
+  // type === "link"
+  const embedUrl = getYoutubeEmbedUrl(item.url);
+  if (embedUrl) {
+    return (
+      <div className="surface-card" style={{ padding: 16 }}>
+        {item.label && <div style={{ fontWeight: 700, marginBottom: 10, color: "var(--text-hard)" }}>{item.label}</div>}
+        <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 12, overflow: "hidden" }}>
+          <iframe
+            src={embedUrl}
+            title={item.label || "Video resource"}
+            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <a href={item.url} target="_blank" rel="noopener noreferrer" className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
+      <div style={{ width: 36, height: 36, borderRadius: 10, background: "var(--bg-2)", color: "var(--olive-700)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Link2 size={18} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 700, color: "var(--text-hard)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label || item.url}</div>
+        {item.label && <div style={{ fontSize: "0.78rem", color: "var(--text-soft)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.url}</div>}
+      </div>
+      <ExternalLink size={14} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
+    </a>
+  );
+}
+
+function TopicLearnView({ examName, section, topic, onBack }) {
+  return (
+    <div className="page-stack problem-page">
+      <section className="page-header compact-header problem-page-header">
+        <button
+          type="button"
+          onClick={onBack}
+          className="ghost-button"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 12, width: "fit-content" }}
+        >
+          <ChevronLeft size={16} /> {examName}
+        </button>
+        <div>
+          <p className="kicker">{section.title}</p>
+          <h1>{topic.title}</h1>
+        </div>
+      </section>
+
+      {topic.subtopics.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {topic.subtopics.map((st) => (
+            <span key={st.id} style={{ fontSize: "0.82rem", color: "var(--text-soft)", background: "var(--bg-2)", padding: "6px 14px", borderRadius: 10, fontWeight: 600 }}>
+              {st.title}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {topic.resource_links.length === 0 ? (
+        <div className="surface-card" style={{ padding: 48, textAlign: "center", color: "var(--text-soft)" }}>
+          Resources for this topic are coming soon.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {topic.resource_links.map((item, i) => <ResourceCard key={i} item={item} />)}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function CompetitivePracticePage() {
   const [examinations, setExaminations] = useState([]);
@@ -10,6 +116,7 @@ export default function CompetitivePracticePage() {
   const [syllabus, setSyllabus] = useState(null);
   const [syllabusLoading, setSyllabusLoading] = useState(false);
   const [expandedSections, setExpandedSections] = useState({});
+  const [activeTopic, setActiveTopic] = useState(null); // { section, topic }
 
   useEffect(() => {
     fetch("/api/competitive/examinations/", { credentials: "include" })
@@ -24,6 +131,7 @@ export default function CompetitivePracticePage() {
 
   const openExam = (exam) => {
     setSelectedExam(exam);
+    setActiveTopic(null);
     setSyllabusLoading(true);
     fetch(`/api/competitive/examinations/${exam.id}/syllabus/`, { credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
@@ -33,6 +141,17 @@ export default function CompetitivePracticePage() {
       })
       .finally(() => setSyllabusLoading(false));
   };
+
+  if (selectedExam && activeTopic) {
+    return (
+      <TopicLearnView
+        examName={selectedExam.name}
+        section={activeTopic.section}
+        topic={activeTopic.topic}
+        onBack={() => setActiveTopic(null)}
+      />
+    );
+  }
 
   if (selectedExam) {
     return (
@@ -76,36 +195,27 @@ export default function CompetitivePracticePage() {
                 </button>
 
                 {expandedSections[section.id] && (
-                  <div style={{ padding: "8px 24px 20px" }}>
-                    {section.topics.map((topic) => {
-                      const hasLinks = (topic.resource_links || []).length > 0;
-                      return (
-                        <div key={topic.id} style={{ padding: "14px 0", borderBottom: "1px solid var(--border-soft)" }}>
-                          {hasLinks ? (
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                              <Link2 size={14} style={{ color: "var(--olive-600)" }} />
-                              {topic.resource_links.map((link, i) => (
-                                <a key={i} href={link.url} target="_blank" rel="noopener noreferrer" className="topic-link" style={{ fontWeight: 700, color: "var(--olive-700)", fontSize: "0.95rem" }}>
-                                  {topic.title}{link.label ? ` — ${link.label}` : ""}
-                                </a>
-                              ))}
-                            </div>
-                          ) : (
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--text-soft)" }}>
-                              <Link2 size={14} />
-                              <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>{topic.title}</span>
-                            </div>
-                          )}
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8, paddingLeft: 22 }}>
-                            {topic.subtopics.map((st) => (
-                              <span key={st.id} style={{ fontSize: "0.78rem", color: "var(--text-soft)", background: "var(--bg-2)", padding: "4px 10px", borderRadius: 8 }}>
-                                {st.title}
-                              </span>
-                            ))}
-                          </div>
+                  <div style={{ padding: "16px 24px 24px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 12 }}>
+                    {section.topics.map((topic) => (
+                      <button
+                        key={topic.id}
+                        type="button"
+                        onClick={() => setActiveTopic({ section, topic })}
+                        style={{
+                          textAlign: "left", padding: 16, borderRadius: 14, border: "1px solid var(--border-soft)",
+                          background: "var(--bg-2)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8,
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <Link2 size={14} style={{ color: "var(--olive-600)", flexShrink: 0 }} />
+                          <span style={{ fontWeight: 750, fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{topic.title}</span>
                         </div>
-                      );
-                    })}
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--text-soft)", fontWeight: 700 }}>
+                          <span>{topic.subtopics.length} subtopics</span>
+                          <span>{topic.resource_links.length > 0 ? `${topic.resource_links.length} resource${topic.resource_links.length > 1 ? "s" : ""}` : "coming soon"}</span>
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>

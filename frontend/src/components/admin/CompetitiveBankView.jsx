@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Swords, Plus, Trash2, Upload, ChevronDown, ChevronRight, Loader2, Link2 } from 'lucide-react';
-import { getCsrfToken } from '../../lib/appUtils';
+import { ArrowLeft, Swords, Plus, Trash2, Upload, ChevronDown, ChevronRight, Loader2, Link2, X, PlayCircle, BookOpen, Code2 } from 'lucide-react';
+import { getCsrfToken, getYoutubeEmbedUrl } from '../../lib/appUtils';
 
 function apiFetch(url, method, body) {
   const token = getCsrfToken();
@@ -17,10 +17,184 @@ function apiFetchForm(url, formData) {
   return fetch(url, opts);
 }
 
+// Flattens the Aptitude Category > Topic tree down to just the leaf topics
+// (the level questions actually attach to) for a simple picker.
+function flattenAptitudeTopics(categories) {
+  const out = [];
+  (categories || []).forEach((cat) => {
+    (cat.subcategories || []).forEach((sub) => {
+      out.push({ id: sub.id, label: `${cat.title} > ${sub.title}` });
+    });
+  });
+  return out;
+}
+
+function resourceIcon(item) {
+  if (item.type === 'link' && getYoutubeEmbedUrl(item.url)) return <PlayCircle size={14} style={{ color: '#dc2626' }} />;
+  if (item.type === 'link') return <Link2 size={14} style={{ color: 'var(--olive-600)' }} />;
+  if (item.type === 'aptitude_topic') return <BookOpen size={14} style={{ color: '#7c3aed' }} />;
+  if (item.type === 'problem') return <Code2 size={14} style={{ color: '#0891b2' }} />;
+  return <Link2 size={14} />;
+}
+
+function resourceLabel(item) {
+  if (item.type === 'aptitude_topic') return item.label || item.aptitude_topic_title;
+  if (item.type === 'problem') return item.label || `${item.problem_title} (${item.problem_difficulty})`;
+  return item.label || item.url;
+}
+
+// ── Resource-editing modal for one syllabus topic ──────────────────────────
+function TopicResourceModal({ topic, onClose, onSaved }) {
+  const [items, setItems] = useState(topic.resource_links || []);
+  const [saving, setSaving] = useState(false);
+
+  const [linkLabel, setLinkLabel] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
+
+  const [aptitudeTopics, setAptitudeTopics] = useState(null);
+  const [pickedAptitudeId, setPickedAptitudeId] = useState('');
+
+  const [problems, setProblems] = useState(null);
+  const [problemSearch, setProblemSearch] = useState('');
+  const [pickedProblemSlug, setPickedProblemSlug] = useState('');
+
+  useEffect(() => {
+    fetch('/api/aptitude/topics/', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setAptitudeTopics(flattenAptitudeTopics(d?.categories)))
+      .catch(() => setAptitudeTopics([]));
+    fetch('/api/admin/v2/problem-bank/', { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setProblems(d?.problems || []))
+      .catch(() => setProblems([]));
+  }, []);
+
+  const removeItem = (idx) => setItems((prev) => prev.filter((_, i) => i !== idx));
+
+  const addLink = () => {
+    if (!linkUrl.trim()) return;
+    setItems((prev) => [...prev, { type: 'link', label: linkLabel.trim(), url: linkUrl.trim() }]);
+    setLinkLabel('');
+    setLinkUrl('');
+  };
+
+  const addAptitudeTopic = () => {
+    if (!pickedAptitudeId) return;
+    const found = (aptitudeTopics || []).find((t) => String(t.id) === String(pickedAptitudeId));
+    setItems((prev) => [...prev, { type: 'aptitude_topic', label: '', aptitude_topic_id: Number(pickedAptitudeId), aptitude_topic_title: found?.label }]);
+    setPickedAptitudeId('');
+  };
+
+  const addProblem = () => {
+    if (!pickedProblemSlug) return;
+    const found = (problems || []).find((p) => p.slug === pickedProblemSlug);
+    setItems((prev) => [...prev, { type: 'problem', label: '', problem_slug: pickedProblemSlug, problem_title: found?.title, problem_difficulty: found?.difficulty }]);
+    setPickedProblemSlug('');
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await apiFetch(`/api/admin/v2/examinations/topics/${topic.id}/resources/`, 'PATCH', {
+        resource_links: items.map(({ type, label, url, aptitude_topic_id, problem_slug }) => {
+          if (type === 'link') return { type, label, url };
+          if (type === 'aptitude_topic') return { type, label, aptitude_topic_id };
+          if (type === 'problem') return { type, label, problem_slug };
+          return null;
+        }).filter(Boolean),
+      });
+      if (res.ok) {
+        const body = await res.json();
+        onSaved(body.resource_links || []);
+      } else {
+        alert('Failed to save resources');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const filteredProblems = (problems || []).filter(p =>
+    !problemSearch.trim() || p.title.toLowerCase().includes(problemSearch.trim().toLowerCase())
+  ).slice(0, 50);
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }} onClick={onClose}>
+      <div style={{ background: 'white', borderRadius: 24, padding: 32, width: '100%', maxWidth: 560, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 900, color: 'var(--olive-950)' }}>Resources</h3>
+            <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '0.9rem' }}>{topic.title}</p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)' }}><X size={20} /></button>
+        </div>
+
+        {/* Existing resources */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
+          {items.length === 0 && (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No resources attached yet.</div>
+          )}
+          {items.map((item, idx) => (
+            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 10 }}>
+              {resourceIcon(item)}
+              <span style={{ flex: 1, fontSize: '0.85rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{resourceLabel(item)}</span>
+              <button onClick={() => removeItem(idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}><X size={14} /></button>
+            </div>
+          ))}
+        </div>
+
+        {/* Add a link */}
+        <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 16, marginBottom: 16 }}>
+          <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>Add a Link</label>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input placeholder="Label" value={linkLabel} onChange={(e) => setLinkLabel(e.target.value)} style={{ flex: '1 1 120px', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }} />
+            <input placeholder="https://..." value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} style={{ flex: '2 1 200px', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }} />
+            <button onClick={addLink} disabled={!linkUrl.trim()} className="primary-button" style={{ borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem' }}>Add</button>
+          </div>
+          <p style={{ margin: '6px 0 0', fontSize: '0.72rem', color: 'var(--text-soft)' }}>YouTube links are shown as an embedded video automatically.</p>
+        </div>
+
+        {/* Add an existing Aptitude topic */}
+        <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 16, marginBottom: 16 }}>
+          <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>Link an Existing Aptitude Topic</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <select value={pickedAptitudeId} onChange={(e) => setPickedAptitudeId(e.target.value)} style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }}>
+              <option value="">{aptitudeTopics === null ? 'Loading…' : 'Select a topic...'}</option>
+              {(aptitudeTopics || []).map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
+            <button onClick={addAptitudeTopic} disabled={!pickedAptitudeId} className="primary-button" style={{ borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem' }}>Add</button>
+          </div>
+        </div>
+
+        {/* Add an existing Problem */}
+        <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 16, marginBottom: 24 }}>
+          <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>Link an Existing Coding Problem</label>
+          <input placeholder="Search problems..." value={problemSearch} onChange={(e) => setProblemSearch(e.target.value)} style={{ width: '100%', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem', marginBottom: 8, boxSizing: 'border-box' }} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <select value={pickedProblemSlug} onChange={(e) => setPickedProblemSlug(e.target.value)} style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }}>
+              <option value="">{problems === null ? 'Loading…' : 'Select a problem...'}</option>
+              {filteredProblems.map((p) => <option key={p.slug} value={p.slug}>{p.title} ({p.difficulty})</option>)}
+            </select>
+            <button onClick={addProblem} disabled={!pickedProblemSlug} className="primary-button" style={{ borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem' }}>Add</button>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button onClick={onClose} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontWeight: 700 }}>Cancel</button>
+          <button onClick={save} disabled={saving} className="primary-button" style={{ borderRadius: 10, padding: '10px 24px' }}>
+            {saving ? 'Saving…' : 'Save Resources'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Admin content bank for Competitive Practice — Examinations (GRE, GATE...)
 // each own a Section > Topic > Subtopic syllabus tree, populated in one
-// shot via an Excel upload. Question content and per-topic resource links
-// are later additions; this screen only manages the syllabus structure.
+// shot via an Excel upload. Each topic tile can then be configured with
+// resources: external links (auto-embedded if YouTube), or pointers at
+// existing Aptitude topics / coding Problems already in the platform.
 export default function CompetitiveBankView({ onBack }) {
   const [examinations, setExaminations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -35,6 +209,7 @@ export default function CompetitiveBankView({ onBack }) {
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadError, setUploadError] = useState('');
   const [expandedSections, setExpandedSections] = useState({});
+  const [resourceModalTopic, setResourceModalTopic] = useState(null);
 
   useEffect(() => { fetchExaminations(); }, []);
 
@@ -123,6 +298,20 @@ export default function CompetitiveBankView({ onBack }) {
     }
   };
 
+  const handleResourcesSaved = (topicId, resourceLinks) => {
+    setSyllabus((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        sections: prev.sections.map((section) => ({
+          ...section,
+          topics: section.topics.map((t) => t.id === topicId ? { ...t, resource_links: resourceLinks } : t),
+        })),
+      };
+    });
+    setResourceModalTopic(null);
+  };
+
   // ── Syllabus detail view ──────────────────────────────────────────────
   if (selectedExam) {
     return (
@@ -166,7 +355,7 @@ export default function CompetitiveBankView({ onBack }) {
           </div>
         )}
         <p style={{ color: 'var(--text-soft)', fontSize: '0.85rem', marginTop: -8, marginBottom: 24 }}>
-          Expects a Section, Topic, Subtopic column (an Exam column is fine too, it's ignored). Re-uploading an updated sheet is safe — existing entries aren't duplicated.
+          Expects a Section, Topic, Subtopic column (an Exam column is fine too, it's ignored). Re-uploading an updated sheet is safe — existing entries aren't duplicated. Click a topic tile to attach resources.
         </p>
 
         {syllabusLoading ? (
@@ -191,31 +380,39 @@ export default function CompetitiveBankView({ onBack }) {
                 </button>
 
                 {expandedSections[section.id] && (
-                  <div style={{ padding: '8px 24px 20px' }}>
+                  <div style={{ padding: '16px 24px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
                     {section.topics.map((topic) => (
-                      <div key={topic.id} style={{ padding: '14px 0', borderBottom: '1px solid var(--border-soft)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <button
+                        key={topic.id}
+                        onClick={() => setResourceModalTopic(topic)}
+                        style={{
+                          textAlign: 'left', padding: 16, borderRadius: 14, border: '1px solid var(--border-soft)',
+                          background: 'var(--bg-2)', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 8,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <Link2 size={14} style={{ color: 'var(--olive-600)', flexShrink: 0 }} />
-                          <span style={{ fontWeight: 700, color: 'var(--olive-900)', fontSize: '0.95rem' }}>{topic.title}</span>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-soft)', fontWeight: 600 }}>({topic.subtopics.length})</span>
-                          {topic.resource_links.length === 0 && (
-                            <span style={{ fontSize: '0.7rem', color: 'var(--text-soft)', fontStyle: 'italic', marginLeft: 4 }}>no resources yet</span>
-                          )}
+                          <span style={{ fontWeight: 750, color: 'var(--olive-900)', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{topic.title}</span>
                         </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8, paddingLeft: 22 }}>
-                          {topic.subtopics.map((st) => (
-                            <span key={st.id} style={{ fontSize: '0.78rem', color: 'var(--text-soft)', background: 'var(--bg-2)', padding: '4px 10px', borderRadius: 8 }}>
-                              {st.title}
-                            </span>
-                          ))}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-soft)', fontWeight: 700 }}>
+                          <span>{topic.subtopics.length} subtopics</span>
+                          <span>{topic.resource_links.length > 0 ? `${topic.resource_links.length} resource${topic.resource_links.length > 1 ? 's' : ''}` : 'no resources'}</span>
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
               </div>
             ))}
           </div>
+        )}
+
+        {resourceModalTopic && (
+          <TopicResourceModal
+            topic={resourceModalTopic}
+            onClose={() => setResourceModalTopic(null)}
+            onSaved={(resourceLinks) => handleResourcesSaved(resourceModalTopic.id, resourceLinks)}
+          />
         )}
       </div>
     );

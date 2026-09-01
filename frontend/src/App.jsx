@@ -108,7 +108,10 @@ function App() {
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     return window.localStorage.getItem("code2day-language") || "Python";
   });
-  const [selectedProblemSlug, setSelectedProblemSlug] = useState("");
+  const [selectedProblemSlug, setSelectedProblemSlug] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("slug") || "";
+  });
   const [problemDetailTab, setProblemDetailTab] = useState("current");
   const [code, setCode] = useState(() => {
     const savedCode = window.localStorage.getItem("code2day-code");
