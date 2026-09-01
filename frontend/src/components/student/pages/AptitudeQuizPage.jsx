@@ -40,13 +40,15 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
   const [submitError, setSubmitError] = useState('');
   const [startTime] = useState(Date.now());
   const [elapsedTime, setElapsedTime] = useState(0);
-  
+  const [finalTimeTaken, setFinalTimeTaken] = useState(null);
+
   useEffect(() => {
+    if (showSummary) return; // stop ticking once practice is complete
     const timer = setInterval(() => {
       setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
     }, 1000);
     return () => clearInterval(timer);
-  }, [startTime]);
+  }, [startTime, showSummary]);
 
   const formatTime = (seconds) => {
     const m = Math.floor(seconds / 60);
@@ -184,6 +186,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
       setShowAnswer(false);
       setSubmitError('');
     } else {
+      setFinalTimeTaken(Math.floor((Date.now() - startTime) / 1000));
       setShowSummary(true);
     }
   };
@@ -198,7 +201,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
   }
 
   if (showSummary) {
-    const timeTaken = Math.floor((Date.now() - startTime) / 1000);
+    const timeTaken = finalTimeTaken ?? Math.floor((Date.now() - startTime) / 1000);
     const minutes = Math.floor(timeTaken / 60);
     const seconds = timeTaken % 60;
 
