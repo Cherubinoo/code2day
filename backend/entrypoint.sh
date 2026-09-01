@@ -6,8 +6,10 @@
 #   1. Apply any pending Django migrations
 #   2. Remove SQL problems (idempotent — safe if already done)
 #   3. Collect static files
-#   4. Pull Drive-hosted aptitude images to local cache (idempotent)
-#   5. Start gunicorn
+#   4. Start gunicorn (Drive image cache warms in the background, see below —
+#      it must never be able to delay this: an earlier version ran it inline
+#      here and a slow/unreachable Drive from the server's network stalled
+#      startup long enough that gunicorn never bound its port at all)
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -e
@@ -19,35 +21,35 @@ echo "════════════════════════�
 
 # ── 1. Migrations ─────────────────────────────────────────────────────────────
 echo ""
-echo "▶ [1/5] Running database migrations..."
+echo "▶ [1/4] Running database migrations..."
 python manage.py migrate --noinput
 echo "✓ Migrations done"
 
 # ── 2. Remove SQL problems ─────────────────────────────────────────────────────
 echo ""
-echo "▶ [2/5] Removing SQL problems from problem bank..."
+echo "▶ [2/4] Removing SQL problems from problem bank..."
 python manage.py remove_sql_problems --confirm
 echo "✓ SQL problem cleanup done"
 
 # ── 3. Static files ────────────────────────────────────────────────────────────
 echo ""
-echo "▶ [3/5] Collecting static files..."
+echo "▶ [3/4] Collecting static files..."
 python manage.py collectstatic --noinput --clear > /dev/null 2>&1 || true
 echo "✓ Static files collected"
 
-# ── 4. Pull Drive-hosted aptitude images to local cache ────────────────────────
-# Idempotent — only fetches images not already cached to the media volume, so
-# this stays fast on every restart after the first one. Never fatal: a Drive
-# hiccup here shouldn't block a deploy, the proxy still serves images live
-# for anything this pass couldn't reach.
-echo ""
-echo "▶ [4/5] Pulling Drive-hosted aptitude images to local cache..."
-python manage.py pull_drive_images || echo "⚠ Drive image pull had failures — will retry lazily via the image proxy"
-echo "✓ Drive image cache warmed"
+# ── Pull Drive-hosted aptitude images to local cache — BACKGROUND, non-blocking ─
+# Idempotent (only fetches images not already cached) and capped at 10 minutes
+# so it can never hang indefinitely, but it must NEVER be able to delay
+# gunicorn starting — spawned detached with `&` and left running after exec
+# hands off PID 1 to gunicorn below. Its own output is logged to a file since
+# it runs unattended; check /app/media/pull_drive_images.log if you want to
+# see how it went.
+mkdir -p /app/media
+(timeout 600 python manage.py pull_drive_images > /app/media/pull_drive_images.log 2>&1 || echo "⚠ Drive image pull had failures — will retry lazily via the image proxy") &
 
-# ── 5. Start gunicorn ─────────────────────────────────────────────────────────
+# ── 4. Start gunicorn ─────────────────────────────────────────────────────────
 echo ""
-echo "▶ [5/5] Starting gunicorn..."
+echo "▶ [4/4] Starting gunicorn..."
 echo "═══════════════════════════════════════════════"
 echo ""
 
