@@ -286,7 +286,6 @@ function ContestWorkspacePage({ contestId, onBack }) {
           if (data.participation && data.participation.is_locked === false) {
             setIsLocked(false);
             setLockReason('');
-            setUnlockPinInput('');
             violationCountRef.current = 0;
             violationLockRef.current = false;
             setViolationModal(null);

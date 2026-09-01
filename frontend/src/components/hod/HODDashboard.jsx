@@ -1986,6 +1986,24 @@ const HODDashboard = ({ institutionId }) => {
                           >
                             <Plus size={16} /> New Aptitude Contest
                           </button>
+                          <button
+                            onClick={() => setShowContestCreator({ type: 'combined' })}
+                            style={{
+                              padding: '10px 18px',
+                              borderRadius: '10px',
+                              border: 'none',
+                              background: '#0891b2',
+                              color: 'white',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              fontSize: '13px',
+                              fontWeight: '700',
+                            }}
+                          >
+                            <Plus size={16} /> New Combined Contest
+                          </button>
                           <input
                             type="text"
                             placeholder="🔍 Search contests..."

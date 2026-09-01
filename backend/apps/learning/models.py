@@ -1042,12 +1042,23 @@ class Contest(models.Model):
     CONTEST_TYPE_CHOICES = (
         ("programming", "Programming"),
         ("aptitude", "Aptitude"),
+        ("combined", "Combined (Coding + Aptitude + Reading)"),
     )
     contest_type = models.CharField(
         max_length=20,
         choices=CONTEST_TYPE_CHOICES,
         default="programming",
     )
+    # Only meaningful when contest_type == "combined" — how much each section
+    # contributes to the participant's final weighted score. Staff-set,
+    # must sum to 100 (enforced in ContestListCreateView.post). Reading
+    # questions are AptitudeQuestion rows (question_type="RC") that ride
+    # along in `aptitude_questions` alongside regular MCQ questions, so
+    # their weight is tracked separately here even though there's no
+    # separate M2M for them.
+    coding_weight_percent = models.PositiveIntegerField(default=34)
+    aptitude_weight_percent = models.PositiveIntegerField(default=33)
+    reading_weight_percent = models.PositiveIntegerField(default=33)
     
     # Contest timing - Enhanced for session-based contests
     access_start_time = models.DateTimeField(

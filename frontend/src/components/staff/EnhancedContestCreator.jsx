@@ -1,6 +1,6 @@
 // Enhanced Contest Creator with Student Selection and Filtering
 import { useState, useEffect } from 'react';
-import { Plus, X, Calendar, Clock, Search, Users, CheckCircle, Trophy, Brain } from 'lucide-react';
+import { Plus, X, Calendar, Clock, Search, Users, CheckCircle, Trophy, Brain, Layers } from 'lucide-react';
 import { buildJsonPostOptions } from '../../lib/appUtils';
 
 const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming' }) => {
@@ -13,21 +13,26 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     session_duration_minutes: 60,
     problem_slugs: [],
     aptitude_question_ids: [],
+    reading_passage_ids: [],
+    coding_weight_percent: 34,
+    aptitude_weight_percent: 33,
+    reading_weight_percent: 33,
     assigned_batches: [],
     assigned_sections: [],
     assigned_student_ids: [],
     submit_for_approval: false,
-    contest_type: initialType, // 'programming' or 'aptitude'
+    contest_type: initialType, // 'programming', 'aptitude', or 'combined'
     enable_tab_switch_check: true,
     max_tab_switches: 3,
     enable_fullscreen_lock: false,
     enable_copy_paste_lock: false,
     enable_webcam_proctoring: false,
   });
-  
+
   const [problems, setProblems] = useState([]);
   const [aptitudeTopics, setAptitudeTopics] = useState([]);
   const [aptitudeQuestions, setAptitudeQuestions] = useState([]);
+  const [readingPassages, setReadingPassages] = useState([]);
   const [batches, setBatches] = useState([]);
   const [sectionsByBatch, setSectionsByBatch] = useState({});
   const [students, setStudents] = useState([]);
@@ -173,8 +178,17 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     }));
   }
 
+  function toggleReadingPassage(id) {
+    setFormData(prev => ({
+      ...prev,
+      reading_passage_ids: prev.reading_passage_ids.includes(id)
+        ? prev.reading_passage_ids.filter(i => i !== id)
+        : [...prev.reading_passage_ids, id],
+    }));
+  }
+
   async function loadAptitudeQuestions() {
-    if (formData.contest_type !== 'aptitude') return;
+    if (formData.contest_type !== 'aptitude' && formData.contest_type !== 'combined') return;
     
     setLoadingData(true);
     try {
@@ -391,10 +405,18 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
   }
 
   useEffect(() => {
-    if (formData.contest_type === 'aptitude') {
+    if (formData.contest_type === 'aptitude' || formData.contest_type === 'combined') {
       loadAptitudeQuestions();
     }
   }, [formData.contest_type, selectedTopics, selectedDifficulty, searchQuery]);
+
+  useEffect(() => {
+    if (formData.contest_type !== 'combined') return;
+    fetch('/api/aptitude/reading-passages/', { credentials: 'include' })
+      .then((res) => res.json())
+      .then((data) => setReadingPassages(data.passages || []))
+      .catch((err) => console.error('Error loading reading passages:', err));
+  }, [formData.contest_type]);
 
   // Auto-update total questions based on selected questions
   useEffect(() => {
@@ -622,6 +644,13 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
       )
     : formData.assigned_student_ids.length;
 
+  const weightsSum = formData.coding_weight_percent + formData.aptitude_weight_percent + formData.reading_weight_percent;
+  const hasNoContentSelected = formData.contest_type === 'combined'
+    ? (formData.problem_slugs.length === 0 && formData.aptitude_question_ids.length === 0 && formData.reading_passage_ids.length === 0) || weightsSum !== 100
+    : formData.contest_type === 'programming'
+    ? formData.problem_slugs.length === 0
+    : formData.aptitude_question_ids.length === 0;
+
   return (
     <div style={{
       position: 'fixed',
@@ -765,7 +794,35 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                     <Brain size={20} />
                     <span>Aptitude Contest</span>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, contest_type: 'combined' })}
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      borderRadius: 8,
+                      border: formData.contest_type === 'combined' ? '2px solid #4f46e5' : '1px solid #d1d5db',
+                      background: formData.contest_type === 'combined' ? '#eef2ff' : 'white',
+                      color: formData.contest_type === 'combined' ? '#4f46e5' : '#666',
+                      cursor: 'pointer',
+                      fontSize: 14,
+                      fontWeight: formData.contest_type === 'combined' ? 600 : 400,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 4
+                    }}
+                  >
+                    <Layers size={20} />
+                    <span>Combined Contest</span>
+                  </button>
                 </div>
+                {formData.contest_type === 'combined' && (
+                  <p style={{ margin: '10px 0 0', fontSize: 12, color: '#64748b' }}>
+                    One session covering Coding, Aptitude, and Reading Comprehension together — pick problems, aptitude
+                    questions, and reading passages in the next step, and set how much each section is worth.
+                  </p>
+                )}
               </div>
 
               <div style={{ marginBottom: 20 }}>
@@ -901,7 +958,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
           )}
 
           {/* Step 2: Select Content */}
-          {step === 2 && (
+          {step === 2 && formData.contest_type !== 'combined' && (
             <div>
               {/* Tab Navigation */}
               <div style={{ 
@@ -2067,6 +2124,101 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
             </div>
           )}
 
+          {/* Step 2 (combined contest): pick problems, aptitude questions, and reading
+              passages together, plus how much each section is worth. */}
+          {step === 2 && formData.contest_type === 'combined' && (
+            <div style={{ display: 'grid', gap: 24 }}>
+              <div style={{ padding: 16, background: '#f8fafc', borderRadius: 10, border: '1px solid #e2e8f0' }}>
+                <h4 style={{ margin: '0 0 10px', fontSize: 14 }}>Section Weights (must add up to 100%)</h4>
+                <div style={{ display: 'flex', gap: 16 }}>
+                  {[
+                    { key: 'coding_weight_percent', label: 'Coding' },
+                    { key: 'aptitude_weight_percent', label: 'Aptitude' },
+                    { key: 'reading_weight_percent', label: 'Reading' },
+                  ].map(({ key, label }) => (
+                    <div key={key}>
+                      <label style={{ display: 'block', fontSize: 12, color: '#64748b', marginBottom: 4 }}>{label} %</label>
+                      <input
+                        type="number" min="0" max="100"
+                        value={formData[key]}
+                        onChange={(e) => setFormData({ ...formData, [key]: parseInt(e.target.value) || 0 })}
+                        style={{ width: 80, padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                {(formData.coding_weight_percent + formData.aptitude_weight_percent + formData.reading_weight_percent) !== 100 && (
+                  <p style={{ margin: '10px 0 0', fontSize: 12, color: '#dc2626' }}>
+                    Currently sums to {formData.coding_weight_percent + formData.aptitude_weight_percent + formData.reading_weight_percent}% — must be exactly 100%.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <h4 style={{ margin: '0 0 10px', fontSize: 14 }}>
+                  Coding Problems ({formData.problem_slugs.length} selected)
+                </h4>
+                <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: 8 }}>
+                  {problems.map((p) => (
+                    <label key={p.slug} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer', fontSize: 13 }}>
+                      <input type="checkbox" checked={formData.problem_slugs.includes(p.slug)} onChange={() => toggleProblem(p.slug)} />
+                      <span style={{ flex: 1 }}>{p.title}</span>
+                      <span style={{ color: '#94a3b8', fontSize: 11 }}>{p.difficulty}</span>
+                    </label>
+                  ))}
+                  {problems.length === 0 && <p style={{ padding: 12, fontSize: 13, color: '#94a3b8' }}>No problems available.</p>}
+                </div>
+              </div>
+
+              <div>
+                <h4 style={{ margin: '0 0 10px', fontSize: 14 }}>
+                  Aptitude Questions ({formData.aptitude_question_ids.length} selected)
+                </h4>
+                <input
+                  type="text" placeholder="Search questions…" value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  style={{ width: '100%', padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db', marginBottom: 8, boxSizing: 'border-box' }}
+                />
+                <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #e5e7eb', borderRadius: 8 }}>
+                  {aptitudeQuestions.filter((q) => q.question_type !== 'RC').map((q) => (
+                    <label key={q.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer', fontSize: 13 }}>
+                      <input type="checkbox" checked={formData.aptitude_question_ids.includes(String(q.id))} onChange={() => toggleAptitudeQuestion(q.id)} />
+                      <span style={{ flex: 1 }}>{q.question_text}</span>
+                    </label>
+                  ))}
+                  {aptitudeQuestions.filter((q) => q.question_type !== 'RC').length === 0 && (
+                    <p style={{ padding: 12, fontSize: 13, color: '#94a3b8' }}>No aptitude questions found.</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <h4 style={{ margin: '0 0 10px', fontSize: 14 }}>
+                  Reading Passages ({formData.reading_passage_ids.length} selected)
+                </h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+                  {readingPassages.map((p) => {
+                    const selected = formData.reading_passage_ids.includes(p.id);
+                    return (
+                      <button
+                        key={p.id} type="button" onClick={() => toggleReadingPassage(p.id)}
+                        style={{
+                          textAlign: 'left', padding: 12, borderRadius: 8, cursor: 'pointer',
+                          border: selected ? '2px solid #4f46e5' : '1px solid #e5e7eb',
+                          background: selected ? '#eef2ff' : 'white',
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{p.title}</div>
+                        <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.question_count} question(s) · {p.difficulty}</div>
+                      </button>
+                    );
+                  })}
+                  {readingPassages.length === 0 && <p style={{ fontSize: 13, color: '#94a3b8' }}>No reading passages available.</p>}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Step 3: Security & Anti-Cheating Settings */}
           {step === 3 && (
             <div style={{ display: 'grid', gap: 20 }}>
@@ -2448,7 +2600,15 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                   📊 Contest Summary
                 </div>
                 <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
-                  • {formData.contest_type === 'programming' ? `${formData.problem_slugs.length} problems` : `${formData.aptitude_question_ids.length} questions`} selected<br />
+                  {formData.contest_type === 'combined' ? (
+                    <>
+                      • {formData.problem_slugs.length} problems ({formData.coding_weight_percent}%), {formData.aptitude_question_ids.length} aptitude questions ({formData.aptitude_weight_percent}%), {formData.reading_passage_ids.length} reading passages ({formData.reading_weight_percent}%)<br />
+                    </>
+                  ) : (
+                    <>
+                      • {formData.contest_type === 'programming' ? `${formData.problem_slugs.length} problems` : `${formData.aptitude_question_ids.length} questions`} selected<br />
+                    </>
+                  )}
                   • {totalAssignedStudents} students will be assigned
                 </div>
               </div>
@@ -2531,14 +2691,14 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                   <button
                     type="submit"
                     onClick={() => setFormData({ ...formData, submit_for_approval: true })}
-                    disabled={loading || (formData.contest_type === 'programming' ? formData.problem_slugs.length === 0 : formData.aptitude_question_ids.length === 0)}
+                    disabled={loading || hasNoContentSelected}
                     style={{
                       padding: '10px 20px',
                       borderRadius: 8,
                       border: 'none',
-                      background: (loading || (formData.contest_type === 'programming' ? formData.problem_slugs.length === 0 : formData.aptitude_question_ids.length === 0)) ? '#d1d5db' : '#059669',
+                      background: (loading || hasNoContentSelected) ? '#d1d5db' : '#059669',
                       color: 'white',
-                      cursor: (loading || (formData.contest_type === 'programming' ? formData.problem_slugs.length === 0 : formData.aptitude_question_ids.length === 0)) ? 'not-allowed' : 'pointer',
+                      cursor: (loading || hasNoContentSelected) ? 'not-allowed' : 'pointer',
                       fontSize: 14,
                       fontWeight: 500,
                     }}

@@ -406,6 +406,26 @@ const StaffDashboard = ({ institutionId }) => {
                   <Plus size={18} />
                   New Aptitude Contest
                 </button>
+                <button
+                  onClick={() => setShowContestCreator({ type: 'combined' })}
+                  style={{
+                    padding: '12px 20px',
+                    borderRadius: '12px',
+                    border: 'none',
+                    background: '#0891b2',
+                    color: 'white',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: '13px',
+                    fontWeight: '600',
+                    boxShadow: '0 4px 12px rgba(8, 145, 178, 0.2)'
+                  }}
+                >
+                  <Plus size={18} />
+                  New Combined Contest
+                </button>
               </div>
             </div>
           </div>

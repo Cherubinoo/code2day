@@ -587,6 +587,70 @@ def _best_score_per_problem(contest, student):
     return sum(r['best'] for r in rows)
 
 
+_CODING_DIFFICULTY_MAX = {"Easy": 100, "Medium": 200, "Hard": 300}
+
+
+def _compute_contest_score_and_solved(contest, student):
+    """Canonical way to (re)compute a student's total_score and
+    problems_solved for a contest, across all contest types.
+
+    - programming: total_score is the raw best-per-problem sum (unchanged).
+    - aptitude: total_score is the raw sum of AptitudeContestSubmission.score
+      (unchanged).
+    - combined: coding and aptitude/reading are each normalized to a 0-100%
+      of that section's own maximum possible score, then blended using the
+      contest's staff-set weight percentages into a single 0-100 total_score.
+      Reading questions are AptitudeQuestion rows (question_type="RC") that
+      ride along in aptitude_questions/AptitudeContestSubmission, so they're
+      split out from regular aptitude ones by question_type here.
+    """
+    from django.db.models import Sum
+
+    if contest.contest_type == "programming":
+        score = _best_score_per_problem(contest, student)
+        solved = ContestSubmission.objects.filter(
+            contest=contest, student=student, status="Accepted",
+        ).values("problem").distinct().count()
+        return score, solved
+
+    if contest.contest_type == "aptitude":
+        subs = AptitudeContestSubmission.objects.filter(contest=contest, student=student)
+        score = subs.aggregate(total=Sum("score"))["total"] or 0
+        solved = subs.filter(is_correct=True).count()
+        return score, solved
+
+    # combined
+    coding_raw = _best_score_per_problem(contest, student)
+    coding_solved = ContestSubmission.objects.filter(
+        contest=contest, student=student, status="Accepted",
+    ).values("problem").distinct().count()
+    coding_max = sum(
+        _CODING_DIFFICULTY_MAX.get(p.difficulty, 100) for p in contest.problems.all()
+    )
+    coding_pct = (coding_raw / coding_max * 100) if coding_max else 0
+
+    apt_questions = list(contest.aptitude_questions.all())
+    apt_ids = {q.id for q in apt_questions if q.question_type != "RC"}
+    read_ids = {q.id for q in apt_questions if q.question_type == "RC"}
+
+    subs = AptitudeContestSubmission.objects.filter(contest=contest, student=student)
+    apt_subs = [s for s in subs if s.question_id in apt_ids]
+    read_subs = [s for s in subs if s.question_id in read_ids]
+
+    apt_raw = sum(s.score for s in apt_subs)
+    apt_pct = (apt_raw / len(apt_ids) * 100) if apt_ids else 0
+    read_raw = sum(s.score for s in read_subs)
+    read_pct = (read_raw / len(read_ids) * 100) if read_ids else 0
+
+    weighted = (
+        coding_pct * (contest.coding_weight_percent / 100)
+        + apt_pct * (contest.aptitude_weight_percent / 100)
+        + read_pct * (contest.reading_weight_percent / 100)
+    )
+    solved = coding_solved + sum(1 for s in apt_subs if s.is_correct) + sum(1 for s in read_subs if s.is_correct)
+    return round(weighted), solved
+
+
 def _display_actual_output(tc_result, actual_raw):
     """What to show as "Received Output" for one test case. On a clean run
     this is just the program's real stdout; on a failing run with no
@@ -3674,8 +3738,8 @@ class ContestListCreateView(APIView):
                 "rejection_reason": contest.rejection_reason,
                 "submitted_for_approval_at": contest.submitted_for_approval_at,
                 "created_at": contest.created_at,
-                "problem_count": contest.problems.count() if contest.contest_type == "programming" else 0,
-                "aptitude_question_count": contest.aptitude_questions.count() if contest.contest_type == "aptitude" else 0,
+                "problem_count": contest.problems.count() if contest.contest_type in ("programming", "combined") else 0,
+                "aptitude_question_count": contest.aptitude_questions.count() if contest.contest_type in ("aptitude", "combined") else 0,
                 "contest_type": contest.contest_type,
                 "assigned_student_count": contest.assigned_students.count(),
             })
@@ -3703,6 +3767,16 @@ class ContestListCreateView(APIView):
         title = request.data.get('title')
         if not title:
             return Response({"detail": "Title is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        contest_type = request.data.get('contest_type', 'programming')
+        coding_weight = int(request.data.get('coding_weight_percent', 34) or 0)
+        aptitude_weight = int(request.data.get('aptitude_weight_percent', 33) or 0)
+        reading_weight = int(request.data.get('reading_weight_percent', 33) or 0)
+        if contest_type == 'combined' and (coding_weight + aptitude_weight + reading_weight) != 100:
+            return Response(
+                {"detail": "Coding, aptitude, and reading weights must add up to 100%."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Determine initial status
         submit_for_approval = request.data.get('submit_for_approval', False)
@@ -3763,7 +3837,10 @@ class ContestListCreateView(APIView):
             access_end_time=access_end_time,
             session_duration_minutes=request.data.get('session_duration_minutes', 60),
             status=initial_status,
-            contest_type=request.data.get('contest_type', 'programming'),
+            contest_type=contest_type,
+            coding_weight_percent=coding_weight,
+            aptitude_weight_percent=aptitude_weight,
+            reading_weight_percent=reading_weight,
             submitted_for_approval_at=timezone.now() if submit_for_approval else None,
             # Security & Anti-cheat settings
             enable_tab_switch_check=request.data.get('enable_tab_switch_check', True),
@@ -3773,16 +3850,27 @@ class ContestListCreateView(APIView):
             enable_webcam_proctoring=request.data.get('enable_webcam_proctoring', False),
         )
 
-        # Add problems by slugs (for programming)
-        if contest.contest_type == 'programming':
+        # Add problems by slugs (for programming, and coding section of combined)
+        if contest.contest_type in ('programming', 'combined'):
             problem_slugs = request.data.get('problem_slugs', [])
             if problem_slugs:
                 problems = Problem.objects.filter(slug__in=problem_slugs)
                 contest.problems.set(problems)
-        
-        # Add aptitude questions (for aptitude)
-        elif contest.contest_type == 'aptitude':
-            aptitude_question_ids = request.data.get('aptitude_question_ids', [])
+
+        # Add aptitude questions (for aptitude, and aptitude+reading sections of combined)
+        if contest.contest_type in ('aptitude', 'combined'):
+            aptitude_question_ids = list(request.data.get('aptitude_question_ids', []))
+            # Reading passages expand to the RC questions belonging to them —
+            # reading questions are just AptitudeQuestion rows (question_type
+            # "RC") so they ride along in the same M2M as regular MCQs.
+            reading_passage_ids = request.data.get('reading_passage_ids', [])
+            if reading_passage_ids:
+                passage_question_ids = list(
+                    AptitudeQuestion.objects.filter(
+                        passage_id__in=reading_passage_ids, question_type='RC'
+                    ).values_list('id', flat=True)
+                )
+                aptitude_question_ids += passage_question_ids
             if aptitude_question_ids:
                 questions = AptitudeQuestion.objects.filter(id__in=aptitude_question_ids)
                 contest.aptitude_questions.set(questions)
@@ -3871,7 +3959,8 @@ class ContestDetailView(APIView):
             return Response({"detail": "You can only view contests in your department."}, status=status.HTTP_403_FORBIDDEN)
 
         problems_data = []
-        if contest.contest_type == 'programming':
+        aptitude_data = []
+        if contest.contest_type in ('programming', 'combined'):
             for problem in contest.problems.all():
                 problems_data.append({
                     "id": problem.id,
@@ -3879,14 +3968,15 @@ class ContestDetailView(APIView):
                     "title": problem.title,
                     "difficulty": problem.difficulty,
                 })
-        else:
+        if contest.contest_type in ('aptitude', 'combined'):
             for q in contest.aptitude_questions.all():
-                problems_data.append({
+                aptitude_data.append({
                     "id": q.id,
                     "question_type": q.question_type,
                     "question_text": q.question_text,
                     "question_image": q.question_image,
                     "topic": q.topic.title if q.topic else "General",
+                    "passage": q.passage.title if q.passage_id else None,
                     "difficulty": q.difficulty,
                     "option_a": q.option_a,
                     "option_a_image": q.option_a_image,
@@ -3898,17 +3988,24 @@ class ContestDetailView(APIView):
                     "option_d_image": q.option_d_image,
                     "correct_option": q.correct_option,
                 })
-        
+
         data = {
             "id": contest.id,
             "title": contest.title,
             "description": contest.description,
             "contest_type": contest.contest_type,
+            "coding_weight_percent": contest.coding_weight_percent,
+            "aptitude_weight_percent": contest.aptitude_weight_percent,
+            "reading_weight_percent": contest.reading_weight_percent,
             "status": contest.status,
             "start_time": contest.start_time,
             "end_time": contest.end_time,
             "duration_minutes": contest.duration_minutes,
+            # "problems" stays coding-only (empty for pure-aptitude contests, unchanged
+            # behavior); "aptitude_questions" is aptitude+reading data, new for combined
+            # contests but also populated for pure-aptitude ones going forward.
             "problems": problems_data,
+            "aptitude_questions": aptitude_data,
             "problem_count": contest.problem_count,
             "aptitude_question_count": contest.aptitude_question_count,
             "assigned_batches": contest.assigned_batches,
@@ -6392,8 +6489,9 @@ class StudentContestDetailView(APIView):
 
         # Get questions/problems with status
         problems_data = []
-        if contest.contest_type == 'aptitude':
-            for q in contest.aptitude_questions.all():
+        aptitude_data = []
+        if contest.contest_type in ('aptitude', 'combined'):
+            for q in contest.aptitude_questions.all().select_related('passage'):
                 # Check if student has answered this question in the contest
                 submission = AptitudeContestSubmission.objects.filter(
                     contest=contest,
@@ -6401,7 +6499,7 @@ class StudentContestDetailView(APIView):
                     question=q
                 ).first()
 
-                problems_data.append({
+                aptitude_data.append({
                     "id": q.id,
                     "question_type": q.question_type,
                     "question_text": q.question_text,
@@ -6416,11 +6514,14 @@ class StudentContestDetailView(APIView):
                     "option_d_image": q.option_d_image,
                     "explanation": q.explanation,
                     "difficulty": q.difficulty,
+                    "passage_id": q.passage_id,
+                    "passage_title": q.passage.title if q.passage_id else None,
+                    "passage_text": q.passage.passage_text if q.passage_id else None,
                     "is_solved": submission is not None,
                     "student_answer": submission.selected_option if submission else None,
                     "score": submission.score if submission else 0,
                 })
-        else:
+        if contest.contest_type in ('programming', 'combined'):
             for problem in contest.problems.all():
                 # Check if student has solved this problem in the contest
                 submission = ContestSubmission.objects.filter(
@@ -6445,11 +6546,22 @@ class StudentContestDetailView(APIView):
                     "attempted": has_any_submission,
                 })
 
+        # Pure aptitude contests keep serving their question list under the
+        # original "problems" key too — AptitudeContestWorkspacePage.jsx
+        # reads data.problems, and changing that is unnecessary risk to an
+        # already-working flow. Combined contests use "problems" for coding
+        # and the new "aptitude_questions" key for aptitude+reading instead.
+        if contest.contest_type == 'aptitude':
+            problems_data = aptitude_data
+
         return Response({
             "id": contest.id,
             "title": contest.title,
             "description": contest.description,
             "contest_type": contest.contest_type,
+            "coding_weight_percent": contest.coding_weight_percent,
+            "aptitude_weight_percent": contest.aptitude_weight_percent,
+            "reading_weight_percent": contest.reading_weight_percent,
             "start_time": contest.start_time,
             "end_time": contest.end_time,
             "access_end_time": contest.access_end_time,
@@ -6465,7 +6577,12 @@ class StudentContestDetailView(APIView):
             "is_active": is_active,
             "is_ended": is_ended,
             "has_started": participation is not None,
+            # "problems" is coding-only, kept for backward compat with the
+            # existing programming-contest workspace; "aptitude_questions" is
+            # aptitude+reading data (new key, also populated for pure-aptitude
+            # contests now so the new combined workspace can reuse it).
             "problems": problems_data,
+            "aptitude_questions": aptitude_data,
             "participation": {
                 "started_at": participation.started_at,
                 "session_end_time": participation.session_end_time,
@@ -6613,21 +6730,9 @@ class StudentContestAutoSubmitView(APIView):
             participation.end_participation(auto_submitted=True)
 
             # Calculate final score and problems solved
-            if participation.contest.contest_type == 'programming':
-                participation.total_score = _best_score_per_problem(participation.contest, student)
-                participation.problems_solved = ContestSubmission.objects.filter(
-                    contest_id=contest_id,
-                    student=student,
-                    status='Accepted',
-                ).values('problem').distinct().count()
-            else:
-                # Aptitude contest
-                submissions = AptitudeContestSubmission.objects.filter(
-                    contest_id=contest_id,
-                    student=student
-                )
-                participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
-                participation.problems_solved = submissions.filter(is_correct=True).count()
+            participation.total_score, participation.problems_solved = _compute_contest_score_and_solved(
+                participation.contest, student
+            )
 
             participation.save(update_fields=['total_score', 'problems_solved'])
         except Exception:
@@ -6698,22 +6803,9 @@ class StudentContestStopView(APIView):
             participation.total_time_taken = participation.time_spent_seconds
         
         # Recalculate final score and problems solved one last time
-        if contest.contest_type == 'programming':
-            participation.total_score = _best_score_per_problem(contest, request.user.student_profile)
-            participation.problems_solved = ContestSubmission.objects.filter(
-                contest=contest,
-                student=request.user.student_profile,
-                status='Accepted',
-            ).values('problem').distinct().count()
-        else:
-            # Aptitude contest
-            from django.db.models import Sum
-            submissions = AptitudeContestSubmission.objects.filter(
-                contest=contest,
-                student=request.user.student_profile
-            )
-            participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
-            participation.problems_solved = submissions.filter(is_correct=True).count()
+        participation.total_score, participation.problems_solved = _compute_contest_score_and_solved(
+            contest, request.user.student_profile
+        )
 
         participation.manually_stopped = True
         participation.save()
@@ -6760,21 +6852,10 @@ class StudentContestSessionStatusView(APIView):
             participation.end_participation(auto_submitted=True)
             
             # Calculate final score — only count Accepted submissions
-            if participation.contest.contest_type == 'programming':
-                participation.total_score = _best_score_per_problem(participation.contest, student)
-                participation.problems_solved = ContestSubmission.objects.filter(
-                    contest_id=contest_id,
-                    student=student,
-                    status='Accepted',
-                ).values('problem').distinct().count()
-            else:
-                submissions = AptitudeContestSubmission.objects.filter(
-                    contest_id=contest_id,
-                    student=student
-                )
-                participation.total_score = submissions.aggregate(total=Sum('score'))['total'] or 0
-                participation.problems_solved = submissions.filter(is_correct=True).count()
-            
+            participation.total_score, participation.problems_solved = _compute_contest_score_and_solved(
+                participation.contest, student
+            )
+
             participation.save(update_fields=['total_score', 'problems_solved'])
 
         return Response({

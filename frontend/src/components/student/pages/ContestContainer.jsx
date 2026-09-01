@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import StudentContestsPage from './StudentContestsPage';
 import ContestWorkspacePage from './ContestWorkspacePage';
 import AptitudeContestWorkspacePage from './AptitudeContestWorkspacePage';
+import CombinedContestWorkspacePage from './CombinedContestWorkspacePage';
 
 const ContestContainer = ({ targetContestId, setTargetContestId, onToggleWorkspace }) => {
   const [view, setView] = useState('list'); // 'list' or 'workspace'
@@ -79,6 +80,14 @@ const ContestContainer = ({ targetContestId, setTargetContestId, onToggleWorkspa
 
   // Show workspace view
   if (view === 'workspace' && selectedContestId) {
+    if (contestType === 'combined') {
+      return (
+        <CombinedContestWorkspacePage
+          contestId={selectedContestId}
+          onBack={handleBackToContestList}
+        />
+      );
+    }
     if (contestType === 'aptitude') {
       return (
         <AptitudeContestWorkspacePage
