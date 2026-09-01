@@ -949,6 +949,7 @@ class StaffProfile(models.Model):
     faculty_id = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=120)
     email = models.EmailField(blank=True, default="")
+    mobile_number = models.CharField(max_length=20, blank=True, default="")
     password = models.CharField(max_length=128, blank=True, default="")  # For first-login flow
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="staff")
     department = models.ForeignKey(

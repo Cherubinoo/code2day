@@ -9440,7 +9440,7 @@ class InstitutionDetailManagementView(APIView):
         
         # Get staff, HODs, and Academic Coordinator (0001)
         staff_list = StaffProfile.objects.filter(institution=institution).values(
-            'id', 'faculty_id', 'name', 'email', 'role', 'department__name', 'department__id', 'department__code'
+            'id', 'faculty_id', 'name', 'email', 'mobile_number', 'role', 'department__name', 'department__id', 'department__code'
         )
         
         # Get departments
@@ -9561,6 +9561,7 @@ class InstitutionDetailManagementView(APIView):
             faculty_id = (request.data.get('faculty_id') or '').strip()
             name = (request.data.get('name') or '').strip()
             email = (request.data.get('email') or '').strip()
+            mobile_number = (request.data.get('mobile_number') or '').strip()
             role = request.data.get('role', 'staff')
             dept_id = request.data.get('dept_id')
 
@@ -9581,6 +9582,7 @@ class InstitutionDetailManagementView(APIView):
                 faculty_id=faculty_id,
                 name=name,
                 email=email,
+                mobile_number=mobile_number,
                 role=role,
                 department=department,
                 institution=institution,
@@ -9592,6 +9594,7 @@ class InstitutionDetailManagementView(APIView):
                     "faculty_id": staff.faculty_id,
                     "name": staff.name,
                     "email": staff.email,
+                    "mobile_number": staff.mobile_number,
                     "role": staff.role,
                     "department__id": staff.department_id,
                     "department__name": staff.department.name if staff.department else None,
@@ -9606,6 +9609,14 @@ class InstitutionDetailManagementView(APIView):
             staff.email = email
             staff.save(update_fields=['email'])
             return Response({"message": "Email updated", "email": staff.email})
+
+        elif action == 'update_staff_mobile':
+            staff_id = request.data.get('staff_id')
+            mobile_number = (request.data.get('mobile_number') or '').strip()
+            staff = get_object_or_404(StaffProfile, id=staff_id, institution=institution)
+            staff.mobile_number = mobile_number
+            staff.save(update_fields=['mobile_number'])
+            return Response({"message": "Contact number updated", "mobile_number": staff.mobile_number})
 
         elif action == 'toggle_student_lock':
             student_id = request.data.get('student_id')

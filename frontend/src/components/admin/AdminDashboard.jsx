@@ -60,7 +60,7 @@ const AdminDashboard = () => {
 
   const [newInstitution, setNewInstitution] = useState({ institution_id: '', name: '', short_code: '', address: '', contact_email: '', contact_phone: '' });
   const [newDept, setNewDept] = useState({ name: '', code: '' });
-  const [newStaff, setNewStaff] = useState({ faculty_id: '', name: '', email: '', role: 'staff', dept_id: '' });
+  const [newStaff, setNewStaff] = useState({ faculty_id: '', name: '', email: '', mobile_number: '', role: 'staff', dept_id: '' });
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('');
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -246,11 +246,12 @@ const AdminDashboard = () => {
         faculty_id: newStaff.faculty_id.trim(),
         name: newStaff.name.trim(),
         email: newStaff.email.trim(),
+        mobile_number: newStaff.mobile_number.trim(),
         role: newStaff.role,
         dept_id: newStaff.dept_id || null,
       });
       setShowAddStaffModal(false);
-      setNewStaff({ faculty_id: '', name: '', email: '', role: 'staff', dept_id: '' });
+      setNewStaff({ faculty_id: '', name: '', email: '', mobile_number: '', role: 'staff', dept_id: '' });
       fetchInstitutionHub(selectedInstitution);
     } catch (err) {
       alert("Failed to add staff: " + (err.response?.data?.error || err.message));
@@ -268,6 +269,20 @@ const AdminDashboard = () => {
       });
     } catch (err) {
       alert("Failed to update email");
+    }
+  };
+
+  const updateStaffMobile = async (staffId, mobile_number) => {
+    try {
+      await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, {
+        action: 'update_staff_mobile', staff_id: staffId, mobile_number,
+      });
+      setHubData({
+        ...hubData,
+        staff: hubData.staff.map(s => s.id === staffId ? { ...s, mobile_number } : s)
+      });
+    } catch (err) {
+      alert("Failed to update contact number");
     }
   };
 
@@ -1347,6 +1362,16 @@ const AdminDashboard = () => {
                                       const val = e.target.value.trim();
                                       if (val !== (s.email || '')) updateStaffEmail(s.id, val);
                                     }}
+                                    style={{ width: '100%', maxWidth: 220, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.8rem', fontWeight: 600, boxSizing: 'border-box', marginBottom: 6 }}
+                                  />
+                                  <input
+                                    type="tel"
+                                    defaultValue={s.mobile_number || ''}
+                                    placeholder="Add contact number..."
+                                    onBlur={(e) => {
+                                      const val = e.target.value.trim();
+                                      if (val !== (s.mobile_number || '')) updateStaffMobile(s.id, val);
+                                    }}
                                     style={{ width: '100%', maxWidth: 220, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.8rem', fontWeight: 600, boxSizing: 'border-box' }}
                                   />
                                 </td>
@@ -1676,6 +1701,7 @@ const AdminDashboard = () => {
                 <input type="text" placeholder="Faculty ID" value={newStaff.faculty_id} onChange={(e) => setNewStaff({ ...newStaff, faculty_id: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }} />
                 <input type="text" placeholder="Full Name" value={newStaff.name} onChange={(e) => setNewStaff({ ...newStaff, name: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }} />
                 <input type="email" placeholder="Email (optional)" value={newStaff.email} onChange={(e) => setNewStaff({ ...newStaff, email: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }} />
+                <input type="tel" placeholder="Contact Number (optional)" value={newStaff.mobile_number} onChange={(e) => setNewStaff({ ...newStaff, mobile_number: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }} />
                 <select value={newStaff.role} onChange={(e) => setNewStaff({ ...newStaff, role: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 700, boxSizing: 'border-box' }}>
                   <option value="staff">Staff Member</option>
                   <option value="hod">Dept. Head (HOD)</option>
