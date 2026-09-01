@@ -121,8 +121,19 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     setLoading(true);
     setError(null);
 
+    // Only send the assignment data for the currently active selection mode —
+    // switching between Batch-wise and Individual Selection doesn't clear the
+    // other mode's picks, so without this a contest could end up assigned to
+    // both a leftover batch AND the hand-picked individuals.
+    const payload = {
+      ...formData,
+      assigned_batches: selectionMode === 'batch' ? formData.assigned_batches : [],
+      assigned_sections: selectionMode === 'batch' ? formData.assigned_sections : [],
+      assigned_student_ids: selectionMode === 'individual' ? formData.assigned_student_ids : [],
+    };
+
     try {
-      const res = await fetch('/api/contests/', buildJsonPostOptions(formData));
+      const res = await fetch('/api/contests/', buildJsonPostOptions(payload));
 
       if (res.ok) {
         const data = await res.json();
