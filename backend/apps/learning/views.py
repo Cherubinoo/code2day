@@ -5,7 +5,7 @@ import os
 import re
 import threading
 from collections import defaultdict
-from datetime import timedelta
+from datetime import date, timedelta
 
 from io import BytesIO
 from django.core.files.base import ContentFile
@@ -360,6 +360,54 @@ def build_weekly_activity(activity_calendar):
 
     order = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     return [{"day": day, "count": grouped.get(day, 0)} for day in order]
+
+
+def parse_date_param(value):
+    """Parse a 'YYYY-MM-DD' query param into a date, or None if missing/invalid."""
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def build_solved_activity_series(base_filter, start_date=None, end_date=None, default_days=7):
+    """Daily SolvedProblem counts for the "Weekly Solving Activity" widget
+    on HOD/Staff dashboards, scoped by `base_filter` (a Q object — e.g.
+    department or institution). Defaults to the last `default_days` days
+    ending today when no explicit range is given; a given range is capped
+    at 90 days so the single grouped query stays cheap. Returns one entry
+    per calendar day (oldest first) with both the ISO date and a short
+    weekday label, so the frontend can label bars either way depending on
+    how wide the selected range is.
+    """
+    today = timezone.now().date()
+    if start_date and end_date:
+        start, end = (start_date, end_date) if start_date <= end_date else (end_date, start_date)
+        if (end - start).days > 89:
+            start = end - timedelta(days=89)
+    else:
+        end = today
+        start = end - timedelta(days=default_days - 1)
+
+    counts = dict(
+        SolvedProblem.objects.filter(base_filter, solved_at__date__range=(start, end))
+        .values('solved_at__date')
+        .annotate(count=Count('id'))
+        .values_list('solved_at__date', 'count')
+    )
+
+    series = []
+    cursor = start
+    while cursor <= end:
+        series.append({
+            "date": cursor.isoformat(),
+            "day": cursor.strftime("%a"),
+            "count": counts.get(cursor, 0),
+        })
+        cursor += timedelta(days=1)
+    return series
 
 
 def _contest_live_summary(contest, limit=5):
@@ -884,16 +932,19 @@ class DashboardView(UnifiedAuthMixin, APIView):
             return error
 
         problems = Problem.objects.all()
-        
+
+        range_start = parse_date_param(request.query_params.get('start_date'))
+        range_end = parse_date_param(request.query_params.get('end_date'))
+
         # Handle staff/hod/academics/admin/director/tpu/ja users differently
         if profile_type in ["staff", "hod", "academics", "admin", "director", "tpu", "ja"]:
             # Get profile details
             profile_obj = profile if profile else None
             user_department = getattr(profile_obj, 'department', None) if profile_obj else None
-            
+
             # Filter by institution for multi-tenant support
             inst = getattr(profile_obj, 'institution', None)
-            
+
             # Filter student count by department for HOD / Academic Coordinator, all for admin/staff within institution
             if profile_type in ["hod", "academics"] and user_department:
                 students_qs = StudentProfile.objects.filter(department=user_department, institution=inst)
@@ -901,44 +952,20 @@ class DashboardView(UnifiedAuthMixin, APIView):
                 dept_contests = Contest.objects.filter(department=user_department, institution=inst)
                 contest_count = dept_contests.count()
                 pending_approvals = dept_contests.filter(status='pending_approval').count()
-                
-                # Department Weekly Activity (Total solved problems)
-                seven_days_ago = (timezone.now() - timedelta(days=7)).date()
-                activity_qs = SolvedProblem.objects.filter(
-                    student__department=user_department,
-                    student__institution=inst,
-                    solved_at__date__gte=seven_days_ago
-                ).values('solved_at__date').annotate(count=Count('id'))
-                
-                day_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
-                activity_dict = {day: 0 for day in day_map.values()}
-                for item in activity_qs:
-                    day_name = day_map.get(item['solved_at__date'].weekday())
-                    if day_name:
-                        activity_dict[day_name] += item['count']
-                
-                weekly_activity = [{"day": day, "count": activity_dict[day]} for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]]
+
+                weekly_activity = build_solved_activity_series(
+                    Q(student__department=user_department, student__institution=inst),
+                    start_date=range_start, end_date=range_end,
+                )
             else:
                 student_count = StudentProfile.objects.filter(institution=inst).count() if inst else StudentProfile.objects.count()
                 contest_count = Contest.objects.filter(institution=inst).count() if inst else Contest.objects.count()
                 pending_approvals = Contest.objects.filter(status='pending_approval', institution=inst).count() if profile_type in ["admin", "director", "tpu", "ja"] and inst else 0
-                
-                # Institution Weekly Activity (Total solved problems)
-                seven_days_ago = (timezone.now() - timedelta(days=7)).date()
-                activity_filter = Q(solved_at__date__gte=seven_days_ago)
-                if inst:
-                    activity_filter &= Q(student__institution=inst)
-                
-                activity_qs = SolvedProblem.objects.filter(activity_filter).values('solved_at__date').annotate(count=Count('id'))
-                
-                day_map = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
-                activity_dict = {day: 0 for day in day_map.values()}
-                for item in activity_qs:
-                    day_name = day_map.get(item['solved_at__date'].weekday())
-                    if day_name:
-                        activity_dict[day_name] += item['count']
-                
-                weekly_activity = [{"day": day, "count": activity_dict[day]} for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]]
+
+                weekly_activity = build_solved_activity_series(
+                    Q(student__institution=inst) if inst else Q(),
+                    start_date=range_start, end_date=range_end,
+                )
 
             # Common analytics for HOD and staff dashboards
             recent_activity = []
@@ -3471,22 +3498,13 @@ class StaffDetailView(APIView):
                 "students": all_students,
             })
 
-        # Calculate weekly progress
-        weekly_progress = []
-        for i in range(7):
-            day = timezone.now() - timedelta(days=i)
-            solved_filter = Q(solved_at__date=day.date())
-            if target_staff.department:
-                solved_filter &= Q(student__department=target_staff.department)
-            else:
-                solved_filter &= Q(student__institution=target_staff.institution)
-                
-            count = SolvedProblem.objects.filter(solved_filter).count()
-            weekly_progress.append({
-                "day": day.strftime("%a"),
-                "count": count,
-            })
-        weekly_progress.reverse()
+        # Weekly progress (accepts ?start_date=&end_date=, defaults to last 7 days)
+        weekly_progress = build_solved_activity_series(
+            Q(student__department=target_staff.department) if target_staff.department
+            else Q(student__institution=target_staff.institution),
+            start_date=parse_date_param(request.query_params.get('start_date')),
+            end_date=parse_date_param(request.query_params.get('end_date')),
+        )
 
         # Recent Activity (Last 10 solved problems)
         recent_activity = []
@@ -3661,19 +3679,12 @@ class DepartmentDetailView(APIView):
                 "students": all_students,
             })
 
-        # Weekly progress
-        weekly_progress = []
-        for i in range(7):
-            day = timezone.now() - timedelta(days=i)
-            count = SolvedProblem.objects.filter(
-                student__department=dept,
-                solved_at__date=day.date()
-            ).count()
-            weekly_progress.append({
-                "day": day.strftime("%a"),
-                "count": count,
-            })
-        weekly_progress.reverse()
+        # Weekly progress (accepts ?start_date=&end_date=, defaults to last 7 days)
+        weekly_progress = build_solved_activity_series(
+            Q(student__department=dept),
+            start_date=parse_date_param(request.query_params.get('start_date')),
+            end_date=parse_date_param(request.query_params.get('end_date')),
+        )
 
         # Recent Activity
         recent_activity = []
@@ -9429,7 +9440,7 @@ class InstitutionDetailManagementView(APIView):
         
         # Get staff, HODs, and Academic Coordinator (0001)
         staff_list = StaffProfile.objects.filter(institution=institution).values(
-            'id', 'faculty_id', 'name', 'role', 'department__name', 'department__id', 'department__code'
+            'id', 'faculty_id', 'name', 'email', 'role', 'department__name', 'department__id', 'department__code'
         )
         
         # Get departments
@@ -9549,6 +9560,7 @@ class InstitutionDetailManagementView(APIView):
         elif action == 'create_staff':
             faculty_id = (request.data.get('faculty_id') or '').strip()
             name = (request.data.get('name') or '').strip()
+            email = (request.data.get('email') or '').strip()
             role = request.data.get('role', 'staff')
             dept_id = request.data.get('dept_id')
 
@@ -9568,6 +9580,7 @@ class InstitutionDetailManagementView(APIView):
             staff = StaffProfile.objects.create(
                 faculty_id=faculty_id,
                 name=name,
+                email=email,
                 role=role,
                 department=department,
                 institution=institution,
@@ -9578,13 +9591,22 @@ class InstitutionDetailManagementView(APIView):
                     "id": staff.id,
                     "faculty_id": staff.faculty_id,
                     "name": staff.name,
+                    "email": staff.email,
                     "role": staff.role,
                     "department__id": staff.department_id,
                     "department__name": staff.department.name if staff.department else None,
                     "department__code": staff.department.code if staff.department else None,
                 },
             }, status=201)
-            
+
+        elif action == 'update_staff_email':
+            staff_id = request.data.get('staff_id')
+            email = (request.data.get('email') or '').strip()
+            staff = get_object_or_404(StaffProfile, id=staff_id, institution=institution)
+            staff.email = email
+            staff.save(update_fields=['email'])
+            return Response({"message": "Email updated", "email": staff.email})
+
         elif action == 'toggle_student_lock':
             student_id = request.data.get('student_id')
             student = get_object_or_404(StudentProfile, id=student_id, institution=institution)

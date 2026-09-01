@@ -22,6 +22,7 @@ import { PerformanceDashboard } from '../common/PerformanceCharts';
 import { FlaskConical } from 'lucide-react';
 import { useTabNav } from '../../lib/useTabNav';
 import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
+import SolvingActivityChart from '../common/SolvingActivityChart';
 import HourlyBatchReportModal from '../common/HourlyBatchReportModal';
 
 
@@ -228,6 +229,27 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
   useEffect(() => {
     loadHODData();
   }, [institutionId]);
+
+  async function fetchActivityRange(startDate, endDate) {
+    try {
+      const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
+      if (selectedDeptId) {
+        const res = await fetch(`/api/departments/${selectedDeptId}/details/?${params.toString()}`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setWeeklyActivity(data.analytics?.weekly_progress || []);
+        }
+      } else {
+        const res = await fetch(`/api/dashboard/?${params.toString()}`, { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setWeeklyActivity(data.weeklyActivity || []);
+        }
+      }
+    } catch (err) {
+      // silent fail — chart just keeps showing the previous range
+    }
+  }
 
   async function handleStaffClick(facultyId) {
     setSelectedStaff(facultyId);
@@ -985,41 +1007,7 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 32, alignItems: 'start' }}>
-                {/* Department Activity Graph */}
-                <div className="premium-card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Weekly Solving Activity</h3>
-                    <div style={{ color: 'var(--text-soft)', fontSize: '13px' }}>Problem Solutions</div>
-                  </div>
-                  
-                  <div style={{ height: 240, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', padding: '0 10px' }}>
-                    {weeklyActivity.map((day) => {
-                      const maxCount = Math.max(...weeklyActivity.map(d => d.count), 1);
-                      const height = (day.count / maxCount) * 180;
-                      return (
-                        <div key={day.day} style={{ textAlign: 'center', flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                          <div style={{ 
-                            width: '60%', 
-                            height: `${height}px`, 
-                            background: 'linear-gradient(180deg, var(--olive-600) 0%, var(--olive-900) 100%)', 
-                            borderRadius: '8px 8px 4px 4px',
-                            minHeight: day.count > 0 ? 8 : 2,
-                            transition: 'height 0.3s ease',
-                            position: 'relative'
-                          }}>
-                            {day.count > 0 && (
-                              <div style={{ 
-                                position: 'absolute', top: -24, left: '50%', transform: 'translateX(-50%)',
-                                fontSize: '11px', fontWeight: '800', color: 'var(--olive-900)'
-                              }}>{day.count}</div>
-                            )}
-                          </div>
-                          <div style={{ marginTop: 12, fontSize: '12px', fontWeight: '700', color: 'var(--text-soft)' }}>{day.day}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
+                <SolvingActivityChart data={weeklyActivity} onRangeChange={fetchActivityRange} />
 
                 {/* Live Activity Feed */}
                 <div className="premium-card">
@@ -2123,50 +2111,7 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
             <div className="students-tab">
               {/* ── Default-visible graphs: Weekly Solving Activity + Project Builders ── */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 28 }}>
-                {/* Weekly Solving Activity */}
-                <div className="premium-card">
-                  <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-hard)' }}>
-                    📈 Weekly Solving Activity
-                  </h3>
-                  <p style={{ margin: '0 0 20px', color: 'var(--text-soft)', fontSize: '13px' }}>
-                    Department submissions per day this week
-                  </p>
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 160, padding: '0 4px' }}>
-                    {(() => {
-                      const dayLabels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-                      // Derive activity from recentActivity state if available, else from departmentStudents streaks
-                      const activeStudents = (departmentStudents || []).filter(s => s.current_streak > 0);
-                      const rawCounts = dayLabels.map((d, i) => ({
-                        day: d,
-                        count: recentActivity?.filter?.(a => {
-                          if (!a.date) return false;
-                          return new Date(a.date).getDay() === (i + 1) % 7;
-                        })?.length || (i === new Date().getDay() - 1 ? activeStudents.length : Math.floor(activeStudents.length * (0.4 + Math.random() * 0.4)))
-                      }));
-                      const maxCount = Math.max(...rawCounts.map(d => d.count), 1);
-                      return rawCounts.map((day, i) => {
-                        const heightPct = (day.count / maxCount) * 100;
-                        return (
-                          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                            <div style={{ fontSize: '10px', fontWeight: '700', color: 'var(--olive-700)' }}>{day.count > 0 ? day.count : ''}</div>
-                            <div
-                              style={{
-                                width: '100%',
-                                height: `${Math.max(heightPct, 4)}%`,
-                                background: heightPct > 70 ? 'linear-gradient(180deg,#4f7942,#2d5016)' : heightPct > 30 ? 'linear-gradient(180deg,#7ca370,#4f7942)' : 'var(--sage-200)',
-                                borderRadius: '6px 6px 0 0',
-                                transition: 'height 0.8s cubic-bezier(0.34,1.56,0.64,1)',
-                              }}
-                              title={`${day.count} submissions`}
-                            />
-                            <div style={{ fontSize: '11px', color: 'var(--text-soft)', fontWeight: '600' }}>{day.day}</div>
-                          </div>
-                        );
-                      });
-                    })()}
-
-                  </div>
-                </div>
+                <SolvingActivityChart data={weeklyActivity} onRangeChange={fetchActivityRange} />
 
                 {/* Project Builders */}
                 <div className="premium-card">

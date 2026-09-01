@@ -60,7 +60,7 @@ const AdminDashboard = () => {
 
   const [newInstitution, setNewInstitution] = useState({ institution_id: '', name: '', short_code: '', address: '', contact_email: '', contact_phone: '' });
   const [newDept, setNewDept] = useState({ name: '', code: '' });
-  const [newStaff, setNewStaff] = useState({ faculty_id: '', name: '', role: 'staff', dept_id: '' });
+  const [newStaff, setNewStaff] = useState({ faculty_id: '', name: '', email: '', role: 'staff', dept_id: '' });
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('');
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -245,14 +245,29 @@ const AdminDashboard = () => {
         action: 'create_staff',
         faculty_id: newStaff.faculty_id.trim(),
         name: newStaff.name.trim(),
+        email: newStaff.email.trim(),
         role: newStaff.role,
         dept_id: newStaff.dept_id || null,
       });
       setShowAddStaffModal(false);
-      setNewStaff({ faculty_id: '', name: '', role: 'staff', dept_id: '' });
+      setNewStaff({ faculty_id: '', name: '', email: '', role: 'staff', dept_id: '' });
       fetchInstitutionHub(selectedInstitution);
     } catch (err) {
       alert("Failed to add staff: " + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const updateStaffEmail = async (staffId, email) => {
+    try {
+      await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, {
+        action: 'update_staff_email', staff_id: staffId, email,
+      });
+      setHubData({
+        ...hubData,
+        staff: hubData.staff.map(s => s.id === staffId ? { ...s, email } : s)
+      });
+    } catch (err) {
+      alert("Failed to update email");
     }
   };
 
@@ -1323,7 +1338,17 @@ const AdminDashboard = () => {
                               <tr key={s.id} style={{ background: 'var(--bg-2)' }}>
                                 <td style={{ padding: 24, borderRadius: '24px 0 0 24px' }}>
                                   <div style={{ fontWeight: 850, color: 'var(--olive-900)', fontSize: '1.1rem' }}>{s.name}</div>
-                                  <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600 }}>ID: {s.faculty_id}</div>
+                                  <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: 6 }}>ID: {s.faculty_id}</div>
+                                  <input
+                                    type="email"
+                                    defaultValue={s.email || ''}
+                                    placeholder="Add email..."
+                                    onBlur={(e) => {
+                                      const val = e.target.value.trim();
+                                      if (val !== (s.email || '')) updateStaffEmail(s.id, val);
+                                    }}
+                                    style={{ width: '100%', maxWidth: 220, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.8rem', fontWeight: 600, boxSizing: 'border-box' }}
+                                  />
                                 </td>
                                 <td style={{ padding: 24 }}>
                                   <select 
@@ -1650,6 +1675,7 @@ const AdminDashboard = () => {
               <div style={{ display: 'grid', gap: 24 }}>
                 <input type="text" placeholder="Faculty ID" value={newStaff.faculty_id} onChange={(e) => setNewStaff({ ...newStaff, faculty_id: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }} />
                 <input type="text" placeholder="Full Name" value={newStaff.name} onChange={(e) => setNewStaff({ ...newStaff, name: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }} />
+                <input type="email" placeholder="Email (optional)" value={newStaff.email} onChange={(e) => setNewStaff({ ...newStaff, email: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 600, boxSizing: 'border-box' }} />
                 <select value={newStaff.role} onChange={(e) => setNewStaff({ ...newStaff, role: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 700, boxSizing: 'border-box' }}>
                   <option value="staff">Staff Member</option>
                   <option value="hod">Dept. Head (HOD)</option>

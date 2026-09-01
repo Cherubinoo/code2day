@@ -8,6 +8,7 @@ import DiscussPage from '../student/pages/DiscussPage';
 import StaffLabPanel from './StaffLabPanel';
 import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
 import HourlyBatchReportModal from '../common/HourlyBatchReportModal';
+import SolvingActivityChart from '../common/SolvingActivityChart';
 import { useTabNav } from '../../lib/useTabNav';
 
 const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
@@ -187,6 +188,25 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
   useEffect(() => {
     loadStaffData();
   }, []);
+
+  async function fetchActivityRange(startDate, endDate) {
+    try {
+      const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
+      let weekly_progress = [];
+      if (selectedDeptId) {
+        const res = await fetch(`/api/departments/${selectedDeptId}/details/?${params.toString()}`, { credentials: 'include' });
+        if (res.ok) weekly_progress = (await res.json()).analytics?.weekly_progress || [];
+      } else {
+        const facultyId = staffDetail?.staff?.faculty_id;
+        if (!facultyId) return;
+        const res = await fetch(`/api/staff/${facultyId}/details/?${params.toString()}`, { credentials: 'include' });
+        if (res.ok) weekly_progress = (await res.json()).analytics?.weekly_progress || [];
+      }
+      setStaffDetail(prev => ({ ...prev, analytics: { ...(prev?.analytics || {}), weekly_progress } }));
+    } catch (err) {
+      // silent fail — chart just keeps showing the previous range
+    }
+  }
 
   if (loading) {
     return (
@@ -1205,40 +1225,7 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
             <div className="batches-tab">
               {/* ── Default-visible graphs: Weekly Solving Activity + Project Builders ── */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 28 }}>
-                {/* Weekly Solving Activity */}
-                <div className="premium-card">
-                  <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-hard)' }}>
-                    📈 Weekly Solving Activity
-                  </h3>
-                  <p style={{ margin: '0 0 20px', color: 'var(--text-soft)', fontSize: '13px' }}>
-                    Submissions per day this week
-                  </p>
-                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 160, padding: '0 4px' }}>
-                    {(analytics?.weekly_progress || []).map((day, i) => {
-                      const maxCount = Math.max(...(analytics?.weekly_progress?.map(d => d.count) || [1]), 1);
-                      const heightPct = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
-                      return (
-                        <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-                          <div style={{ fontSize: '10px', fontWeight: '700', color: 'var(--olive-700)' }}>{day.count > 0 ? day.count : ''}</div>
-                          <div
-                            style={{
-                              width: '100%',
-                              height: `${Math.max(heightPct, 4)}%`,
-                              background: heightPct > 70 ? 'linear-gradient(180deg,#4f7942,#2d5016)' : heightPct > 30 ? 'linear-gradient(180deg,#7ca370,#4f7942)' : 'var(--sage-200)',
-                              borderRadius: '6px 6px 0 0',
-                              transition: 'height 0.8s cubic-bezier(0.34,1.56,0.64,1)',
-                            }}
-                            title={`${day.count} submissions`}
-                          />
-                          <div style={{ fontSize: '11px', color: 'var(--text-soft)', fontWeight: '600' }}>{day.day}</div>
-                        </div>
-                      );
-                    })}
-                    {(!analytics?.weekly_progress || analytics.weekly_progress.length === 0) && (
-                      <div style={{ flex: 1, textAlign: 'center', color: 'var(--text-soft)', fontSize: '13px', paddingTop: 60 }}>No activity data yet.</div>
-                    )}
-                  </div>
-                </div>
+                <SolvingActivityChart data={analytics?.weekly_progress || []} onRangeChange={fetchActivityRange} />
 
                 {/* Project Builders */}
                 <div className="premium-card">
