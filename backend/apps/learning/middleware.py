@@ -1,6 +1,6 @@
 from django.http import JsonResponse
 from .models import SystemConfiguration, Institution, StudentProfile, StaffProfile
-from .module_registry import path_to_module_key, MODULE_REGISTRY
+from .module_registry import locked_module_for_path
 
 class MaintenanceMiddleware:
     def __init__(self, get_response):
@@ -86,9 +86,9 @@ class MaintenanceMiddleware:
         # already exempted above via the /api/admin/ path check) always keeps
         # access so the lock can be lifted again.
         if institution and institution.locked_modules:
-            module_key = path_to_module_key(request.path)
-            if module_key and module_key in institution.locked_modules:
-                label = next((m["label"] for m in MODULE_REGISTRY if m["key"] == module_key), module_key)
+            hit = locked_module_for_path(request.path, institution.locked_modules)
+            if hit:
+                module_key, label = hit
                 return JsonResponse({
                     "error": "module_locked",
                     "module": module_key,

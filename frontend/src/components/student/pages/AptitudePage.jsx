@@ -3,8 +3,11 @@ import { Brain, Calculator, MessageSquare, ChevronDown, BookOpen } from 'lucide-
 import AptitudeQuizPage from './AptitudeQuizPage';
 import ReadingComprehensionPage from './ReadingComprehensionPage';
 
-export default function AptitudePage({ onToggleWorkspace }) {
-  const [activeSection, setActiveSection] = useState('topics');
+export default function AptitudePage({ dashboard, onToggleWorkspace }) {
+  const lockedModules = dashboard?.locked_modules || [];
+  const practiceLocked = lockedModules.includes('aptitude_practice');
+  const readingLocked = lockedModules.includes('aptitude_reading');
+  const [activeSection, setActiveSection] = useState(practiceLocked && !readingLocked ? 'reading' : 'topics');
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCats, setExpandedCats] = useState({});
@@ -77,34 +80,38 @@ export default function AptitudePage({ onToggleWorkspace }) {
 
   const sectionTabs = (
     <div style={{ display: 'flex', justifyContent: 'center', gap: 10, marginBottom: 32 }}>
-      <button
-        onClick={() => setActiveSection('topics')}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', borderRadius: 14,
-          border: activeSection === 'topics' ? 'none' : '1px solid var(--border-soft)',
-          background: activeSection === 'topics' ? 'var(--olive-900)' : 'var(--bg-1)',
-          color: activeSection === 'topics' ? '#fff' : 'var(--olive-900)',
-          fontWeight: 700, cursor: 'pointer',
-        }}
-      >
-        <Brain size={16} /> Practice Topics
-      </button>
-      <button
-        onClick={() => setActiveSection('reading')}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', borderRadius: 14,
-          border: activeSection === 'reading' ? 'none' : '1px solid var(--border-soft)',
-          background: activeSection === 'reading' ? 'var(--olive-900)' : 'var(--bg-1)',
-          color: activeSection === 'reading' ? '#fff' : 'var(--olive-900)',
-          fontWeight: 700, cursor: 'pointer',
-        }}
-      >
-        <BookOpen size={16} /> Reading Comprehension
-      </button>
+      {!practiceLocked && (
+        <button
+          onClick={() => setActiveSection('topics')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', borderRadius: 14,
+            border: activeSection === 'topics' ? 'none' : '1px solid var(--border-soft)',
+            background: activeSection === 'topics' ? 'var(--olive-900)' : 'var(--bg-1)',
+            color: activeSection === 'topics' ? '#fff' : 'var(--olive-900)',
+            fontWeight: 700, cursor: 'pointer',
+          }}
+        >
+          <Brain size={16} /> Practice Topics
+        </button>
+      )}
+      {!readingLocked && (
+        <button
+          onClick={() => setActiveSection('reading')}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, padding: '10px 22px', borderRadius: 14,
+            border: activeSection === 'reading' ? 'none' : '1px solid var(--border-soft)',
+            background: activeSection === 'reading' ? 'var(--olive-900)' : 'var(--bg-1)',
+            color: activeSection === 'reading' ? '#fff' : 'var(--olive-900)',
+            fontWeight: 700, cursor: 'pointer',
+          }}
+        >
+          <BookOpen size={16} /> Reading Comprehension
+        </button>
+      )}
     </div>
   );
 
-  if (activeSection === 'reading') {
+  if (activeSection === 'reading' && !readingLocked) {
     return (
       <div className="aptitude-page" style={{ padding: '24px 24px 0', width: '100%', margin: '0' }}>
         {sectionTabs}

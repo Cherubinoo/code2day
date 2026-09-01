@@ -1143,11 +1143,16 @@ const LAB_TYPE_TABS = [
   { id: "company", label: "🏢 Company Based Lab" },
 ];
 
+const LAB_TYPE_MODULE_KEY = { practical: "labs_practical", university: "labs_university", company: "labs_company" };
+
 export default function LabsPage({ dashboard }) {
+  const lockedModules = dashboard?.locked_modules || [];
+  const visibleLabTypeTabs = LAB_TYPE_TABS.filter((t) => !lockedModules.includes(LAB_TYPE_MODULE_KEY[t.id]));
+
   const [labs, setLabs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedLab, setSelectedLab] = useState(null);
-  const [typeFilter, setTypeFilter] = useState("practical");
+  const [typeFilter, setTypeFilter] = useState(visibleLabTypeTabs[0]?.id || "practical");
 
   useEffect(() => {
     fetch("/api/lab/v2/student/", { credentials: "include" })
@@ -1187,7 +1192,7 @@ export default function LabsPage({ dashboard }) {
       </div>
 
       <div className="slab-type-tabs">
-        {LAB_TYPE_TABS.map((t) => (
+        {visibleLabTypeTabs.map((t) => (
           <button key={t.id} type="button"
             className={`slab-type-tab${typeFilter === t.id ? " active" : ""}`}
             onClick={() => setTypeFilter(t.id)}>

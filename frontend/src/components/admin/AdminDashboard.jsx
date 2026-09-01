@@ -1529,9 +1529,9 @@ const AdminDashboard = () => {
                       <section className="surface-card" style={{ padding: 32, borderRadius: 24, background: 'var(--bg-2)', border: '1px solid var(--border-soft)', marginTop: 24 }}>
                         <h3 style={{ fontSize: '1.3rem', fontWeight: 900, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}><Lock className="text-olive-600" /> Module Locks</h3>
                         <p style={{ color: 'var(--text-soft)', marginBottom: 24, fontSize: '0.9rem' }}>
-                          Locking a module hides it completely — from navigation and the API — for every student, staff member, and HOD at this institution. There's no per-role split; it's all or nothing per module.
+                          Locking a module hides it completely — from navigation and the API — for every student, staff member, and HOD at this institution. There's no per-role split; it's all or nothing per module. Locking a whole module locks every sub-module under it too, whether or not those are individually locked; sub-modules can also be locked one at a time without touching the rest.
                         </p>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16 }}>
                           {(hubData.module_registry || []).map((m) => {
                             const isLocked = (hubData.locked_modules || []).includes(m.key);
                             return (
@@ -1543,6 +1543,32 @@ const AdminDashboard = () => {
                                 <button onClick={() => toggleModuleLock(m.key, isLocked)} style={{ width: '100%', padding: '12px', borderRadius: 12, border: isLocked ? '2px solid #ef4444' : 'none', background: isLocked ? 'white' : 'var(--olive-900)', color: isLocked ? '#ef4444' : 'white', fontSize: '0.9rem', fontWeight: 800, cursor: 'pointer', transition: 'all 0.2s' }}>
                                   {isLocked ? 'Unlock Module' : 'Lock Module'}
                                 </button>
+                                {m.children && m.children.length > 0 && (
+                                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border-soft)', display: 'grid', gap: 8 }}>
+                                    {m.children.map((child) => {
+                                      const childLocked = isLocked || (hubData.locked_modules || []).includes(child.key);
+                                      return (
+                                        <div key={child.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                                          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-soft)' }}>{child.label}</span>
+                                          <button
+                                            onClick={() => toggleModuleLock(child.key, childLocked)}
+                                            disabled={isLocked}
+                                            title={isLocked ? `Locked because ${m.label} is locked` : undefined}
+                                            style={{
+                                              padding: '4px 12px', borderRadius: 8, fontSize: '0.7rem', fontWeight: 800, cursor: isLocked ? 'not-allowed' : 'pointer',
+                                              border: childLocked ? '1px solid #ef4444' : '1px solid #10b981',
+                                              background: childLocked ? '#fee2e2' : '#dcfce7',
+                                              color: childLocked ? '#ef4444' : '#10b981',
+                                              opacity: isLocked ? 0.6 : 1,
+                                            }}
+                                          >
+                                            {childLocked ? 'LOCKED' : 'ACTIVE'}
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}

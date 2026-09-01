@@ -1372,7 +1372,7 @@ function App() {
       activeView = <PlaygroundPage />;
       break;
     case "aptitude":
-      activeView = <AptitudePage onToggleWorkspace={setIsInsideWorkspace} />;
+      activeView = <AptitudePage dashboard={dashboard} onToggleWorkspace={setIsInsideWorkspace} />;
       break;
     case "discuss":
       activeView = (

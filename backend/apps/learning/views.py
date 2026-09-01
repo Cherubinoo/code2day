@@ -26,7 +26,7 @@ from rest_framework.views import APIView
 
 from .auth_utils import RateLimitExceeded, StudentAuthMixin, UnifiedAuthMixin, check_rate_limit
 from .data import FALLBACK_DASHBOARD, FALLBACK_PROBLEMS
-from .module_registry import MODULE_REGISTRY, MODULE_KEYS
+from .module_registry import MODULE_KEYS, serializable_registry
 from .drive_image_cache import cached_image_path, fetch_and_cache_drive_image, DriveImageFetchError
 from .models import (
     BatchAdvisor,
@@ -6392,6 +6392,17 @@ class StudentContestListView(APIView):
 
         contests = [c for c in all_contests if c.is_student_assigned(student)]
 
+        # Filter out contests of a type locked for this institution — the
+        # middleware already blocks direct access, this keeps the list from
+        # showing tiles that would just 403 on click.
+        locked = (student.institution.locked_modules if student.institution else []) or []
+        if locked:
+            contest_type_module = {"programming": "contest_programming", "aptitude": "contest_aptitude", "combined": "contest_combined"}
+            if "contest" in locked:
+                contests = []
+            else:
+                contests = [c for c in contests if contest_type_module.get(c.contest_type) not in locked]
+
         data = []
         for contest in contests:
             # Update contest status if it has ended
@@ -9419,7 +9430,7 @@ class InstitutionDetailManagementView(APIView):
                 "tpu": institution.maintenance_tpu,
                 "director": institution.maintenance_director
             },
-            "module_registry": MODULE_REGISTRY,
+            "module_registry": serializable_registry(),
             "locked_modules": institution.locked_modules,
             "branding": {
                 "display_name": institution.display_name,
