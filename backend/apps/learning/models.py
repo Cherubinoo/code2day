@@ -29,6 +29,12 @@ class Institution(models.Model):
     maintenance_tpu = models.BooleanField(default=False)
     maintenance_director = models.BooleanField(default=False)
 
+    # Module locks — institution-wide, not per-role: a locked module is
+    # unavailable to every user at this institution (student, staff, HOD,
+    # everyone). Stores a list of module keys from MODULE_REGISTRY (see
+    # module_registry.py) that are currently locked, e.g. ["labs", "discuss"].
+    locked_modules = models.JSONField(default=list, blank=True)
+
     # Branding Information
     display_name = models.CharField(max_length=300, blank=True, default="", help_text="Full display name for reports and headers")
     subheading = models.CharField(max_length=200, blank=True, default="", help_text="Subtitle or tagline")

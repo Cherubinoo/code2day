@@ -1,5 +1,6 @@
 from django.http import JsonResponse
 from .models import SystemConfiguration, Institution, StudentProfile, StaffProfile
+from .module_registry import path_to_module_key, MODULE_REGISTRY
 
 class MaintenanceMiddleware:
     def __init__(self, get_response):
@@ -79,6 +80,20 @@ class MaintenanceMiddleware:
             field = inst_role_fields.get(role)
             if field and getattr(institution, field, False):
                 return self.maintenance_response(f"{institution.name} {global_role_labels.get(role, role)} portal maintenance.")
+
+        # 3. Check Module Lock — institution-wide, blocks every role alike
+        # (unlike maintenance above, which is per-role). Admin ('admin' role,
+        # already exempted above via the /api/admin/ path check) always keeps
+        # access so the lock can be lifted again.
+        if institution and institution.locked_modules:
+            module_key = path_to_module_key(request.path)
+            if module_key and module_key in institution.locked_modules:
+                label = next((m["label"] for m in MODULE_REGISTRY if m["key"] == module_key), module_key)
+                return JsonResponse({
+                    "error": "module_locked",
+                    "module": module_key,
+                    "message": f"{label} is currently unavailable for {institution.name}.",
+                }, status=403)
 
         return self.get_response(request)
 

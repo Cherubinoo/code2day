@@ -187,6 +187,24 @@ const AdminDashboard = () => {
     );
   };
 
+  const toggleModuleLock = async (moduleKey, isLocked) => {
+    const action = isLocked ? 'UNLOCK' : 'LOCK';
+    askDouble(
+      async () => {
+        try {
+          const res = await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, {
+            action: 'toggle_module_lock', module: moduleKey, value: !isLocked,
+          });
+          setHubData({ ...hubData, locked_modules: res.data.locked_modules });
+        } catch (err) {
+          alert("Failed to update module lock");
+        }
+      },
+      `Are you sure you want to ${action} this module?`,
+      `Confirming ${action} for ${selectedInstitution.name}. This will hide it from every student, staff, and HOD at this institution immediately.`
+    );
+  };
+
   const updateStaffRole = async (staffId, newRole) => {
     try {
       await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, { 
@@ -1505,6 +1523,29 @@ const AdminDashboard = () => {
                               </button>
                             </div>
                           ))}
+                        </div>
+                      </section>
+
+                      <section className="surface-card" style={{ padding: 32, borderRadius: 24, background: 'var(--bg-2)', border: '1px solid var(--border-soft)', marginTop: 24 }}>
+                        <h3 style={{ fontSize: '1.3rem', fontWeight: 900, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}><Lock className="text-olive-600" /> Module Locks</h3>
+                        <p style={{ color: 'var(--text-soft)', marginBottom: 24, fontSize: '0.9rem' }}>
+                          Locking a module hides it completely — from navigation and the API — for every student, staff member, and HOD at this institution. There's no per-role split; it's all or nothing per module.
+                        </p>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+                          {(hubData.module_registry || []).map((m) => {
+                            const isLocked = (hubData.locked_modules || []).includes(m.key);
+                            return (
+                              <div key={m.key} style={{ padding: 20, background: 'white', borderRadius: 20, border: '1px solid var(--border-soft)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                                  <span style={{ fontWeight: 800, color: 'var(--olive-900)', fontSize: '1.05rem' }}>{m.label}</span>
+                                  <span style={{ fontSize: '0.75rem', fontWeight: 900, color: isLocked ? '#ef4444' : '#10b981', background: isLocked ? '#fee2e2' : '#dcfce7', padding: '4px 10px', borderRadius: 8 }}>{isLocked ? 'LOCKED' : 'ACTIVE'}</span>
+                                </div>
+                                <button onClick={() => toggleModuleLock(m.key, isLocked)} style={{ width: '100%', padding: '12px', borderRadius: 12, border: isLocked ? '2px solid #ef4444' : 'none', background: isLocked ? 'white' : 'var(--olive-900)', color: isLocked ? '#ef4444' : 'white', fontSize: '0.9rem', fontWeight: 800, cursor: 'pointer', transition: 'all 0.2s' }}>
+                                  {isLocked ? 'Unlock Module' : 'Lock Module'}
+                                </button>
+                              </div>
+                            );
+                          })}
                         </div>
                       </section>
                     </div>

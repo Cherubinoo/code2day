@@ -10,7 +10,7 @@ import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
 import HourlyBatchReportModal from '../common/HourlyBatchReportModal';
 import { useTabNav } from '../../lib/useTabNav';
 
-const StaffDashboard = ({ institutionId }) => {
+const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
   const [activeTab, setActiveTab] = useTabNav('overview');
   const [staffDetail, setStaffDetail] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -253,6 +253,10 @@ const StaffDashboard = ({ institutionId }) => {
     fetchContests();
   }
 
+  // Tabs tied to a lockable module disappear entirely when that module is
+  // locked institution-wide — matches the module lock hiding it from the
+  // student nav too.
+  const MODULE_BY_TAB = { contests: 'contest', labs: 'labs', chat: 'discuss' };
   const sidebarItems = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'performance', label: 'Performance', icon: Trophy },
@@ -263,7 +267,7 @@ const StaffDashboard = ({ institutionId }) => {
     { id: 'reports', label: 'Reports', icon: FileText },
     { id: 'labs', label: 'Lab', icon: FlaskConical },
     { id: 'chat', label: 'Discuss', icon: MessageSquare },
-  ];
+  ].filter((item) => !MODULE_BY_TAB[item.id] || !lockedModules.includes(MODULE_BY_TAB[item.id]));
 
   return (
     <div className="admin-dashboard-layout">

@@ -1452,7 +1452,7 @@ function App() {
       break;
     case "hod":
       activeView = (userType === "hod" || userType === "director" || userType === "tpu" || userType === "academics") ? (
-        <HODDashboard institutionId={selectedInstitutionId} />
+        <HODDashboard institutionId={selectedInstitutionId} lockedModules={dashboard.locked_modules || []} />
       ) : (
         <div style={{ padding: 40 }}>
           <h2>Access Denied</h2>
@@ -1472,7 +1472,7 @@ function App() {
       break;
     case "staff":
       activeView = ["staff", "hod", "admin", "director", "tpu", "ja", "academics"].includes(userType) ? (
-        <StaffDashboard institutionId={selectedInstitutionId} />
+        <StaffDashboard institutionId={selectedInstitutionId} lockedModules={dashboard.locked_modules || []} />
       ) : (
         <div style={{ padding: 40 }}>
           <h2>Access Denied</h2>
@@ -1678,7 +1678,7 @@ function App() {
           activePage={activePage}
           dashboard={dashboard}
           handleLogout={handleLogout}
-          navItems={navItems}
+          navItems={navItems.filter((item) => !(dashboard.locked_modules || []).includes(item.id))}
           setActivePage={navigate}
           userType={userType}
           hideNav={isInsideWorkspace || (sessionMode === "contest" && activePage === "problems")}

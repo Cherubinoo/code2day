@@ -26,7 +26,12 @@ import HourlyBatchReportModal from '../common/HourlyBatchReportModal';
 
 
 
-const HODDashboard = ({ institutionId }) => {
+const HODDashboard = ({ institutionId, lockedModules = [] }) => {
+  // Tabs tied to a lockable module disappear entirely when that module is
+  // locked institution-wide — matches the module lock hiding from the
+  // student nav too, so nobody at a locked institution can reach it from
+  // either side.
+  const MODULE_BY_TAB = { contests: 'contest', labs: 'labs', 'my-practicals': 'labs', companies: 'company', discuss: 'discuss' };
   const sidebarItems = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'performance', label: 'Performance', icon: Trophy },
@@ -38,7 +43,7 @@ const HODDashboard = ({ institutionId }) => {
     { id: 'companies', label: 'Companies', icon: Briefcase },
     { id: 'my-practicals', label: 'My Practicals', icon: Pencil },
     { id: 'discuss', label: 'Discuss', icon: MessageSquare },
-  ];
+  ].filter((item) => !MODULE_BY_TAB[item.id] || !lockedModules.includes(MODULE_BY_TAB[item.id]));
 
   const [activeTab, setActiveTab] = useTabNav('overview');
   const [stats, setStats] = useState({

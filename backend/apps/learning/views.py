@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 
 from .auth_utils import RateLimitExceeded, StudentAuthMixin, UnifiedAuthMixin, check_rate_limit
 from .data import FALLBACK_DASHBOARD, FALLBACK_PROBLEMS
+from .module_registry import MODULE_REGISTRY, MODULE_KEYS
 from .models import (
     BatchAdvisor,
     Contest,
@@ -1083,6 +1084,7 @@ class DashboardView(UnifiedAuthMixin, APIView):
                 "recentActivity": recent_activity,
                 "engagementSummary": engagement_summary,
                 "staff": StaffProfileSerializer(profile).data if profile and profile_type in ["staff", "hod", "academics"] else None,
+                "locked_modules": inst.locked_modules if inst else [],
             })
 
         # Student dashboard (original logic)
@@ -1243,6 +1245,7 @@ class DashboardView(UnifiedAuthMixin, APIView):
             } for a in announcements],
             "editor": FALLBACK_DASHBOARD["editor"],
             "student": StudentProfileSerializer(profile).data,
+            "locked_modules": profile.institution.locked_modules if profile.institution else [],
         }
         return Response(payload)
 
@@ -9415,6 +9418,8 @@ class InstitutionDetailManagementView(APIView):
                 "tpu": institution.maintenance_tpu,
                 "director": institution.maintenance_director
             },
+            "module_registry": MODULE_REGISTRY,
+            "locked_modules": institution.locked_modules,
             "branding": {
                 "display_name": institution.display_name,
                 "subheading": institution.subheading,
@@ -9450,7 +9455,21 @@ class InstitutionDetailManagementView(APIView):
             elif role == 'director': institution.maintenance_director = value
             institution.save()
             return Response({"message": "Maintenance updated"})
-            
+
+        elif action == 'toggle_module_lock':
+            module_key = request.data.get('module')
+            value = bool(request.data.get('value'))
+            if module_key not in MODULE_KEYS:
+                return Response({"error": f"Unknown module '{module_key}'."}, status=400)
+            locked = set(institution.locked_modules or [])
+            if value:
+                locked.add(module_key)
+            else:
+                locked.discard(module_key)
+            institution.locked_modules = sorted(locked)
+            institution.save(update_fields=['locked_modules'])
+            return Response({"message": "Module lock updated", "locked_modules": institution.locked_modules})
+
         elif action == 'update_role':
             staff_id = request.data.get('staff_id')
             new_role = request.data.get('role')
