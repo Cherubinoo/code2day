@@ -193,6 +193,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
     memory: null,
   });
   const [executionPhase, setExecutionPhase] = useState("idle"); // "idle" | "compiling" | "running"
+  const [elapsedTime, setElapsedTime] = useState(0);
   const timerRef = useRef(null);
 
   // Timer state
