@@ -3770,6 +3770,7 @@ class ContestListCreateView(APIView):
             max_tab_switches=request.data.get('max_tab_switches', 3),
             enable_fullscreen_lock=request.data.get('enable_fullscreen_lock', False),
             enable_copy_paste_lock=request.data.get('enable_copy_paste_lock', False),
+            enable_webcam_proctoring=request.data.get('enable_webcam_proctoring', False),
         )
 
         # Add problems by slugs (for programming)
@@ -4216,12 +4217,9 @@ class AptitudeContestSubmitView(APIView):
             return Response({"detail": "Student access required."}, status=status.HTTP_403_FORBIDDEN)
 
         student = request.user.student_profile
-        contest = Contest.objects.filter(
-            Q(assigned_students=student) | Q(assigned_batches__contains=student.batch),
-            id=contest_id
-        ).first()
-        
-        if not contest:
+        contest = Contest.objects.filter(id=contest_id).first()
+
+        if not contest or not contest.is_student_assigned(student):
             return Response({"detail": "Contest not found or not accessible."}, status=status.HTTP_404_NOT_FOUND)
 
         # Check if contest is active for the student
@@ -6457,6 +6455,7 @@ class StudentContestDetailView(APIView):
             "max_tab_switches": contest.max_tab_switches,
             "enable_fullscreen_lock": contest.enable_fullscreen_lock,
             "enable_copy_paste_lock": contest.enable_copy_paste_lock,
+            "enable_webcam_proctoring": contest.enable_webcam_proctoring,
             "is_active": is_active,
             "is_ended": is_ended,
             "has_started": participation is not None,
@@ -6803,13 +6802,11 @@ class StudentContestProblemView(APIView):
         student = request.user.student_profile
 
         contest = Contest.objects.filter(
-            Q(assigned_students=student) | 
-            Q(assigned_batches__contains=student.batch, department=student.department),
             id=contest_id,
             status__in=['published', 'completed']  # Only published/completed contests
         ).first()
 
-        if not contest:
+        if not contest or not contest.is_student_assigned(student):
             return Response(
                 {"detail": "Contest not found or not accessible."},
                 status=status.HTTP_404_NOT_FOUND
@@ -6893,13 +6890,11 @@ class StudentContestSubmitView(APIView):
         student = request.user.student_profile
 
         contest = Contest.objects.filter(
-            Q(assigned_students=student) | 
-            Q(assigned_batches__contains=student.batch, department=student.department),
             id=contest_id,
             status__in=['published', 'completed']  # Only published/completed contests
         ).first()
 
-        if not contest:
+        if not contest or not contest.is_student_assigned(student):
             return Response(
                 {"detail": "Contest not found or not accessible."},
                 status=status.HTTP_404_NOT_FOUND
@@ -6922,7 +6917,7 @@ class StudentContestSubmitView(APIView):
             # End participation if still active
             if participation.is_active:
                 participation.end_participation()
-            
+
             return Response(
                 {"detail": "Contest has ended. No more submissions allowed."},
                 status=status.HTTP_400_BAD_REQUEST

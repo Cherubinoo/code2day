@@ -209,8 +209,10 @@ function ContestWorkspacePage({ contestId, onBack }) {
   const [isLocked, setIsLocked] = useState(false);
   const [lockReason, setLockReason] = useState('');
 
-  // Camera initialization
+  // Camera initialization — only when the contest requires webcam proctoring
   useEffect(() => {
+    if (!contest?.enable_webcam_proctoring) return;
+
     async function initCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
@@ -229,7 +231,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
         cameraStreamRef.current.getTracks().forEach(track => track.stop());
       }
     };
-  }, []);
+  }, [contest?.enable_webcam_proctoring]);
 
   // Snapshot capture function
   const captureSnapshot = useCallback(async () => {

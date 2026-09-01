@@ -1135,7 +1135,11 @@ class Contest(models.Model):
         default=False,
         help_text="Disable copy and paste in contest workspace"
     )
-    
+    enable_webcam_proctoring = models.BooleanField(
+        default=False,
+        help_text="Require webcam access and capture periodic snapshots during contest"
+    )
+
     # Analytics
     total_participants = models.PositiveIntegerField(default=0)
     total_submissions = models.PositiveIntegerField(default=0)

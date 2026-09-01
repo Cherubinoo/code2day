@@ -18,6 +18,11 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     assigned_student_ids: [],
     submit_for_approval: false,
     contest_type: initialType, // 'programming' or 'aptitude'
+    enable_tab_switch_check: true,
+    max_tab_switches: 3,
+    enable_fullscreen_lock: false,
+    enable_copy_paste_lock: false,
+    enable_webcam_proctoring: false,
   });
   
   const [problems, setProblems] = useState([]);
@@ -2126,6 +2131,22 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                     Prevents copying or pasting text or external solutions during the contest session.
                   </p>
                 </div>
+
+                {/* Webcam Proctoring */}
+                <div style={{ padding: 16, background: 'white', borderRadius: 10, border: '1px solid #cbd5e1', marginTop: 16 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', fontWeight: 600, fontSize: 15, color: '#1e293b' }}>
+                    <input
+                      type="checkbox"
+                      checked={formData.enable_webcam_proctoring}
+                      onChange={(e) => setFormData({ ...formData, enable_webcam_proctoring: e.target.checked })}
+                      style={{ width: 18, height: 18, accentColor: '#4f46e5' }}
+                    />
+                    Require Webcam Proctoring
+                  </label>
+                  <p style={{ margin: '6px 0 0 30px', color: '#64748b', fontSize: 13 }}>
+                    Asks students for camera access and captures periodic snapshots while they attempt the contest. Leave unchecked if a webcam isn't needed.
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -2243,6 +2264,10 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                       </div>
                     </div>
                   ))}
+
+                  <div style={{ marginTop: 14, fontSize: 13, color: '#4f46e5', fontWeight: 600 }}>
+                    {totalAssignedStudents} student{totalAssignedStudents === 1 ? '' : 's'} will be assigned
+                  </div>
                 </div>
               )}
 
