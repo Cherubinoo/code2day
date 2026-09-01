@@ -679,8 +679,12 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
         <SuccessAnimation onDone={() => setShowSuccessAnimation(false)} />
       )}
 
-      {/* ── Question Switcher Bar for Allocated Questions ── */}
-      {allExercises && allExercises.length > 0 && (
+      {/* ── Question Switcher Bar — only for University labs, where students have no
+          "All Exercises" list page to navigate back to (session is locked to the
+          workspace). Regular practical/company labs already have that back button,
+          so cramming every allocated exercise into the solving space here would
+          just be redundant clutter, especially for labs with many exercises. ── */}
+      {lab.lab_type === "university" && allExercises && allExercises.length > 0 && (
         <div style={{
           background: "#0f172a", borderBottom: "1px solid #334155", padding: "10px 16px",
           display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap"
