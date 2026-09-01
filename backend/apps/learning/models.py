@@ -1746,6 +1746,10 @@ class Lab(models.Model):
         'self', on_delete=models.SET_NULL, null=True, blank=True, related_name="university_labs"
     )
     allowed_languages = models.JSONField(default=default_lab_languages)
+    pass_threshold_percent = models.PositiveIntegerField(
+        default=70,
+        help_text="Minimum percentage of an exercise's test cases that must pass for a student's submission to be accepted",
+    )
 
     class Meta:
         db_table = "labs"

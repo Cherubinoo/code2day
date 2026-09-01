@@ -65,6 +65,7 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab, labs =
     max_tab_switches: 3,
     enable_fullscreen_lock: true,
     enable_copy_paste_lock: true,
+    pass_threshold_percent: 70,
     linked_lab_id: "",
   };
   const [form, setForm] = useState(blank);
@@ -87,6 +88,7 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab, labs =
         max_tab_switches: editLab.max_tab_switches ?? 3,
         enable_fullscreen_lock: editLab.enable_fullscreen_lock ?? true,
         enable_copy_paste_lock: editLab.enable_copy_paste_lock ?? true,
+        pass_threshold_percent: editLab.pass_threshold_percent ?? 70,
         linked_lab_id: editLab.linked_lab_id ?? "",
       });
     } else {
@@ -224,6 +226,24 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab, labs =
             <label className="hlc2-label">Allowed Languages *</label>
             <LangMultiSelect options={LAB_LANGUAGES} values={form.allowed_languages}
               onChange={(v) => setForm((f) => ({ ...f, allowed_languages: v }))} />
+          </div>
+          <div className="hlc2-field">
+            <label className="hlc2-label">Pass Threshold (%)</label>
+            <input
+              type="number"
+              min="1"
+              max="100"
+              className="hlc2-input"
+              style={{ width: 100, marginTop: 4 }}
+              value={form.pass_threshold_percent}
+              onChange={(e) => setForm((f) => ({
+                ...f,
+                pass_threshold_percent: Math.max(1, Math.min(100, parseInt(e.target.value) || 70)),
+              }))}
+            />
+            <p style={{ margin: "6px 0 0", fontSize: 12, color: "#94a3b8" }}>
+              A student's exercise submission is only accepted once at least this % of its test cases pass.
+            </p>
           </div>
           {form.lab_type === "university" && (
             <div style={{ marginTop: 20, marginBottom: 20, padding: 15, background: "#0f172a", borderRadius: 8, border: "1px solid #1e293b" }}>

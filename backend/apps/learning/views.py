@@ -13696,6 +13696,7 @@ def _serialize_lab_v2(lab, student=None):
         "max_tab_switches": lab.max_tab_switches,
         "enable_fullscreen_lock": lab.enable_fullscreen_lock,
         "enable_copy_paste_lock": lab.enable_copy_paste_lock,
+        "pass_threshold_percent": lab.pass_threshold_percent,
     }
     if student is not None:
         completed = LabExerciseSubmission.objects.filter(
@@ -13973,6 +13974,10 @@ class HODLabListView(APIView):
                 pass
 
         is_univ = (lab_type == "university")
+        try:
+            pass_threshold_percent = max(1, min(100, int(data.get("pass_threshold_percent", 70))))
+        except (TypeError, ValueError):
+            pass_threshold_percent = 70
         lab = Lab.objects.create(
             name=data["name"],
             department=staff.department,
@@ -13989,6 +13994,7 @@ class HODLabListView(APIView):
             max_tab_switches=int(data.get("max_tab_switches", 3)) if is_univ else 3,
             enable_fullscreen_lock=bool(data.get("enable_fullscreen_lock", False)) if is_univ else False,
             enable_copy_paste_lock=bool(data.get("enable_copy_paste_lock", False)) if is_univ else False,
+            pass_threshold_percent=pass_threshold_percent,
             allowed_languages=allowed_languages,
             linked_lab=linked_lab,
         )
@@ -14025,6 +14031,11 @@ class HODLabDetailView(APIView):
             lab.enable_tab_switch_check = False
             lab.enable_fullscreen_lock = False
             lab.enable_copy_paste_lock = False
+        if "pass_threshold_percent" in data:
+            try:
+                lab.pass_threshold_percent = max(1, min(100, int(data["pass_threshold_percent"])))
+            except (TypeError, ValueError):
+                pass
         if "linked_lab_id" in data:
             linked_lab_id = data["linked_lab_id"]
             if linked_lab_id:
@@ -14099,6 +14110,10 @@ class StaffLabListView(APIView):
                 pass
 
         is_univ = (lab_type == "university")
+        try:
+            pass_threshold_percent = max(1, min(100, int(data.get("pass_threshold_percent", 70))))
+        except (TypeError, ValueError):
+            pass_threshold_percent = 70
         lab = Lab.objects.create(
             name=data["name"],
             department=staff.department,
@@ -14115,6 +14130,7 @@ class StaffLabListView(APIView):
             max_tab_switches=int(data.get("max_tab_switches", 3)) if is_univ else 3,
             enable_fullscreen_lock=bool(data.get("enable_fullscreen_lock", False)) if is_univ else False,
             enable_copy_paste_lock=bool(data.get("enable_copy_paste_lock", False)) if is_univ else False,
+            pass_threshold_percent=pass_threshold_percent,
             allowed_languages=allowed_languages,
             linked_lab=linked_lab,
         )
@@ -14879,12 +14895,13 @@ class StudentExerciseRunView(APIView):
 
 
 class StudentExerciseSubmitView(APIView):
-    """Student: submit a LabExercise. Only actually recorded once all of
-    the exercise's test cases pass — re-runs them here (the full set, same
-    as the Run button now does) so a submission can't be stored on the
-    strength of a subset that happened to pass while others silently
-    failed. Exercises with no test cases configured yet have nothing to
-    gate against, so those still submit best-effort as before."""
+    """Student: submit a LabExercise. Only actually recorded once at least
+    the lab's pass_threshold_percent of the exercise's test cases pass —
+    re-runs them here (the full set, same as the Run button now does) so a
+    submission can't be stored on the strength of a subset that happened to
+    pass while others silently failed. Exercises with no test cases
+    configured yet have nothing to gate against, so those still submit
+    best-effort as before."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, lab_id, exercise_id):
@@ -14952,12 +14969,14 @@ class StudentExerciseSubmitView(APIView):
 
             passed = result["passed_cases"]
             total = result["total_cases"]
-            if total > 0 and passed < 1:
+            threshold_pct = exercise.lab.pass_threshold_percent
+            pass_pct = (passed / total * 100) if total else 0
+            if total > 0 and pass_pct < threshold_pct:
                 return Response(
                     {
                         "error": (
-                            f"0/{total} test case(s) passed. "
-                            f"At least 1 test case must pass before this exercise can be submitted."
+                            f"{passed}/{total} test case(s) passed ({round(pass_pct)}%). "
+                            f"At least {threshold_pct}% of test cases must pass before this exercise can be submitted."
                         ),
                         "test_results": result["test_results"],
                         "passed_cases": passed,
