@@ -10854,10 +10854,18 @@ class AdminAptitudeBulkUploadView(APIView):
                 )
                 continue
 
+            # Dedup key includes question_image, not just (topic, question_text) —
+            # image-based question sets (e.g. Figure Series) commonly reuse the
+            # same generic instructional text across every row ("Select the
+            # figure that will replace the question mark...") with the actual
+            # content living entirely in the image, so text alone would collapse
+            # dozens/hundreds of genuinely distinct questions into one row that
+            # just gets overwritten repeatedly. Text-only rows (question_image
+            # empty for all of them) still dedup by text alone as before.
             q, created = AptitudeQuestion.objects.get_or_create(
-                topic=topic, question_text=question_text,
+                topic=topic, question_text=question_text, question_image=question_image,
                 defaults={
-                    "question_type": question_type, "question_image": question_image,
+                    "question_type": question_type,
                     "option_a": option_a, "option_a_image": option_a_image,
                     "option_b": option_b, "option_b_image": option_b_image,
                     "option_c": option_c, "option_c_image": option_c_image,
@@ -10869,7 +10877,6 @@ class AdminAptitudeBulkUploadView(APIView):
                 created_count += 1
             else:
                 q.question_type = question_type
-                q.question_image = question_image
                 q.option_a = option_a
                 q.option_a_image = option_a_image
                 q.option_b = option_b
@@ -10883,12 +10890,12 @@ class AdminAptitudeBulkUploadView(APIView):
                 if explanation:
                     q.explanation = explanation
                 q.save(update_fields=[
-                    'question_type', 'question_image',
+                    'question_type',
                     'option_a', 'option_a_image', 'option_b', 'option_b_image',
                     'option_c', 'option_c_image', 'option_d', 'option_d_image',
                     'correct_option', 'difficulty', 'explanation',
                 ])
-                created_count += 1
+                skipped_count += 1
 
         return Response({
             "created_count": created_count,
