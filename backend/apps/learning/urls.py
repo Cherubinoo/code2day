@@ -190,6 +190,7 @@ from .views import (
     AptitudeTopicListView,
     ReadingPassageListView,
     ReadingPassageDetailView,
+    aptitude_drive_image_proxy,
     ExecutorSystemInfoView,
     ExecutorSubmitView,
     StaffDeptListView,
@@ -354,6 +355,7 @@ urlpatterns = [
     path("aptitude/questions/submit/", AptitudeQuestionSubmitView.as_view(), name="aptitude-question-submit"),
     path("aptitude/reading-passages/", ReadingPassageListView.as_view(), name="aptitude-reading-passage-list"),
     path("aptitude/reading-passages/<int:passage_id>/", ReadingPassageDetailView.as_view(), name="aptitude-reading-passage-detail"),
+    path("aptitude/drive-image/<str:drive_id>/", aptitude_drive_image_proxy, name="aptitude-drive-image-proxy"),
 
     path("students/<str:register_number>/report/", StudentReportPDFView.as_view(), name="student-report-pdf"),
     path("staff/<str:faculty_id>/report/", StaffReportPDFView.as_view(), name="staff-report-pdf"),

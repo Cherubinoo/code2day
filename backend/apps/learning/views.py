@@ -1,4 +1,7 @@
+import glob
 import logging
+import mimetypes
+import os
 import re
 import threading
 from collections import defaultdict
@@ -11,7 +14,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Sum, Avg, Max, Max
-from django.http import HttpResponse
+from django.http import HttpResponse, FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.decorators import method_decorator
@@ -10326,19 +10329,70 @@ def _resolve_drive_image(raw_value):
     ready-to-use image URL, or (for the "Question/Option Image ID" template
     variant) a bare Google Drive file ID — e.g. a Figure Series export where
     every option is an image referenced by its Drive file ID rather than a
-    URL. Bare IDs are turned into a public, no-auth-required direct-image
-    link (Drive's thumbnail endpoint, which reliably serves the actual image
-    bytes for a publicly-shared file, unlike the uc?export=download endpoint
-    which can serve an HTML interstitial instead). Already-a-URL values pass
-    through unchanged."""
+    URL. Bare IDs are pointed at our own caching proxy (see
+    AptitudeDriveImageProxyView) rather than Drive directly — Drive's
+    thumbnail endpoint is noticeably slow to serve cold, and with hundreds
+    of image-based questions on one page that adds up fast. The proxy
+    fetches from Drive once per file and serves every request after that
+    from local disk with a long-lived Cache-Control header. Already-a-URL
+    values (a plain image URL, not a Drive file ID) pass through unchanged
+    since there's nothing to cache-proxy for those."""
     val = (raw_value or "").strip().strip('*').strip()
     if not val:
         return ""
     if val.lower().startswith(("http://", "https://")):
         return val
     if _DRIVE_FILE_ID_RE.match(val):
-        return f"https://drive.google.com/thumbnail?id={val}&sz=w2000"
+        return f"/api/aptitude/drive-image/{val}/"
     return val
+
+
+_DRIVE_IMAGE_CACHE_DIR = os.path.join(settings.MEDIA_ROOT, "aptitude_drive_cache")
+
+
+def aptitude_drive_image_proxy(request, drive_id):
+    """Serve a Google-Drive-hosted aptitude question/option image, caching
+    it to local disk on first request so every request after that is a
+    local file read instead of a round trip to Drive's thumbnail endpoint.
+    Public/no-auth by design — these are the exact same files Drive itself
+    already serves without authentication (that's what makes storing a bare
+    file ID + resolving to a public thumbnail URL work at all), so proxying
+    them adds no new exposure."""
+    if not _DRIVE_FILE_ID_RE.match(drive_id or ""):
+        raise Http404("Invalid image id.")
+
+    os.makedirs(_DRIVE_IMAGE_CACHE_DIR, exist_ok=True)
+    existing = glob.glob(os.path.join(_DRIVE_IMAGE_CACHE_DIR, f"{drive_id}.*"))
+    if existing:
+        cached_path = existing[0]
+        content_type = mimetypes.guess_type(cached_path)[0] or "image/png"
+        response = FileResponse(open(cached_path, "rb"), content_type=content_type)
+        response["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+    try:
+        upstream = requests.get(
+            f"https://drive.google.com/thumbnail?id={drive_id}&sz=w2000",
+            timeout=15,
+        )
+        upstream.raise_for_status()
+    except requests.exceptions.RequestException:
+        raise Http404("Image could not be retrieved from Drive.")
+
+    content_type = upstream.headers.get("Content-Type", "image/png").split(";")[0].strip()
+    if not content_type.startswith("image/"):
+        # Drive returned something other than an image (e.g. an HTML error
+        # page for a private/deleted file) — don't cache or serve it as one.
+        raise Http404("File is not accessible or is not an image.")
+    ext = mimetypes.guess_extension(content_type) or ".png"
+
+    cached_path = os.path.join(_DRIVE_IMAGE_CACHE_DIR, f"{drive_id}{ext}")
+    with open(cached_path, "wb") as f:
+        f.write(upstream.content)
+
+    response = HttpResponse(upstream.content, content_type=content_type)
+    response["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
 
 
 def _resolve_aptitude_correct_option(raw_answer, option_a, option_b, option_c, option_d):
