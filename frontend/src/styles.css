@@ -9900,6 +9900,18 @@ body.in-lab-exam .hamburger-overlay {
   overflow: hidden;
 }
 
+.developers-fallback-photo {
+  position: relative;
+  z-index: 1;
+  max-width: min(320px, 80%);
+  max-height: 80%;
+  width: auto;
+  height: auto;
+  object-fit: cover;
+  border-radius: 18px;
+  box-shadow: var(--shadow-soft);
+}
+
 .developers-lanyard-panel::before {
   content: '';
   position: absolute;

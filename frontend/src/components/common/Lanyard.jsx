@@ -58,6 +58,7 @@ export default function Lanyard({
   imagePosition = 'top',
   lanyardImage = null,
   lanyardWidth = 0.72,
+  onReady = null,
 }) {
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
 
@@ -86,6 +87,7 @@ export default function Lanyard({
               imagePosition={imagePosition}
               lanyardImage={lanyardImage}
               lanyardWidth={lanyardWidth}
+              onReady={onReady}
             />
           </Physics>
         </Suspense>
@@ -110,7 +112,9 @@ function Band({
   imagePosition,
   lanyardImage,
   lanyardWidth,
+  onReady = null,
 }) {
+  const readyFired = useRef(false);
   const band = useRef();
   const fixed = useRef();
   const j1 = useRef();
@@ -147,6 +151,11 @@ function Band({
   }, [hovered, dragged]);
 
   useFrame((state, delta) => {
+    if (!readyFired.current) {
+      readyFired.current = true;
+      onReady?.();
+    }
+
     if (dragged && card.current) {
       vec.set(state.pointer.x, state.pointer.y, 0.5).unproject(state.camera);
       dir.copy(vec).sub(state.camera.position).normalize();

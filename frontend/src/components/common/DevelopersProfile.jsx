@@ -1,7 +1,32 @@
+import { Component, useEffect, useState } from 'react';
 import { ArrowLeft, Code2, GraduationCap, Globe, Mail, Phone } from 'lucide-react';
 import Lanyard from './Lanyard';
 
 const avatarUrl = '/images/dev.png';
+
+// The lanyard is a WebGL/physics scene (three.js + rapier) — on some
+// browsers/GPU drivers it can fail to render a frame (texture upload
+// errors etc.) without ever throwing a catchable JS error, so it can go
+// silently blank instead of crashing. LanyardBoundary catches real thrown
+// errors; the mount-timeout in DevelopersProfile below catches the silent
+// case by falling back to a plain photo if no frame ever renders.
+class LanyardBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error) {
+    console.error('Lead developers lanyard failed to render, falling back to a static photo:', error);
+    this.props.onError?.();
+  }
+  render() {
+    if (this.state.hasError) return null;
+    return this.props.children;
+  }
+}
 
 const developers = [
   {
@@ -27,6 +52,23 @@ const developers = [
 ];
 
 const DevelopersProfile = ({ onBack, isLoggedIn }) => {
+  // 'pending' while the 3D scene is still loading, 'ready' once it renders
+  // its first frame, 'failed' if it errors or never renders in time.
+  const [lanyardStatus, setLanyardStatus] = useState('pending');
+
+  useEffect(() => {
+    // Covers the silent failure case — no thrown error, the canvas just
+    // never renders a frame (e.g. a texture upload failure on some GPU
+    // drivers) — by falling back to a static photo if nothing came up.
+    const timer = setTimeout(() => {
+      setLanyardStatus((status) => (status === 'ready' ? status : 'failed'));
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const handleLanyardReady = () => setLanyardStatus('ready');
+  const handleLanyardError = () => setLanyardStatus('failed');
+
   return (
     <div className="developers-page">
       <div className="developers-hero">
@@ -46,15 +88,22 @@ const DevelopersProfile = ({ onBack, isLoggedIn }) => {
 
       <div className="developers-showcase">
         <section className="developers-lanyard-panel" aria-label="Lead developers photo">
-          <Lanyard
-            position={[0, 0, 22]}
-            gravity={[0, -38, 0]}
-            frontImage={avatarUrl}
-            backImage={avatarUrl}
-            imageFit="cover"
-            imagePosition="top"
-            lanyardWidth={0.72}
-          />
+          {lanyardStatus === 'failed' ? (
+            <img src={avatarUrl} alt="Lead developers" className="developers-fallback-photo" />
+          ) : (
+            <LanyardBoundary onError={handleLanyardError}>
+              <Lanyard
+                position={[0, 0, 22]}
+                gravity={[0, -38, 0]}
+                frontImage={avatarUrl}
+                backImage={avatarUrl}
+                imageFit="cover"
+                imagePosition="top"
+                lanyardWidth={0.72}
+                onReady={handleLanyardReady}
+              />
+            </LanyardBoundary>
+          )}
         </section>
 
         <div className="developers-info-stack">
