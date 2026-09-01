@@ -14738,7 +14738,15 @@ class StudentLabExercisesView(APIView):
             lab = Lab.objects.get(id=lab_id, department=student.department, batch=student.batch, is_active=True, is_published=True)
         except Lab.DoesNotExist:
             return Response({"error": "Not found"}, status=404)
-        
+
+        if lab.is_expired:
+            return Response({
+                "lab": _serialize_lab_v2(lab, student=student),
+                "is_expired": True,
+                "error": "This lab has expired and can no longer be accessed.",
+                "exercises": [],
+            })
+
         session, created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
         if created and lab.lab_type == "university":
             session.is_locked = True
@@ -14753,13 +14761,16 @@ class StudentLabExercisesView(APIView):
                 "exercises": [],
             })
 
-        if not session.allocated_exercises.exists():
-            from .services.lab_allocation import allocate_lab_questions_for_students
-            allocate_lab_questions_for_students(lab)
-            session.refresh_from_db()
+        # Randomized per-student question allocation (1-2 exercises out of the full
+        # pool) is a University Practical Lab exam feature only — regular practical
+        # / company labs must always show every exercise staff added.
+        if lab.lab_type == "university":
+            if not session.allocated_exercises.exists():
+                from .services.lab_allocation import allocate_lab_questions_for_students
+                allocate_lab_questions_for_students(lab)
+                session.refresh_from_db()
 
-        if session.allocated_exercises.exists():
-            exercises = session.allocated_exercises.all()
+            exercises = session.allocated_exercises.all() if session.allocated_exercises.exists() else lab.exercises.all()
         else:
             exercises = lab.exercises.all()
 
@@ -14801,6 +14812,9 @@ class StudentExerciseRunView(APIView):
             lab = Lab.objects.get(id=lab_id, department=student.department, batch=student.batch, is_active=True)
         except Lab.DoesNotExist:
             return Response({"error": "Lab not found"}, status=404)
+
+        if lab.is_expired:
+            return Response({"error": "This lab has expired and no longer accepts submissions.", "is_expired": True}, status=403)
 
         session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
         if session.is_locked:
@@ -14879,6 +14893,9 @@ class StudentExerciseSubmitView(APIView):
             lab = Lab.objects.get(id=lab_id, department=student.department, batch=student.batch, is_active=True)
         except Lab.DoesNotExist:
             return Response({"error": "Lab not found"}, status=404)
+
+        if lab.is_expired:
+            return Response({"error": "This lab has expired and no longer accepts submissions.", "is_expired": True}, status=403)
 
         session, _created = LabStudentSession.objects.get_or_create(lab=lab, student=student)
         if session.is_locked:

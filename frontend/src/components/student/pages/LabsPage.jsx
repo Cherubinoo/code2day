@@ -918,6 +918,7 @@ function LabDetail({ lab, onBack, dashboard }) {
   const [activeExercise, setActiveExercise] = useState(null);
   const [locked, setLocked] = useState(false);
   const [lockReason, setLockReason] = useState("");
+  const [expired, setExpired] = useState(false);
   const [downloadingReportId, setDownloadingReportId] = useState(null);
   const [reportErr, setReportErr] = useState("");
 
@@ -926,11 +927,14 @@ function LabDetail({ lab, onBack, dashboard }) {
     fetch(`/api/lab/v2/${lab.id}/exercises/list/`, { credentials: "include" })
       .then((r) => r.json())
       .then((d) => {
-        if (d.is_locked) {
+        if (d.is_expired) {
+          setExpired(true);
+        } else if (d.is_locked) {
           setLocked(true);
           setLockReason(d.lock_reason || "Lab session is locked by staff. Awaiting staff unlock for your batch.");
         } else {
           setLocked(false);
+          setExpired(false);
           setExercises(d.exercises ?? []);
         }
         setLoading(false);
@@ -978,6 +982,23 @@ function LabDetail({ lab, onBack, dashboard }) {
       prev.map((ex) =>
         ex.id === exerciseId ? { ...ex, submitted: true, code, language, submitted_at } : ex
       )
+    );
+  }
+
+  if (expired) {
+    return (
+      <div className="slab-lab-detail" style={{ textAlign: "center", padding: "40px 20px" }}>
+        <button type="button" className="slab-back" onClick={onBack}>
+          <ChevronLeft size={15} /> All Labs
+        </button>
+        <div style={{ marginTop: 60, display: "inline-block", padding: 30, background: "#1e1b4b", borderRadius: 12, border: "1px solid #dc2626", maxWidth: 500 }}>
+          <AlertCircle size={48} style={{ color: "#dc2626", margin: "0 auto 16px" }} />
+          <h2 style={{ fontSize: 20, color: "#f8fafc", marginBottom: 8 }}>Lab Expired</h2>
+          <p style={{ fontSize: 14, color: "#cbd5e1" }}>
+            This lab's access window has ended ({fmt(lab.end_date)}) and can no longer be accessed.
+          </p>
+        </div>
+      </div>
     );
   }
 
