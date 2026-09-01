@@ -302,14 +302,14 @@ function ContestWorkspacePage({ contestId, onBack }) {
 
   const maxTabSwitches = contest?.max_tab_switches ?? 3;
   const enableTabCheck = contest?.enable_tab_switch_check !== false;
-  const enableFullscreenLock = contest?.enable_fullscreen_lock !== false;
   const enableCopyPasteLock = contest?.enable_copy_paste_lock ?? false;
 
   // ── Violation handler ─────────────────────────────────────────────────────
+  // Fullscreen is always enforced — staying in fullscreen for the whole contest
+  // is not an optional, per-contest setting like tab-switch/copy-paste checks.
   const recordViolation = useCallback(async (reason) => {
     if (!isContestActiveRef.current) return;
     if ((reason.includes('Tab switch') || reason.includes('blur')) && !enableTabCheck) return;
-    if (reason.includes('Fullscreen') && !enableFullscreenLock) return;
     if (reason.includes('Paste') && !enableCopyPasteLock) return;
     if (violationLockRef.current) return; // ignore while modal is shown
     violationLockRef.current = true;
@@ -336,7 +336,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
         });
       } catch {}
     }
-  }, [contestId, enableCopyPasteLock, enableFullscreenLock, enableTabCheck, maxTabSwitches]);
+  }, [contestId, enableCopyPasteLock, enableTabCheck, maxTabSwitches]);
 
   const dismissViolationModal = useCallback(() => {
     setViolationModal(null);
@@ -757,16 +757,17 @@ function ContestWorkspacePage({ contestId, onBack }) {
         memory: null,
       });
 
-      // Mark problem as solved if accepted
-      if (sub.status === 'Accepted') {
-        const updatedProblems = [...problems];
-        updatedProblems[selectedProblemIndex] = {
-          ...updatedProblems[selectedProblemIndex],
-          solved: true,
-          is_solved: true,
-        };
-        setProblems(updatedProblems);
+      // Mark problem as attempted, and solved if accepted
+      const updatedProblems = [...problems];
+      updatedProblems[selectedProblemIndex] = {
+        ...updatedProblems[selectedProblemIndex],
+        attempted: true,
+        solved: updatedProblems[selectedProblemIndex].is_solved || sub.status === 'Accepted',
+        is_solved: updatedProblems[selectedProblemIndex].is_solved || sub.status === 'Accepted',
+      };
+      setProblems(updatedProblems);
 
+      if (sub.status === 'Accepted') {
         // Find next unsolved problem
         const nextIdx = updatedProblems.findIndex(
           (p, i) => i !== selectedProblemIndex && !p.is_solved && !p.solved
@@ -796,79 +797,72 @@ function ContestWorkspacePage({ contestId, onBack }) {
     }
   }, [contestId, selectedProblem, code, selectedLanguage, problems, selectedProblemIndex]);
 
+  // Build a pending/attempted/solved breakdown shown before final submission
+  const buildSubmitSummary = useCallback(() => {
+    const solved = problems.filter((p) => p.is_solved);
+    const attemptedNotSolved = problems.filter((p) => p.attempted && !p.is_solved);
+    const notAttempted = problems.filter((p) => !p.attempted);
+
+    const lines = [`Solved: ${solved.length}/${problems.length}`];
+    if (attemptedNotSolved.length) {
+      lines.push(`Attempted but not solved (${attemptedNotSolved.length}): ${attemptedNotSolved.map((p) => p.title).join(', ')}`);
+    }
+    if (notAttempted.length) {
+      lines.push(`Not attempted at all (${notAttempted.length}): ${notAttempted.map((p) => p.title).join(', ')}`);
+    }
+    if (!attemptedNotSolved.length && !notAttempted.length) {
+      lines.push('All problems attempted.');
+    }
+    return lines.join('\n');
+  }, [problems]);
+
+  const submitContest = useCallback(async ({ successMessage }) => {
+    try {
+      const response = await fetch(`/api/student/contests/${contestId}/stop/`, {
+        method: "POST",
+        ...buildJsonPostOptions({}),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to finish contest");
+      }
+
+      isContestActiveRef.current = false;
+      // Clear contest cache on completion
+      try {
+        Object.keys(localStorage)
+          .filter(k => k.startsWith(`c2d-contest-${contestId}`))
+          .forEach(k => localStorage.removeItem(k));
+      } catch {}
+      showToast(successMessage, 'success');
+      setTimeout(() => {
+        if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+        onBack();
+      }, 2500);
+    } catch (err) {
+      console.error("Error submitting contest:", err);
+      showToast(`Failed to submit contest: ${err.message}`, 'error');
+    }
+  }, [contestId, onBack]);
+
   // Handle finish contest
   const handleFinishContest = useCallback(async () => {
     askDouble(
-      async () => {
-        try {
-          const response = await fetch(`/api/student/contests/${contestId}/stop/`, {
-            method: "POST",
-            ...buildJsonPostOptions({}),
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || "Failed to finish contest");
-          }
-
-          isContestActiveRef.current = false;
-          // Clear contest cache on completion
-          try {
-            Object.keys(localStorage)
-              .filter(k => k.startsWith(`c2d-contest-${contestId}`))
-              .forEach(k => localStorage.removeItem(k));
-          } catch {}
-          showToast('🎉 Contest submitted successfully! Redirecting...', 'success');
-          setTimeout(() => {
-            if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-            onBack();
-          }, 2500);
-        } catch (err) {
-          console.error("Error finishing contest:", err);
-          showToast(`Failed to finish contest: ${err.message}`, 'error');
-        }
-      },
-      "Are you sure you want to finish this contest?",
-      "WARNING: This action cannot be undone. Your attempt will be submitted for final evaluation."
+      () => submitContest({ successMessage: '🎉 Contest submitted successfully! Redirecting...' }),
+      buildSubmitSummary(),
+      "WARNING: This action cannot be undone. Your attempt will be submitted for final evaluation as-is."
     );
-  }, [contestId, onBack]);
+  }, [submitContest, buildSubmitSummary]);
 
-  // Handle leave contest (same as finish but different messaging)
+  // Handle leave contest — leaving is only ever possible by submitting; there is no plain exit
   const handleLeaveContest = useCallback(async () => {
     askDouble(
-      async () => {
-        try {
-          const response = await fetch(`/api/student/contests/${contestId}/stop/`, {
-            method: "POST",
-            ...buildJsonPostOptions({}),
-          });
-
-          if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.detail || "Failed to finish contest");
-          }
-
-          isContestActiveRef.current = false;
-          // Clear contest cache on completion
-          try {
-            Object.keys(localStorage)
-              .filter(k => k.startsWith(`c2d-contest-${contestId}`))
-              .forEach(k => localStorage.removeItem(k));
-          } catch {}
-          showToast('Contest submitted. Returning to contest list...', 'success');
-          setTimeout(() => {
-            if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-            onBack();
-          }, 2500);
-        } catch (err) {
-          console.error("Error leaving contest:", err);
-          showToast(`Failed to leave contest: ${err.message}`, 'error');
-        }
-      },
-      "Are you sure you want to leave this contest?",
-      "Your attempt will be submitted and you cannot return. Confirm departure?"
+      () => submitContest({ successMessage: 'Contest submitted. Returning to contest list...' }),
+      buildSubmitSummary(),
+      "Your attempt will be submitted exactly as it stands now and you cannot return. Confirm departure?"
     );
-  }, [contestId, onBack]);
+  }, [submitContest, buildSubmitSummary]);
 
   const editorLanguage = editorLanguageByChoice[selectedLanguage] || "javascript";
 
@@ -921,7 +915,8 @@ function ContestWorkspacePage({ contestId, onBack }) {
           <button
             type="button"
             className="back-to-list-btn"
-            onClick={onBack}
+            onClick={handleLeaveContest}
+            title="Leaving submits your attempt as-is"
           >
             ← Contests
           </button>

@@ -2100,19 +2100,13 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                   )}
                 </div>
 
-                {/* Fullscreen Lock */}
-                <div style={{ padding: 16, background: 'white', borderRadius: 10, border: '1px solid #cbd5e1', marginBottom: 16 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', fontWeight: 600, fontSize: 15, color: '#1e293b' }}>
-                    <input
-                      type="checkbox"
-                      checked={formData.enable_fullscreen_lock}
-                      onChange={(e) => setFormData({ ...formData, enable_fullscreen_lock: e.target.checked })}
-                      style={{ width: 18, height: 18, accentColor: '#4f46e5' }}
-                    />
-                    Enforce Fullscreen Mode
-                  </label>
+                {/* Fullscreen Lock — always on, not a per-contest toggle */}
+                <div style={{ padding: 16, background: '#f8fafc', borderRadius: 10, border: '1px solid #cbd5e1', marginBottom: 16 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontWeight: 600, fontSize: 15, color: '#1e293b' }}>
+                    🔒 Fullscreen Mode — Always Enforced
+                  </div>
                   <p style={{ margin: '6px 0 0 30px', color: '#64748b', fontSize: 13 }}>
-                    Forces students into fullscreen mode upon starting the test and records violations if exited.
+                    Every contest forces students into fullscreen and blocks leaving without submitting — this isn't optional and can't be turned off here.
                   </p>
                 </div>
 

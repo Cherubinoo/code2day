@@ -6429,6 +6429,11 @@ class StudentContestDetailView(APIView):
                     problem=problem,
                     status='Accepted'
                 ).first()
+                has_any_submission = ContestSubmission.objects.filter(
+                    contest=contest,
+                    student=student,
+                    problem=problem,
+                ).exists()
 
                 problems_data.append({
                     "id": problem.id,
@@ -6437,6 +6442,7 @@ class StudentContestDetailView(APIView):
                     "difficulty": problem.difficulty,
                     "tags": problem.tags,
                     "is_solved": submission is not None,
+                    "attempted": has_any_submission,
                 })
 
         return Response({

@@ -13,7 +13,7 @@ const DoubleConfirmModal = ({ show, m1, m2, onConfirm, onCancel, firstOk, setFir
         {!firstOk ? (
           <div className="animate-fade-in">
             <h3 style={{ fontSize: '1.8rem', fontWeight: 950, marginBottom: 12 }}>Security Verification</h3>
-            <p style={{ color: 'var(--text-soft)', fontSize: '1.1rem', marginBottom: 40 }}>{m1}</p>
+            <p style={{ color: 'var(--text-soft)', fontSize: '1.1rem', marginBottom: 40, whiteSpace: 'pre-line' }}>{m1}</p>
             <div style={{ display: 'flex', gap: 16 }}>
               <button onClick={onCancel} style={{ flex: 1, padding: '18px', borderRadius: 18, border: '1px solid var(--border-soft)', background: 'white', fontWeight: 800, cursor: 'pointer' }}>Cancel</button>
               <button onClick={() => setFirstOk(true)} className="primary-button" style={{ flex: 1, borderRadius: 18, fontWeight: 800, cursor: 'pointer' }}>Confirm</button>
@@ -22,7 +22,7 @@ const DoubleConfirmModal = ({ show, m1, m2, onConfirm, onCancel, firstOk, setFir
         ) : (
           <div className="animate-bounce-in">
             <h3 style={{ fontSize: '1.8rem', fontWeight: 950, marginBottom: 12, color: '#ef4444' }}>Final Confirmation</h3>
-            <p style={{ color: '#ef4444', fontSize: '1.1rem', fontWeight: 700, marginBottom: 40 }}>{m2}</p>
+            <p style={{ color: '#ef4444', fontSize: '1.1rem', fontWeight: 700, marginBottom: 40, whiteSpace: 'pre-line' }}>{m2}</p>
             <div style={{ display: 'flex', gap: 16 }}>
               <button onClick={onCancel} style={{ flex: 1, padding: '18px', borderRadius: 18, border: '1px solid var(--border-soft)', background: 'white', fontWeight: 800, cursor: 'pointer' }}>Abort Action</button>
               <button 

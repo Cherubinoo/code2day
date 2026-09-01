@@ -260,14 +260,14 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
 
   const maxTabSwitches = contest?.max_tab_switches ?? 3;
   const enableTabCheck = contest?.enable_tab_switch_check !== false;
-  const enableFullscreenLock = contest?.enable_fullscreen_lock !== false;
   const enableCopyPasteLock = contest?.enable_copy_paste_lock ?? false;
 
   // ── Violation handler ─────────────────────────────────────────────────────
+  // Fullscreen is always enforced — staying in fullscreen for the whole contest
+  // is not an optional, per-contest setting like tab-switch/copy-paste checks.
   const recordViolation = useCallback(async (reason) => {
     if (!isContestActiveRef.current) return;
     if ((reason.includes('Tab switch') || reason.includes('blur')) && !enableTabCheck) return;
-    if (reason.includes('Fullscreen') && !enableFullscreenLock) return;
     if (reason.includes('Paste') && !enableCopyPasteLock) return;
     if (violationLockRef.current) return;
     violationLockRef.current = true;
@@ -293,7 +293,7 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
         });
       } catch {}
     }
-  }, [contestId, enableCopyPasteLock, enableFullscreenLock, enableTabCheck, maxTabSwitches]);
+  }, [contestId, enableCopyPasteLock, enableTabCheck, maxTabSwitches]);
 
   const dismissViolationModal = useCallback(() => {
     setViolationModal(null);
@@ -495,6 +495,23 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
     }
   };
 
+  // Build a pending/attempted/solved breakdown shown before final submission
+  const buildSubmitSummary = useCallback(() => {
+    const notAnsweredNumbers = questions
+      .map((q, idx) => ({ q, num: idx + 1 }))
+      .filter(({ q }) => answers[q.id] === undefined)
+      .map(({ num }) => `Q${num}`);
+    const answeredCount = questions.length - notAnsweredNumbers.length;
+
+    const lines = [`Answered: ${answeredCount}/${questions.length}`];
+    if (notAnsweredNumbers.length) {
+      lines.push(`Not attempted (${notAnsweredNumbers.length}): ${notAnsweredNumbers.join(', ')}`);
+    } else {
+      lines.push('All questions attempted.');
+    }
+    return lines.join('\n');
+  }, [questions, answers]);
+
   const handleFinishContest = useCallback(async (isAuto = false) => {
     const action = () => {
       async function finish() {
@@ -527,11 +544,11 @@ function AptitudeContestWorkspacePage({ contestId, onBack }) {
     } else {
       askDouble(
         action,
-        "Are you sure you want to finish this aptitude contest?",
-        "Your answers will be submitted for evaluation. You cannot change them after this."
+        buildSubmitSummary(),
+        "Your answers will be submitted exactly as they stand now for evaluation. You cannot change them after this."
       );
     }
-  }, [contestId, onBack]);
+  }, [contestId, onBack, buildSubmitSummary]);
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center' }}>Loading contest...</div>;
   if (error) return <div style={{ padding: 40, textAlign: 'center', color: 'red' }}>Error: {error}</div>;
