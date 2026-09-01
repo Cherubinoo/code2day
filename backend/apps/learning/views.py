@@ -10318,6 +10318,29 @@ class AdminProblemBankFillMissingView(APIView):
         })
 
 
+_DRIVE_FILE_ID_RE = re.compile(r'^[A-Za-z0-9_-]{20,}$')
+
+
+def _resolve_drive_image(raw_value):
+    """The Aptitude Bank Excel Template's image columns can hold either a
+    ready-to-use image URL, or (for the "Question/Option Image ID" template
+    variant) a bare Google Drive file ID — e.g. a Figure Series export where
+    every option is an image referenced by its Drive file ID rather than a
+    URL. Bare IDs are turned into a public, no-auth-required direct-image
+    link (Drive's thumbnail endpoint, which reliably serves the actual image
+    bytes for a publicly-shared file, unlike the uc?export=download endpoint
+    which can serve an HTML interstitial instead). Already-a-URL values pass
+    through unchanged."""
+    val = (raw_value or "").strip().strip('*').strip()
+    if not val:
+        return ""
+    if val.lower().startswith(("http://", "https://")):
+        return val
+    if _DRIVE_FILE_ID_RE.match(val):
+        return f"https://drive.google.com/thumbnail?id={val}&sz=w2000"
+    return val
+
+
 def _resolve_aptitude_correct_option(raw_answer, option_a, option_b, option_c, option_d):
     """Verify/derive the correct option letter for an aptitude question —
     shared by the individual add/edit form and the bulk upload, so an
@@ -10782,15 +10805,15 @@ class AdminAptitudeBulkUploadView(APIView):
                 continue
             question_text = col(row, "question_text", "question")
             question_type = col(row, "question_type") or "MCQ"
-            question_image = col(row, "question_image")
+            question_image = _resolve_drive_image(col(row, "question_image", "question_image_id"))
             option_a = col(row, "option_a")
-            option_a_image = col(row, "option_a_image")
+            option_a_image = _resolve_drive_image(col(row, "option_a_image", "option_a_image_id"))
             option_b = col(row, "option_b")
-            option_b_image = col(row, "option_b_image")
+            option_b_image = _resolve_drive_image(col(row, "option_b_image", "option_b_image_id"))
             option_c = col(row, "option_c")
-            option_c_image = col(row, "option_c_image")
+            option_c_image = _resolve_drive_image(col(row, "option_c_image", "option_c_image_id"))
             option_d = col(row, "option_d")
-            option_d_image = col(row, "option_d_image")
+            option_d_image = _resolve_drive_image(col(row, "option_d_image", "option_d_image_id"))
             raw_answer = col(row, "correct_option", "answer", "correct_answer")
             raw_difficulty = col(row, "difficulty", "level", "difficulty_level", "diff", "complexity", "tier")
 
@@ -10816,8 +10839,11 @@ class AdminAptitudeBulkUploadView(APIView):
             difficulty = _clean_difficulty(raw_difficulty)
             explanation = col(row, "explanation")
 
-            if not question_text or not all([option_a, option_b, option_c, option_d]):
-                errors.append(f"Row {row_num}: missing question text or an option — skipped.")
+            if not question_text or not all([
+                option_a or option_a_image, option_b or option_b_image,
+                option_c or option_c_image, option_d or option_d_image,
+            ]):
+                errors.append(f"Row {row_num}: missing question text or an option (text or image) — skipped.")
                 continue
 
             correct_option = _resolve_aptitude_correct_option(raw_answer, option_a, option_b, option_c, option_d)
@@ -10876,20 +10902,26 @@ class AdminAptitudeBulkUploadView(APIView):
         wb = openpyxl.load_workbook(upload, data_only=True)
         ws = wb.active
         formatted_rows = []
-        for row in ws.iter_rows():
+        for row_idx, row in enumerate(ws.iter_rows()):
+            is_header_row = row_idx == 0
             row_vals = []
             for cell in row:
                 if cell.value is None:
                     row_vals.append("")
                     continue
-                
+
                 val_str = str(cell.value).strip()
-                if hasattr(cell, 'font') and cell.font and getattr(cell.font, 'bold', False):
+                # Bold formatting is a content cue for data cells (rendered as
+                # **markdown**), but header cells are commonly bold-styled
+                # purely for visual emphasis — wrapping them the same way
+                # corrupts every column-name match below, since "**question**"
+                # doesn't match the "question" alias.
+                if not is_header_row and hasattr(cell, 'font') and cell.font and getattr(cell.font, 'bold', False):
                     if val_str and not (val_str.startswith('**') or val_str.startswith('<b>') or val_str.startswith('<strong>')):
                         val_str = f"**{val_str}**"
                 row_vals.append(val_str)
             formatted_rows.append(row_vals)
-        
+
         if not formatted_rows:
             return []
         header = [str(h).strip().lower().replace(" ", "_") if h else "" for h in formatted_rows[0]]
