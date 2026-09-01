@@ -48,6 +48,12 @@ from .views import (
     DiscussionMessageListCreateView,
     DiscussionPollVoteView,
     InterviewTrackView,
+    AdminExaminationListCreateView,
+    AdminExaminationDetailView,
+    AdminExaminationSyllabusView,
+    AdminExaminationSyllabusUploadView,
+    CompetitiveExaminationListView,
+    CompetitiveExaminationSyllabusView,
     DiscussionThreadListView,
     EditorBootstrapView,
     UnifiedUserLookupView,
@@ -309,6 +315,12 @@ urlpatterns = [
     path("admin/v2/institutions/<int:inst_pk>/departments/<int:pk>/", DepartmentManagementView.as_view(), name="admin-dept-mgmt-detail"),
     path("departments/<int:dept_id>/details/", DepartmentDetailView.as_view(), name="department-detail"),
 
+    # Competitive Practice — Examinations & Syllabus (admin content bank)
+    path("admin/v2/examinations/", AdminExaminationListCreateView.as_view(), name="admin-examination-list"),
+    path("admin/v2/examinations/<int:exam_id>/", AdminExaminationDetailView.as_view(), name="admin-examination-detail"),
+    path("admin/v2/examinations/<int:exam_id>/syllabus/", AdminExaminationSyllabusView.as_view(), name="admin-examination-syllabus"),
+    path("admin/v2/examinations/<int:exam_id>/syllabus/upload/", AdminExaminationSyllabusUploadView.as_view(), name="admin-examination-syllabus-upload"),
+
     # Staff Institution
     path("staff/advisor/dashboard/", StaffClassAdvisorDashboardView.as_view(), name="staff-advisor-dashboard"),
     path("staff/institutions/<int:institution_id>/details/", StaffInstitutionDetailView.as_view(), name="staff-institution-detail"),
@@ -340,6 +352,8 @@ urlpatterns = [
     path("discussions/", DiscussionMessageListCreateView.as_view(), name="discussion-messages"),
     path("discussions/<int:pk>/vote/", DiscussionPollVoteView.as_view(), name="discussion-poll-vote"),
     path("interview/track/", InterviewTrackView.as_view(), name="interview-track"),
+    path("competitive/examinations/", CompetitiveExaminationListView.as_view(), name="competitive-examinations"),
+    path("competitive/examinations/<int:exam_id>/syllabus/", CompetitiveExaminationSyllabusView.as_view(), name="competitive-examination-syllabus"),
 
     # Announcements & Notifications
     path("announcements/", AnnouncementListView.as_view(), name="announcement-list"),

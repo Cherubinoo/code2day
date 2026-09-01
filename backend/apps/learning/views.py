@@ -74,6 +74,10 @@ from .models import (
     LLMProvider,
     Company,
     LAB_LANGUAGE_CHOICES,
+    Examination,
+    SyllabusSection,
+    SyllabusTopic,
+    SyllabusSubtopic,
 )
 from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
@@ -2724,6 +2728,240 @@ class InterviewTrackView(UnifiedAuthMixin, APIView):
             "track_label": label,
             "topics": [],
         })
+
+
+def _serialize_examination_syllabus(examination):
+    """Full Section > Topic > Subtopic tree for one examination — shared by
+    the admin management view and the student-facing browse view."""
+    sections = []
+    for section in examination.sections.prefetch_related('topics__subtopics'):
+        topics = []
+        for topic in section.topics.all():
+            topics.append({
+                "id": topic.id,
+                "title": topic.title,
+                "resource_links": topic.resource_links or [],
+                "subtopics": [{"id": st.id, "title": st.title} for st in topic.subtopics.all()],
+            })
+        sections.append({"id": section.id, "title": section.title, "topics": topics})
+    return sections
+
+
+class AdminExaminationListCreateView(APIView):
+    """System Admin: list/create Examinations — the top-level content bank
+    for the student-facing Competitive Practice module (GRE, GATE, CAT...).
+    Global, like the Problem/Aptitude banks — not institution-scoped."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        exams = Examination.objects.annotate(
+            section_count=Count('sections', distinct=True),
+            topic_count=Count('sections__topics', distinct=True),
+            subtopic_count=Count('sections__topics__subtopics', distinct=True),
+        )
+        return Response([
+            {
+                "id": e.id, "name": e.name, "description": e.description, "is_active": e.is_active,
+                "section_count": e.section_count, "topic_count": e.topic_count, "subtopic_count": e.subtopic_count,
+            }
+            for e in exams
+        ])
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        name = (request.data.get('name') or '').strip()
+        description = (request.data.get('description') or '').strip()
+        if not name:
+            return Response({"error": "name is required."}, status=400)
+        if Examination.objects.filter(name__iexact=name).exists():
+            return Response({"error": "An examination with this name already exists."}, status=400)
+        exam = Examination.objects.create(name=name, description=description)
+        return Response({
+            "id": exam.id, "name": exam.name, "description": exam.description, "is_active": exam.is_active,
+            "section_count": 0, "topic_count": 0, "subtopic_count": 0,
+        }, status=201)
+
+
+class AdminExaminationDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, exam_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        exam = get_object_or_404(Examination, id=exam_id)
+        exam.delete()
+        return Response({"message": "Examination deleted"})
+
+    def patch(self, request, exam_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        exam = get_object_or_404(Examination, id=exam_id)
+        if 'is_active' in request.data:
+            exam.is_active = bool(request.data.get('is_active'))
+        if 'description' in request.data:
+            exam.description = (request.data.get('description') or '').strip()
+        exam.save()
+        return Response({"message": "Updated", "is_active": exam.is_active, "description": exam.description})
+
+
+class AdminExaminationSyllabusView(APIView):
+    """Admin view of one examination's full syllabus tree."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        exam = get_object_or_404(Examination, id=exam_id)
+        return Response({
+            "examination": {"id": exam.id, "name": exam.name, "description": exam.description},
+            "sections": _serialize_examination_syllabus(exam),
+        })
+
+
+class AdminExaminationSyllabusUploadView(APIView):
+    """System Admin: bulk-populate an Examination's Section > Topic >
+    Subtopic tree from an uploaded .xlsx/.xls/.csv file. Expects Section,
+    Topic, Subtopic columns (an Exam column is accepted but ignored — the
+    target examination is the one in the URL, not whatever the sheet
+    says, since the same sheet format could otherwise be uploaded to the
+    wrong exam). Upserts by title within each parent so re-uploading an
+    updated sheet is safe and doesn't create duplicates."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, exam_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        exam = get_object_or_404(Examination, id=exam_id)
+
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response({"error": "No file uploaded."}, status=400)
+
+        filename = upload.name.lower()
+        try:
+            if filename.endswith((".xlsx", ".xls")):
+                rows = self._read_excel(upload)
+            elif filename.endswith(".csv"):
+                rows = self._read_csv(upload)
+            else:
+                return Response({"error": "Only .xlsx, .xls, or .csv files are supported."}, status=400)
+        except Exception as e:
+            return Response({"error": f"Could not read file: {e}"}, status=400)
+
+        if not rows:
+            return Response({"error": "File is empty."}, status=400)
+
+        header = [str(h or '').strip().lower() for h in rows[0]]
+        col_idx = {h: i for i, h in enumerate(header) if h}
+
+        def col(row, name):
+            idx = col_idx.get(name)
+            if idx is None or idx >= len(row) or row[idx] is None:
+                return ""
+            val = str(row[idx]).strip()
+            return "" if val.lower() == "nan" else val
+
+        missing = [n for n in ("section", "topic", "subtopic") if n not in col_idx]
+        if missing:
+            return Response({"error": f"Missing required column(s): {', '.join(missing)}."}, status=400)
+
+        section_cache, topic_cache = {}, {}
+        section_seq, topic_seq = 0, {}
+        created_sections = created_topics = created_subtopics = 0
+        skipped = 0
+
+        for row in rows[1:]:
+            if not row or all(not str(c or '').strip() for c in row):
+                continue
+            section_title = col(row, "section")
+            topic_title = col(row, "topic")
+            subtopic_title = col(row, "subtopic")
+            if not section_title or not topic_title or not subtopic_title:
+                skipped += 1
+                continue
+
+            if section_title not in section_cache:
+                section, created = SyllabusSection.objects.get_or_create(
+                    examination=exam, title=section_title, defaults={"order": section_seq},
+                )
+                section_cache[section_title] = section
+                section_seq += 1
+                topic_seq[section_title] = 0
+                if created:
+                    created_sections += 1
+            section = section_cache[section_title]
+
+            topic_key = (section_title, topic_title)
+            if topic_key not in topic_cache:
+                topic, created = SyllabusTopic.objects.get_or_create(
+                    section=section, title=topic_title, defaults={"order": topic_seq[section_title]},
+                )
+                topic_cache[topic_key] = topic
+                topic_seq[section_title] += 1
+                if created:
+                    created_topics += 1
+            topic = topic_cache[topic_key]
+
+            _, created = SyllabusSubtopic.objects.get_or_create(
+                topic=topic, title=subtopic_title,
+                defaults={"order": topic.subtopics.count()},
+            )
+            if created:
+                created_subtopics += 1
+
+        return Response({
+            "message": "Syllabus imported",
+            "created_sections": created_sections,
+            "created_topics": created_topics,
+            "created_subtopics": created_subtopics,
+            "skipped_rows": skipped,
+        }, status=201)
+
+    def _read_excel(self, upload):
+        import openpyxl
+        wb = openpyxl.load_workbook(upload, data_only=True)
+        ws = wb.active
+        return [[cell.value for cell in row] for row in ws.iter_rows()]
+
+    def _read_csv(self, upload):
+        import csv
+        import io
+        text = upload.read().decode("utf-8-sig")
+        return list(csv.reader(io.StringIO(text)))
+
+
+class CompetitiveExaminationListView(APIView):
+    """Student: active Examinations available under Competitive Practice."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        exams = Examination.objects.filter(is_active=True).annotate(
+            section_count=Count('sections', distinct=True),
+            topic_count=Count('sections__topics', distinct=True),
+        )
+        return Response([
+            {
+                "id": e.id, "name": e.name, "description": e.description,
+                "section_count": e.section_count, "topic_count": e.topic_count,
+            }
+            for e in exams
+        ])
+
+
+class CompetitiveExaminationSyllabusView(APIView):
+    """Student: browse one examination's Section > Topic > Subtopic syllabus."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, exam_id):
+        exam = get_object_or_404(Examination, id=exam_id, is_active=True)
+        return Response({
+            "examination": {"id": exam.id, "name": exam.name, "description": exam.description},
+            "sections": _serialize_examination_syllabus(exam),
+        })
+
 
 class FirstLoginView(APIView):
     def post(self, request):

@@ -779,6 +779,73 @@ class SolvedAptitude(models.Model):
         return f"{self.student} solved aptitude q#{self.question.id}"
 
 
+# ── Competitive Practice — Examinations & Syllabus ──────────────────────────
+# Content backing the student-facing "Competitive Practice" module. A global
+# bank (like Problems/Aptitude), not institution-scoped: an Examination
+# (e.g. "GRE") owns a Section > Topic > Subtopic syllabus tree, normally
+# populated in one shot via an admin Excel upload (columns: Exam, Section,
+# Topic, Subtopic) rather than built by hand. Question content is a later
+# addition (deliberately not part of this model yet); for now each Topic
+# carries `resource_links` so a future admin screen can attach study links
+# without another migration.
+
+class Examination(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    description = models.CharField(max_length=255, blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "examinations"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class SyllabusSection(models.Model):
+    examination = models.ForeignKey(Examination, on_delete=models.CASCADE, related_name="sections")
+    title = models.CharField(max_length=150)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "syllabus_sections"
+        unique_together = ("examination", "title")
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.examination.name} / {self.title}"
+
+
+class SyllabusTopic(models.Model):
+    section = models.ForeignKey(SyllabusSection, on_delete=models.CASCADE, related_name="topics")
+    title = models.CharField(max_length=200)
+    order = models.PositiveIntegerField(default=0)
+    resource_links = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        db_table = "syllabus_topics"
+        unique_together = ("section", "title")
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.section} / {self.title}"
+
+
+class SyllabusSubtopic(models.Model):
+    topic = models.ForeignKey(SyllabusTopic, on_delete=models.CASCADE, related_name="subtopics")
+    title = models.CharField(max_length=255)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "syllabus_subtopics"
+        unique_together = ("topic", "title")
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.topic} / {self.title}"
+
+
 class AptitudeAttempt(models.Model):
     """Logs every free-practice aptitude answer — correct or wrong.
     SolvedAptitude only records correct answers, so it can show "questions
