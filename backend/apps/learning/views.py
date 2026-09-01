@@ -27,6 +27,7 @@ from rest_framework.views import APIView
 from .auth_utils import RateLimitExceeded, StudentAuthMixin, UnifiedAuthMixin, check_rate_limit
 from .data import FALLBACK_DASHBOARD, FALLBACK_PROBLEMS
 from .module_registry import MODULE_REGISTRY, MODULE_KEYS
+from .drive_image_cache import cached_image_path, fetch_and_cache_drive_image, DriveImageFetchError
 from .models import (
     BatchAdvisor,
     Contest,
@@ -10366,9 +10367,6 @@ def _resolve_drive_image(raw_value):
     return val
 
 
-_DRIVE_IMAGE_CACHE_DIR = os.path.join(settings.MEDIA_ROOT, "aptitude_drive_cache")
-
-
 def aptitude_drive_image_proxy(request, drive_id):
     """Serve a Google-Drive-hosted aptitude question/option image, caching
     it to local disk on first request so every request after that is a
@@ -10376,40 +10374,21 @@ def aptitude_drive_image_proxy(request, drive_id):
     Public/no-auth by design — these are the exact same files Drive itself
     already serves without authentication (that's what makes storing a bare
     file ID + resolving to a public thumbnail URL work at all), so proxying
-    them adds no new exposure."""
+    them adds no new exposure. Once `pull_drive_images` has been run,
+    every referenced image is already cached and this never touches Drive
+    at all — it only falls back to a live fetch for anything new."""
     if not _DRIVE_FILE_ID_RE.match(drive_id or ""):
         raise Http404("Invalid image id.")
 
-    os.makedirs(_DRIVE_IMAGE_CACHE_DIR, exist_ok=True)
-    existing = glob.glob(os.path.join(_DRIVE_IMAGE_CACHE_DIR, f"{drive_id}.*"))
-    if existing:
-        cached_path = existing[0]
-        content_type = mimetypes.guess_type(cached_path)[0] or "image/png"
-        response = FileResponse(open(cached_path, "rb"), content_type=content_type)
-        response["Cache-Control"] = "public, max-age=31536000, immutable"
-        return response
+    cached_path = cached_image_path(drive_id)
+    if not cached_path:
+        try:
+            cached_path = fetch_and_cache_drive_image(drive_id)
+        except DriveImageFetchError:
+            raise Http404("Image could not be retrieved from Drive.")
 
-    try:
-        upstream = requests.get(
-            f"https://drive.google.com/thumbnail?id={drive_id}&sz=w2000",
-            timeout=15,
-        )
-        upstream.raise_for_status()
-    except requests.exceptions.RequestException:
-        raise Http404("Image could not be retrieved from Drive.")
-
-    content_type = upstream.headers.get("Content-Type", "image/png").split(";")[0].strip()
-    if not content_type.startswith("image/"):
-        # Drive returned something other than an image (e.g. an HTML error
-        # page for a private/deleted file) — don't cache or serve it as one.
-        raise Http404("File is not accessible or is not an image.")
-    ext = mimetypes.guess_extension(content_type) or ".png"
-
-    cached_path = os.path.join(_DRIVE_IMAGE_CACHE_DIR, f"{drive_id}{ext}")
-    with open(cached_path, "wb") as f:
-        f.write(upstream.content)
-
-    response = HttpResponse(upstream.content, content_type=content_type)
+    content_type = mimetypes.guess_type(cached_path)[0] or "image/png"
+    response = FileResponse(open(cached_path, "rb"), content_type=content_type)
     response["Cache-Control"] = "public, max-age=31536000, immutable"
     return response
 
