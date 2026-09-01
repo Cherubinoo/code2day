@@ -173,6 +173,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
     try { return parseInt(localStorage.getItem(`${sessionKey}-idx`) || '0', 10) || 0; } catch { return 0; }
   });
   const [selectedProblemDetails, setSelectedProblemDetails] = useState(null);
+  const [problemDetailTab, setProblemDetailTab] = useState('current');
   const selectedProblem = problems[selectedProblemIndex] || null;
 
   // Editor state — restore language from cache
