@@ -1811,6 +1811,14 @@ class LabExerciseSubmission(models.Model):
     code         = models.TextField(blank=True, default="")
     language     = models.CharField(max_length=50, blank=True, default="")
     submitted_at = models.DateTimeField(auto_now=True)
+    # The actual test-case results from the run that got this submission
+    # accepted — stored so the lab report can reuse them verbatim instead of
+    # re-executing the code later, which could legitimately produce a
+    # different result (timing, executor flakiness) than what the student
+    # was shown at submit time.
+    passed_cases = models.PositiveIntegerField(default=0)
+    total_cases  = models.PositiveIntegerField(default=0)
+    test_results = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "lab_exercise_submissions"

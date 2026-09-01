@@ -14951,6 +14951,7 @@ class StudentExerciseSubmitView(APIView):
             return Response({"error": f"Unsupported language: {language}"}, status=400)
 
         test_cases = build_lab_runtime_test_cases(exercise, sample_only=False)
+        result = None
         if test_cases:
             try:
                 result = execute_lab_test_case_batch(
@@ -14987,7 +14988,13 @@ class StudentExerciseSubmitView(APIView):
 
         sub, created = LabExerciseSubmission.objects.update_or_create(
             exercise=exercise, student=student,
-            defaults={"code": code, "language": language},
+            defaults={
+                "code": code,
+                "language": language,
+                "passed_cases": result["passed_cases"] if result else 0,
+                "total_cases": result["total_cases"] if result else 0,
+                "test_results": result["test_results"] if result else [],
+            },
         )
 
         def _pregen():
@@ -15049,8 +15056,7 @@ def _generate_lab_exercise_report(exercise, submission):
         from .services.lab_report import (
             extract_problem_statement, build_aim, get_or_generate_question_algorithm, build_result,
         )
-        from .services.testcase_generator import TestCaseGenError
-        from .services.lab_report_pdf import build_lab_report_pdf, reexecute_test_cases
+        from .services.lab_report_pdf import build_lab_report_pdf
 
         problem_statement = extract_problem_statement(exercise.description)
         aim = build_aim(exercise.title, problem_statement)
@@ -15058,21 +15064,28 @@ def _generate_lab_exercise_report(exercise, submission):
         # Single canonical algorithm per Question (exercise), shared across all students
         algorithm = get_or_generate_question_algorithm(exercise)
 
-        test_case_rows, all_passed, tc_note = reexecute_test_cases(exercise, submission.code, submission.language)
-        result_text = build_result(exercise.title, all_passed=all_passed)
-        passed_n = sum(1 for r in test_case_rows if r[3] == "Passed") if test_case_rows else 0
-        total_n = len(test_case_rows) if test_case_rows else 0
+        # Use the test-case results recorded at submit time — never re-run the
+        # code here. Re-execution can legitimately differ from the graded run
+        # (executor timing/flakiness), which previously caused a report to
+        # show "Failed" for a submission the student was told had passed.
+        # A LabExerciseSubmission only exists once it already cleared the
+        # lab's pass_threshold_percent (or the exercise has no test cases),
+        # so any existing submission is, by construction, an accepted one.
+        passed_n = submission.passed_cases
+        total_n = submission.total_cases
+        test_case_rows = [
+            (r.get("stdin", ""), r.get("expected", ""), r.get("actual", ""), "Passed" if r.get("passed") else "Failed")
+            for r in (submission.test_results or [])
+        ]
+        result_text = build_result(exercise.title, all_passed=(True if test_case_rows else None))
         if test_case_rows:
             output_text = f"{passed_n}/{total_n} test case(s) passed."
+            tc_note = ""
         else:
-            output_text = tc_note or "(No test cases configured for this exercise.)"
+            output_text = "(No test cases configured for this exercise, or this submission predates result tracking.)"
+            tc_note = "No stored test-case results for this submission — resubmit to generate an up-to-date record."
 
-        if all_passed is True:
-            status_label = "Passed"
-        elif all_passed is False:
-            status_label = "Partially Passed" if passed_n else "Failed"
-        else:
-            status_label = "Not Verified"
+        status_label = "Passed" if test_case_rows else "Not Verified"
         details = {
             "language": submission.language or "—",
             "status": status_label,

@@ -116,65 +116,6 @@ class RegisterWatermarkDocTemplate(BaseDocTemplate):
         canvas.restoreState()
 
 
-def reexecute_test_cases(exercise, code, language):
-    """Best-effort: re-run `code` against this exercise's LabExerciseTestCase
-    rows in parallel using ThreadPoolExecutor to build a real Input/Expected/Received/Status table.
-
-    Returns (rows, all_passed, note):
-      - rows: list of (stdin, expected, received, "Passed"/"Failed") tuples
-      - all_passed: True/False, or None if rows is empty (no cases run)
-      - note: explanation for why rows is empty/partial, else ""
-    """
-    import logging
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    from .executor import execute_submission, get_language_id, ExecutorError
-    from .execution_adapter import normalize_comparable_output
-
-    logger = logging.getLogger(__name__)
-
-    test_cases = list(exercise.test_cases.all().order_by("order"))
-    if not test_cases:
-        return [], None, "No test cases are configured for this exercise."
-    try:
-        language_id = get_language_id(language)
-    except Exception:
-        return [], None, f"Re-verification isn't available for language '{language}'."
-
-    def _exec_single_tc(idx, tc):
-        try:
-            result = execute_submission(code, language_id, stdin=tc.stdin, timeout=8)
-            received = (result.get("stdout") or "").strip()
-            expected = (tc.expected_output or "").strip()
-            passed = (
-                result.get("status") == "Accepted"
-                and normalize_comparable_output(received) == normalize_comparable_output(expected)
-            )
-            display_received = received
-            if not passed and not display_received:
-                display_received = result.get("output") or result.get("stderr") or result.get("compile_output") or ""
-            return idx, tc.stdin, expected, display_received, "Passed" if passed else "Failed", None
-        except Exception as exc:
-            return idx, tc.stdin, (tc.expected_output or "").strip(), "", "Failed", exc
-
-    results_by_idx = {}
-    error_occurred = False
-
-    workers = min(8, len(test_cases))
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(_exec_single_tc, i, tc) for i, tc in enumerate(test_cases)]
-        for future in as_completed(futures):
-            idx, stdin, expected, received, status_str, exc = future.result()
-            if exc:
-                logger.warning("Lab test-case re-execution failed: %s", exc)
-                error_occurred = True
-            results_by_idx[idx] = (stdin, expected, received, status_str)
-
-    rows = [results_by_idx[i] for i in range(len(test_cases)) if i in results_by_idx]
-    all_passed = all(r[3] == "Passed" for r in rows) if rows else None
-    note = "Could not automatically verify all outputs — code execution service had an issue." if (error_occurred and not rows) else ""
-    return rows, all_passed, note
-
-
 def _test_case_table(rows):
     hdr = [["Input", "Expected Output", "Received Output", "Status"]]
     body = [[_truncate(r[0], 40), _truncate(r[1], 30), _truncate(r[2], 30), r[3]] for r in rows]
@@ -226,9 +167,10 @@ def _sig_block(label, width):
 def build_lab_report_pdf(buffer: BytesIO, *, report, test_case_rows=None, test_case_note="", details=None):
     """report: a LabExerciseReport instance (already saved, with
     exp_no/exp_name/aim/algorithm/program/result populated). test_case_rows
-    / test_case_note: the output of reexecute_test_cases(), computed once by
-    the caller at generation time and rendered here as the Output section.
-    details: optional {language, status, score, percentage, submitted_at}
+    / test_case_note: (stdin, expected, received, "Passed"/"Failed") rows
+    built by the caller from the submission's own stored test_results (the
+    actual graded run) — never re-executed here — and rendered as the
+    Output section. details: optional {language, status, score, percentage, submitted_at}
     dict rendered as a Details section right before Result — the single-
     experiment analogue of the score/percentage summary a typical
     assessment-vendor report shows per question."""
