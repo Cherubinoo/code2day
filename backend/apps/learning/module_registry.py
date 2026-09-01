@@ -131,6 +131,11 @@ MODULE_REGISTRY = [
         "label": "Discuss",
         "api_path_prefixes": ["/api/discussions/"],
     },
+    {
+        "key": "interview",
+        "label": "Interview Practice",
+        "api_path_prefixes": ["/api/interview/"],
+    },
 ]
 
 MODULE_KEYS = [m["key"] for m in MODULE_REGISTRY] + [

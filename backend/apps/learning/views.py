@@ -2662,6 +2662,42 @@ class DiscussionPollVoteView(UnifiedAuthMixin, APIView):
 
         return Response(DiscussionMessageSerializer(message, context={"request": request}).data)
 
+
+INTERVIEW_TRACK_LABELS = {
+    "civil": "Civil Engineering",
+    "mech": "Mechanical Engineering",
+    "eee": "Electrical & Electronics Engineering",
+    "ece": "Electronics & Communication Engineering",
+    "cs_common": "Computer Science Family",
+}
+
+
+class InterviewTrackView(UnifiedAuthMixin, APIView):
+    """Resolves the caller's Interview Practice track from their department.
+    The question bank itself isn't built yet (content shape TBD) — this just
+    tells the frontend which track the caller belongs to so the tile/page can
+    exist ahead of that, and so admins can regroup departments in the
+    meantime via Department.interview_track."""
+
+    def get(self, request):
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        department = getattr(profile, 'department', None)
+        if not department:
+            return Response({"detail": "No department assigned."}, status=404)
+
+        track_key = department.interview_track or department.default_interview_track()
+        label = INTERVIEW_TRACK_LABELS.get(track_key, track_key.replace('_', ' ').title())
+
+        return Response({
+            "department": department.name,
+            "track_key": track_key,
+            "track_label": label,
+            "topics": [],
+        })
+
 class FirstLoginView(APIView):
     def post(self, request):
         max_attempts, window = _auth_rate_limits()
@@ -9397,7 +9433,7 @@ class InstitutionDetailManagementView(APIView):
         )
         
         # Get departments
-        depts = Department.objects.filter(institution=institution).values('id', 'name', 'code')
+        depts = Department.objects.filter(institution=institution).values('id', 'name', 'code', 'interview_track')
         
         # Get students
         student_list = []
@@ -9501,6 +9537,14 @@ class InstitutionDetailManagementView(APIView):
                 staff.department = None
             staff.save()
             return Response({"message": "Department updated"})
+
+        elif action == 'update_department_interview_track':
+            dept_id = request.data.get('dept_id')
+            track = (request.data.get('interview_track') or '').strip()
+            dept = get_object_or_404(Department, id=dept_id, institution=institution)
+            dept.interview_track = track or dept.default_interview_track()
+            dept.save(update_fields=['interview_track'])
+            return Response({"message": "Interview track updated", "interview_track": dept.interview_track})
 
         elif action == 'create_staff':
             faculty_id = (request.data.get('faculty_id') or '').strip()

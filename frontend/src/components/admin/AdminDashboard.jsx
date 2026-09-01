@@ -267,6 +267,20 @@ const AdminDashboard = () => {
     }
   };
 
+  const updateDeptInterviewTrack = async (deptId, track) => {
+    try {
+      const res = await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, {
+        action: 'update_department_interview_track', dept_id: deptId, interview_track: track,
+      });
+      setHubData({
+        ...hubData,
+        departments: hubData.departments.map(d => d.id === deptId ? { ...d, interview_track: res.data.interview_track } : d)
+      });
+    } catch (err) {
+      alert("Failed to update interview track");
+    }
+  };
+
   const handleDeleteDept = async (deptId) => {
     askDouble(
       async () => {
@@ -1471,19 +1485,43 @@ const AdminDashboard = () => {
                           <button onClick={handleAddDept} className="primary-button" style={{ borderRadius: 14 }}>Add</button>
                         </div>
                       </div>
+                      <datalist id="interview-track-options">
+                        {[...new Set(hubData.departments.map(d => d.interview_track).filter(Boolean))].map(t => (
+                          <option key={t} value={t} />
+                        ))}
+                      </datalist>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
                         {hubData.departments.map(d => (
-                          <div key={d.id} style={{ padding: 24, background: 'var(--bg-2)', borderRadius: 24, border: '1px solid var(--border-soft)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                              <div style={{ fontWeight: 800, color: 'var(--olive-900)' }}>{d.name}</div>
-                              <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)' }}>Code: {d.code}</div>
+                          <div key={d.id} style={{ padding: 24, background: 'var(--bg-2)', borderRadius: 24, border: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                              <div>
+                                <div style={{ fontWeight: 800, color: 'var(--olive-900)' }}>{d.name}</div>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)' }}>Code: {d.code}</div>
+                              </div>
+                              <button
+                                onClick={() => handleDeleteDept(d.id)}
+                                style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', padding: 8 }}
+                              >
+                                <Trash2 size={20} />
+                              </button>
                             </div>
-                            <button 
-                              onClick={() => handleDeleteDept(d.id)}
-                              style={{ color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', padding: 8 }}
-                            >
-                              <Trash2 size={20} />
-                            </button>
+                            <div>
+                              <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                                Interview Track
+                              </label>
+                              <input
+                                defaultValue={d.interview_track}
+                                list="interview-track-options"
+                                onBlur={(e) => {
+                                  const val = e.target.value.trim();
+                                  if (val && val !== d.interview_track) updateDeptInterviewTrack(d.id, val);
+                                }}
+                                style={{ width: '100%', padding: '8px 12px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', fontWeight: 700, fontSize: '0.85rem' }}
+                              />
+                              <div style={{ fontSize: '0.72rem', color: 'var(--text-soft)', marginTop: 4 }}>
+                                Departments sharing the same track share one Interview Practice question bank.
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>

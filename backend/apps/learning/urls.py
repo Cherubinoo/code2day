@@ -47,6 +47,7 @@ from .views import (
     DepartmentStudentsFilterView,
     DiscussionMessageListCreateView,
     DiscussionPollVoteView,
+    InterviewTrackView,
     DiscussionThreadListView,
     EditorBootstrapView,
     UnifiedUserLookupView,
@@ -338,6 +339,7 @@ urlpatterns = [
     # Discussions
     path("discussions/", DiscussionMessageListCreateView.as_view(), name="discussion-messages"),
     path("discussions/<int:pk>/vote/", DiscussionPollVoteView.as_view(), name="discussion-poll-vote"),
+    path("interview/track/", InterviewTrackView.as_view(), name="interview-track"),
 
     # Announcements & Notifications
     path("announcements/", AnnouncementListView.as_view(), name="announcement-list"),

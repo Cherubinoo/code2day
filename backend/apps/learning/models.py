@@ -100,6 +100,22 @@ DEPARTMENT_FULL_NAMES = {
 }
 
 
+# Interview Practice groups departments into "tracks" that share a question
+# bank. Civil/Mech/EEE/ECE each get their own track (their placement
+# interviews look nothing alike); every CS-family branch (CSE, IT, AI&DS,
+# CSBS, CSE-AIML, ...) defaults to one shared "cs_common" track since their
+# technical interviews cover largely the same ground. This is only the
+# DEFAULT assigned when a department is created — admins can freely
+# reassign any department to any track afterward (Department.interview_track).
+INDIVIDUAL_INTERVIEW_TRACKS = {
+    "CIVIL": "civil",
+    "MECH": "mech",
+    "EEE": "eee",
+    "ECE": "ece",
+}
+DEFAULT_COMMON_INTERVIEW_TRACK = "cs_common"
+
+
 class Department(models.Model):
     """Department model for organizing students and staff"""
     institution = models.ForeignKey(
@@ -111,6 +127,13 @@ class Department(models.Model):
     )
     name = models.CharField(max_length=120)
     code = models.CharField(max_length=10, unique=True)
+    interview_track = models.CharField(
+        max_length=40,
+        blank=True,
+        default="",
+        help_text="Interview Practice grouping key — departments sharing the same "
+                  "value share one question bank. Defaults by branch, admin-editable.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -123,6 +146,15 @@ class Department(models.Model):
         """Official descriptive department name for headers/PDFs, e.g. 'CSE' -> 'Computer Science & Engineering (CSE)'."""
         key = (self.name or "").strip().upper().replace(" ", "")
         return DEPARTMENT_FULL_NAMES.get(key, self.name)
+
+    def default_interview_track(self):
+        key = (self.name or "").strip().upper().replace(" ", "")
+        return INDIVIDUAL_INTERVIEW_TRACKS.get(key, DEFAULT_COMMON_INTERVIEW_TRACK)
+
+    def save(self, *args, **kwargs):
+        if not self.interview_track:
+            self.interview_track = self.default_interview_track()
+        super().save(*args, **kwargs)
 
 
 class StudentProfile(models.Model):
