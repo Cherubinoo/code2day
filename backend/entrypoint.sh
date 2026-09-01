@@ -6,7 +6,8 @@
 #   1. Apply any pending Django migrations
 #   2. Remove SQL problems (idempotent — safe if already done)
 #   3. Collect static files
-#   4. Start gunicorn
+#   4. Pull Drive-hosted aptitude images to local cache (idempotent)
+#   5. Start gunicorn
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -e
@@ -18,25 +19,35 @@ echo "════════════════════════�
 
 # ── 1. Migrations ─────────────────────────────────────────────────────────────
 echo ""
-echo "▶ [1/4] Running database migrations..."
+echo "▶ [1/5] Running database migrations..."
 python manage.py migrate --noinput
 echo "✓ Migrations done"
 
 # ── 2. Remove SQL problems ─────────────────────────────────────────────────────
 echo ""
-echo "▶ [2/4] Removing SQL problems from problem bank..."
+echo "▶ [2/5] Removing SQL problems from problem bank..."
 python manage.py remove_sql_problems --confirm
 echo "✓ SQL problem cleanup done"
 
 # ── 3. Static files ────────────────────────────────────────────────────────────
 echo ""
-echo "▶ [3/4] Collecting static files..."
+echo "▶ [3/5] Collecting static files..."
 python manage.py collectstatic --noinput --clear > /dev/null 2>&1 || true
 echo "✓ Static files collected"
 
-# ── 4. Start gunicorn ─────────────────────────────────────────────────────────
+# ── 4. Pull Drive-hosted aptitude images to local cache ────────────────────────
+# Idempotent — only fetches images not already cached to the media volume, so
+# this stays fast on every restart after the first one. Never fatal: a Drive
+# hiccup here shouldn't block a deploy, the proxy still serves images live
+# for anything this pass couldn't reach.
 echo ""
-echo "▶ [4/4] Starting gunicorn..."
+echo "▶ [4/5] Pulling Drive-hosted aptitude images to local cache..."
+python manage.py pull_drive_images || echo "⚠ Drive image pull had failures — will retry lazily via the image proxy"
+echo "✓ Drive image cache warmed"
+
+# ── 5. Start gunicorn ─────────────────────────────────────────────────────────
+echo ""
+echo "▶ [5/5] Starting gunicorn..."
 echo "═══════════════════════════════════════════════"
 echo ""
 
