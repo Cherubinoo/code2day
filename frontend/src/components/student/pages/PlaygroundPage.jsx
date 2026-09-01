@@ -9,6 +9,7 @@ import { executionLanguageMap, editorLanguageMap, runPlaygroundCode } from "../.
 loader.config({ monaco });
 
 const LANGUAGES = Object.keys(executionLanguageMap);
+const LANGUAGE_MODULE_KEY = { C: "playground_c", "C++": "playground_cpp", Java: "playground_java", Python: "playground_python", SQL: "playground_sql" };
 
 // Simple, generic starter snippets — this is a free space to experiment,
 // not a problem template, so these are just runnable "hello world" style
@@ -21,8 +22,10 @@ const PLAYGROUND_STARTERS = {
   SQL: `-- Write and run any query here\nSELECT 1;\n`,
 };
 
-export default function PlaygroundPage() {
-  const [language, setLanguage] = useState("Python");
+export default function PlaygroundPage({ dashboard }) {
+  const lockedModules = dashboard?.locked_modules || [];
+  const visibleLanguages = LANGUAGES.filter((lang) => !lockedModules.includes(LANGUAGE_MODULE_KEY[lang]));
+  const [language, setLanguage] = useState(() => (visibleLanguages.includes("Python") ? "Python" : (visibleLanguages[0] || "Python")));
   const [codeByLanguage, setCodeByLanguage] = useState({});
   const [stdin, setStdin] = useState("");
   const [busy, setBusy] = useState(false);
@@ -94,7 +97,7 @@ export default function PlaygroundPage() {
               value={language}
               onChange={(e) => setLanguage(e.target.value)}
             >
-              {LANGUAGES.map((lang) => (
+              {visibleLanguages.map((lang) => (
                 <option key={lang} value={lang}>{lang}</option>
               ))}
             </select>

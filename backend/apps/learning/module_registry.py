@@ -18,6 +18,14 @@ Contest.contest_type), not by the URL itself. Two shapes of entry exist:
   the object whose id appears in the URL. `id_pattern` extracts that id
   from the path; `type_model`/`type_field` says which model+field to look
   up; each child's `type_value` is the value that field must equal.
+- Body-field children (Playground's per-language locks): distinguished by
+  a field in the POST body itself rather than anything in the URL or a
+  database object — Playground is a single stateless "run this code"
+  endpoint, there's no object to look up. `body_field` names the JSON key
+  (language_id, not the human-readable "language" string — the id is the
+  required field, "language" is optional, so keying on it would let a
+  request that omits "language" slip past the lock); `body_value` is what
+  it must equal.
 
 Locking a PARENT blocks everything under it, typed/prefixed children
 included, whether or not those children are individually locked —
@@ -46,6 +54,13 @@ MODULE_REGISTRY = [
         "key": "playground",
         "label": "Code Playground",
         "api_path_prefixes": ["/api/playground/"],
+        "children": [
+            {"key": "playground_c", "label": "C", "body_field": "language_id", "body_value": 50},
+            {"key": "playground_cpp", "label": "C++", "body_field": "language_id", "body_value": 54},
+            {"key": "playground_java", "label": "Java", "body_field": "language_id", "body_value": 62},
+            {"key": "playground_python", "label": "Python", "body_field": "language_id", "body_value": 71},
+            {"key": "playground_sql", "label": "SQL", "body_field": "language_id", "body_value": 82},
+        ],
     },
     {
         "key": "labs",
@@ -127,7 +142,7 @@ def _matches_prefix(path, prefixes):
     return any(path.startswith(p) for p in prefixes)
 
 
-def locked_module_for_path(path, locked_keys):
+def locked_module_for_request(request, locked_keys):
     """Return the (module_key, label) that should block this request given
     the institution's locked_keys, or None if nothing locks it. Checks the
     parent module first (locking it blocks every child regardless of the
@@ -136,6 +151,7 @@ def locked_module_for_path(path, locked_keys):
     if not locked_keys:
         return None
 
+    path = request.path
     for module in MODULE_REGISTRY:
         if not _matches_prefix(path, module["api_path_prefixes"]):
             continue
@@ -153,6 +169,9 @@ def locked_module_for_path(path, locked_keys):
                     continue
                 if _object_has_type(child["type_model"], int(m.group(1)), child["type_field"], child["type_value"]):
                     return child["key"], child["label"]
+            elif "body_field" in child and child["key"] in locked_keys:
+                if _body_field_equals(request, child["body_field"], child["body_value"]):
+                    return child["key"], child["label"]
 
         return None  # matched the parent's prefix but no lock applies
 
@@ -163,6 +182,19 @@ def _object_has_type(model_name, object_id, field, value):
     from . import models as _models
     model = getattr(_models, model_name)
     return model.objects.filter(id=object_id).values_list(field, flat=True).first() == value
+
+
+def _body_field_equals(request, field, value):
+    """Best-effort read of one field from a JSON POST body — used for
+    modules with no URL-visible id to key off (e.g. Playground's language).
+    Accessing request.body here is safe: Django caches the raw bytes on
+    first read, so the view (DRF's request.data included) still sees the
+    same body afterward — this doesn't consume/replace anything."""
+    import json
+    try:
+        return json.loads(request.body or b"{}").get(field) == value
+    except (ValueError, TypeError):
+        return False
 
 
 def serializable_registry():
