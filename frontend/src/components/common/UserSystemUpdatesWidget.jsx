@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Sparkles, ChevronDown, ChevronUp, X, Megaphone, Tag, Zap, Bug, Bell } from 'lucide-react';
+import { Megaphone, Zap, Bug } from 'lucide-react';
 import api from '../../lib/api';
 
 const STORAGE_KEY = 'code2day-dismissed-updates';
@@ -26,9 +26,7 @@ const CATEGORY_META = {
 };
 
 const UserSystemUpdatesWidget = () => {
-  const [updates, setUpdates] = useState([]);
   const [visibleUpdates, setVisibleUpdates] = useState([]);
-  const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -41,7 +39,6 @@ const UserSystemUpdatesWidget = () => {
       const res = await api.get('/system-updates/');
       const all = res.data.updates || [];
       const dismissed = getDismissedIds();
-      setUpdates(all);
       setVisibleUpdates(all.filter(u => !dismissed.includes(u.id)));
     } catch (err) {
       console.error('Failed to fetch system updates', err);
@@ -50,166 +47,97 @@ const UserSystemUpdatesWidget = () => {
     }
   };
 
-  const dismissUpdate = (id) => {
-    addDismissedId(id);
-    setVisibleUpdates(prev => prev.filter(u => u.id !== id));
+  const acknowledgeCurrent = () => {
+    const current = visibleUpdates[0];
+    if (!current) return;
+    addDismissedId(current.id);
+    setVisibleUpdates(prev => prev.slice(1));
   };
 
-  const dismissAll = () => {
-    visibleUpdates.forEach(u => addDismissedId(u.id));
-    setVisibleUpdates([]);
-  };
-
-  // Nothing to show
   if (loading || visibleUpdates.length === 0) return null;
 
-  const latest = visibleUpdates[0];
-  const rest   = visibleUpdates.slice(1);
-  const meta   = CATEGORY_META[latest.category] || CATEGORY_META.announcement;
-  const Icon   = meta.icon;
+  const current = visibleUpdates[0];
+  const meta = CATEGORY_META[current.category] || CATEGORY_META.announcement;
+  const Icon = meta.icon;
 
   return (
-    <div style={{
-      background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
-      border: '1px solid #bae6fd',
-      borderRadius: 16,
-      padding: '16px 20px',
-      marginBottom: 24,
-      boxShadow: '0 4px 12px rgba(2, 132, 199, 0.08)',
-    }}>
-      {/* ── Top row ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 240 }}>
-          {/* Icon badge */}
-          <div style={{
-            width: 38, height: 38, borderRadius: 10,
-            background: meta.bg, color: meta.color,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-          }}>
-            <Icon size={18} />
-          </div>
-
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
-              <span style={{
-                fontSize: '0.7rem', fontWeight: 800,
-                background: meta.bg, color: meta.color,
-                padding: '2px 8px', borderRadius: 8,
-              }}>
-                {meta.label}
-              </span>
-              {latest.version && (
-                <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748b', background: '#f1f5f9', padding: '2px 7px', borderRadius: 6 }}>
-                  {latest.version}
-                </span>
-              )}
-              <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>{latest.created_at}</span>
-              {visibleUpdates.length > 1 && (
-                <span style={{
-                  fontSize: '0.7rem', fontWeight: 800, color: '#0284c7',
-                  background: '#bae6fd', padding: '2px 8px', borderRadius: 20,
-                }}>
-                  +{visibleUpdates.length - 1} more
-                </span>
-              )}
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(15, 23, 42, 0.55)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+        padding: 20,
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 480,
+          background: '#fff',
+          borderRadius: 18,
+          boxShadow: '0 20px 60px rgba(2, 132, 199, 0.25)',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)', padding: '22px 24px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{
+              width: 42, height: 42, borderRadius: 12,
+              background: meta.bg, color: meta.color,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+            }}>
+              <Icon size={20} />
             </div>
-            <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#0f172a' }}>
-              {latest.title}
-            </h4>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                <span style={{
+                  fontSize: '0.7rem', fontWeight: 800,
+                  background: meta.bg, color: meta.color,
+                  padding: '2px 8px', borderRadius: 8,
+                }}>
+                  {meta.label}
+                </span>
+                {current.version && (
+                  <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748b', background: '#f1f5f9', padding: '2px 7px', borderRadius: 6 }}>
+                    {current.version}
+                  </span>
+                )}
+                <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>{current.created_at}</span>
+              </div>
+              <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#0f172a' }}>
+                {current.title}
+              </h3>
+            </div>
           </div>
         </div>
 
-        {/* Controls */}
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+        <div style={{ padding: '18px 24px', color: '#334155', fontSize: '0.92rem', lineHeight: 1.65 }}>
+          <p style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{current.content}</p>
+        </div>
+
+        <div style={{
+          padding: '14px 24px', borderTop: '1px solid #f1f5f9',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+        }}>
+          <span style={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600 }}>
+            {visibleUpdates.length > 1 ? `1 of ${visibleUpdates.length} updates` : ''}
+          </span>
           <button
-            onClick={() => setExpanded(v => !v)}
+            onClick={acknowledgeCurrent}
             style={{
-              padding: '5px 12px', borderRadius: 8,
-              border: '1px solid #93c5fd', background: 'white', color: '#0284c7',
-              fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 4,
+              padding: '9px 28px', borderRadius: 10,
+              border: 'none', background: '#0284c7', color: '#fff',
+              fontSize: '0.9rem', fontWeight: 700, cursor: 'pointer',
             }}
           >
-            {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-            {expanded ? 'Collapse' : 'Details'}
-          </button>
-          <button
-            onClick={() => dismissUpdate(latest.id)}
-            title="Dismiss this update"
-            style={{
-              width: 30, height: 30, borderRadius: 8,
-              border: '1px solid #e2e8f0', background: 'white',
-              color: '#94a3b8', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}
-          >
-            <X size={14} />
+            OK
           </button>
         </div>
       </div>
-
-      {/* ── Expanded content ── */}
-      {expanded && (
-        <div style={{
-          marginTop: 16, paddingTop: 16,
-          borderTop: '1px dashed #93c5fd',
-          color: '#334155', fontSize: '0.88rem', lineHeight: 1.65,
-        }}>
-          {/* Latest update body */}
-          <p style={{ margin: '0 0 16px', whiteSpace: 'pre-wrap' }}>{latest.content}</p>
-
-          {/* Remaining updates */}
-          {rest.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ fontSize: '0.78rem', fontWeight: 800, color: '#0369a1', marginBottom: 4 }}>
-                Other pending updates ({rest.length}):
-              </div>
-              {rest.map(u => {
-                const m = CATEGORY_META[u.category] || CATEGORY_META.announcement;
-                return (
-                  <div key={u.id} style={{
-                    display: 'flex', alignItems: 'flex-start', gap: 10,
-                    background: 'white', borderRadius: 10, padding: '10px 14px',
-                    border: '1px solid #e0f2fe',
-                  }}>
-                    <span style={{
-                      fontSize: '0.68rem', fontWeight: 800, padding: '2px 8px', borderRadius: 6,
-                      background: m.bg, color: m.color, flexShrink: 0, marginTop: 2,
-                    }}>
-                      {m.label}
-                    </span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#0f172a' }}>{u.title}</div>
-                      <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: 2, whiteSpace: 'pre-wrap' }}>{u.content}</div>
-                    </div>
-                    <button
-                      onClick={() => dismissUpdate(u.id)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#cbd5e1', flexShrink: 0 }}
-                      title="Dismiss"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Dismiss all */}
-          {visibleUpdates.length > 1 && (
-            <button
-              onClick={dismissAll}
-              style={{
-                marginTop: 14, padding: '6px 16px', borderRadius: 8,
-                border: '1px solid #bae6fd', background: 'white',
-                color: '#64748b', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer',
-              }}
-            >
-              Dismiss all updates
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 };

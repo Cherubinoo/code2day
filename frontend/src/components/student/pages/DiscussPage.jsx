@@ -27,6 +27,8 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
   const [activeTab, setActiveTab] = useTabNav("general");
   const [activeThreadId, setActiveThreadId] = useState("general");
   const [activeBatch, setActiveBatch] = useState(studentProfile?.batch || "");
+  const [activeSection, setActiveSection] = useState("");
+  const [sectionsByBatch, setSectionsByBatch] = useState({});
   const [activeRecipientReg, setActiveRecipientReg] = useState("");
   const [activeRecipientName, setActiveRecipientName] = useState("");
   const [activeMentorId, setActiveMentorId] = useState(studentProfile?.mentor_id || null);
@@ -82,13 +84,36 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
     };
   }, [activeTab, activeRecipientReg, activeBatch, activeMentorId]);
 
-  // Helper to check if a channel has unread messages
-  const hasUnread = (threadType, batchName = null) => {
-    return notifications.some(n => {
-      if (n.is_read) return false;
-      const expectedLink = `/discuss?thread_type=${threadType}${batchName ? `&batch_name=${batchName}` : ''}`;
-      return n.link === expectedLink;
+  // Helper to check if a channel has unread messages. extraParams must be
+  // built in the same order the backend appends them to Notification.link
+  // (see DiscussionMessageListCreateView.post) since this is a plain string
+  // comparison, not a parsed query match.
+  const hasUnread = (threadType, extraParams = {}) => {
+    const parts = [`thread_type=${threadType}`];
+    Object.entries(extraParams).forEach(([key, value]) => {
+      if (value) parts.push(`${key}=${value}`);
     });
+    const expectedLink = `/discuss?${parts.join('&')}`;
+    return notifications.some(n => !n.is_read && n.link === expectedLink);
+  };
+
+  // Per-channel extra params for hasUnread — mirrors what each channel type
+  // actually sends as batch_name/section/mentor_id when posting.
+  const unreadExtraParams = (channelId) => {
+    if (channelId === "general") {
+      const batch = isStudent ? studentProfile?.batch : activeBatch;
+      return batch ? { batch_name: batch } : {};
+    }
+    if (channelId === "section") {
+      const batch = isStudent ? studentProfile?.batch : activeBatch;
+      const section = isStudent ? studentProfile?.section : activeSection;
+      return (batch && section) ? { batch_name: batch, section } : {};
+    }
+    if (channelId === "mentor_group") {
+      const mentorId = isStudent ? (studentProfile?.mentor_id || activeMentorId) : staffProfile?.id;
+      return mentorId ? { mentor_id: mentorId } : {};
+    }
+    return {};
   };
 
   // Load staff list for students
@@ -172,6 +197,7 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
       if (res.ok) {
         const data = await res.json();
         setBatches(Array.isArray(data) ? data : (data.batches || data.results || []));
+        if (data && data.sections_by_batch) setSectionsByBatch(data.sections_by_batch);
       }
     } catch (err) {
       console.error("Failed to load batches", err);
@@ -204,8 +230,10 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
     } else if (activeTab === "section") {
       if (isStudent && studentProfile?.section) {
         params.append("section", studentProfile.section);
-      } else if (!isStudent && activeBatch) {
+      } else if (!isStudent) {
+        if (!activeBatch || !activeSection) return;
         params.append("batch_name", activeBatch);
+        params.append("section", activeSection);
       }
     } else if (activeTab === "mentor_group") {
       const mid = isStudent ? (studentProfile?.mentor_id || activeMentorId) : staffProfile?.id;
@@ -260,6 +288,9 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
     } else if (activeTab === "section") {
       if (isStudent && studentProfile?.section) {
         payload.section = studentProfile.section;
+      } else if (!isStudent && activeBatch && activeSection) {
+        payload.batch_name = activeBatch;
+        payload.section = activeSection;
       }
     } else if (activeTab === "mentor_group") {
       const mid = isStudent ? (studentProfile?.mentor_id || activeMentorId) : staffProfile?.id;
@@ -348,7 +379,12 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
     } else if (activeTab === "individual") {
       payload.recipient_reg = activeRecipientReg;
     } else if (activeTab === "section") {
-      if (isStudent && studentProfile?.section) payload.section = studentProfile.section;
+      if (isStudent && studentProfile?.section) {
+        payload.section = studentProfile.section;
+      } else if (!isStudent && activeBatch && activeSection) {
+        payload.batch_name = activeBatch;
+        payload.section = activeSection;
+      }
     } else if (activeTab === "mentor_group") {
       const mid = isStudent ? (studentProfile?.mentor_id || activeMentorId) : staffProfile?.id;
       if (mid) payload.mentor_id = mid;
@@ -454,7 +490,7 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
                 >
                   <div className="item-icon-box">
                     <ch.icon size={18} />
-                    {hasUnread(ch.id) && <span className="unread-badge-dot"></span>}
+                    {hasUnread(ch.id, unreadExtraParams(ch.id)) && <span className="unread-badge-dot"></span>}
                   </div>
                   <span className="item-label">{ch.label}</span>
                 </button>
@@ -470,13 +506,24 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
                   </div>
                 )}
                 {ch.id === "section" && activeTab === "section" && isStaff && (
-                  <div className="batch-filter-box">
-                    <select value={activeBatch} onChange={(e) => setActiveBatch(e.target.value)}>
+                  <div className="batch-filter-box" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <select
+                      value={activeBatch}
+                      onChange={(e) => { setActiveBatch(e.target.value); setActiveSection(""); }}
+                    >
                       <option value="">Select Batch...</option>
                       {batches.map(b => (
                         <option key={b.batch} value={b.batch}>{b.batch}</option>
                       ))}
                     </select>
+                    {activeBatch && (
+                      <select value={activeSection} onChange={(e) => setActiveSection(e.target.value)}>
+                        <option value="">Select Section...</option>
+                        {(sectionsByBatch[activeBatch] || []).map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                 )}
               </React.Fragment>
@@ -682,7 +729,9 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
                 {activeTab === "general"
                   ? (activeBatch ? `Batch ${activeBatch}` : (isStudent ? "Batch Chat" : "General Chat"))
                   : activeTab === "section"
-                  ? (isStudent ? `Section ${studentProfile?.section || ""} Chat` : `Section Chat (${activeBatch || "Select Batch"})`)
+                  ? (isStudent
+                      ? `Section ${studentProfile?.section || ""} Chat`
+                      : `Section Chat (${activeBatch && activeSection ? `${activeBatch} - ${activeSection}` : "Select Batch & Section"})`)
                   : activeTab === "mentor_group"
                   ? (isStudent
                       ? `Mentor Group${studentProfile?.mentor_name ? ` — ${studentProfile.mentor_name}` : ""}`
@@ -784,6 +833,11 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
             <div className="footer-blocked-v2">
               <AlertTriangle size={16} />
               <span>Select a batch in the sidebar to start chatting</span>
+            </div>
+          ) : activeTab === "section" && !isStudent && (!activeBatch || !activeSection) ? (
+            <div className="footer-blocked-v2">
+              <AlertTriangle size={16} />
+              <span>Select a batch and section in the sidebar to start chatting</span>
             </div>
           ) : (
             <form className="message-input-wrapper-v2" onSubmit={sendMessage}>

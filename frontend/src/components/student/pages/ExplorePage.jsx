@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Trophy, Clock, Target, Award, Users, ChevronRight, X, MessageSquare } from 'lucide-react';
+import UserSystemUpdatesWidget from '../../common/UserSystemUpdatesWidget';
 
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -107,6 +108,8 @@ function ExplorePage({
 
   return (
     <div className="page-stack">
+      <UserSystemUpdatesWidget />
+
       <section className="hero-grid">
         <article className="hero-card hero-card-wide">
           <div className="eyebrow-row">
