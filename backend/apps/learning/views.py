@@ -11494,6 +11494,7 @@ class StaffDeptListView(UnifiedAuthMixin, APIView):
             data.append({
                 "faculty_id": s.faculty_id,
                 "name": s.name,
+                "email": s.email,
                 "role": s.get_role_display(),
                 "department": s.department.name if s.department else ""
             })
@@ -13242,6 +13243,7 @@ class StudentMentorAdvisorView(APIView):
                 "id": m.id,
                 "faculty_id": m.faculty_id,
                 "name": m.name,
+                "email": m.email,
                 "role": m.role,
                 "role_display": m.get_role_display(),
                 "department": m.department.name if m.department else "",
@@ -13267,6 +13269,7 @@ class StudentMentorAdvisorView(APIView):
                     "id": a.id,
                     "faculty_id": a.faculty_id,
                     "name": a.name,
+                    "email": a.email,
                     "role": a.role,
                     "role_display": a.get_role_display(),
                     "department": a.department.name if a.department else "",

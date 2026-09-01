@@ -136,6 +136,11 @@ MODULE_REGISTRY = [
         "label": "Interview Practice",
         "api_path_prefixes": ["/api/interview/"],
     },
+    {
+        "key": "competitive",
+        "label": "Competitive Practice",
+        "api_path_prefixes": ["/api/competitive/"],
+    },
 ]
 
 MODULE_KEYS = [m["key"] for m in MODULE_REGISTRY] + [

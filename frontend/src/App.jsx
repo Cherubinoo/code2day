@@ -45,6 +45,7 @@ import ContestContainer from "./components/student/pages/ContestContainer";
 import LabsPage from "./components/student/pages/LabsPage";
 import AptitudePage from "./components/student/pages/AptitudePage";
 import InterviewPracticePage from "./components/student/pages/InterviewPracticePage";
+import CompetitivePracticePage from "./components/student/pages/CompetitivePracticePage";
 import DiscussPage from "./components/student/pages/DiscussPage";
 import ExplorePage from "./components/student/pages/ExplorePage";
 import ProblemsPage from "./components/student/pages/ProblemsPage";
@@ -1377,6 +1378,9 @@ function App() {
       break;
     case "interview":
       activeView = <InterviewPracticePage />;
+      break;
+    case "competitive":
+      activeView = <CompetitivePracticePage />;
       break;
     case "discuss":
       activeView = (

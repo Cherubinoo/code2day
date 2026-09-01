@@ -142,6 +142,9 @@ function MentorAdvisorCard() {
               <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#059669', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Mentor</div>
               <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#111827' }}>{mentor.name}</div>
               <div style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 500 }}>{mentor.faculty_id}</div>
+              {mentor.email && (
+                <a href={`mailto:${mentor.email}`} style={{ fontSize: '0.76rem', color: '#059669', fontWeight: 600, textDecoration: 'none' }}>{mentor.email}</a>
+              )}
             </div>
           </div>
         )}
@@ -155,6 +158,9 @@ function MentorAdvisorCard() {
               <div style={{ fontSize: '0.72rem', fontWeight: 800, color: '#1d4ed8', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Class Advisor</div>
               <div style={{ fontWeight: 800, fontSize: '0.95rem', color: '#111827' }}>{class_advisor.name}</div>
               <div style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 500 }}>{class_advisor.faculty_id}</div>
+              {class_advisor.email && (
+                <a href={`mailto:${class_advisor.email}`} style={{ fontSize: '0.76rem', color: '#1d4ed8', fontWeight: 600, textDecoration: 'none' }}>{class_advisor.email}</a>
+              )}
             </div>
           </div>
         )}

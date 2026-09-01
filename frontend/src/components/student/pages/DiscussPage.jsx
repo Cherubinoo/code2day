@@ -590,6 +590,9 @@ function DiscussPage({ userType, studentProfile, staffProfile }) {
                         <div className="contact-info-v2">
                           <span className="contact-name-v2">{staffMember.name}</span>
                           <span className="contact-role-v2">{staffMember.role}</span>
+                          {staffMember.email && (
+                            <span style={{ display: 'block', fontSize: '11px', color: 'var(--text-soft)', fontWeight: 500 }}>{staffMember.email}</span>
+                          )}
                         </div>
                       </button>
                     ))}
