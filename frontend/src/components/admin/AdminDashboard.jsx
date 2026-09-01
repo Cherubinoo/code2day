@@ -7,12 +7,14 @@ import {
   Trash2, Activity, Database, LayoutDashboard,
   GraduationCap, Briefcase, Award, Settings,
   ChevronRight, ArrowLeft, BarChart3, HardHat,
-  UserCheck, Wrench, Search, Brain, Crown, Compass, Megaphone
+  UserCheck, Wrench, Search, Brain, Crown, Compass, Megaphone, Swords,
+  Pencil, Check, X
 } from 'lucide-react';
 import api from '../../lib/api';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import ProblemBankView from './ProblemBankView';
 import AptitudeBankView from './AptitudeBankView';
+import CompetitiveBankView from './CompetitiveBankView';
 import LLMProviderView from './LLMProviderView';
 import DAUAnalyticsChart from './DAUAnalyticsChart';
 import SystemUpdatesModal from './SystemUpdatesModal';
@@ -24,6 +26,7 @@ const AdminDashboard = () => {
   const [selectedInstitution, setSelectedInstitution] = useState(null);
   const [showProblemBank, setShowProblemBank] = useState(false);
   const [showAptitudeBank, setShowAptitudeBank] = useState(false);
+  const [showCompetitiveBank, setShowCompetitiveBank] = useState(false);
   const [showLLMProviders, setShowLLMProviders] = useState(false);
   const [showSystemUpdates, setShowSystemUpdates] = useState(false);
   const [activeTab, setActiveTab] = useTabNav('dashboard');
@@ -59,6 +62,8 @@ const AdminDashboard = () => {
   });
 
   const [newInstitution, setNewInstitution] = useState({ institution_id: '', name: '', short_code: '', address: '', contact_email: '', contact_phone: '' });
+  const [editingContactId, setEditingContactId] = useState(null);
+  const [contactDraft, setContactDraft] = useState({ email: '', mobile_number: '' });
   const [newDept, setNewDept] = useState({ name: '', code: '' });
   const [newStaff, setNewStaff] = useState({ faculty_id: '', name: '', email: '', mobile_number: '', role: 'staff', dept_id: '' });
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('');
@@ -286,6 +291,23 @@ const AdminDashboard = () => {
     }
   };
 
+  const startEditContact = (s) => {
+    setEditingContactId(s.id);
+    setContactDraft({ email: s.email || '', mobile_number: s.mobile_number || '' });
+  };
+
+  const cancelEditContact = () => {
+    setEditingContactId(null);
+  };
+
+  const saveStaffContact = async (staffId) => {
+    await Promise.all([
+      updateStaffEmail(staffId, contactDraft.email.trim()),
+      updateStaffMobile(staffId, contactDraft.mobile_number.trim()),
+    ]);
+    setEditingContactId(null);
+  };
+
   const handleAddDept = async () => {
     if (!newDept.name || !newDept.code) return;
     try {
@@ -442,6 +464,8 @@ const AdminDashboard = () => {
           <ProblemBankView onBack={() => setShowProblemBank(false)} />
         ) : showAptitudeBank ? (
           <AptitudeBankView onBack={() => setShowAptitudeBank(false)} />
+        ) : showCompetitiveBank ? (
+          <CompetitiveBankView onBack={() => setShowCompetitiveBank(false)} />
         ) : showLLMProviders ? (
           <LLMProviderView onBack={() => setShowLLMProviders(false)} />
         ) : !selectedInstitution ? (
@@ -455,6 +479,7 @@ const AdminDashboard = () => {
                 { label: 'Faculty Members', value: metrics.total_staff, icon: Briefcase, color: '#f59e0b' },
                 { label: 'Problem Bank', value: metrics.total_problems, icon: Database, color: '#ef4444', onClick: () => setShowProblemBank(true) },
                 { label: 'Aptitude Bank', value: metrics.total_aptitude, icon: Brain, color: '#8b5cf6', onClick: () => setShowAptitudeBank(true) },
+                { label: 'Competitive Bank', value: 0, icon: Swords, color: '#0891b2', onClick: () => setShowCompetitiveBank(true) },
               ].map((m, i) => (
                 <div
                   key={i}
@@ -1353,27 +1378,59 @@ const AdminDashboard = () => {
                               <tr key={s.id} style={{ background: 'var(--bg-2)' }}>
                                 <td style={{ padding: 24, borderRadius: '24px 0 0 24px' }}>
                                   <div style={{ fontWeight: 850, color: 'var(--olive-900)', fontSize: '1.1rem' }}>{s.name}</div>
-                                  <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: 6 }}>ID: {s.faculty_id}</div>
-                                  <input
-                                    type="email"
-                                    defaultValue={s.email || ''}
-                                    placeholder="Add email..."
-                                    onBlur={(e) => {
-                                      const val = e.target.value.trim();
-                                      if (val !== (s.email || '')) updateStaffEmail(s.id, val);
-                                    }}
-                                    style={{ width: '100%', maxWidth: 220, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.8rem', fontWeight: 600, boxSizing: 'border-box', marginBottom: 6 }}
-                                  />
-                                  <input
-                                    type="tel"
-                                    defaultValue={s.mobile_number || ''}
-                                    placeholder="Add contact number..."
-                                    onBlur={(e) => {
-                                      const val = e.target.value.trim();
-                                      if (val !== (s.mobile_number || '')) updateStaffMobile(s.id, val);
-                                    }}
-                                    style={{ width: '100%', maxWidth: 220, padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.8rem', fontWeight: 600, boxSizing: 'border-box' }}
-                                  />
+                                  <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: 8 }}>ID: {s.faculty_id}</div>
+
+                                  {editingContactId === s.id ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 220 }} onClick={(e) => e.stopPropagation()}>
+                                      <input
+                                        type="email"
+                                        autoFocus
+                                        value={contactDraft.email}
+                                        placeholder="Email"
+                                        onChange={(e) => setContactDraft({ ...contactDraft, email: e.target.value })}
+                                        style={{ width: '100%', padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.8rem', fontWeight: 600, boxSizing: 'border-box' }}
+                                      />
+                                      <input
+                                        type="tel"
+                                        value={contactDraft.mobile_number}
+                                        placeholder="Contact number"
+                                        onChange={(e) => setContactDraft({ ...contactDraft, mobile_number: e.target.value })}
+                                        style={{ width: '100%', padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.8rem', fontWeight: 600, boxSizing: 'border-box' }}
+                                      />
+                                      <div style={{ display: 'flex', gap: 6 }}>
+                                        <button
+                                          onClick={() => saveStaffContact(s.id)}
+                                          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '6px 10px', borderRadius: 8, border: 'none', background: 'var(--olive-700)', color: 'white', fontSize: '0.78rem', fontWeight: 800, cursor: 'pointer' }}
+                                        >
+                                          <Check size={13} /> Save
+                                        </button>
+                                        <button
+                                          onClick={cancelEditContact}
+                                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-soft)', cursor: 'pointer' }}
+                                        >
+                                          <X size={13} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, maxWidth: 220 }}>
+                                      <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: '0.8rem', color: s.email ? 'var(--olive-900)' : 'var(--text-soft)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                          {s.email || 'No email'}
+                                        </div>
+                                        <div style={{ fontSize: '0.8rem', color: s.mobile_number ? 'var(--olive-900)' : 'var(--text-soft)', fontWeight: 600 }}>
+                                          {s.mobile_number || 'No contact number'}
+                                        </div>
+                                      </div>
+                                      <button
+                                        onClick={() => startEditContact(s)}
+                                        title="Edit contact info"
+                                        style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-soft)', cursor: 'pointer' }}
+                                      >
+                                        <Pencil size={13} />
+                                      </button>
+                                    </div>
+                                  )}
                                 </td>
                                 <td style={{ padding: 24 }}>
                                   <select 
