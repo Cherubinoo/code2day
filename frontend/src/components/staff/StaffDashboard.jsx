@@ -1253,7 +1253,7 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
                 <SolvingActivityChart data={analytics?.weekly_progress || []} onRangeChange={fetchActivityRange} />
 
                 {/* Project Builders */}
-                <div className="premium-card">
+                <div className="premium-card" style={{ display: 'flex', flexDirection: 'column', minHeight: 340 }}>
                   <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-hard)' }}>
                     🏗️ Project Builders
                   </h3>
@@ -1265,26 +1265,29 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
                     const maxSolved = Math.max(...builders.map(s => s.solved_count || 0), 1);
                     const colors = ['#2563eb','#7c3aed','#059669','#d97706','#dc2626','#0891b2','#4f46e5','#be185d'];
                     return builders.length > 0 ? (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 16 }}>
                         {builders.map((student, i) => {
                           const pct = ((student.solved_count || 0) / maxSolved) * 100;
+                          const color = colors[i % colors.length];
                           return (
                             <div
                               key={student.id || i}
                               onClick={() => setSelectedStudentForAnalytics(student.register_number || student.id)}
-                              style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '2px 4px', borderRadius: 6, transition: 'background 0.15s' }}
+                              style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', padding: '4px 6px', borderRadius: 8, transition: 'background 0.15s' }}
                               onMouseOver={e => e.currentTarget.style.background = 'var(--sage-50)'}
                               onMouseOut={e => e.currentTarget.style.background = 'transparent'}
                               title={`View ${student.name}'s profile`}
                             >
-                              <div style={{ width: 24, fontSize: '11px', fontWeight: '800', color: 'var(--text-soft)', textAlign: 'right' }}>#{i+1}</div>
-                              <div style={{ width: 76, fontSize: '12px', fontWeight: '600', color: 'var(--text-hard)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              <div style={{ width: 28, height: 28, borderRadius: '50%', background: `${color}20`, color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: '900', flexShrink: 0 }}>
+                                #{i+1}
+                              </div>
+                              <div style={{ width: 90, fontSize: '13px', fontWeight: '700', color: 'var(--text-hard)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                 {student.name?.split(' ')[0] || 'Student'}
                               </div>
-                              <div style={{ flex: 1, height: 14, background: '#f1f5f9', borderRadius: 8, overflow: 'hidden' }}>
-                                <div style={{ height: '100%', width: `${pct}%`, background: colors[i % colors.length], borderRadius: 8, transition: 'width 0.8s cubic-bezier(0.34,1.56,0.64,1)' }} />
+                              <div style={{ flex: 1, height: 18, background: '#f1f5f9', borderRadius: 9, overflow: 'hidden' }}>
+                                <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 9, transition: 'width 0.8s cubic-bezier(0.34,1.56,0.64,1)' }} />
                               </div>
-                              <div style={{ width: 30, fontSize: '12px', fontWeight: '800', color: 'var(--olive-700)', textAlign: 'right' }}>
+                              <div style={{ width: 34, fontSize: '13px', fontWeight: '900', color: 'var(--olive-700)', textAlign: 'right' }}>
                                 {student.solved_count || 0}
                               </div>
                             </div>
@@ -1292,7 +1295,7 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
                         })}
                       </div>
                     ) : (
-                      <div style={{ textAlign: 'center', color: 'var(--text-soft)', fontSize: '13px', paddingTop: 40 }}>No performance data yet.</div>
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-soft)', fontSize: '13px' }}>No performance data yet.</div>
                     );
                   })()}
                 </div>

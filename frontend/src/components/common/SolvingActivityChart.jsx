@@ -23,11 +23,17 @@ function shortLabel(isoDate) {
  * `onRangeChange(startDate, endDate)` is called with ISO date strings
  * whenever the caller should refetch — either a preset or a custom range.
  */
+function fullLabel(isoDate) {
+  const d = new Date(`${isoDate}T00:00:00`);
+  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
 export default function SolvingActivityChart({ data, onRangeChange, title = 'Weekly Solving Activity' }) {
   const [activePreset, setActivePreset] = useState('7');
   const [showCustom, setShowCustom] = useState(false);
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
+  const [selectedBar, setSelectedBar] = useState(null);
 
   const series = data || [];
   const total = series.reduce((sum, d) => sum + (d.count || 0), 0);
@@ -39,6 +45,7 @@ export default function SolvingActivityChart({ data, onRangeChange, title = 'Wee
   const applyPreset = (preset) => {
     setActivePreset(preset.key);
     setShowCustom(false);
+    setSelectedBar(null);
     const end = new Date();
     const start = new Date();
     start.setDate(end.getDate() - (preset.days - 1));
@@ -48,6 +55,7 @@ export default function SolvingActivityChart({ data, onRangeChange, title = 'Wee
   const applyCustom = () => {
     if (!customStart || !customEnd) return;
     setActivePreset('custom');
+    setSelectedBar(null);
     onRangeChange?.(customStart, customEnd);
   };
 
@@ -134,8 +142,26 @@ export default function SolvingActivityChart({ data, onRangeChange, title = 'Wee
         {series.map((d, i) => {
           const heightPct = maxCount > 0 ? Math.max((d.count / maxCount) * 100, d.count > 0 ? 4 : 1) : 1;
           const showLabel = i % labelStride === 0 || i === series.length - 1;
+          const isSelected = selectedBar === i;
           return (
-            <div key={d.date || i} style={{ flex: 1, minWidth: series.length > 30 ? 2 : 6, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: 4, height: '100%' }}>
+            <div key={d.date || i} style={{ position: 'relative', flex: 1, minWidth: series.length > 30 ? 2 : 6, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', gap: 4, height: '100%' }}>
+              {isSelected && (
+                <div
+                  style={{
+                    position: 'absolute', bottom: `calc(${heightPct}% + 10px)`, left: '50%', transform: 'translateX(-50%)',
+                    background: 'var(--olive-950, #1e2a1a)', color: 'white', padding: '8px 12px', borderRadius: 10,
+                    fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap', boxShadow: '0 6px 16px rgba(0,0,0,0.2)', zIndex: 5,
+                  }}
+                >
+                  {fullLabel(d.date)}
+                  <div style={{ fontWeight: 900, fontSize: 14, marginTop: 2 }}>{d.count} solved</div>
+                  <div style={{
+                    position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
+                    width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent',
+                    borderTop: '6px solid var(--olive-950, #1e2a1a)',
+                  }} />
+                </div>
+              )}
               {showValueLabels && (
                 <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--olive-700)', minHeight: 12 }}>
                   {d.count > 0 ? d.count : ''}
@@ -143,12 +169,16 @@ export default function SolvingActivityChart({ data, onRangeChange, title = 'Wee
               )}
               <div
                 title={`${shortLabel(d.date)}: ${d.count} solved`}
+                onClick={() => setSelectedBar(isSelected ? null : i)}
                 style={{
                   width: '100%',
                   height: `${heightPct}%`,
-                  background: heightPct > 70 ? 'linear-gradient(180deg,#4f7942,#2d5016)' : heightPct > 30 ? 'linear-gradient(180deg,#7ca370,#4f7942)' : 'var(--sage-200)',
+                  background: isSelected ? 'linear-gradient(180deg,#ffb347,#d97706)' : heightPct > 70 ? 'linear-gradient(180deg,#4f7942,#2d5016)' : heightPct > 30 ? 'linear-gradient(180deg,#7ca370,#4f7942)' : 'var(--sage-200)',
                   borderRadius: '4px 4px 0 0',
-                  transition: 'height 0.5s cubic-bezier(0.34,1.56,0.64,1)',
+                  cursor: 'pointer',
+                  outline: isSelected ? '2px solid #d97706' : 'none',
+                  outlineOffset: 1,
+                  transition: 'height 0.5s cubic-bezier(0.34,1.56,0.64,1), background 0.15s',
                 }}
               />
               {series.length <= 31 && (
