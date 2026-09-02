@@ -43,6 +43,194 @@ function resourceLabel(item) {
   return item.label || item.url;
 }
 
+const BLANK_QUESTION = { question_text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_option: 'A', explanation: '', question_image: '', video_url: '' };
+
+// ── MCQ question bank for one subtopic — authored directly here, or
+// imported (copied) from an existing Aptitude topic's questions. ──────────
+function QuestionsManager({ subtopicId }) {
+  const [questions, setQuestions] = useState(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newQ, setNewQ] = useState(BLANK_QUESTION);
+  const [saving, setSaving] = useState(false);
+
+  const [showImport, setShowImport] = useState(false);
+  const [aptitudeTopics, setAptitudeTopics] = useState(null);
+  const [importTopicId, setImportTopicId] = useState('');
+  const [importCandidates, setImportCandidates] = useState(null);
+  const [selectedImportIds, setSelectedImportIds] = useState([]);
+  const [importing, setImporting] = useState(false);
+
+  useEffect(() => { fetchQuestions(); }, [subtopicId]);
+
+  const fetchQuestions = async () => {
+    const res = await fetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/questions/`, { credentials: 'include' });
+    if (res.ok) setQuestions(await res.json());
+  };
+
+  const removeQuestion = async (id) => {
+    if (!window.confirm('Delete this question?')) return;
+    const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/questions/${id}/`, 'DELETE');
+    if (res.ok) setQuestions((prev) => prev.filter((q) => q.id !== id));
+  };
+
+  const addQuestion = async () => {
+    if (!newQ.question_text.trim() || !newQ.option_a.trim() || !newQ.option_b.trim() || !newQ.option_c.trim() || !newQ.option_d.trim()) return;
+    setSaving(true);
+    try {
+      const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/questions/`, 'POST', newQ);
+      if (res.ok) {
+        const q = await res.json();
+        setQuestions((prev) => [...(prev || []), q]);
+        setNewQ(BLANK_QUESTION);
+        setShowAddForm(false);
+      } else {
+        alert('Failed to add question');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openImportPicker = () => {
+    setShowImport(true);
+    if (aptitudeTopics === null) {
+      fetch('/api/aptitude/topics/', { credentials: 'include' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => setAptitudeTopics(flattenAptitudeTopics(d?.categories)))
+        .catch(() => setAptitudeTopics([]));
+    }
+  };
+
+  const loadImportCandidates = (topicId) => {
+    setImportTopicId(topicId);
+    setSelectedImportIds([]);
+    setImportCandidates(null);
+    if (!topicId) return;
+    fetch(`/api/admin/v2/aptitude-bank/?topic_id=${topicId}`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setImportCandidates(d?.questions || []))
+      .catch(() => setImportCandidates([]));
+  };
+
+  const toggleImportSelection = (id) => {
+    setSelectedImportIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  };
+
+  const runImport = async () => {
+    if (selectedImportIds.length === 0) return;
+    setImporting(true);
+    try {
+      const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/questions/import/`, 'POST', {
+        aptitude_question_ids: selectedImportIds,
+      });
+      if (res.ok) {
+        const body = await res.json();
+        setQuestions((prev) => [...(prev || []), ...body.questions]);
+        setShowImport(false);
+        setImportTopicId('');
+        setImportCandidates(null);
+        setSelectedImportIds([]);
+      } else {
+        alert('Import failed');
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 16, marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase' }}>
+          Practice Questions {questions ? `(${questions.length})` : ''}
+        </label>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={openImportPicker} style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>
+            Import from Aptitude
+          </button>
+          <button onClick={() => setShowAddForm((v) => !v)} style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>
+            + Add Question
+          </button>
+        </div>
+      </div>
+
+      {questions === null ? (
+        <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)' }}>Loading…</div>
+      ) : questions.length === 0 && !showAddForm ? (
+        <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No questions yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+          {(questions || []).map((q) => (
+            <div key={q.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 10 }}>
+              <span style={{ flex: 1, fontSize: '0.82rem', fontWeight: 600 }}>{q.question_text}</span>
+              <span style={{ fontSize: '0.72rem', color: '#059669', fontWeight: 800, flexShrink: 0 }}>Ans: {q.correct_option}</span>
+              <button onClick={() => removeQuestion(q.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 2, flexShrink: 0 }}><X size={13} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showAddForm && (
+        <div style={{ background: 'var(--bg-2)', borderRadius: 12, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          <textarea placeholder="Question text" value={newQ.question_text} onChange={(e) => setNewQ({ ...newQ, question_text: e.target.value })} rows={2} style={{ padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.82rem', fontFamily: 'inherit', resize: 'vertical' }} />
+          <input placeholder="Image URL (optional)" value={newQ.question_image} onChange={(e) => setNewQ({ ...newQ, question_image: e.target.value })} style={{ padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.82rem' }} />
+          <input placeholder="Video URL — YouTube etc. (optional)" value={newQ.video_url} onChange={(e) => setNewQ({ ...newQ, video_url: e.target.value })} style={{ padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.82rem' }} />
+          {['a', 'b', 'c', 'd'].map((letter) => (
+            <div key={letter} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                type="radio"
+                checked={newQ.correct_option === letter.toUpperCase()}
+                onChange={() => setNewQ({ ...newQ, correct_option: letter.toUpperCase() })}
+                title="Correct answer"
+              />
+              <input
+                placeholder={`Option ${letter.toUpperCase()}`}
+                value={newQ[`option_${letter}`]}
+                onChange={(e) => setNewQ({ ...newQ, [`option_${letter}`]: e.target.value })}
+                style={{ flex: 1, padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.82rem' }}
+              />
+            </div>
+          ))}
+          <textarea placeholder="Explanation (optional)" value={newQ.explanation} onChange={(e) => setNewQ({ ...newQ, explanation: e.target.value })} rows={2} style={{ padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.82rem', fontFamily: 'inherit', resize: 'vertical' }} />
+          <button onClick={addQuestion} disabled={saving} className="primary-button" style={{ borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem', alignSelf: 'flex-start' }}>
+            {saving ? 'Saving…' : 'Save Question'}
+          </button>
+        </div>
+      )}
+
+      {showImport && (
+        <div style={{ background: 'var(--bg-2)', borderRadius: 12, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <select value={importTopicId} onChange={(e) => loadImportCandidates(e.target.value)} style={{ padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.82rem' }}>
+            <option value="">{aptitudeTopics === null ? 'Loading…' : 'Select an Aptitude topic to import from...'}</option>
+            {(aptitudeTopics || []).map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+
+          {importCandidates !== null && (
+            <>
+              <div style={{ maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {importCandidates.length === 0 ? (
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No questions in this topic.</div>
+                ) : importCandidates.map((q) => (
+                  <label key={q.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '6px 8px', background: 'white', borderRadius: 8, fontSize: '0.8rem', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={selectedImportIds.includes(q.id)} onChange={() => toggleImportSelection(q.id)} style={{ marginTop: 2 }} />
+                    <span>{q.question_text}</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button onClick={runImport} disabled={importing || selectedImportIds.length === 0} className="primary-button" style={{ borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem' }}>
+                  {importing ? 'Importing…' : `Import ${selectedImportIds.length || ''} Selected`}
+                </button>
+                <button onClick={() => setShowImport(false)} style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontSize: '0.8rem' }}>Close</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Resource-editing modal, shared by syllabus Topics and Subtopics — both
 // carry the same three resource kinds (link / Aptitude topic / Problem) as
 // individual resources of their own, not just something inherited from the
@@ -200,6 +388,8 @@ function ResourceEditorModal({ entity, saveUrl, showDescription, onClose, onSave
             <button onClick={addProblem} disabled={!pickedProblemSlug} className="primary-button" style={{ borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem' }}>Add</button>
           </div>
         </div>
+
+        {showDescription && <QuestionsManager subtopicId={entity.id} />}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button onClick={onClose} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontWeight: 700 }}>Cancel</button>
@@ -448,7 +638,7 @@ export default function CompetitiveBankView({ onBack }) {
                               <button
                                 key={st.id}
                                 onClick={() => setResourceModalSubtopic(st)}
-                                title="Edit description & multimedia"
+                                title="Edit description, resources & questions"
                                 style={{
                                   textAlign: 'left', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border-soft)',
                                   background: 'white', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 650, color: 'var(--olive-900)',
@@ -458,6 +648,9 @@ export default function CompetitiveBankView({ onBack }) {
                                 {st.title}
                                 {(st.description || (st.resource_links || []).length > 0) && (
                                   <span style={{ marginLeft: 4, color: '#059669' }}>●</span>
+                                )}
+                                {st.question_count > 0 && (
+                                  <span style={{ marginLeft: 4, fontSize: '0.68rem', color: '#7c3aed', fontWeight: 800 }}>{st.question_count}Q</span>
                                 )}
                               </button>
                             ))}
@@ -486,7 +679,7 @@ export default function CompetitiveBankView({ onBack }) {
             entity={resourceModalSubtopic}
             saveUrl={`/api/admin/v2/examinations/subtopics/${resourceModalSubtopic.id}/`}
             showDescription={true}
-            onClose={() => setResourceModalSubtopic(null)}
+            onClose={() => { setResourceModalSubtopic(null); fetchSyllabus(selectedExam.id); }}
             onSaved={(description, resourceLinks) => handleSubtopicSaved(resourceModalSubtopic.id, description, resourceLinks)}
           />
         )}

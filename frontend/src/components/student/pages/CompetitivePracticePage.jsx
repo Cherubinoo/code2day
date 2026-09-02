@@ -1,6 +1,112 @@
 import React, { useState, useEffect } from "react";
-import { Swords, ChevronLeft, ChevronDown, ChevronRight, Link2, Loader2, BookOpen, Code2, ExternalLink } from "lucide-react";
-import { getYoutubeEmbedUrl, getMediaKind } from "../../../lib/appUtils";
+import { Swords, ChevronLeft, ChevronDown, ChevronRight, Link2, Loader2, BookOpen, Code2, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
+import { getYoutubeEmbedUrl, getMediaKind, buildJsonPostOptions } from "../../../lib/appUtils";
+
+const OPTION_LETTERS = ["A", "B", "C", "D"];
+
+function QuestionCard({ question, index }) {
+  const [selected, setSelected] = useState(null);
+  const [result, setResult] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const answer = async (letter) => {
+    if (result || submitting) return;
+    setSelected(letter);
+    setSubmitting(true);
+    try {
+      const res = await fetch(`/api/competitive/questions/${question.id}/submit/`, buildJsonPostOptions({ selected_option: letter }));
+      if (res.ok) setResult(await res.json());
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const embedUrl = question.video_url ? getYoutubeEmbedUrl(question.video_url) : null;
+
+  return (
+    <div className="surface-card" style={{ padding: 20 }}>
+      <div style={{ fontWeight: 700, marginBottom: 12, color: "var(--text-hard)" }}>
+        {index + 1}. {question.question_text}
+      </div>
+      {question.question_image && (
+        <img src={question.question_image} alt="" style={{ maxWidth: "100%", borderRadius: 10, marginBottom: 12, display: "block" }} />
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {OPTION_LETTERS.map((letter) => {
+          const optionText = question[`option_${letter.toLowerCase()}`];
+          const isSelected = selected === letter;
+          const isCorrectAnswer = result && result.correct_option === letter;
+          const isWrongSelected = result && isSelected && !result.is_correct;
+          return (
+            <button
+              key={letter}
+              type="button"
+              onClick={() => answer(letter)}
+              disabled={!!result}
+              style={{
+                textAlign: "left", padding: "10px 14px", borderRadius: 10, cursor: result ? "default" : "pointer",
+                display: "flex", alignItems: "center", gap: 10, fontSize: "0.9rem", fontWeight: 600,
+                border: isCorrectAnswer ? "1px solid #10b981" : isWrongSelected ? "1px solid #ef4444" : "1px solid var(--border-soft)",
+                background: isCorrectAnswer ? "#f0fdf4" : isWrongSelected ? "#fef2f2" : "white",
+                color: "var(--text-hard)",
+              }}
+            >
+              <span style={{ fontWeight: 800, color: "var(--text-soft)" }}>{letter}</span>
+              <span style={{ flex: 1 }}>{optionText}</span>
+              {isCorrectAnswer && <CheckCircle2 size={16} style={{ color: "#10b981" }} />}
+              {isWrongSelected && <XCircle size={16} style={{ color: "#ef4444" }} />}
+            </button>
+          );
+        })}
+      </div>
+
+      {result && (
+        <div style={{ marginTop: 14, padding: 14, borderRadius: 10, background: "var(--bg-2)" }}>
+          <div style={{ fontWeight: 800, marginBottom: result.explanation || embedUrl ? 8 : 0, color: result.is_correct ? "#059669" : "#dc2626" }}>
+            {result.is_correct ? "Correct!" : `Incorrect — correct answer is ${result.correct_option}`}
+          </div>
+          {result.explanation && <p style={{ margin: embedUrl ? "0 0 12px" : 0, color: "var(--text-soft)", fontSize: "0.88rem" }}>{result.explanation}</p>}
+          {embedUrl && (
+            <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 10, overflow: "hidden" }}>
+              <iframe
+                src={embedUrl}
+                title="Explanation video"
+                style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+              />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuestionsPractice({ subtopicId }) {
+  const [questions, setQuestions] = useState(null);
+
+  useEffect(() => {
+    fetch(`/api/competitive/subtopics/${subtopicId}/questions/`, { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : []))
+      .then(setQuestions)
+      .catch(() => setQuestions([]));
+  }, [subtopicId]);
+
+  if (questions === null) {
+    return <div style={{ textAlign: "center", padding: 40, color: "var(--text-soft)" }}><Loader2 size={24} className="spin" /></div>;
+  }
+  if (questions.length === 0) return null;
+
+  return (
+    <div>
+      <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Practice Questions</h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {questions.map((q, i) => <QuestionCard key={q.id} question={q} index={i} />)}
+      </div>
+    </div>
+  );
+}
 
 function ResourceCard({ item }) {
   if (item.type === "aptitude_topic") {
@@ -115,6 +221,9 @@ function TopicLearnView({ examName, section, topic, onOpenSubtopic, onBack }) {
               style={{ textAlign: "left", cursor: "pointer", padding: "14px 16px", fontSize: "0.85rem", fontWeight: 700 }}
             >
               {st.title}
+              {st.question_count > 0 && (
+                <div style={{ fontSize: "0.72rem", color: "#7c3aed", fontWeight: 700, marginTop: 4 }}>{st.question_count} question{st.question_count > 1 ? "s" : ""}</div>
+              )}
               {(st.description || (st.resource_links || []).length > 0) && (
                 <div style={{ fontSize: "0.72rem", color: "var(--text-soft)", fontWeight: 600, marginTop: 4 }}>Learn more →</div>
               )}
@@ -160,15 +269,20 @@ function SubtopicLearnView({ examName, topicTitle, subtopic, onBack }) {
         )}
       </section>
 
-      {(subtopic.resource_links || []).length === 0 ? (
-        <div className="surface-card" style={{ padding: 48, textAlign: "center", color: "var(--text-soft)" }}>
-          Resources for this subtopic are coming soon.
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {subtopic.resource_links.map((item, i) => <ResourceCard key={i} item={item} />)}
-        </div>
-      )}
+      <QuestionsPractice subtopicId={subtopic.id} />
+
+      <div>
+        <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Resources</h3>
+        {(subtopic.resource_links || []).length === 0 ? (
+          <div className="surface-card" style={{ padding: 48, textAlign: "center", color: "var(--text-soft)" }}>
+            Resources for this subtopic are coming soon.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {subtopic.resource_links.map((item, i) => <ResourceCard key={i} item={item} />)}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

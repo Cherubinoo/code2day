@@ -54,6 +54,11 @@ from .views import (
     AdminExaminationSyllabusUploadView,
     AdminSyllabusTopicResourcesView,
     AdminSyllabusSubtopicView,
+    AdminSubtopicQuestionListCreateView,
+    AdminSubtopicQuestionDetailView,
+    AdminSubtopicQuestionImportView,
+    CompetitiveSubtopicQuestionsView,
+    CompetitiveQuestionSubmitView,
     CompetitiveExaminationListView,
     CompetitiveExaminationSyllabusView,
     DiscussionThreadListView,
@@ -325,6 +330,11 @@ urlpatterns = [
     path("admin/v2/examinations/<int:exam_id>/syllabus/upload/", AdminExaminationSyllabusUploadView.as_view(), name="admin-examination-syllabus-upload"),
     path("admin/v2/examinations/topics/<int:topic_id>/resources/", AdminSyllabusTopicResourcesView.as_view(), name="admin-syllabus-topic-resources"),
     path("admin/v2/examinations/subtopics/<int:subtopic_id>/", AdminSyllabusSubtopicView.as_view(), name="admin-syllabus-subtopic-detail"),
+    path("admin/v2/examinations/subtopics/<int:subtopic_id>/questions/", AdminSubtopicQuestionListCreateView.as_view(), name="admin-subtopic-question-list"),
+    path("admin/v2/examinations/subtopics/<int:subtopic_id>/questions/import/", AdminSubtopicQuestionImportView.as_view(), name="admin-subtopic-question-import"),
+    path("admin/v2/examinations/subtopics/<int:subtopic_id>/questions/<int:question_id>/", AdminSubtopicQuestionDetailView.as_view(), name="admin-subtopic-question-detail"),
+    path("competitive/subtopics/<int:subtopic_id>/questions/", CompetitiveSubtopicQuestionsView.as_view(), name="competitive-subtopic-questions"),
+    path("competitive/questions/<int:question_id>/submit/", CompetitiveQuestionSubmitView.as_view(), name="competitive-question-submit"),
 
     # Staff Institution
     path("staff/advisor/dashboard/", StaffClassAdvisorDashboardView.as_view(), name="staff-advisor-dashboard"),

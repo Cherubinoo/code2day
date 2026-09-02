@@ -78,6 +78,7 @@ from .models import (
     SyllabusSection,
     SyllabusTopic,
     SyllabusSubtopic,
+    CompetitiveQuestion,
 )
 from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
@@ -2764,7 +2765,9 @@ def _serialize_examination_syllabus(examination):
     """Full Section > Topic > Subtopic tree for one examination — shared by
     the admin management view and the student-facing browse view."""
     sections = []
-    for section in examination.sections.prefetch_related('topics__subtopics'):
+    for section in examination.sections.prefetch_related(
+        'topics__subtopics__questions'
+    ):
         topics = []
         for topic in section.topics.all():
             topics.append({
@@ -2777,6 +2780,7 @@ def _serialize_examination_syllabus(examination):
                         "title": st.title,
                         "description": st.description,
                         "resource_links": _resolve_resource_display(st.resource_links),
+                        "question_count": len(st.questions.all()),
                     }
                     for st in topic.subtopics.all()
                 ],
@@ -3066,6 +3070,160 @@ class AdminSyllabusSubtopicView(APIView):
             "message": "Subtopic updated",
             "description": subtopic.description,
             "resource_links": _resolve_resource_display(subtopic.resource_links),
+        })
+
+
+def _serialize_competitive_question(q, include_answer=True):
+    data = {
+        "id": q.id,
+        "question_text": q.question_text,
+        "question_image": q.question_image,
+        "video_url": q.video_url,
+        "option_a": q.option_a,
+        "option_b": q.option_b,
+        "option_c": q.option_c,
+        "option_d": q.option_d,
+    }
+    if include_answer:
+        data["correct_option"] = q.correct_option
+        data["explanation"] = q.explanation
+    return data
+
+
+class AdminSubtopicQuestionListCreateView(APIView):
+    """System Admin: list/create MCQ questions authored directly for one
+    Competitive Practice subtopic — separate from resource_links' pointers
+    at existing Aptitude/Problem content."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, subtopic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
+        questions = subtopic.questions.all()
+        return Response([_serialize_competitive_question(q) for q in questions])
+
+    def post(self, request, subtopic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
+
+        question_text = (request.data.get('question_text') or '').strip()
+        option_a = (request.data.get('option_a') or '').strip()
+        option_b = (request.data.get('option_b') or '').strip()
+        option_c = (request.data.get('option_c') or '').strip()
+        option_d = (request.data.get('option_d') or '').strip()
+        correct_option = (request.data.get('correct_option') or '').strip().upper()
+
+        if not all([question_text, option_a, option_b, option_c, option_d]):
+            return Response({"error": "question_text and all four options are required."}, status=400)
+        if correct_option not in ('A', 'B', 'C', 'D'):
+            return Response({"error": "correct_option must be one of A, B, C, D."}, status=400)
+
+        q = CompetitiveQuestion.objects.create(
+            subtopic=subtopic,
+            question_text=question_text,
+            question_image=(request.data.get('question_image') or '').strip(),
+            video_url=(request.data.get('video_url') or '').strip(),
+            option_a=option_a, option_b=option_b, option_c=option_c, option_d=option_d,
+            correct_option=correct_option,
+            explanation=(request.data.get('explanation') or '').strip(),
+            order=subtopic.questions.count(),
+        )
+        return Response(_serialize_competitive_question(q), status=201)
+
+
+class AdminSubtopicQuestionDetailView(APIView):
+    """System Admin: edit or remove one Competitive Practice question."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, subtopic_id, question_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        q = get_object_or_404(CompetitiveQuestion, id=question_id, subtopic_id=subtopic_id)
+
+        for field in ('question_text', 'question_image', 'video_url', 'option_a', 'option_b', 'option_c', 'option_d', 'explanation'):
+            if field in request.data:
+                setattr(q, field, (request.data.get(field) or '').strip())
+        if 'correct_option' in request.data:
+            correct_option = (request.data.get('correct_option') or '').strip().upper()
+            if correct_option not in ('A', 'B', 'C', 'D'):
+                return Response({"error": "correct_option must be one of A, B, C, D."}, status=400)
+            q.correct_option = correct_option
+        q.save()
+        return Response(_serialize_competitive_question(q))
+
+    def delete(self, request, subtopic_id, question_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        q = get_object_or_404(CompetitiveQuestion, id=question_id, subtopic_id=subtopic_id)
+        q.delete()
+        return Response({"message": "Question deleted"})
+
+
+class AdminSubtopicQuestionImportView(APIView):
+    """System Admin: import (copy) existing AptitudeQuestion rows into a
+    Competitive Practice subtopic's own question bank. A one-time copy,
+    not a live link — editing the original Aptitude question afterward
+    doesn't change the imported copy here."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, subtopic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
+
+        aptitude_question_ids = request.data.get('aptitude_question_ids')
+        if not isinstance(aptitude_question_ids, list) or not aptitude_question_ids:
+            return Response({"error": "aptitude_question_ids must be a non-empty list."}, status=400)
+
+        source_questions = AptitudeQuestion.objects.filter(id__in=aptitude_question_ids)
+        next_order = subtopic.questions.count()
+        created = []
+        for i, aq in enumerate(source_questions):
+            q = CompetitiveQuestion.objects.create(
+                subtopic=subtopic,
+                question_text=aq.question_text,
+                question_image=aq.question_image or "",
+                option_a=aq.option_a, option_b=aq.option_b, option_c=aq.option_c, option_d=aq.option_d,
+                correct_option=(aq.correct_option or 'A').upper(),
+                explanation=aq.explanation or "",
+                order=next_order + i,
+            )
+            created.append(q)
+
+        return Response({
+            "message": f"Imported {len(created)} question(s)",
+            "questions": [_serialize_competitive_question(q) for q in created],
+        }, status=201)
+
+
+class CompetitiveSubtopicQuestionsView(APIView):
+    """Student: practice questions for one subtopic — correct_option and
+    explanation are withheld until answered via the submit endpoint."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, subtopic_id):
+        subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
+        questions = subtopic.questions.all()
+        return Response([_serialize_competitive_question(q, include_answer=False) for q in questions])
+
+
+class CompetitiveQuestionSubmitView(APIView):
+    """Student: submit an answer to one Competitive Practice question,
+    get instant right/wrong feedback plus the explanation."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, question_id):
+        question = get_object_or_404(CompetitiveQuestion, id=question_id)
+        selected = (request.data.get('selected_option') or '').strip().upper()
+        if selected not in ('A', 'B', 'C', 'D'):
+            return Response({"error": "selected_option must be one of A, B, C, D."}, status=400)
+
+        return Response({
+            "is_correct": selected == question.correct_option,
+            "correct_option": question.correct_option,
+            "explanation": question.explanation,
         })
 
 

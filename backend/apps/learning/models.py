@@ -845,10 +845,10 @@ class SyllabusSubtopic(models.Model):
     title = models.CharField(max_length=255)
     order = models.PositiveIntegerField(default=0)
     description = models.TextField(blank=True, default="")
-    # Multimedia only (a plain {label, url} list) — smart-rendered on the
-    # frontend as a YouTube embed / image / video / plain link depending on
-    # the URL, unlike SyllabusTopic.resource_links which also carries typed
-    # pointers at existing Aptitude topics / Problems.
+    # Same three resource kinds SyllabusTopic.resource_links carries: a
+    # plain {type:"link", label, url} (smart-rendered as a YouTube embed /
+    # image / video / plain link depending on the URL), or a typed pointer
+    # at an existing Aptitude topic or Problem.
     resource_links = models.JSONField(default=list, blank=True)
 
     class Meta:
@@ -858,6 +858,37 @@ class SyllabusSubtopic(models.Model):
 
     def __str__(self):
         return f"{self.topic} / {self.title}"
+
+
+class CompetitiveQuestion(models.Model):
+    """An MCQ practice question authored directly for one Competitive
+    Practice subtopic — distinct from SyllabusSubtopic.resource_links'
+    "aptitude_topic" pointer, which only deep-links into the existing
+    Aptitude module. A question here can also be imported (copied) from
+    an existing AptitudeQuestion via the admin import picker — that's a
+    one-time copy, not a live link, so editing the original afterward
+    doesn't change this copy."""
+    OPTION_CHOICES = (("A", "A"), ("B", "B"), ("C", "C"), ("D", "D"))
+
+    subtopic = models.ForeignKey(SyllabusSubtopic, on_delete=models.CASCADE, related_name="questions")
+    question_text = models.TextField()
+    question_image = models.URLField(blank=True, default="")
+    video_url = models.URLField(blank=True, default="", help_text="Optional YouTube/video explainer for this question")
+    option_a = models.CharField(max_length=500)
+    option_b = models.CharField(max_length=500)
+    option_c = models.CharField(max_length=500)
+    option_d = models.CharField(max_length=500)
+    correct_option = models.CharField(max_length=1, choices=OPTION_CHOICES)
+    explanation = models.TextField(blank=True, default="")
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "competitive_questions"
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.subtopic} — {self.question_text[:50]}"
 
 
 class AptitudeAttempt(models.Model):
