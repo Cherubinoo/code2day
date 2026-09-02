@@ -4524,6 +4524,28 @@ class ContestListCreateView(APIView):
             )
             contest.assigned_students.add(*individual_students)
 
+        # Auto-tag every question in this contest as "already used" for every
+        # batch it's actually assigned to — so building a later contest for
+        # the same batch shows these as used without the staff having to
+        # hand-tick each one. Based on the resulting assigned_students set
+        # (not just assigned_batches) so this also covers individual-student
+        # and section-restricted assignment.
+        target_batches = [
+            b for b in contest.assigned_students.values_list('batch', flat=True).distinct() if b
+        ]
+        if target_batches:
+            new_marks = []
+            if contest.contest_type in ('programming', 'combined'):
+                for problem in contest.problems.all():
+                    for batch in target_batches:
+                        new_marks.append(QuestionUsageMark(staff=profile, batch=batch, problem=problem))
+            if contest.contest_type in ('aptitude', 'combined'):
+                for question in contest.aptitude_questions.all():
+                    for batch in target_batches:
+                        new_marks.append(QuestionUsageMark(staff=profile, batch=batch, aptitude_question=question))
+            if new_marks:
+                QuestionUsageMark.objects.bulk_create(new_marks, ignore_conflicts=True)
+
         return Response({
             "id": contest.id,
             "title": contest.title,
