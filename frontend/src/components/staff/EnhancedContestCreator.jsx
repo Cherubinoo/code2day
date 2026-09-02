@@ -52,6 +52,50 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('');
   const [selectedSectionFilter, setSelectedSectionFilter] = useState('');
 
+  // "Already used for this batch" ticks — this staff member's own marks
+  // on Aptitude questions / Problems for whichever batch is assigned in
+  // step 2, shown while browsing content in step 3 so questions already
+  // used for that batch aren't accidentally repeated.
+  const markBatch = formData.assigned_batches[0] || '';
+  const [usageMarks, setUsageMarks] = useState({ aptitude_question_ids: [], problem_slugs: [] });
+
+  useEffect(() => {
+    if (!markBatch) {
+      setUsageMarks({ aptitude_question_ids: [], problem_slugs: [] });
+      return;
+    }
+    fetch(`/api/staff/question-marks/?batch=${encodeURIComponent(markBatch)}`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setUsageMarks(d))
+      .catch(() => {});
+  }, [markBatch]);
+
+  async function toggleUsageMark({ aptitudeQuestionId, problemSlug }) {
+    if (!markBatch) return;
+    const body = { batch: markBatch };
+    if (aptitudeQuestionId) body.aptitude_question_id = aptitudeQuestionId;
+    else body.problem_slug = problemSlug;
+    try {
+      const res = await fetch('/api/staff/question-marks/toggle/', buildJsonPostOptions(body));
+      if (!res.ok) return;
+      const { marked } = await res.json();
+      setUsageMarks((prev) => {
+        if (aptitudeQuestionId) {
+          const ids = marked
+            ? [...prev.aptitude_question_ids, aptitudeQuestionId]
+            : prev.aptitude_question_ids.filter((id) => id !== aptitudeQuestionId);
+          return { ...prev, aptitude_question_ids: ids };
+        }
+        const slugs = marked
+          ? [...prev.problem_slugs, problemSlug]
+          : prev.problem_slugs.filter((s) => s !== problemSlug);
+        return { ...prev, problem_slugs: slugs };
+      });
+    } catch (err) {
+      // silent fail — the tick just won't update
+    }
+  }
+
   useEffect(() => {
     loadInitialData();
   }, []);
@@ -2010,6 +2054,19 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                                 background: problem.difficulty === 'Easy' ? '#d1fae5' : problem.difficulty === 'Medium' ? '#fef3c7' : '#fee2e2',
                                 color: problem.difficulty === 'Easy' ? '#059669' : problem.difficulty === 'Medium' ? '#d97706' : '#dc2626',
                               }}>{problem.difficulty}</span>
+                              {markBatch && (
+                                <button
+                                  type="button"
+                                  title={usageMarks.problem_slugs.includes(problem.slug) ? `Marked used for batch ${markBatch} — click to unmark` : `Mark as already used for batch ${markBatch}`}
+                                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleUsageMark({ problemSlug: problem.slug }); }}
+                                  style={{
+                                    marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex',
+                                    color: usageMarks.problem_slugs.includes(problem.slug) ? '#7c3aed' : '#d1d5db',
+                                  }}
+                                >
+                                  <CheckCircle size={16} fill={usageMarks.problem_slugs.includes(problem.slug) ? '#ede9fe' : 'none'} />
+                                </button>
+                              )}
                             </label>
                           ))
                         )
@@ -2058,6 +2115,19 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                                   )}
                                 </div>
                               </div>
+                              {markBatch && (
+                                <button
+                                  type="button"
+                                  title={usageMarks.aptitude_question_ids.includes(q.id) ? `Marked used for batch ${markBatch} — click to unmark` : `Mark as already used for batch ${markBatch}`}
+                                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleUsageMark({ aptitudeQuestionId: q.id }); }}
+                                  style={{
+                                    marginLeft: 8, marginTop: 2, background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', flexShrink: 0,
+                                    color: usageMarks.aptitude_question_ids.includes(q.id) ? '#7c3aed' : '#d1d5db',
+                                  }}
+                                >
+                                  <CheckCircle size={16} fill={usageMarks.aptitude_question_ids.includes(q.id) ? '#ede9fe' : 'none'} />
+                                </button>
+                              )}
                             </label>
                           ))
                         )
@@ -2164,6 +2234,16 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                       <input type="checkbox" checked={formData.problem_slugs.includes(p.slug)} onChange={() => toggleProblem(p.slug)} />
                       <span style={{ flex: 1 }}>{p.title}</span>
                       <span style={{ color: '#94a3b8', fontSize: 11 }}>{p.difficulty}</span>
+                      {markBatch && (
+                        <button
+                          type="button"
+                          title={usageMarks.problem_slugs.includes(p.slug) ? `Marked used for batch ${markBatch}` : `Mark as already used for batch ${markBatch}`}
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleUsageMark({ problemSlug: p.slug }); }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: usageMarks.problem_slugs.includes(p.slug) ? '#7c3aed' : '#d1d5db' }}
+                        >
+                          <CheckCircle size={15} fill={usageMarks.problem_slugs.includes(p.slug) ? '#ede9fe' : 'none'} />
+                        </button>
+                      )}
                     </label>
                   ))}
                   {problems.length === 0 && <p style={{ padding: 12, fontSize: 13, color: '#94a3b8' }}>No problems available.</p>}
@@ -2184,6 +2264,16 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                     <label key={q.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer', fontSize: 13 }}>
                       <input type="checkbox" checked={formData.aptitude_question_ids.includes(String(q.id))} onChange={() => toggleAptitudeQuestion(q.id)} />
                       <span style={{ flex: 1 }}>{q.question_text}</span>
+                      {markBatch && (
+                        <button
+                          type="button"
+                          title={usageMarks.aptitude_question_ids.includes(q.id) ? `Marked used for batch ${markBatch}` : `Mark as already used for batch ${markBatch}`}
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleUsageMark({ aptitudeQuestionId: q.id }); }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: usageMarks.aptitude_question_ids.includes(q.id) ? '#7c3aed' : '#d1d5db' }}
+                        >
+                          <CheckCircle size={15} fill={usageMarks.aptitude_question_ids.includes(q.id) ? '#ede9fe' : 'none'} />
+                        </button>
+                      )}
                     </label>
                   ))}
                   {aptitudeQuestions.filter((q) => q.question_type !== 'RC').length === 0 && (

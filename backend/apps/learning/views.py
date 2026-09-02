@@ -79,6 +79,7 @@ from .models import (
     SyllabusTopic,
     SyllabusSubtopic,
     CompetitiveQuestion,
+    QuestionUsageMark,
 )
 from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
@@ -5522,6 +5523,69 @@ class StaffContactUpdateView(APIView):
         profile.save(update_fields=update_fields)
 
         return Response({"message": "Contact info saved", "email": profile.email, "mobile_number": profile.mobile_number})
+
+
+class QuestionUsageMarksView(APIView):
+    """Staff/HOD: which Aptitude questions and Problems has *this* staff
+    member already marked "used" for a given batch — a personal tracker
+    (not shared with colleagues) to help avoid repeating questions when
+    building a new contest for a batch they've already run one for."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not hasattr(request.user, 'staff_profile'):
+            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+        batch = (request.query_params.get('batch') or '').strip()
+        if not batch:
+            return Response({"error": "batch is required."}, status=400)
+
+        marks = QuestionUsageMark.objects.filter(staff=request.user.staff_profile, batch=batch)
+        return Response({
+            "aptitude_question_ids": list(marks.exclude(aptitude_question=None).values_list('aptitude_question_id', flat=True)),
+            "problem_slugs": list(
+                Problem.objects.filter(id__in=marks.exclude(problem=None).values_list('problem_id', flat=True)).values_list('slug', flat=True)
+            ),
+        })
+
+
+class QuestionUsageMarkToggleView(APIView):
+    """Staff/HOD: toggle "used for this batch" on one Aptitude question or
+    Problem. Pass exactly one of aptitude_question_id / problem_slug."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not hasattr(request.user, 'staff_profile'):
+            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+        profile = request.user.staff_profile
+
+        batch = (request.data.get('batch') or '').strip()
+        if not batch:
+            return Response({"error": "batch is required."}, status=400)
+
+        aptitude_question_id = request.data.get('aptitude_question_id')
+        problem_slug = (request.data.get('problem_slug') or '').strip()
+
+        if bool(aptitude_question_id) == bool(problem_slug):
+            return Response({"error": "Provide exactly one of aptitude_question_id or problem_slug."}, status=400)
+
+        lookup = {"staff": profile, "batch": batch}
+        if aptitude_question_id:
+            question = AptitudeQuestion.objects.filter(id=aptitude_question_id).first()
+            if not question:
+                return Response({"error": "Aptitude question not found."}, status=404)
+            lookup["aptitude_question"] = question
+        else:
+            problem = Problem.objects.filter(slug=problem_slug).first()
+            if not problem:
+                return Response({"error": "Problem not found."}, status=404)
+            lookup["problem"] = problem
+
+        existing = QuestionUsageMark.objects.filter(**lookup).first()
+        if existing:
+            existing.delete()
+            return Response({"marked": False})
+        QuestionUsageMark.objects.create(**lookup)
+        return Response({"marked": True})
 
 
 class StaffLockToggleView(APIView):

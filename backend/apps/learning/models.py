@@ -787,6 +787,44 @@ class SolvedAptitude(models.Model):
         return f"{self.student} solved aptitude q#{self.question.id}"
 
 
+class QuestionUsageMark(models.Model):
+    """A staff member's personal "already used this for <batch>" tick on
+    an Aptitude question or coding Problem — lets staff avoid repeating
+    questions when building a new contest for a batch they've already
+    tested. Scoped to (staff, batch, content): each staff member's marks
+    are their own, not shared with colleagues, and a mark is specific to
+    one batch — the same question can be marked for one batch and not
+    another. Exactly one of aptitude_question/problem is set per row."""
+    staff = models.ForeignKey('StaffProfile', on_delete=models.CASCADE, related_name="question_usage_marks")
+    batch = models.CharField(max_length=20)
+    aptitude_question = models.ForeignKey(
+        AptitudeQuestion, on_delete=models.CASCADE, null=True, blank=True, related_name="usage_marks"
+    )
+    problem = models.ForeignKey(
+        'Problem', on_delete=models.CASCADE, null=True, blank=True, related_name="usage_marks"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "question_usage_marks"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["staff", "batch", "aptitude_question"],
+                condition=models.Q(aptitude_question__isnull=False),
+                name="unique_staff_batch_aptitude_mark",
+            ),
+            models.UniqueConstraint(
+                fields=["staff", "batch", "problem"],
+                condition=models.Q(problem__isnull=False),
+                name="unique_staff_batch_problem_mark",
+            ),
+        ]
+
+    def __str__(self):
+        target = self.aptitude_question_id and f"aptitude#{self.aptitude_question_id}" or f"problem#{self.problem_id}"
+        return f"{self.staff} marked {target} used for {self.batch}"
+
+
 # ── Competitive Practice — Examinations & Syllabus ──────────────────────────
 # Content backing the student-facing "Competitive Practice" module. A global
 # bank (like Problems/Aptitude), not institution-scoped: an Examination
