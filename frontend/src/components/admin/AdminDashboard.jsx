@@ -8,7 +8,7 @@ import {
   GraduationCap, Briefcase, Award, Settings,
   ChevronRight, ArrowLeft, BarChart3, HardHat,
   UserCheck, Wrench, Search, Brain, Crown, Compass, Megaphone, Swords,
-  Pencil, Check, X
+  Pencil, Check, X, Mic
 } from 'lucide-react';
 import api from '../../lib/api';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
@@ -35,7 +35,7 @@ const AdminDashboard = () => {
   const [showAddStaffModal, setShowAddStaffModal] = useState(false);
   
   // System State (Global)
-  const [metrics, setMetrics] = useState({ total_users: 0, total_staff: 0, total_problems: 0, total_aptitude: 0 });
+  const [metrics, setMetrics] = useState({ total_users: 0, total_staff: 0, total_problems: 0, total_aptitude: 0, total_interview_tracks: 0 });
   const [institutions, setInstitutions] = useState([]);
   const [globalMaintenance, setGlobalMaintenance] = useState({
     staff: false, student: false, hod: false, tpu: false, director: false, ja: false, admin: false,
@@ -480,6 +480,7 @@ const AdminDashboard = () => {
                 { label: 'Problem Bank', value: metrics.total_problems, icon: Database, color: '#ef4444', onClick: () => setShowProblemBank(true) },
                 { label: 'Aptitude Bank', value: metrics.total_aptitude, icon: Brain, color: '#8b5cf6', onClick: () => setShowAptitudeBank(true) },
                 { label: 'Competitive Bank', value: 0, icon: Swords, color: '#0891b2', onClick: () => setShowCompetitiveBank(true) },
+                { label: 'Interview Practice', value: metrics.total_interview_tracks, icon: Mic, color: '#d946ef' },
               ].map((m, i) => (
                 <div
                   key={i}

@@ -9998,6 +9998,9 @@ class SystemAdminDashboardView(APIView):
             total_staff = StaffProfile.objects.count()
             total_problems = Problem.objects.count()
             total_aptitude = AptitudeQuestion.objects.count()
+            total_interview_tracks = Department.objects.exclude(
+                interview_track=''
+            ).values('interview_track').distinct().count()
 
             # Fetch all institutions for the management table
             institutions = Institution.objects.all().values(
@@ -10014,7 +10017,8 @@ class SystemAdminDashboardView(APIView):
                     "total_users": total_students + total_staff,
                     "total_staff": total_staff,
                     "total_problems": total_problems,
-                    "total_aptitude": total_aptitude
+                    "total_aptitude": total_aptitude,
+                    "total_interview_tracks": total_interview_tracks
                 },
                 "institutions": list(institutions),
                 "global_config": {
