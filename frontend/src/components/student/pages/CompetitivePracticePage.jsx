@@ -2,7 +2,38 @@ import React, { useState, useEffect } from "react";
 import { Swords, ChevronLeft, ChevronDown, ChevronRight, Link2, Loader2, BookOpen, Code2, ExternalLink } from "lucide-react";
 import { getYoutubeEmbedUrl, getMediaKind } from "../../../lib/appUtils";
 
-function MediaCard({ item }) {
+function ResourceCard({ item }) {
+  if (item.type === "aptitude_topic") {
+    return (
+      <a href={`/aptitude?topic=${item.aptitude_topic_id}`} className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
+        <div style={{ width: 36, height: 36, borderRadius: 10, background: "#f5f3ff", color: "#7c3aed", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <BookOpen size={18} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: "0.7rem", fontWeight: 800, color: "#7c3aed", textTransform: "uppercase", letterSpacing: "0.04em" }}>Aptitude Practice</div>
+          <div style={{ fontWeight: 700, color: "var(--text-hard)" }}>{item.label || item.aptitude_topic_title}</div>
+        </div>
+        <ExternalLink size={14} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
+      </a>
+    );
+  }
+
+  if (item.type === "problem") {
+    return (
+      <a href={`/problems?slug=${encodeURIComponent(item.problem_slug)}`} className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
+        <div style={{ width: 36, height: 36, borderRadius: 10, background: "#e0f2fe", color: "#0891b2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Code2 size={18} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: "0.7rem", fontWeight: 800, color: "#0891b2", textTransform: "uppercase", letterSpacing: "0.04em" }}>Coding Problem · {item.problem_difficulty}</div>
+          <div style={{ fontWeight: 700, color: "var(--text-hard)" }}>{item.label || item.problem_title}</div>
+        </div>
+        <ExternalLink size={14} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
+      </a>
+    );
+  }
+
+  // type === "link" — smart-rendered by what the URL actually is
   const kind = getMediaKind(item.url);
 
   if (kind === "youtube") {
@@ -37,70 +68,6 @@ function MediaCard({ item }) {
       <div className="surface-card" style={{ padding: 16 }}>
         {item.label && <div style={{ fontWeight: 700, marginBottom: 10, color: "var(--text-hard)" }}>{item.label}</div>}
         <video src={item.url} controls style={{ width: "100%", borderRadius: 12, display: "block" }} />
-      </div>
-    );
-  }
-
-  return (
-    <a href={item.url} target="_blank" rel="noopener noreferrer" className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
-      <div style={{ width: 36, height: 36, borderRadius: 10, background: "var(--bg-2)", color: "var(--olive-700)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <Link2 size={18} />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 700, color: "var(--text-hard)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label || item.url}</div>
-        {item.label && <div style={{ fontSize: "0.78rem", color: "var(--text-soft)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.url}</div>}
-      </div>
-      <ExternalLink size={14} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
-    </a>
-  );
-}
-
-function ResourceCard({ item }) {
-  if (item.type === "aptitude_topic") {
-    return (
-      <a href={`/aptitude?topic=${item.aptitude_topic_id}`} className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
-        <div style={{ width: 36, height: 36, borderRadius: 10, background: "#f5f3ff", color: "#7c3aed", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <BookOpen size={18} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: "0.7rem", fontWeight: 800, color: "#7c3aed", textTransform: "uppercase", letterSpacing: "0.04em" }}>Aptitude Practice</div>
-          <div style={{ fontWeight: 700, color: "var(--text-hard)" }}>{item.label || item.aptitude_topic_title}</div>
-        </div>
-        <ExternalLink size={14} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
-      </a>
-    );
-  }
-
-  if (item.type === "problem") {
-    return (
-      <a href={`/problems?slug=${encodeURIComponent(item.problem_slug)}`} className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
-        <div style={{ width: 36, height: 36, borderRadius: 10, background: "#e0f2fe", color: "#0891b2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Code2 size={18} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: "0.7rem", fontWeight: 800, color: "#0891b2", textTransform: "uppercase", letterSpacing: "0.04em" }}>Coding Problem · {item.problem_difficulty}</div>
-          <div style={{ fontWeight: 700, color: "var(--text-hard)" }}>{item.label || item.problem_title}</div>
-        </div>
-        <ExternalLink size={14} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
-      </a>
-    );
-  }
-
-  // type === "link"
-  const embedUrl = getYoutubeEmbedUrl(item.url);
-  if (embedUrl) {
-    return (
-      <div className="surface-card" style={{ padding: 16 }}>
-        {item.label && <div style={{ fontWeight: 700, marginBottom: 10, color: "var(--text-hard)" }}>{item.label}</div>}
-        <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 12, overflow: "hidden" }}>
-          <iframe
-            src={embedUrl}
-            title={item.label || "Video resource"}
-            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          />
-        </div>
       </div>
     );
   }
@@ -195,11 +162,11 @@ function SubtopicLearnView({ examName, topicTitle, subtopic, onBack }) {
 
       {(subtopic.resource_links || []).length === 0 ? (
         <div className="surface-card" style={{ padding: 48, textAlign: "center", color: "var(--text-soft)" }}>
-          Multimedia for this subtopic is coming soon.
+          Resources for this subtopic are coming soon.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {subtopic.resource_links.map((item, i) => <MediaCard key={i} item={item} />)}
+          {subtopic.resource_links.map((item, i) => <ResourceCard key={i} item={item} />)}
         </div>
       )}
     </div>

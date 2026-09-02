@@ -43,9 +43,15 @@ function resourceLabel(item) {
   return item.label || item.url;
 }
 
-// ── Resource-editing modal for one syllabus topic ──────────────────────────
-function TopicResourceModal({ topic, onClose, onSaved }) {
-  const [items, setItems] = useState(topic.resource_links || []);
+// ── Resource-editing modal, shared by syllabus Topics and Subtopics — both
+// carry the same three resource kinds (link / Aptitude topic / Problem) as
+// individual resources of their own, not just something inherited from the
+// parent. `entity` is the topic or subtopic object; `saveUrl` is its
+// resources endpoint; `showDescription` renders a subtopic's description
+// field too (topics don't have one). ──────────────────────────────────────
+function ResourceEditorModal({ entity, saveUrl, showDescription, onClose, onSaved }) {
+  const [description, setDescription] = useState(entity.description || '');
+  const [items, setItems] = useState(entity.resource_links || []);
   const [saving, setSaving] = useState(false);
 
   const [linkLabel, setLinkLabel] = useState('');
@@ -95,17 +101,20 @@ function TopicResourceModal({ topic, onClose, onSaved }) {
   const save = async () => {
     setSaving(true);
     try {
-      const res = await apiFetch(`/api/admin/v2/examinations/topics/${topic.id}/resources/`, 'PATCH', {
+      const payload = {
         resource_links: items.map(({ type, label, url, aptitude_topic_id, problem_slug }) => {
           if (type === 'link') return { type, label, url };
           if (type === 'aptitude_topic') return { type, label, aptitude_topic_id };
           if (type === 'problem') return { type, label, problem_slug };
           return null;
         }).filter(Boolean),
-      });
+      };
+      if (showDescription) payload.description = description;
+
+      const res = await apiFetch(saveUrl, 'PATCH', payload);
       if (res.ok) {
         const body = await res.json();
-        onSaved(body.resource_links || []);
+        onSaved(body.description, body.resource_links || []);
       } else {
         alert('Failed to save resources');
       }
@@ -124,10 +133,23 @@ function TopicResourceModal({ topic, onClose, onSaved }) {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
           <div>
             <h3 style={{ margin: 0, fontSize: '1.3rem', fontWeight: 900, color: 'var(--olive-950)' }}>Resources</h3>
-            <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '0.9rem' }}>{topic.title}</p>
+            <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '0.9rem' }}>{entity.title}</p>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)' }}><X size={20} /></button>
         </div>
+
+        {showDescription && (
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>Description</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="What this subtopic covers..."
+              rows={3}
+              style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid var(--border-soft)', fontSize: '0.9rem', fontFamily: 'inherit', boxSizing: 'border-box', resize: 'vertical' }}
+            />
+          </div>
+        )}
 
         {/* Existing resources */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 20 }}>
@@ -183,88 +205,6 @@ function TopicResourceModal({ topic, onClose, onSaved }) {
           <button onClick={onClose} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontWeight: 700 }}>Cancel</button>
           <button onClick={save} disabled={saving} className="primary-button" style={{ borderRadius: 10, padding: '10px 24px' }}>
             {saving ? 'Saving…' : 'Save Resources'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Description + multimedia editor for one syllabus subtopic ─────────────
-function SubtopicResourceModal({ subtopic, onClose, onSaved }) {
-  const [description, setDescription] = useState(subtopic.description || '');
-  const [items, setItems] = useState(subtopic.resource_links || []);
-  const [mediaLabel, setMediaLabel] = useState('');
-  const [mediaUrl, setMediaUrl] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const addMedia = () => {
-    if (!mediaUrl.trim()) return;
-    setItems((prev) => [...prev, { label: mediaLabel.trim(), url: mediaUrl.trim() }]);
-    setMediaLabel('');
-    setMediaUrl('');
-  };
-
-  const removeItem = (idx) => setItems((prev) => prev.filter((_, i) => i !== idx));
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopic.id}/`, 'PATCH', {
-        description, resource_links: items,
-      });
-      if (res.ok) {
-        const body = await res.json();
-        onSaved(body.description, body.resource_links || []);
-      } else {
-        alert('Failed to save subtopic');
-      }
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }} onClick={onClose}>
-      <div style={{ background: 'white', borderRadius: 24, padding: 32, width: '100%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)' }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-          <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 900, color: 'var(--olive-950)' }}>{subtopic.title}</h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)' }}><X size={20} /></button>
-        </div>
-
-        <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>Description</label>
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="What this subtopic covers..."
-          rows={4}
-          style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid var(--border-soft)', fontSize: '0.9rem', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: 20, resize: 'vertical' }}
-        />
-
-        <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>Multimedia</label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
-          {items.length === 0 && (
-            <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No media attached yet.</div>
-          )}
-          {items.map((item, idx) => (
-            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 10 }}>
-              <Link2 size={14} style={{ color: 'var(--olive-600)', flexShrink: 0 }} />
-              <span style={{ flex: 1, fontSize: '0.85rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.label || item.url}</span>
-              <button onClick={() => removeItem(idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}><X size={14} /></button>
-            </div>
-          ))}
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 24 }}>
-          <input placeholder="Label" value={mediaLabel} onChange={(e) => setMediaLabel(e.target.value)} style={{ flex: '1 1 100px', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }} />
-          <input placeholder="https://... (video, image, or link)" value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} style={{ flex: '2 1 200px', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }} />
-          <button onClick={addMedia} disabled={!mediaUrl.trim()} className="primary-button" style={{ borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem' }}>Add</button>
-        </div>
-        <p style={{ margin: '-16px 0 20px', fontSize: '0.72rem', color: 'var(--text-soft)' }}>YouTube links embed as video; image/video file URLs render inline; anything else shows as a link.</p>
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-          <button onClick={onClose} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontWeight: 700 }}>Cancel</button>
-          <button onClick={save} disabled={saving} className="primary-button" style={{ borderRadius: 10, padding: '10px 24px' }}>
-            {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
       </div>
@@ -533,15 +473,19 @@ export default function CompetitiveBankView({ onBack }) {
         )}
 
         {resourceModalTopic && (
-          <TopicResourceModal
-            topic={resourceModalTopic}
+          <ResourceEditorModal
+            entity={resourceModalTopic}
+            saveUrl={`/api/admin/v2/examinations/topics/${resourceModalTopic.id}/resources/`}
+            showDescription={false}
             onClose={() => setResourceModalTopic(null)}
-            onSaved={(resourceLinks) => handleResourcesSaved(resourceModalTopic.id, resourceLinks)}
+            onSaved={(_description, resourceLinks) => handleResourcesSaved(resourceModalTopic.id, resourceLinks)}
           />
         )}
         {resourceModalSubtopic && (
-          <SubtopicResourceModal
-            subtopic={resourceModalSubtopic}
+          <ResourceEditorModal
+            entity={resourceModalSubtopic}
+            saveUrl={`/api/admin/v2/examinations/subtopics/${resourceModalSubtopic.id}/`}
+            showDescription={true}
             onClose={() => setResourceModalSubtopic(null)}
             onSaved={(description, resourceLinks) => handleSubtopicSaved(resourceModalSubtopic.id, description, resourceLinks)}
           />

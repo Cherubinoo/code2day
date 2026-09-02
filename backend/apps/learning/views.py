@@ -2776,7 +2776,7 @@ def _serialize_examination_syllabus(examination):
                         "id": st.id,
                         "title": st.title,
                         "description": st.description,
-                        "resource_links": st.resource_links or [],
+                        "resource_links": _resolve_resource_display(st.resource_links),
                     }
                     for st in topic.subtopics.all()
                 ],
@@ -2971,6 +2971,44 @@ class AdminExaminationSyllabusUploadView(APIView):
         return list(csv.reader(io.StringIO(text)))
 
 
+def _clean_resource_items(raw_items):
+    """Validate/normalize a resource list — shared by the Topic and
+    Subtopic resource endpoints, since both now support the same three
+    kinds: an external link (frontend renders it as a YouTube embed,
+    image, or video automatically depending on the URL), or a pointer at
+    existing platform content (an Aptitude topic or a coding Problem)."""
+    cleaned = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get('type')
+        label = (item.get('label') or '').strip()
+
+        if item_type == 'link':
+            url = (item.get('url') or '').strip()
+            if not url:
+                continue
+            cleaned.append({"type": "link", "label": label, "url": url})
+
+        elif item_type == 'aptitude_topic':
+            apt_id = item.get('aptitude_topic_id')
+            try:
+                apt_id = int(apt_id)
+            except (TypeError, ValueError):
+                continue
+            if not AptitudeTopic.objects.filter(id=apt_id).exists():
+                continue
+            cleaned.append({"type": "aptitude_topic", "label": label, "aptitude_topic_id": apt_id})
+
+        elif item_type == 'problem':
+            slug = (item.get('problem_slug') or '').strip()
+            if not slug or not Problem.objects.filter(slug=slug).exists():
+                continue
+            cleaned.append({"type": "problem", "label": label, "problem_slug": slug})
+
+    return cleaned
+
+
 class AdminSyllabusTopicResourcesView(APIView):
     """System Admin: replace the resource list attached to one syllabus
     topic. Each resource is either an external link (rendered as a
@@ -2990,46 +3028,18 @@ class AdminSyllabusTopicResourcesView(APIView):
         if not isinstance(raw_items, list):
             return Response({"error": "resource_links must be a list."}, status=400)
 
-        cleaned = []
-        for item in raw_items:
-            if not isinstance(item, dict):
-                continue
-            item_type = item.get('type')
-            label = (item.get('label') or '').strip()
-
-            if item_type == 'link':
-                url = (item.get('url') or '').strip()
-                if not url:
-                    continue
-                cleaned.append({"type": "link", "label": label, "url": url})
-
-            elif item_type == 'aptitude_topic':
-                apt_id = item.get('aptitude_topic_id')
-                try:
-                    apt_id = int(apt_id)
-                except (TypeError, ValueError):
-                    continue
-                if not AptitudeTopic.objects.filter(id=apt_id).exists():
-                    continue
-                cleaned.append({"type": "aptitude_topic", "label": label, "aptitude_topic_id": apt_id})
-
-            elif item_type == 'problem':
-                slug = (item.get('problem_slug') or '').strip()
-                if not slug or not Problem.objects.filter(slug=slug).exists():
-                    continue
-                cleaned.append({"type": "problem", "label": label, "problem_slug": slug})
-
+        cleaned = _clean_resource_items(raw_items)
         topic.resource_links = cleaned
         topic.save(update_fields=['resource_links'])
         return Response({"message": "Resources updated", "resource_links": _resolve_resource_display(cleaned)})
 
 
 class AdminSyllabusSubtopicView(APIView):
-    """System Admin: update one subtopic's description and/or multimedia.
-    Unlike SyllabusTopic.resource_links, a subtopic's media list is plain
-    {label, url} pairs — no typed pointers at existing content — the
-    frontend smart-renders each URL as a YouTube embed, image, video, or
-    plain link depending on what it looks like."""
+    """System Admin: update one subtopic's description and/or resources.
+    Subtopics get their own individual resources here — the same three
+    kinds a Topic can carry (external link, Aptitude topic, or Problem)
+    — rather than only being covered by whatever's attached at the
+    parent Topic level."""
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, subtopic_id):
@@ -3046,15 +3056,7 @@ class AdminSyllabusSubtopicView(APIView):
             raw_items = request.data.get('resource_links')
             if not isinstance(raw_items, list):
                 return Response({"error": "resource_links must be a list."}, status=400)
-            cleaned = []
-            for item in raw_items:
-                if not isinstance(item, dict):
-                    continue
-                url = (item.get('url') or '').strip()
-                if not url:
-                    continue
-                cleaned.append({"label": (item.get('label') or '').strip(), "url": url})
-            subtopic.resource_links = cleaned
+            subtopic.resource_links = _clean_resource_items(raw_items)
             update_fields.append('resource_links')
 
         if update_fields:
@@ -3063,7 +3065,7 @@ class AdminSyllabusSubtopicView(APIView):
         return Response({
             "message": "Subtopic updated",
             "description": subtopic.description,
-            "resource_links": subtopic.resource_links,
+            "resource_links": _resolve_resource_display(subtopic.resource_links),
         })
 
 
