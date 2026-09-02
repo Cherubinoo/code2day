@@ -458,11 +458,34 @@ export default function CompetitiveBankView({ onBack }) {
   };
 
   const openExam = (exam) => {
+    window.history.pushState({ competitiveBank: 'exam', examId: exam.id }, '');
     setSelectedExam(exam);
     setUploadResult(null);
     setUploadError('');
     fetchSyllabus(exam.id);
   };
+
+  // Browser/mouse Back support for exam list <-> syllabus view — pushes a
+  // history entry (without touching the pathname, so the app's top-level
+  // router doesn't fight with this) and restores on popstate instead of
+  // Back leaving the Competitive Bank tile entirely.
+  useEffect(() => {
+    function handlePopState(e) {
+      const s = e.state;
+      if (!s || s.competitiveBank !== 'exam') {
+        setSelectedExam(null);
+        return;
+      }
+      const exam = examinations.find((x) => x.id === s.examId);
+      if (!exam) return;
+      setSelectedExam(exam);
+      setUploadResult(null);
+      setUploadError('');
+      fetchSyllabus(exam.id);
+    }
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [examinations]);
 
   const handleCreateExam = async () => {
     if (!newExam.name.trim()) return;
@@ -575,7 +598,7 @@ export default function CompetitiveBankView({ onBack }) {
     return (
       <div className="global-view animate-fade-in">
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-          <button onClick={() => setSelectedExam(null)} style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: 10, cursor: 'pointer', display: 'flex' }}>
+          <button onClick={() => window.history.back()} style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: 10, cursor: 'pointer', display: 'flex' }}>
             <ArrowLeft size={20} />
           </button>
           <div style={{ flex: 1 }}>

@@ -41,6 +41,8 @@ export const PAGE_PATHS = {
   discuss:       "/discuss",
   company:       "/company",
   aptitude:      "/aptitude",
+  interview:     "/interview",
+  competitive:   "/competitive",
   admin:         "/admin",
   hod:           "/hod",
   staff:         "/staff",

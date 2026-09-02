@@ -297,19 +297,98 @@ export default function CompetitivePracticePage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const openExam = (exam) => {
-    setSelectedExam(exam);
-    setActiveTopic(null);
-    setActiveSubtopic(null);
+  // Browser/mouse Back support for the exam -> topic -> subtopic
+  // drill-down. Each level pushes a history entry carrying just enough to
+  // restore it (never changing the pathname, so the app's top-level
+  // router — which only cares about the path — stays untouched and
+  // doesn't fight with this). Back/forward then just replays these
+  // states via popstate instead of leaving the page entirely.
+  const fetchSyllabusFor = (examId) => {
     setSyllabusLoading(true);
-    fetch(`/api/competitive/examinations/${exam.id}/syllabus/`, { credentials: "include" })
+    return fetch(`/api/competitive/examinations/${examId}/syllabus/`, { credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         setSyllabus(data);
         setExpandedSections(Object.fromEntries((data?.sections || []).map((s) => [s.id, true])));
+        return data;
       })
       .finally(() => setSyllabusLoading(false));
   };
+
+  const openExam = (exam) => {
+    window.history.pushState({ competitivePractice: "exam", examId: exam.id }, "");
+    setSelectedExam(exam);
+    setActiveTopic(null);
+    setActiveSubtopic(null);
+    fetchSyllabusFor(exam.id);
+  };
+
+  const openTopic = (section, topic) => {
+    window.history.pushState(
+      { competitivePractice: "topic", examId: selectedExam.id, sectionId: section.id, topicId: topic.id },
+      "",
+    );
+    setActiveTopic({ section, topic });
+    setActiveSubtopic(null);
+  };
+
+  const openSubtopic = (subtopic) => {
+    window.history.pushState(
+      {
+        competitivePractice: "subtopic", examId: selectedExam.id,
+        sectionId: activeTopic.section.id, topicId: activeTopic.topic.id, subtopicId: subtopic.id,
+      },
+      "",
+    );
+    setActiveSubtopic(subtopic);
+  };
+
+  useEffect(() => {
+    function handlePopState(e) {
+      const s = e.state;
+
+      if (!s || !s.competitivePractice) {
+        // Popped back out past the exam list itself — nothing left of
+        // ours to restore.
+        setSelectedExam(null);
+        setSyllabus(null);
+        setActiveTopic(null);
+        setActiveSubtopic(null);
+        return;
+      }
+
+      const exam = examinations.find((x) => x.id === s.examId);
+      if (!exam) return; // stale state from a previous session — ignore
+
+      const restore = (data) => {
+        setSelectedExam(exam);
+        if (s.competitivePractice === "exam") {
+          setActiveTopic(null);
+          setActiveSubtopic(null);
+          return;
+        }
+        const section = (data?.sections || []).find((sec) => sec.id === s.sectionId);
+        const topic = section?.topics.find((t) => t.id === s.topicId);
+        if (!section || !topic) { setActiveTopic(null); setActiveSubtopic(null); return; }
+        setActiveTopic({ section, topic });
+        if (s.competitivePractice === "subtopic") {
+          const subtopic = topic.subtopics.find((st) => st.id === s.subtopicId);
+          setActiveSubtopic(subtopic || null);
+        } else {
+          setActiveSubtopic(null);
+        }
+      };
+
+      if (syllabus && selectedExam?.id === exam.id) {
+        restore(syllabus);
+      } else {
+        fetchSyllabusFor(exam.id).then(restore);
+      }
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [examinations, syllabus, selectedExam]);
 
   if (selectedExam && activeTopic && activeSubtopic) {
     return (
@@ -317,7 +396,7 @@ export default function CompetitivePracticePage() {
         examName={selectedExam.name}
         topicTitle={activeTopic.topic.title}
         subtopic={activeSubtopic}
-        onBack={() => setActiveSubtopic(null)}
+        onBack={() => window.history.back()}
       />
     );
   }
@@ -328,8 +407,8 @@ export default function CompetitivePracticePage() {
         examName={selectedExam.name}
         section={activeTopic.section}
         topic={activeTopic.topic}
-        onOpenSubtopic={setActiveSubtopic}
-        onBack={() => setActiveTopic(null)}
+        onOpenSubtopic={openSubtopic}
+        onBack={() => window.history.back()}
       />
     );
   }
@@ -340,7 +419,7 @@ export default function CompetitivePracticePage() {
         <section className="page-header compact-header problem-page-header">
           <button
             type="button"
-            onClick={() => { setSelectedExam(null); setSyllabus(null); setActiveTopic(null); setActiveSubtopic(null); }}
+            onClick={() => window.history.back()}
             className="ghost-button"
             style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 12, width: "fit-content" }}
           >
@@ -381,7 +460,7 @@ export default function CompetitivePracticePage() {
                       <button
                         key={topic.id}
                         type="button"
-                        onClick={() => { setActiveTopic({ section, topic }); setActiveSubtopic(null); }}
+                        onClick={() => openTopic(section, topic)}
                         style={{
                           textAlign: "left", padding: 16, borderRadius: 14, border: "1px solid var(--border-soft)",
                           background: "var(--bg-2)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8,
