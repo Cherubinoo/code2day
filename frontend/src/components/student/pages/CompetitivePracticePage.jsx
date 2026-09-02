@@ -231,19 +231,6 @@ function TopicLearnView({ examName, section, topic, onOpenSubtopic, onBack }) {
           ))}
         </div>
       )}
-
-      <div>
-        <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Resources</h3>
-        {topic.resource_links.length === 0 ? (
-          <div className="surface-card" style={{ padding: 48, textAlign: "center", color: "var(--text-soft)" }}>
-            Resources for this topic are coming soon.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {topic.resource_links.map((item, i) => <ResourceCard key={i} item={item} />)}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -404,9 +391,8 @@ export default function CompetitivePracticePage() {
                           <Link2 size={14} style={{ color: "var(--olive-600)", flexShrink: 0 }} />
                           <span style={{ fontWeight: 750, fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{topic.title}</span>
                         </div>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.72rem", color: "var(--text-soft)", fontWeight: 700 }}>
-                          <span>{topic.subtopics.length} subtopics</span>
-                          <span>{topic.resource_links.length > 0 ? `${topic.resource_links.length} resource${topic.resource_links.length > 1 ? "s" : ""}` : "coming soon"}</span>
+                        <div style={{ fontSize: "0.72rem", color: "var(--text-soft)", fontWeight: 700 }}>
+                          {topic.subtopics.length} subtopic{topic.subtopics.length !== 1 ? "s" : ""}
                         </div>
                       </button>
                     ))}
