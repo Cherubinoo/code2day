@@ -38,6 +38,7 @@ import HODDashboard from "./components/hod/HODDashboard";
 import JADashboard from "./components/ja/JADashboard";
 import StaffDashboard from "./components/staff/StaffDashboard";
 import TwoStepVerification from "./components/common/TwoStepVerification";
+import StaffContactPrompt from "./components/common/StaffContactPrompt";
 import AuthScreen from "./components/common/AuthScreen";
 import MaintenanceScreen from "./components/common/MaintenanceScreen";
 import TopBar from "./components/common/TopBar";
@@ -102,6 +103,8 @@ function App() {
   // replayed on later in-app navigation (see the render below).
   const [firstLoadDone, setFirstLoadDone] = useState(false);
   const [dashboard, setDashboard] = useState(fallbackDashboard);
+  const [showContactPrompt, setShowContactPrompt] = useState(false);
+  const contactPromptCheckedRef = useRef(false);
   const [problemSet, setProblemSet] = useState(normalizeProblems(fallbackProblems));
   const [selectedDifficulty, setSelectedDifficulty] = useState("All Levels");
   const [selectedConcept, setSelectedConcept] = useState("All Concepts");
@@ -349,6 +352,20 @@ function App() {
       isMounted = false;
     };
   }, [activeRegisterNumber, userType]);
+
+  // Prompt any staff-type account (staff/HOD/academics/TPU/director/JA)
+  // missing an email or mobile number to add one, once per login — checked
+  // only the first time the dashboard payload carries staff data so it
+  // doesn't re-trigger on every unrelated dashboard refresh in this session.
+  useEffect(() => {
+    if (contactPromptCheckedRef.current) return;
+    if (!dashboard?.staff) return;
+    if (!["staff", "hod", "academics", "tpu", "director", "ja"].includes(userType)) return;
+    contactPromptCheckedRef.current = true;
+    if (!dashboard.staff.email && !dashboard.staff.mobile_number) {
+      setShowContactPrompt(true);
+    }
+  }, [dashboard, userType]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1678,6 +1695,17 @@ function App() {
       <TargetCursor targetSelector=".hamburger-btn, button[type='submit'], .line-sidebar__item, .cursor-target" hideDefaultCursor={false} />
       <ClickBurstEffect />
       <OfflineOverlay />
+      {showContactPrompt && (
+        <StaffContactPrompt
+          initialEmail={dashboard?.staff?.email}
+          initialMobile={dashboard?.staff?.mobile_number}
+          onClose={() => setShowContactPrompt(false)}
+          onSaved={(email, mobile_number) => {
+            setDashboard((prev) => ({ ...prev, staff: { ...prev.staff, email, mobile_number } }));
+            setShowContactPrompt(false);
+          }}
+        />
+      )}
       {showSuccessAnimation && (
         <SuccessAnimation onDone={() => setShowSuccessAnimation(false)} />
       )}

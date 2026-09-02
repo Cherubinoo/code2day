@@ -21,8 +21,8 @@ const ContestApprovalPanel = ({ contests, onApprove, onReject, onRefresh, onView
         onApprove && onApprove(contestId);
         onRefresh && onRefresh();
       } else {
-        const data = await res.json();
-        alert(data.detail || 'Failed to approve contest');
+        const data = await res.json().catch(() => ({}));
+        alert(data.detail || data.message || data.error || `Failed to approve contest (HTTP ${res.status})`);
       }
     } catch (err) {
       alert('Error approving contest: ' + err.message);
@@ -42,8 +42,8 @@ const ContestApprovalPanel = ({ contests, onApprove, onReject, onRefresh, onView
         setRejectionReason('');
         onRefresh && onRefresh();
       } else {
-        const data = await res.json();
-        alert(data.detail || 'Failed to reject contest');
+        const data = await res.json().catch(() => ({}));
+        alert(data.detail || data.message || data.error || `Failed to reject contest (HTTP ${res.status})`);
       }
     } catch (err) {
       alert('Error rejecting contest: ' + err.message);
@@ -125,14 +125,27 @@ const ContestApprovalPanel = ({ contests, onApprove, onReject, onRefresh, onView
               background: '#f9fafb',
               borderRadius: 8,
             }}>
-              <div>
-                <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
-                  {contest.contest_type === 'aptitude' ? 'Questions' : 'Problems'}
+              {contest.contest_type === 'combined' ? (
+                <>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Problems</div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: '#4f46e5' }}>{contest.problem_count}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Questions</div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: '#4f46e5' }}>{contest.aptitude_question_count}</div>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>
+                    {contest.contest_type === 'aptitude' ? 'Questions' : 'Problems'}
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: '#4f46e5' }}>
+                    {contest.contest_type === 'aptitude' ? contest.aptitude_question_count : contest.problem_count}
+                  </div>
                 </div>
-                <div style={{ fontSize: 16, fontWeight: 600, color: '#4f46e5' }}>
-                  {contest.contest_type === 'aptitude' ? contest.aptitude_question_count : contest.problem_count}
-                </div>
-              </div>
+              )}
               <div>
                 <div style={{ fontSize: 11, color: '#666', marginBottom: 4 }}>Students</div>
                 <div style={{ fontSize: 16, fontWeight: 600, color: '#059669' }}>

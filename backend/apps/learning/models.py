@@ -1461,11 +1461,18 @@ class Contest(models.Model):
             # Count unique participants from aptitude submissions
             self.total_participants = AptitudeContestSubmission.objects.filter(contest=self).values('student').distinct().count()
             self.total_submissions = AptitudeContestSubmission.objects.filter(contest=self).count()
+        elif self.contest_type == 'combined':
+            # Combined contests take submissions on both sides — a student
+            # who only answered the aptitude/reading section still counts.
+            coding_students = set(ContestSubmission.objects.filter(contest=self).values_list('student_id', flat=True))
+            aptitude_students = set(AptitudeContestSubmission.objects.filter(contest=self).values_list('student_id', flat=True))
+            self.total_participants = len(coding_students | aptitude_students)
+            self.total_submissions = ContestSubmission.objects.filter(contest=self).count() + AptitudeContestSubmission.objects.filter(contest=self).count()
         else:
             # Count unique participants from programming contest submissions
             self.total_participants = ContestSubmission.objects.filter(contest=self).values('student').distinct().count()
             self.total_submissions = ContestSubmission.objects.filter(contest=self).count()
-        
+
         self.save(update_fields=['total_participants', 'total_submissions'])
 
 

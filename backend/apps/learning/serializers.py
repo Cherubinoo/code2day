@@ -17,7 +17,7 @@ DEFAULT_PRACTICE_LANGUAGES = [
 class StaffProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = StaffProfile
-        fields = ("id", "name", "faculty_id", "role", "department")
+        fields = ("id", "name", "faculty_id", "role", "department", "email", "mobile_number")
 
 
 class StudentProfileSerializer(serializers.ModelSerializer):

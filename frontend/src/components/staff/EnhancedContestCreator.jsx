@@ -689,7 +689,7 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
           <div>
             <h2 style={{ margin: 0, fontSize: 20 }}>Create New Contest</h2>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: '#666' }}>
-              Step {step} of 4: {step === 1 ? 'Basic Information' : step === 2 ? 'Select Content' : step === 3 ? 'Security & Anti-Cheat Settings' : 'Assign Students'}
+              Step {step} of 4: {step === 1 ? 'Basic Information' : step === 2 ? 'Assign Students' : step === 3 ? 'Select Content' : 'Security & Anti-Cheat Settings'}
             </p>
           </div>
           <button
@@ -957,8 +957,8 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
             </div>
           )}
 
-          {/* Step 2: Select Content */}
-          {step === 2 && formData.contest_type !== 'combined' && (
+          {/* Step 3: Select Content */}
+          {step === 3 && formData.contest_type !== 'combined' && (
             <div>
               {/* Tab Navigation */}
               <div style={{ 
@@ -2124,9 +2124,9 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
             </div>
           )}
 
-          {/* Step 2 (combined contest): pick problems, aptitude questions, and reading
+          {/* Step 3 (combined contest): pick problems, aptitude questions, and reading
               passages together, plus how much each section is worth. */}
-          {step === 2 && formData.contest_type === 'combined' && (
+          {step === 3 && formData.contest_type === 'combined' && (
             <div style={{ display: 'grid', gap: 24 }}>
               <div style={{ padding: 16, background: '#f8fafc', borderRadius: 10, border: '1px solid #e2e8f0' }}>
                 <h4 style={{ margin: '0 0 10px', fontSize: 14 }}>Section Weights (must add up to 100%)</h4>
@@ -2219,8 +2219,8 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
             </div>
           )}
 
-          {/* Step 3: Security & Anti-Cheating Settings */}
-          {step === 3 && (
+          {/* Step 4: Security & Anti-Cheating Settings */}
+          {step === 4 && (
             <div style={{ display: 'grid', gap: 20 }}>
               <div style={{ padding: 20, background: '#f8fafc', borderRadius: 12, border: '1px solid #e2e8f0' }}>
                 <h3 style={{ margin: '0 0 12px', fontSize: 16, fontWeight: 700, color: '#0f172a' }}>
@@ -2308,8 +2308,8 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
             </div>
           )}
 
-          {/* Step 4: Assign Students */}
-          {step === 4 && (
+          {/* Step 2: Assign Students */}
+          {step === 2 && (
             <div>
               {/* Selection Mode Toggle */}
               <div style={{ marginBottom: 20 }}>
@@ -2597,19 +2597,12 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                 border: '1px solid #bbf7d0',
               }}>
                 <div style={{ fontSize: 13, color: '#059669', fontWeight: 500 }}>
-                  📊 Contest Summary
+                  📊 Assignment Summary
                 </div>
                 <div style={{ fontSize: 12, color: '#666', marginTop: 8 }}>
-                  {formData.contest_type === 'combined' ? (
-                    <>
-                      • {formData.problem_slugs.length} problems ({formData.coding_weight_percent}%), {formData.aptitude_question_ids.length} aptitude questions ({formData.aptitude_weight_percent}%), {formData.reading_passage_ids.length} reading passages ({formData.reading_weight_percent}%)<br />
-                    </>
-                  ) : (
-                    <>
-                      • {formData.contest_type === 'programming' ? `${formData.problem_slugs.length} problems` : `${formData.aptitude_question_ids.length} questions`} selected<br />
-                    </>
-                  )}
                   • {totalAssignedStudents} students will be assigned
+                  <br />
+                  • Content (problems/questions) is picked in the next step
                 </div>
               </div>
             </div>

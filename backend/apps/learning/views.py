@@ -2841,12 +2841,19 @@ class AdminExaminationDetailView(APIView):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         exam = get_object_or_404(Examination, id=exam_id)
+        if 'name' in request.data:
+            name = (request.data.get('name') or '').strip()
+            if not name:
+                return Response({"error": "name cannot be empty."}, status=400)
+            if Examination.objects.exclude(id=exam.id).filter(name__iexact=name).exists():
+                return Response({"error": "An examination with this name already exists."}, status=400)
+            exam.name = name
         if 'is_active' in request.data:
             exam.is_active = bool(request.data.get('is_active'))
         if 'description' in request.data:
             exam.description = (request.data.get('description') or '').strip()
         exam.save()
-        return Response({"message": "Updated", "is_active": exam.is_active, "description": exam.description})
+        return Response({"message": "Updated", "name": exam.name, "is_active": exam.is_active, "description": exam.description})
 
 
 class AdminExaminationSyllabusView(APIView):
@@ -5487,6 +5494,36 @@ class ExecutorSubmitView(APIView):
             )
 
 
+class StaffContactUpdateView(APIView):
+    """Staff: set their own email/mobile_number — backs the one-time
+    "please add your contact info" prompt shown right after login when
+    either is missing. Not gated to "only if currently empty" — a staff
+    member should always be able to keep their own contact info current,
+    the "only once" behavior comes from the frontend simply not prompting
+    again once both fields are filled."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not hasattr(request.user, 'staff_profile'):
+            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+        profile = request.user.staff_profile
+        email = (request.data.get('email') or '').strip()
+        mobile_number = (request.data.get('mobile_number') or '').strip()
+        if not email and not mobile_number:
+            return Response({"error": "Provide an email and/or mobile number."}, status=400)
+
+        update_fields = []
+        if email:
+            profile.email = email
+            update_fields.append('email')
+        if mobile_number:
+            profile.mobile_number = mobile_number
+            update_fields.append('mobile_number')
+        profile.save(update_fields=update_fields)
+
+        return Response({"message": "Contact info saved", "email": profile.email, "mobile_number": profile.mobile_number})
+
+
 class StaffLockToggleView(APIView):
     """HOD can lock or unlock staff members from accessing the system."""
     permission_classes = [IsAuthenticated]
@@ -6765,7 +6802,11 @@ def publish_contest_helper(contest):
             recipient_id=user_id,
             title="New Contest Assigned",
             message=f"You have been assigned to a new contest: {contest.title}. Check it out now!",
-            link=f"/contests/{contest.id}" if contest.contest_type == 'programming' else f"/aptitude-contest/{contest.id}"
+            link=(
+                f"/contests/{contest.id}" if contest.contest_type == 'programming'
+                else f"/combined-contest/{contest.id}" if contest.contest_type == 'combined'
+                else f"/aptitude-contest/{contest.id}"
+            )
         ))
     
     if notifications:

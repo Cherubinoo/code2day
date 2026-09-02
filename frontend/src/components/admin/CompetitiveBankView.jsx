@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Swords, Plus, Trash2, Upload, ChevronDown, ChevronRight, Loader2, Link2, X, PlayCircle, BookOpen, Code2 } from 'lucide-react';
+import { ArrowLeft, Swords, Plus, Trash2, Upload, ChevronDown, ChevronRight, Loader2, Link2, X, PlayCircle, BookOpen, Code2, Pencil, Check } from 'lucide-react';
 import { getCsrfToken, getYoutubeEmbedUrl } from '../../lib/appUtils';
 
 function apiFetch(url, method, body) {
@@ -423,6 +423,9 @@ export default function CompetitiveBankView({ onBack }) {
   const [expandedSections, setExpandedSections] = useState({});
   const [resourceModalTopic, setResourceModalTopic] = useState(null);
   const [resourceModalSubtopic, setResourceModalSubtopic] = useState(null);
+  const [editingExamId, setEditingExamId] = useState(null);
+  const [examDraft, setExamDraft] = useState({ name: '', description: '' });
+  const [savingExam, setSavingExam] = useState(false);
 
   useEffect(() => { fetchExaminations(); }, []);
 
@@ -485,6 +488,31 @@ export default function CompetitiveBankView({ onBack }) {
     if (!window.confirm('Delete this examination and its entire syllabus? This cannot be undone.')) return;
     const res = await apiFetch(`/api/admin/v2/examinations/${examId}/`, 'DELETE');
     if (res.ok) fetchExaminations();
+  };
+
+  const startEditExam = (exam) => {
+    setEditingExamId(exam.id);
+    setExamDraft({ name: exam.name, description: exam.description || '' });
+  };
+
+  const saveExamEdit = async (examId) => {
+    if (!examDraft.name.trim()) return;
+    setSavingExam(true);
+    try {
+      const res = await apiFetch(`/api/admin/v2/examinations/${examId}/`, 'PATCH', {
+        name: examDraft.name.trim(), description: examDraft.description.trim(),
+      });
+      if (res.ok) {
+        const body = await res.json();
+        setExaminations((prev) => prev.map((e) => e.id === examId ? { ...e, name: body.name, description: body.description } : e));
+        setEditingExamId(null);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        alert(body.error || 'Failed to update examination');
+      }
+    } finally {
+      setSavingExam(false);
+    }
   };
 
   const handleUpload = async (file) => {
@@ -742,14 +770,48 @@ export default function CompetitiveBankView({ onBack }) {
                 <div style={{ width: 44, height: 44, borderRadius: 12, background: '#e0f2fe', color: '#0891b2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Swords size={20} />
                 </div>
-                <button onClick={() => handleDeleteExam(exam.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 6 }}>
-                  <Trash2 size={16} />
-                </button>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {editingExamId !== exam.id && (
+                    <button onClick={() => startEditExam(exam)} style={{ background: 'none', border: 'none', color: 'var(--text-soft)', cursor: 'pointer', padding: 6 }}>
+                      <Pencil size={16} />
+                    </button>
+                  )}
+                  <button onClick={() => handleDeleteExam(exam.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 6 }}>
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
-              <div>
-                <h3 style={{ margin: '0 0 4px', fontSize: '1.15rem', fontWeight: 850, color: 'var(--olive-950)' }}>{exam.name}</h3>
-                <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-soft)' }}>{exam.description || 'No description'}</p>
-              </div>
+
+              {editingExamId === exam.id ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <input
+                    value={examDraft.name}
+                    onChange={(e) => setExamDraft({ ...examDraft, name: e.target.value })}
+                    placeholder="Name"
+                    style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontWeight: 800, fontSize: '1rem' }}
+                  />
+                  <input
+                    value={examDraft.description}
+                    onChange={(e) => setExamDraft({ ...examDraft, description: e.target.value })}
+                    placeholder="Description"
+                    style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }}
+                  />
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => saveExamEdit(exam.id)} disabled={savingExam} className="primary-button" style={{ flex: 1, borderRadius: 8, padding: '8px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                      <Check size={14} /> {savingExam ? 'Saving…' : 'Save'}
+                    </button>
+                    <button onClick={() => setEditingExamId(null)} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontSize: '0.8rem' }}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <h3 style={{ margin: '0 0 4px', fontSize: '1.15rem', fontWeight: 850, color: 'var(--olive-950)' }}>{exam.name}</h3>
+                  <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-soft)' }}>{exam.description || 'No description'}</p>
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: 12, fontSize: '0.78rem', color: 'var(--text-soft)', fontWeight: 700 }}>
                 <span>{exam.section_count} sections</span>
                 <span>{exam.topic_count} topics</span>

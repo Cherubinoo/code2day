@@ -194,6 +194,7 @@ from .views import (
     StaffPerformanceView,
     StaffDetailView,
     StaffLockToggleView,
+    StaffContactUpdateView,
     AnnouncementListView,
     NotificationListView,
     NotificationMarkReadView,
@@ -342,6 +343,7 @@ urlpatterns = [
     path("staff/institutions/<int:institution_id>/performance/", StaffPerformanceView.as_view(), name="staff-performance"),
     path("staff/<str:faculty_id>/details/", StaffDetailView.as_view(), name="staff-detail"),
     path("staff/<str:faculty_id>/lock/", StaffLockToggleView.as_view(), name="staff-lock-toggle"),
+    path("staff/contact/", StaffContactUpdateView.as_view(), name="staff-contact-update"),
 
     # Student Management
     path("students/filter/", DepartmentStudentsFilterView.as_view(), name="students-filter"),
