@@ -1,6 +1,59 @@
 import React, { useState, useEffect } from "react";
 import { Swords, ChevronLeft, ChevronDown, ChevronRight, Link2, Loader2, BookOpen, Code2, ExternalLink } from "lucide-react";
-import { getYoutubeEmbedUrl } from "../../../lib/appUtils";
+import { getYoutubeEmbedUrl, getMediaKind } from "../../../lib/appUtils";
+
+function MediaCard({ item }) {
+  const kind = getMediaKind(item.url);
+
+  if (kind === "youtube") {
+    const embedUrl = getYoutubeEmbedUrl(item.url);
+    return (
+      <div className="surface-card" style={{ padding: 16 }}>
+        {item.label && <div style={{ fontWeight: 700, marginBottom: 10, color: "var(--text-hard)" }}>{item.label}</div>}
+        <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 12, overflow: "hidden" }}>
+          <iframe
+            src={embedUrl}
+            title={item.label || "Video resource"}
+            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: "none" }}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (kind === "image") {
+    return (
+      <div className="surface-card" style={{ padding: 16 }}>
+        {item.label && <div style={{ fontWeight: 700, marginBottom: 10, color: "var(--text-hard)" }}>{item.label}</div>}
+        <img src={item.url} alt={item.label || ""} style={{ width: "100%", borderRadius: 12, display: "block" }} />
+      </div>
+    );
+  }
+
+  if (kind === "video") {
+    return (
+      <div className="surface-card" style={{ padding: 16 }}>
+        {item.label && <div style={{ fontWeight: 700, marginBottom: 10, color: "var(--text-hard)" }}>{item.label}</div>}
+        <video src={item.url} controls style={{ width: "100%", borderRadius: 12, display: "block" }} />
+      </div>
+    );
+  }
+
+  return (
+    <a href={item.url} target="_blank" rel="noopener noreferrer" className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
+      <div style={{ width: 36, height: 36, borderRadius: 10, background: "var(--bg-2)", color: "var(--olive-700)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Link2 size={18} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 700, color: "var(--text-hard)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label || item.url}</div>
+        {item.label && <div style={{ fontSize: "0.78rem", color: "var(--text-soft)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.url}</div>}
+      </div>
+      <ExternalLink size={14} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
+    </a>
+  );
+}
 
 function ResourceCard({ item }) {
   if (item.type === "aptitude_topic") {
@@ -66,7 +119,7 @@ function ResourceCard({ item }) {
   );
 }
 
-function TopicLearnView({ examName, section, topic, onBack }) {
+function TopicLearnView({ examName, section, topic, onOpenSubtopic, onBack }) {
   return (
     <div className="page-stack problem-page">
       <section className="page-header compact-header problem-page-header">
@@ -85,22 +138,68 @@ function TopicLearnView({ examName, section, topic, onBack }) {
       </section>
 
       {topic.subtopics.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
           {topic.subtopics.map((st) => (
-            <span key={st.id} style={{ fontSize: "0.82rem", color: "var(--text-soft)", background: "var(--bg-2)", padding: "6px 14px", borderRadius: 10, fontWeight: 600 }}>
+            <button
+              key={st.id}
+              type="button"
+              onClick={() => onOpenSubtopic(st)}
+              className="surface-card"
+              style={{ textAlign: "left", cursor: "pointer", padding: "14px 16px", fontSize: "0.85rem", fontWeight: 700 }}
+            >
               {st.title}
-            </span>
+              {(st.description || (st.resource_links || []).length > 0) && (
+                <div style={{ fontSize: "0.72rem", color: "var(--text-soft)", fontWeight: 600, marginTop: 4 }}>Learn more →</div>
+              )}
+            </button>
           ))}
         </div>
       )}
 
-      {topic.resource_links.length === 0 ? (
+      <div>
+        <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Resources</h3>
+        {topic.resource_links.length === 0 ? (
+          <div className="surface-card" style={{ padding: 48, textAlign: "center", color: "var(--text-soft)" }}>
+            Resources for this topic are coming soon.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {topic.resource_links.map((item, i) => <ResourceCard key={i} item={item} />)}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SubtopicLearnView({ examName, topicTitle, subtopic, onBack }) {
+  return (
+    <div className="page-stack problem-page">
+      <section className="page-header compact-header problem-page-header">
+        <button
+          type="button"
+          onClick={onBack}
+          className="ghost-button"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 12, width: "fit-content" }}
+        >
+          <ChevronLeft size={16} /> {topicTitle}
+        </button>
+        <div>
+          <p className="kicker">{examName}</p>
+          <h1>{subtopic.title}</h1>
+        </div>
+        {subtopic.description && (
+          <p style={{ color: "var(--text-soft)", margin: 0 }}>{subtopic.description}</p>
+        )}
+      </section>
+
+      {(subtopic.resource_links || []).length === 0 ? (
         <div className="surface-card" style={{ padding: 48, textAlign: "center", color: "var(--text-soft)" }}>
-          Resources for this topic are coming soon.
+          Multimedia for this subtopic is coming soon.
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {topic.resource_links.map((item, i) => <ResourceCard key={i} item={item} />)}
+          {subtopic.resource_links.map((item, i) => <MediaCard key={i} item={item} />)}
         </div>
       )}
     </div>
@@ -117,6 +216,7 @@ export default function CompetitivePracticePage() {
   const [syllabusLoading, setSyllabusLoading] = useState(false);
   const [expandedSections, setExpandedSections] = useState({});
   const [activeTopic, setActiveTopic] = useState(null); // { section, topic }
+  const [activeSubtopic, setActiveSubtopic] = useState(null); // syllabus subtopic object
 
   useEffect(() => {
     fetch("/api/competitive/examinations/", { credentials: "include" })
@@ -132,6 +232,7 @@ export default function CompetitivePracticePage() {
   const openExam = (exam) => {
     setSelectedExam(exam);
     setActiveTopic(null);
+    setActiveSubtopic(null);
     setSyllabusLoading(true);
     fetch(`/api/competitive/examinations/${exam.id}/syllabus/`, { credentials: "include" })
       .then((res) => (res.ok ? res.json() : null))
@@ -142,12 +243,24 @@ export default function CompetitivePracticePage() {
       .finally(() => setSyllabusLoading(false));
   };
 
+  if (selectedExam && activeTopic && activeSubtopic) {
+    return (
+      <SubtopicLearnView
+        examName={selectedExam.name}
+        topicTitle={activeTopic.topic.title}
+        subtopic={activeSubtopic}
+        onBack={() => setActiveSubtopic(null)}
+      />
+    );
+  }
+
   if (selectedExam && activeTopic) {
     return (
       <TopicLearnView
         examName={selectedExam.name}
         section={activeTopic.section}
         topic={activeTopic.topic}
+        onOpenSubtopic={setActiveSubtopic}
         onBack={() => setActiveTopic(null)}
       />
     );
@@ -159,7 +272,7 @@ export default function CompetitivePracticePage() {
         <section className="page-header compact-header problem-page-header">
           <button
             type="button"
-            onClick={() => { setSelectedExam(null); setSyllabus(null); }}
+            onClick={() => { setSelectedExam(null); setSyllabus(null); setActiveTopic(null); setActiveSubtopic(null); }}
             className="ghost-button"
             style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 12, width: "fit-content" }}
           >
@@ -200,7 +313,7 @@ export default function CompetitivePracticePage() {
                       <button
                         key={topic.id}
                         type="button"
-                        onClick={() => setActiveTopic({ section, topic })}
+                        onClick={() => { setActiveTopic({ section, topic }); setActiveSubtopic(null); }}
                         style={{
                           textAlign: "left", padding: 16, borderRadius: 14, border: "1px solid var(--border-soft)",
                           background: "var(--bg-2)", cursor: "pointer", display: "flex", flexDirection: "column", gap: 8,

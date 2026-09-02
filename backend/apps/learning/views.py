@@ -139,9 +139,9 @@ class WatermarkDocTemplate(BaseDocTemplate):
         self.watermark_image = None
         
         # Try to get watermark image
-        if institution and institution.logo_display_url:
+        if institution and (institution.logo_file or institution.logo_url):
             try:
-                self.watermark_image = self._get_watermark_image(institution.logo_display_url)
+                self.watermark_image = self._get_watermark_image(institution)
             except Exception as e:
                 logger.warning(f"Failed to load watermark image: {e}")
         
@@ -154,18 +154,25 @@ class WatermarkDocTemplate(BaseDocTemplate):
         template = PageTemplate(id='main', frames=frame, onPage=self._add_watermark)
         self.addPageTemplates([template])
     
-    def _get_watermark_image(self, logo_url):
-        """Download and prepare watermark image"""
+    def _get_watermark_image(self, institution):
+        """Download and prepare watermark image. Reads an uploaded logo
+        file directly (its real filesystem path, via Django's storage
+        API) rather than through logo_display_url — that property now
+        returns an /api/... proxy URL for uploaded logos (fixing the
+        broken-image bug where the raw media path wasn't reachable
+        through nginx/nginx in production), which isn't a URL this
+        server-side PDF generator should loop back and fetch over HTTP."""
         try:
-            if logo_url.startswith('http'):
-                # Download from URL
-                response = requests.get(logo_url, timeout=10)
+            if institution.logo_file:
+                with institution.logo_file.open('rb') as f:
+                    image_data = f.read()
+            elif institution.logo_url.startswith('http'):
+                # Pasted external URL — fetch it
+                response = requests.get(institution.logo_url, timeout=10)
                 response.raise_for_status()
                 image_data = response.content
             else:
-                # Local file path
-                with open(logo_url, 'rb') as f:
-                    image_data = f.read()
+                return None
             
             # Process image with PIL
             pil_image = PILImage.open(io.BytesIO(image_data))
@@ -2764,7 +2771,15 @@ def _serialize_examination_syllabus(examination):
                 "id": topic.id,
                 "title": topic.title,
                 "resource_links": _resolve_resource_display(topic.resource_links),
-                "subtopics": [{"id": st.id, "title": st.title} for st in topic.subtopics.all()],
+                "subtopics": [
+                    {
+                        "id": st.id,
+                        "title": st.title,
+                        "description": st.description,
+                        "resource_links": st.resource_links or [],
+                    }
+                    for st in topic.subtopics.all()
+                ],
             })
         sections.append({"id": section.id, "title": section.title, "topics": topics})
     return sections
@@ -3007,6 +3022,49 @@ class AdminSyllabusTopicResourcesView(APIView):
         topic.resource_links = cleaned
         topic.save(update_fields=['resource_links'])
         return Response({"message": "Resources updated", "resource_links": _resolve_resource_display(cleaned)})
+
+
+class AdminSyllabusSubtopicView(APIView):
+    """System Admin: update one subtopic's description and/or multimedia.
+    Unlike SyllabusTopic.resource_links, a subtopic's media list is plain
+    {label, url} pairs — no typed pointers at existing content — the
+    frontend smart-renders each URL as a YouTube embed, image, video, or
+    plain link depending on what it looks like."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, subtopic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
+
+        update_fields = []
+        if 'description' in request.data:
+            subtopic.description = (request.data.get('description') or '').strip()
+            update_fields.append('description')
+
+        if 'resource_links' in request.data:
+            raw_items = request.data.get('resource_links')
+            if not isinstance(raw_items, list):
+                return Response({"error": "resource_links must be a list."}, status=400)
+            cleaned = []
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                url = (item.get('url') or '').strip()
+                if not url:
+                    continue
+                cleaned.append({"label": (item.get('label') or '').strip(), "url": url})
+            subtopic.resource_links = cleaned
+            update_fields.append('resource_links')
+
+        if update_fields:
+            subtopic.save(update_fields=update_fields)
+
+        return Response({
+            "message": "Subtopic updated",
+            "description": subtopic.description,
+            "resource_links": subtopic.resource_links,
+        })
 
 
 class CompetitiveExaminationListView(APIView):
@@ -9963,7 +10021,13 @@ class InstitutionDetailManagementView(APIView):
 
             institution.display_name = branding_data.get('display_name', institution.display_name)
             institution.subheading = branding_data.get('subheading', institution.subheading)
-            institution.logo_url = branding_data.get('logo_url', institution.logo_url)
+            new_logo_url = branding_data.get('logo_url', institution.logo_url)
+            # The branding form's logo_url field doubles as the display value
+            # after a file upload (which is our own /api/.../logo/ proxy
+            # path, not a real external URL) — never persist that back into
+            # the URLField meant for a pasted external link.
+            if not (new_logo_url or '').startswith('/api/institutions/'):
+                institution.logo_url = new_logo_url
             institution.website = branding_data.get('website', institution.website)
 
             # established_year is a nullable PositiveIntegerField, but the
@@ -10792,6 +10856,27 @@ def aptitude_drive_image_proxy(request, drive_id):
     content_type = mimetypes.guess_type(cached_path)[0] or "image/png"
     response = FileResponse(open(cached_path, "rb"), content_type=content_type)
     response["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
+
+
+def institution_logo_proxy(request, institution_id):
+    """Serve an institution's uploaded logo file bytes through the /api/
+    proxy path. Django's MEDIA_URL route only exists when DEBUG=True and
+    the production nginx config has no /media/ passthrough, so serving
+    ImageField.url directly 404s (or falls through to the SPA) in
+    production — this rides the same /api/ path everything else already
+    proxies correctly in both dev and prod. Public/no-auth: logos appear
+    on public login screens before any authentication happens. Not
+    marked immutable like the Drive image cache — a logo can be
+    re-uploaded, so a short max-age keeps a stale one from sticking
+    around in the browser cache for long."""
+    institution = get_object_or_404(Institution, id=institution_id)
+    if not institution.logo_file:
+        raise Http404("No logo uploaded for this institution.")
+
+    content_type = mimetypes.guess_type(institution.logo_file.name)[0] or "image/png"
+    response = FileResponse(institution.logo_file.open("rb"), content_type=content_type)
+    response["Cache-Control"] = "public, max-age=300"
     return response
 
 
@@ -12071,12 +12156,7 @@ class PublicInstitutionListView(APIView):
             # Prepare response data
             institution_list = []
             for institution in institutions:
-                logo_url = getattr(institution, 'logo_url', '') or None
-                if not logo_url and hasattr(institution, 'logo_file') and institution.logo_file:
-                    try:
-                        logo_url = institution.logo_file.url
-                    except Exception:
-                        logo_url = None
+                logo_url = institution.logo_display_url or None
 
                 dept_count = 0
                 try:

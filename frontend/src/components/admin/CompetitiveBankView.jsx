@@ -190,6 +190,88 @@ function TopicResourceModal({ topic, onClose, onSaved }) {
   );
 }
 
+// ── Description + multimedia editor for one syllabus subtopic ─────────────
+function SubtopicResourceModal({ subtopic, onClose, onSaved }) {
+  const [description, setDescription] = useState(subtopic.description || '');
+  const [items, setItems] = useState(subtopic.resource_links || []);
+  const [mediaLabel, setMediaLabel] = useState('');
+  const [mediaUrl, setMediaUrl] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const addMedia = () => {
+    if (!mediaUrl.trim()) return;
+    setItems((prev) => [...prev, { label: mediaLabel.trim(), url: mediaUrl.trim() }]);
+    setMediaLabel('');
+    setMediaUrl('');
+  };
+
+  const removeItem = (idx) => setItems((prev) => prev.filter((_, i) => i !== idx));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopic.id}/`, 'PATCH', {
+        description, resource_links: items,
+      });
+      if (res.ok) {
+        const body = await res.json();
+        onSaved(body.description, body.resource_links || []);
+      } else {
+        alert('Failed to save subtopic');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }} onClick={onClose}>
+      <div style={{ background: 'white', borderRadius: 24, padding: 32, width: '100%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.4)' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 900, color: 'var(--olive-950)' }}>{subtopic.title}</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)' }}><X size={20} /></button>
+        </div>
+
+        <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>Description</label>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="What this subtopic covers..."
+          rows={4}
+          style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid var(--border-soft)', fontSize: '0.9rem', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: 20, resize: 'vertical' }}
+        />
+
+        <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', display: 'block', marginBottom: 8 }}>Multimedia</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          {items.length === 0 && (
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No media attached yet.</div>
+          )}
+          {items.map((item, idx) => (
+            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 10 }}>
+              <Link2 size={14} style={{ color: 'var(--olive-600)', flexShrink: 0 }} />
+              <span style={{ flex: 1, fontSize: '0.85rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.label || item.url}</span>
+              <button onClick={() => removeItem(idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}><X size={14} /></button>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 24 }}>
+          <input placeholder="Label" value={mediaLabel} onChange={(e) => setMediaLabel(e.target.value)} style={{ flex: '1 1 100px', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }} />
+          <input placeholder="https://... (video, image, or link)" value={mediaUrl} onChange={(e) => setMediaUrl(e.target.value)} style={{ flex: '2 1 200px', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }} />
+          <button onClick={addMedia} disabled={!mediaUrl.trim()} className="primary-button" style={{ borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem' }}>Add</button>
+        </div>
+        <p style={{ margin: '-16px 0 20px', fontSize: '0.72rem', color: 'var(--text-soft)' }}>YouTube links embed as video; image/video file URLs render inline; anything else shows as a link.</p>
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button onClick={onClose} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontWeight: 700 }}>Cancel</button>
+          <button onClick={save} disabled={saving} className="primary-button" style={{ borderRadius: 10, padding: '10px 24px' }}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Admin content bank for Competitive Practice — Examinations (GRE, GATE...)
 // each own a Section > Topic > Subtopic syllabus tree, populated in one
 // shot via an Excel upload. Each topic tile can then be configured with
@@ -210,6 +292,7 @@ export default function CompetitiveBankView({ onBack }) {
   const [uploadError, setUploadError] = useState('');
   const [expandedSections, setExpandedSections] = useState({});
   const [resourceModalTopic, setResourceModalTopic] = useState(null);
+  const [resourceModalSubtopic, setResourceModalSubtopic] = useState(null);
 
   useEffect(() => { fetchExaminations(); }, []);
 
@@ -312,6 +395,23 @@ export default function CompetitiveBankView({ onBack }) {
     setResourceModalTopic(null);
   };
 
+  const handleSubtopicSaved = (subtopicId, description, resourceLinks) => {
+    setSyllabus((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        sections: prev.sections.map((section) => ({
+          ...section,
+          topics: section.topics.map((t) => ({
+            ...t,
+            subtopics: t.subtopics.map((st) => st.id === subtopicId ? { ...st, description, resource_links: resourceLinks } : st),
+          })),
+        })),
+      };
+    });
+    setResourceModalSubtopic(null);
+  };
+
   // ── Syllabus detail view ──────────────────────────────────────────────
   if (selectedExam) {
     return (
@@ -380,25 +480,50 @@ export default function CompetitiveBankView({ onBack }) {
                 </button>
 
                 {expandedSections[section.id] && (
-                  <div style={{ padding: '16px 24px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+                  <div style={{ padding: '16px 24px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12, alignItems: 'start' }}>
                     {section.topics.map((topic) => (
-                      <button
+                      <div
                         key={topic.id}
-                        onClick={() => setResourceModalTopic(topic)}
                         style={{
-                          textAlign: 'left', padding: 16, borderRadius: 14, border: '1px solid var(--border-soft)',
-                          background: 'var(--bg-2)', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 8,
+                          padding: 14, borderRadius: 14, border: '1px solid var(--border-soft)',
+                          background: 'var(--bg-2)', display: 'flex', flexDirection: 'column', gap: 10,
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Link2 size={14} style={{ color: 'var(--olive-600)', flexShrink: 0 }} />
-                          <span style={{ fontWeight: 750, color: 'var(--olive-900)', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{topic.title}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem', color: 'var(--text-soft)', fontWeight: 700 }}>
-                          <span>{topic.subtopics.length} subtopics</span>
-                          <span>{topic.resource_links.length > 0 ? `${topic.resource_links.length} resource${topic.resource_links.length > 1 ? 's' : ''}` : 'no resources'}</span>
-                        </div>
-                      </button>
+                        <button
+                          onClick={() => setResourceModalTopic(topic)}
+                          style={{ textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 6 }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Link2 size={14} style={{ color: 'var(--olive-600)', flexShrink: 0 }} />
+                            <span style={{ fontWeight: 750, color: 'var(--olive-900)', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{topic.title}</span>
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-soft)', fontWeight: 700 }}>
+                            {topic.resource_links.length > 0 ? `${topic.resource_links.length} topic resource${topic.resource_links.length > 1 ? 's' : ''} — click to edit` : 'click to add topic resources'}
+                          </div>
+                        </button>
+
+                        {topic.subtopics.length > 0 && (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, paddingTop: 8, borderTop: '1px solid var(--border-soft)' }}>
+                            {topic.subtopics.map((st) => (
+                              <button
+                                key={st.id}
+                                onClick={() => setResourceModalSubtopic(st)}
+                                title="Edit description & multimedia"
+                                style={{
+                                  textAlign: 'left', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border-soft)',
+                                  background: 'white', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 650, color: 'var(--olive-900)',
+                                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {st.title}
+                                {(st.description || (st.resource_links || []).length > 0) && (
+                                  <span style={{ marginLeft: 4, color: '#059669' }}>●</span>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}
@@ -412,6 +537,13 @@ export default function CompetitiveBankView({ onBack }) {
             topic={resourceModalTopic}
             onClose={() => setResourceModalTopic(null)}
             onSaved={(resourceLinks) => handleResourcesSaved(resourceModalTopic.id, resourceLinks)}
+          />
+        )}
+        {resourceModalSubtopic && (
+          <SubtopicResourceModal
+            subtopic={resourceModalSubtopic}
+            onClose={() => setResourceModalSubtopic(null)}
+            onSaved={(description, resourceLinks) => handleSubtopicSaved(resourceModalSubtopic.id, description, resourceLinks)}
           />
         )}
       </div>

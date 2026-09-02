@@ -53,6 +53,7 @@ from .views import (
     AdminExaminationSyllabusView,
     AdminExaminationSyllabusUploadView,
     AdminSyllabusTopicResourcesView,
+    AdminSyllabusSubtopicView,
     CompetitiveExaminationListView,
     CompetitiveExaminationSyllabusView,
     DiscussionThreadListView,
@@ -199,6 +200,7 @@ from .views import (
     ReadingPassageListView,
     ReadingPassageDetailView,
     aptitude_drive_image_proxy,
+    institution_logo_proxy,
     ExecutorSystemInfoView,
     ExecutorSubmitView,
     StaffDeptListView,
@@ -322,6 +324,7 @@ urlpatterns = [
     path("admin/v2/examinations/<int:exam_id>/syllabus/", AdminExaminationSyllabusView.as_view(), name="admin-examination-syllabus"),
     path("admin/v2/examinations/<int:exam_id>/syllabus/upload/", AdminExaminationSyllabusUploadView.as_view(), name="admin-examination-syllabus-upload"),
     path("admin/v2/examinations/topics/<int:topic_id>/resources/", AdminSyllabusTopicResourcesView.as_view(), name="admin-syllabus-topic-resources"),
+    path("admin/v2/examinations/subtopics/<int:subtopic_id>/", AdminSyllabusSubtopicView.as_view(), name="admin-syllabus-subtopic-detail"),
 
     # Staff Institution
     path("staff/advisor/dashboard/", StaffClassAdvisorDashboardView.as_view(), name="staff-advisor-dashboard"),
@@ -374,6 +377,7 @@ urlpatterns = [
     path("aptitude/reading-passages/", ReadingPassageListView.as_view(), name="aptitude-reading-passage-list"),
     path("aptitude/reading-passages/<int:passage_id>/", ReadingPassageDetailView.as_view(), name="aptitude-reading-passage-detail"),
     path("aptitude/drive-image/<str:drive_id>/", aptitude_drive_image_proxy, name="aptitude-drive-image-proxy"),
+    path("institutions/<int:institution_id>/logo/", institution_logo_proxy, name="institution-logo-proxy"),
 
     path("students/<str:register_number>/report/", StudentReportPDFView.as_view(), name="student-report-pdf"),
     path("staff/<str:faculty_id>/report/", StaffReportPDFView.as_view(), name="staff-report-pdf"),

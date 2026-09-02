@@ -299,3 +299,19 @@ export function getYoutubeEmbedUrl(url) {
   }
   return null;
 }
+
+const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
+const VIDEO_EXTENSIONS = /\.(mp4|webm|ogg|mov)$/i;
+
+// Classifies a subtopic multimedia URL for smart rendering, since those
+// are stored as plain {label, url} with no explicit type: 'youtube'
+// (embed as video), 'image' (render as <img>), 'video' (render as
+// <video>), or 'link' (plain external link card) as the fallback.
+export function getMediaKind(url) {
+  if (!url) return 'link';
+  if (getYoutubeEmbedUrl(url)) return 'youtube';
+  const path = url.split('?')[0].split('#')[0];
+  if (IMAGE_EXTENSIONS.test(path)) return 'image';
+  if (VIDEO_EXTENSIONS.test(path)) return 'video';
+  return 'link';
+}

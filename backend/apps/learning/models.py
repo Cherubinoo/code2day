@@ -51,9 +51,17 @@ class Institution(models.Model):
     
     @property
     def logo_display_url(self):
-        """Get the logo URL - prioritize uploaded file over URL"""
+        """Get the logo URL - prioritize uploaded file over URL.
+
+        Uploaded files are served through /api/institutions/<id>/logo/
+        rather than the raw MEDIA_URL path (self.logo_file.url) — Django
+        only serves MEDIA_URL when DEBUG=True, and the production nginx
+        config has no /media/ passthrough, so a raw media path 404s (or
+        silently falls through to the SPA) in production. The /api/
+        prefix already rides the same proxy path as every other request.
+        """
         if self.logo_file:
-            return self.logo_file.url
+            return f"/api/institutions/{self.id}/logo/"
         return self.logo_url or ""
     
     def get_display_name(self):
@@ -836,6 +844,12 @@ class SyllabusSubtopic(models.Model):
     topic = models.ForeignKey(SyllabusTopic, on_delete=models.CASCADE, related_name="subtopics")
     title = models.CharField(max_length=255)
     order = models.PositiveIntegerField(default=0)
+    description = models.TextField(blank=True, default="")
+    # Multimedia only (a plain {label, url} list) — smart-rendered on the
+    # frontend as a YouTube embed / image / video / plain link depending on
+    # the URL, unlike SyllabusTopic.resource_links which also carries typed
+    # pointers at existing Aptitude topics / Problems.
+    resource_links = models.JSONField(default=list, blank=True)
 
     class Meta:
         db_table = "syllabus_subtopics"
