@@ -1006,39 +1006,37 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 32, alignItems: 'start' }}>
-                <SolvingActivityChart data={weeklyActivity} onRangeChange={fetchActivityRange} />
+              <SolvingActivityChart data={weeklyActivity} onRangeChange={fetchActivityRange} />
 
-                {/* Live Activity Feed */}
-                <div className="premium-card">
-                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-hard)', marginBottom: 20 }}>Department Activity</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                    {(recentActivity || []).length > 0 ? recentActivity.map((act, idx) => (
-                      <div key={idx} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                        <div style={{ 
-                          width: 40, height: 40, borderRadius: '12px', background: 'var(--sage-100)', 
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                          fontSize: '14px', fontWeight: '800', color: 'var(--olive-700)'
-                        }}>
-                          {(act.student_name || 'S')[0]}
+              {/* Live Activity Feed */}
+              <div className="premium-card" style={{ marginTop: 32 }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: '800', color: 'var(--text-hard)', marginBottom: 20 }}>Department Activity</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                  {(recentActivity || []).length > 0 ? recentActivity.map((act, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                      <div style={{
+                        width: 40, height: 40, borderRadius: '12px', background: 'var(--sage-100)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                        fontSize: '14px', fontWeight: '800', color: 'var(--olive-700)'
+                      }}>
+                        {(act.student_name || 'S')[0]}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '13px', lineHeight: '1.4' }}>
+                          <strong style={{ color: 'var(--text-hard)' }}>{act.student_name || 'Student'}</strong>
+                          <span style={{ color: 'var(--text-soft)' }}> solved </span>
+                          <strong style={{ color: 'var(--olive-700)' }}>{act.problem_title || 'a problem'}</strong>
                         </div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: '13px', lineHeight: '1.4' }}>
-                            <strong style={{ color: 'var(--text-hard)' }}>{act.student_name || 'Student'}</strong>
-                            <span style={{ color: 'var(--text-soft)' }}> solved </span>
-                            <strong style={{ color: 'var(--olive-700)' }}>{act.problem_title || 'a problem'}</strong>
-                          </div>
-                          <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: 4 }}>
-                            {new Date(act.solved_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </div>
+                        <div style={{ fontSize: '11px', color: '#94a3b8', marginTop: 4 }}>
+                          {new Date(act.solved_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                         </div>
                       </div>
-                    )) : (
-                      <div style={{ textAlign: 'center', color: '#999', padding: '20px 0', fontSize: '14px' }}>
-                        No recent activity recorded.
-                      </div>
-                    )}
-                  </div>
+                    </div>
+                  )) : (
+                    <div style={{ textAlign: 'center', color: '#999', padding: '20px 0', fontSize: '14px' }}>
+                      No recent activity recorded.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -2061,10 +2061,10 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleUsageMark({ problemSlug: problem.slug }); }}
                                   style={{
                                     marginLeft: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex',
-                                    color: usageMarks.problem_slugs.includes(problem.slug) ? '#7c3aed' : '#d1d5db',
+                                    color: usageMarks.problem_slugs.includes(problem.slug) ? '#059669' : '#d1d5db',
                                   }}
                                 >
-                                  <CheckCircle size={16} fill={usageMarks.problem_slugs.includes(problem.slug) ? '#ede9fe' : 'none'} />
+                                  <CheckCircle size={16} fill={usageMarks.problem_slugs.includes(problem.slug) ? '#d1fae5' : 'none'} />
                                 </button>
                               )}
                             </label>
@@ -2122,10 +2122,10 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                                   onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleUsageMark({ aptitudeQuestionId: q.id }); }}
                                   style={{
                                     marginLeft: 8, marginTop: 2, background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', flexShrink: 0,
-                                    color: usageMarks.aptitude_question_ids.includes(q.id) ? '#7c3aed' : '#d1d5db',
+                                    color: usageMarks.aptitude_question_ids.includes(q.id) ? '#059669' : '#d1d5db',
                                   }}
                                 >
-                                  <CheckCircle size={16} fill={usageMarks.aptitude_question_ids.includes(q.id) ? '#ede9fe' : 'none'} />
+                                  <CheckCircle size={16} fill={usageMarks.aptitude_question_ids.includes(q.id) ? '#d1fae5' : 'none'} />
                                 </button>
                               )}
                             </label>
@@ -2239,9 +2239,9 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                           type="button"
                           title={usageMarks.problem_slugs.includes(p.slug) ? `Marked used for batch ${markBatch}` : `Mark as already used for batch ${markBatch}`}
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleUsageMark({ problemSlug: p.slug }); }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: usageMarks.problem_slugs.includes(p.slug) ? '#7c3aed' : '#d1d5db' }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: usageMarks.problem_slugs.includes(p.slug) ? '#059669' : '#d1d5db' }}
                         >
-                          <CheckCircle size={15} fill={usageMarks.problem_slugs.includes(p.slug) ? '#ede9fe' : 'none'} />
+                          <CheckCircle size={15} fill={usageMarks.problem_slugs.includes(p.slug) ? '#d1fae5' : 'none'} />
                         </button>
                       )}
                     </label>
@@ -2269,9 +2269,9 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                           type="button"
                           title={usageMarks.aptitude_question_ids.includes(q.id) ? `Marked used for batch ${markBatch}` : `Mark as already used for batch ${markBatch}`}
                           onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleUsageMark({ aptitudeQuestionId: q.id }); }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: usageMarks.aptitude_question_ids.includes(q.id) ? '#7c3aed' : '#d1d5db' }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, display: 'flex', color: usageMarks.aptitude_question_ids.includes(q.id) ? '#059669' : '#d1d5db' }}
                         >
-                          <CheckCircle size={15} fill={usageMarks.aptitude_question_ids.includes(q.id) ? '#ede9fe' : 'none'} />
+                          <CheckCircle size={15} fill={usageMarks.aptitude_question_ids.includes(q.id) ? '#d1fae5' : 'none'} />
                         </button>
                       )}
                     </label>
