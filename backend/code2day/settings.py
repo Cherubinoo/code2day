@@ -262,6 +262,27 @@ LLM_PROVIDER_SEED_3 = {
 }
 
 # ---------------------------------------------------------------------------
+# Email (forgot-password OTP)
+#
+# Real values live only in the deploy environment (Dokploy env vars /
+# backend/.env, never in this repo). Falls back to Django's console
+# backend when EMAIL_HOST_USER isn't set, so local dev without SMTP
+# configured just prints the OTP email to the runserver console instead
+# of failing outright.
+# ---------------------------------------------------------------------------
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_BACKEND = (
+    "django.core.mail.backends.smtp.EmailBackend"
+    if EMAIL_HOST_USER
+    else "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "true").lower() == "true"
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", f"Code2Day <{EMAIL_HOST_USER or 'noreply@code2day.local'}>")
+
+# ---------------------------------------------------------------------------
 # Auth rate limiting (InMemoryRateLimiter in auth_utils.py)
 # ---------------------------------------------------------------------------
 

@@ -787,6 +787,31 @@ class SolvedAptitude(models.Model):
         return f"{self.student} solved aptitude q#{self.question.id}"
 
 
+class PasswordResetOTP(models.Model):
+    """A short-lived one-time code for the forgot-password flow, emailed
+    to whatever email address is already on file for the account (never
+    one typed in by the person requesting the reset — that's the whole
+    point: only someone with access to the pre-registered inbox can reset
+    the password). 5-minute validity, single-use."""
+    OTP_VALIDITY_MINUTES = 5
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="password_reset_otps")
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        db_table = "password_reset_otps"
+        ordering = ["-created_at"]
+
+    def is_valid(self):
+        return not self.is_used and timezone.now() < self.expires_at
+
+    def __str__(self):
+        return f"OTP for {self.user} (used={self.is_used})"
+
+
 class QuestionUsageMark(models.Model):
     """A staff member's personal "already used this for <batch>" tick on
     an Aptitude question or coding Problem — lets staff avoid repeating

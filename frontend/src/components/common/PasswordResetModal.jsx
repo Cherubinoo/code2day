@@ -5,10 +5,8 @@ import './PasswordResetModal.css';
 function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
   const [step, setStep] = useState("request");
   const [registerNumber, setRegisterNumber] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
   const [facultyId, setFacultyId] = useState("");
-  const [resetToken, setResetToken] = useState("");
+  const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -18,10 +16,8 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
   const handleReset = () => {
     setStep("request");
     setRegisterNumber("");
-    setEmail("");
-    setPhone("");
     setFacultyId("");
-    setResetToken("");
+    setOtp("");
     setNewPassword("");
     setConfirmPassword("");
     setError("");
@@ -34,16 +30,21 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
     onClose();
   };
 
-  const handleRequestReset = async (e) => {
+  const identifierBody = () =>
+    userType === "student"
+      ? { user_type: "student", register_number: registerNumber.trim() }
+      : { user_type: "staff", faculty_id: facultyId.trim() };
+
+  const handleRequestOtp = async (e) => {
     e.preventDefault();
 
-    if (userType === "student") {
-      if (!registerNumber.trim()) { setError("Please enter your register number"); return; }
-      if (!email.trim()) { setError("Please enter your email address"); return; }
-      if (!phone.trim()) { setError("Please enter your phone number"); return; }
-    } else {
-      if (!facultyId.trim()) { setError("Please enter your Faculty ID"); return; }
-      if (!email.trim()) { setError("Please enter your email address"); return; }
+    if (userType === "student" && !registerNumber.trim()) {
+      setError("Please enter your register number");
+      return;
+    }
+    if (userType === "staff" && !facultyId.trim()) {
+      setError("Please enter your Faculty ID");
+      return;
     }
 
     setLoading(true);
@@ -51,33 +52,15 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
     setMessage("");
 
     try {
-      const body =
-        userType === "student"
-          ? {
-              user_type: "student",
-              register_number: registerNumber.trim(),
-              email: email.trim(),
-              phone: phone.trim(),
-            }
-          : {
-              user_type: "staff",
-              faculty_id: facultyId.trim(),
-              email: email.trim(),
-            };
-
-      const response = await fetch("/api/auth/password-reset/", {
-        ...buildJsonPostOptions(body),
-      });
-
+      const response = await fetch("/api/auth/password-reset/", buildJsonPostOptions(identifierBody()));
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(extractApiError(data, "Verification failed. Please check your details."));
+        throw new Error(extractApiError(data, "Could not send a reset code. Please check your details."));
       }
 
-      setResetToken(data.reset_token);
-      setMessage(data.message || "Identity verified. Set your new password below.");
-      setStep("complete");
+      setMessage(data.message || "A code was sent to your registered email.");
+      setStep("verify");
     } catch (err) {
       setError(err.message);
     } finally {
@@ -85,9 +68,10 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
     }
   };
 
-  const handleCompleteReset = async (e) => {
+  const handleVerifyAndReset = async (e) => {
     e.preventDefault();
 
+    if (!otp.trim()) { setError("Please enter the code from your email"); return; }
     if (!newPassword.trim()) { setError("Please enter a new password"); return; }
     if (newPassword.length < 8) { setError("Password must be at least 8 characters"); return; }
     if (newPassword !== confirmPassword) { setError("Passwords do not match"); return; }
@@ -97,7 +81,7 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
 
     try {
       const response = await fetch("/api/auth/password-reset/", {
-        ...buildJsonPostOptions({ reset_token: resetToken, new_password: newPassword }),
+        ...buildJsonPostOptions({ ...identifierBody(), otp: otp.trim(), new_password: newPassword }),
         method: "PUT",
       });
 
@@ -128,82 +112,42 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
 
         <div className="modal-body">
           {step === "request" ? (
-            <form onSubmit={handleRequestReset}>
+            <form onSubmit={handleRequestOtp}>
               <div className="form-section">
                 <h3>Verify Your Identity</h3>
                 {userType === "student" ? (
-                  <p>Enter your register number, email address, and phone number to verify your account.</p>
+                  <p>Enter your register number — we'll email a 6-digit code to your registered address.</p>
                 ) : (
-                  <p>Enter your Faculty ID and email address to verify your account.</p>
+                  <p>Enter your Faculty ID — we'll email a 6-digit code to your registered address.</p>
                 )}
               </div>
 
               {userType === "student" ? (
-                <>
-                  <div className="form-field">
-                    <label htmlFor="reset-register">Register Number</label>
-                    <input
-                      id="reset-register"
-                      type="text"
-                      value={registerNumber}
-                      onChange={(e) => setRegisterNumber(e.target.value)}
-                      placeholder="e.g. 953623243023"
-                      disabled={loading}
-                      autoFocus
-                    />
-                  </div>
-
-                  <div className="form-field">
-                    <label htmlFor="reset-email">Email Address</label>
-                    <input
-                      id="reset-email"
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="Your registered email"
-                      disabled={loading}
-                    />
-                  </div>
-
-                  <div className="form-field">
-                    <label htmlFor="reset-phone">Phone Number</label>
-                    <input
-                      id="reset-phone"
-                      type="tel"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      placeholder="Your 10-digit mobile number"
-                      disabled={loading}
-                    />
-                  </div>
-                </>
+                <div className="form-field">
+                  <label htmlFor="reset-register">Register Number</label>
+                  <input
+                    id="reset-register"
+                    type="text"
+                    value={registerNumber}
+                    onChange={(e) => setRegisterNumber(e.target.value)}
+                    placeholder="e.g. 953623243023"
+                    disabled={loading}
+                    autoFocus
+                  />
+                </div>
               ) : (
-                <>
-                  <div className="form-field">
-                    <label htmlFor="faculty-id">Faculty ID</label>
-                    <input
-                      id="faculty-id"
-                      type="text"
-                      value={facultyId}
-                      onChange={(e) => setFacultyId(e.target.value)}
-                      placeholder="Enter your Faculty ID"
-                      disabled={loading}
-                      autoFocus
-                    />
-                  </div>
-
-                  <div className="form-field">
-                    <label htmlFor="reset-email">Email Address</label>
-                    <input
-                      id="reset-email"
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="Your registered email"
-                      disabled={loading}
-                    />
-                  </div>
-                </>
+                <div className="form-field">
+                  <label htmlFor="faculty-id">Faculty ID</label>
+                  <input
+                    id="faculty-id"
+                    type="text"
+                    value={facultyId}
+                    onChange={(e) => setFacultyId(e.target.value)}
+                    placeholder="Enter your Faculty ID"
+                    disabled={loading}
+                    autoFocus
+                  />
+                </div>
               )}
 
               <div className="form-actions">
@@ -211,15 +155,30 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
                   Cancel
                 </button>
                 <button type="submit" className="primary-button" disabled={loading}>
-                  {loading ? "Verifying..." : "Verify & Continue"}
+                  {loading ? "Sending…" : "Send Code"}
                 </button>
               </div>
             </form>
           ) : (
-            <form onSubmit={handleCompleteReset}>
+            <form onSubmit={handleVerifyAndReset}>
               <div className="form-section">
-                <h3>Set New Password</h3>
-                <p>Enter and confirm your new password.</p>
+                <h3>Enter Code & New Password</h3>
+                <p>Check your email for a 6-digit code — it expires in 5 minutes.</p>
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="reset-otp">6-Digit Code</label>
+                <input
+                  id="reset-otp"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                  placeholder="123456"
+                  disabled={loading}
+                  autoFocus
+                />
               </div>
 
               <div className="form-field">
@@ -231,7 +190,6 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
                   onChange={(e) => setNewPassword(e.target.value)}
                   placeholder="At least 8 characters"
                   disabled={loading}
-                  autoFocus
                 />
               </div>
 
@@ -251,7 +209,7 @@ function PasswordResetModal({ isOpen, onClose, userType = "student" }) {
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() => { setStep("request"); setError(""); setMessage(""); }}
+                  onClick={() => { setStep("request"); setOtp(""); setError(""); setMessage(""); }}
                   disabled={loading}
                 >
                   ← Back

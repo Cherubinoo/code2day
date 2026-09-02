@@ -80,6 +80,7 @@ from .models import (
     SyllabusSubtopic,
     CompetitiveQuestion,
     QuestionUsageMark,
+    PasswordResetOTP,
 )
 from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
@@ -12182,188 +12183,161 @@ class CSRFTokenView(APIView):
 # Password Reset and Public Views
 # =============================================================================
 
+def _generate_otp():
+    import random
+    return f"{random.randint(0, 999999):06d}"
+
+
+def _mask_email(email):
+    if '@' not in email:
+        return email
+    local, domain = email.split('@', 1)
+    return f"{local[:2]}***@{domain}"
+
+
+def _send_password_reset_otp_email(to_email, name, code):
+    from django.core.mail import send_mail
+    send_mail(
+        subject="Your Code2Day password reset code",
+        message=(
+            f"Hi {name},\n\n"
+            f"Your Code2Day password reset code is: {code}\n\n"
+            f"This code expires in {PasswordResetOTP.OTP_VALIDITY_MINUTES} minutes. "
+            "If you didn't request this, you can safely ignore this email — "
+            "your password will not change unless this code is used."
+        ),
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[to_email],
+        fail_silently=False,
+    )
+
+
 class PasswordResetView(APIView):
-    """
-    Handle password reset requests for students and staff.
+    """Forgot-password flow via a one-time code emailed to whatever
+    address is already on file for the account (StudentProfile.personal_email
+    or StaffProfile.email) — never an address typed in by the person
+    requesting the reset, so only someone with access to that inbox can
+    actually reset the password.
+
+    POST: identify the account (register_number for students, faculty_id
+    for staff) -> generate + email a 6-digit OTP, valid 5 minutes.
+    PUT: submit that OTP + a new password -> verify and reset.
     """
     permission_classes = [AllowAny]
 
     def post(self, request):
-        """
-        Verify identity and return a short-lived reset token.
-        Students: register number + email + phone.
-        Staff:    faculty ID + email.
-        """
-        import re as _re
+        max_attempts, window = _auth_rate_limits()
+        try:
+            check_rate_limit(request, "password-reset-request", max_attempts, window)
+        except RateLimitExceeded as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            )
 
         user_type = request.data.get('user_type', 'student')
 
-        try:
-            if user_type == 'student':
-                register_number = (request.data.get('register_number') or '').strip()
-                email = (request.data.get('email') or '').strip()
-                phone = (request.data.get('phone') or '').strip()
+        if user_type == 'student':
+            register_number = (request.data.get('register_number') or '').strip()
+            if not register_number:
+                return Response({'error': 'Register number is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            student = StudentProfile.objects.select_related('account').filter(register_number=register_number).first()
+            if not student or not student.account:
+                return Response({'error': 'No account found with that register number.'}, status=status.HTTP_404_NOT_FOUND)
+            user = student.account
+            name = student.name
+            email = (student.personal_email or student.account.email or '').strip()
+        elif user_type == 'staff':
+            faculty_id = (request.data.get('faculty_id') or '').strip()
+            if not faculty_id:
+                return Response({'error': 'Faculty ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
+            staff = StaffProfile.objects.select_related('account').filter(faculty_id=faculty_id).first()
+            if not staff or not staff.account:
+                return Response({'error': 'No staff account found with that faculty ID.'}, status=status.HTTP_404_NOT_FOUND)
+            user = staff.account
+            name = staff.name
+            email = (staff.email or staff.account.email or '').strip()
+        else:
+            return Response({'error': 'Invalid user type.'}, status=status.HTTP_400_BAD_REQUEST)
 
-                if not register_number or not email or not phone:
-                    return Response(
-                        {'error': 'Register number, email address, and phone number are all required'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                phone_digits = _re.sub(r'\D', '', phone)
-                if len(phone_digits) < 10:
-                    return Response(
-                        {'error': 'Please enter a valid 10-digit phone number'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                phone_last10 = phone_digits[-10:]
-
-                # Find by register number first
-                try:
-                    student = StudentProfile.objects.select_related('account').get(
-                        register_number=register_number
-                    )
-                except StudentProfile.DoesNotExist:
-                    return Response(
-                        {'error': 'No account found with that register number'},
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-
-                # Verify email matches
-                profile_email = (student.personal_email or '').lower()
-                user_email = (student.account.email if student.account else '').lower()
-                if email.lower() not in (profile_email, user_email) or not profile_email and not user_email:
-                    return Response(
-                        {'error': 'Email address does not match our records for that register number'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                # Verify phone matches (last 10 digits)
-                stored_digits = _re.sub(r'\D', '', student.mobile_number or '')
-                if not stored_digits or stored_digits[-10:] != phone_last10:
-                    return Response(
-                        {'error': 'Phone number does not match our records for that register number'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                if not student.account:
-                    return Response(
-                        {'error': 'Student account is not set up yet. Contact your administrator.'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                user = student.account
-                reset_token = f"reset_{user.id}_{timezone.now().timestamp()}"
-                return Response({
-                    'message': 'Identity verified. Set your new password below.',
-                    'reset_token': reset_token,
-                })
-
-            elif user_type == 'staff':
-                faculty_id = (request.data.get('faculty_id') or '').strip()
-                email = (request.data.get('email') or '').strip()
-
-                if not faculty_id or not email:
-                    return Response(
-                        {'error': 'Faculty ID and email address are required'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                try:
-                    staff = StaffProfile.objects.select_related('account').get(faculty_id=faculty_id)
-                except StaffProfile.DoesNotExist:
-                    return Response(
-                        {'error': 'No staff account found with that faculty ID'},
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-
-                user = staff.account
-                if not user:
-                    return Response(
-                        {'error': 'Staff account is not fully set up. Contact your administrator.'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-
-                if (user.email or '').lower() != email.lower():
-                    return Response(
-                        {'error': 'Faculty ID and email address do not match'},
-                        status=status.HTTP_404_NOT_FOUND
-                    )
-
-                reset_token = f"reset_{user.id}_{timezone.now().timestamp()}"
-                return Response({
-                    'message': 'Identity verified. Set your new password below.',
-                    'reset_token': reset_token,
-                })
-
-            else:
-                return Response(
-                    {'error': 'Invalid user type'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        except Exception as e:
-            logger.exception("Password reset step 1 failed")
+        if not email:
             return Response(
-                {'error': f'Password reset failed: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {'error': "No email is on file for this account yet. Ask your JA/HOD/Admin to add one, then try again."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # Superseding any earlier unused code keeps only the latest one valid
+        PasswordResetOTP.objects.filter(user=user, is_used=False).update(is_used=True)
+
+        code = _generate_otp()
+        PasswordResetOTP.objects.create(
+            user=user, code=code,
+            expires_at=timezone.now() + timedelta(minutes=PasswordResetOTP.OTP_VALIDITY_MINUTES),
+        )
+
+        try:
+            _send_password_reset_otp_email(email, name, code)
+        except Exception:
+            logger.exception("Failed to send password reset OTP email")
+            return Response(
+                {'error': 'Could not send the reset email right now. Please try again shortly.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({'message': f'A 6-digit code was sent to {_mask_email(email)}. It expires in 5 minutes.'})
 
     def put(self, request):
-        """
-        Complete password reset with token and new password.
-        """
+        max_attempts, window = _auth_rate_limits()
         try:
-            reset_token = request.data.get('reset_token', '').strip()
-            new_password = request.data.get('new_password', '').strip()
-            
-            if not reset_token or not new_password:
-                return Response(
-                    {'error': 'Reset token and new password are required'}, 
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Parse the reset token (simplified - in production use proper token validation)
-            if reset_token.startswith('reset_'):
-                try:
-                    parts = reset_token.split('_')
-                    user_id = int(parts[1])
-                    timestamp = float(parts[2])
-                    
-                    # Check if token is not too old (24 hours)
-                    current_time = timezone.now().timestamp()
-                    if current_time - timestamp > 86400:  # 24 hours
-                        return Response(
-                            {'error': 'Reset token has expired'}, 
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
-                    
-                    # Find and update user password
-                    user = User.objects.get(id=user_id)
-                    user.set_password(new_password)
-                    user.save()
-                    
-                    return Response({
-                        'message': 'Password reset successfully',
-                        'username': user.username
-                    })
-                    
-                except (ValueError, IndexError, User.DoesNotExist):
-                    return Response(
-                        {'error': 'Invalid reset token'}, 
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-            
+            check_rate_limit(request, "password-reset-verify", max_attempts, window)
+        except RateLimitExceeded as exc:
             return Response(
-                {'error': 'Invalid reset token format'}, 
-                status=status.HTTP_400_BAD_REQUEST
+                {"detail": str(exc)},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={"Retry-After": str(exc.retry_after_seconds)},
             )
-                
-        except Exception as e:
-            return Response(
-                {'error': f'Password reset completion failed: {str(e)}'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+
+        user_type = request.data.get('user_type', 'student')
+        otp = (request.data.get('otp') or '').strip()
+        new_password = (request.data.get('new_password') or '').strip()
+
+        if not otp or not new_password:
+            return Response({'error': 'The code and a new password are both required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(new_password) < 8:
+            return Response({'error': 'Password must be at least 8 characters.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if user_type == 'student':
+            register_number = (request.data.get('register_number') or '').strip()
+            student = StudentProfile.objects.select_related('account').filter(register_number=register_number).first()
+            if not student or not student.account:
+                return Response({'error': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
+            user = student.account
+        elif user_type == 'staff':
+            faculty_id = (request.data.get('faculty_id') or '').strip()
+            staff = StaffProfile.objects.select_related('account').filter(faculty_id=faculty_id).first()
+            if not staff or not staff.account:
+                return Response({'error': 'Account not found.'}, status=status.HTTP_404_NOT_FOUND)
+            user = staff.account
+        else:
+            return Response({'error': 'Invalid user type.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        otp_record = PasswordResetOTP.objects.filter(user=user, code=otp, is_used=False).order_by('-created_at').first()
+        if not otp_record or not otp_record.is_valid():
+            return Response({'error': 'That code is invalid or has expired. Request a new one.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        otp_record.is_used = True
+        otp_record.save(update_fields=['is_used'])
+
+        if user_type == 'staff' and hasattr(user, 'staff_profile'):
+            # StaffProfile has its own password field, checked before
+            # User.password at login — set_password() keeps both in sync.
+            user.staff_profile.set_password(new_password)
+        else:
+            user.set_password(new_password)
+            user.save()
+
+        return Response({'message': 'Password reset successfully. You can now log in with your new password.'})
 
 
 class PublicInstitutionListView(APIView):
