@@ -4613,6 +4613,26 @@ class ContestDetailView(APIView):
         }
         return Response(data)
 
+    def delete(self, request, pk):
+        """Delete a contest — the creator or an admin only (not any staff
+        in the department, unlike the read permission above, since this
+        is destructive: it cascades to every participation/submission
+        already recorded against it)."""
+        is_admin = request.user.is_superuser or getattr(request.user, 'username', '') in ('0001', 'staff_0001', 'admin')
+        profile = getattr(request.user, 'staff_profile', None)
+
+        contest = Contest.objects.filter(id=pk).first()
+        if not contest:
+            return Response({"detail": "Contest not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        is_creator = profile is not None and contest.created_by_id == profile.id
+        if not (is_admin or is_creator):
+            return Response({"detail": "Only the contest creator or an admin can delete this contest."}, status=status.HTTP_403_FORBIDDEN)
+
+        title = contest.title
+        contest.delete()
+        return Response({"message": f'"{title}" deleted.'})
+
 
 class ContestAnalyticsView(APIView):
     """Get analytics for a specific contest"""

@@ -1,6 +1,6 @@
 // Staff Dashboard - Staff view with contests and batch-wise analytics
 import { useState, useEffect } from 'react';
-import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare, GraduationCap, UserCheck, FlaskConical, Download, Loader2 } from 'lucide-react';
+import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare, GraduationCap, UserCheck, FlaskConical, Download, Loader2, Trash2 } from 'lucide-react';
 import EnhancedContestCreator from './EnhancedContestCreator';
 import StudentAnalyticsModal from './StudentAnalyticsModal';
 import ContestDetailModal from '../common/ContestDetailModal';
@@ -46,6 +46,22 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
       }
     } catch (err) {
       console.error("Failed to fetch contests:", err);
+    }
+  }
+
+  async function handleDeleteContest(e, contest) {
+    e.stopPropagation();
+    if (!window.confirm(`Delete "${contest.title}"? This also removes every submission recorded against it. This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`/api/contests/${contest.id}/`, { method: 'DELETE', credentials: 'include' });
+      if (res.ok) {
+        setContestsList((prev) => prev.filter((c) => c.id !== contest.id));
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.detail || 'Failed to delete contest.');
+      }
+    } catch (err) {
+      alert('Failed to delete contest.');
     }
   }
 
@@ -897,6 +913,15 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
                               <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--olive-700)' }}>{contest.total_submissions || 0}</div>
                               <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Submissions</div>
                             </div>
+                            {contest.created_by?.faculty_id === staff.faculty_id && (
+                              <button
+                                onClick={(e) => handleDeleteContest(e, contest)}
+                                title="Delete this contest"
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, display: 'flex', color: '#ef4444', flexShrink: 0 }}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
                             <ChevronRight size={20} color="var(--text-soft)" />
                           </div>
                         </div>
