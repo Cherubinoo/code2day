@@ -63,7 +63,7 @@ const AdminDashboard = () => {
 
   const [newInstitution, setNewInstitution] = useState({ institution_id: '', name: '', short_code: '', address: '', contact_email: '', contact_phone: '' });
   const [editingContactId, setEditingContactId] = useState(null);
-  const [contactDraft, setContactDraft] = useState({ email: '', mobile_number: '' });
+  const [contactDraft, setContactDraft] = useState({ name: '', email: '', mobile_number: '' });
   const [newDept, setNewDept] = useState({ name: '', code: '' });
   const [newStaff, setNewStaff] = useState({ faculty_id: '', name: '', email: '', mobile_number: '', role: 'staff', dept_id: '' });
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('');
@@ -291,9 +291,23 @@ const AdminDashboard = () => {
     }
   };
 
+  const updateStaffName = async (staffId, name) => {
+    try {
+      await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, {
+        action: 'update_staff_name', staff_id: staffId, name,
+      });
+      setHubData({
+        ...hubData,
+        staff: hubData.staff.map(s => s.id === staffId ? { ...s, name } : s)
+      });
+    } catch (err) {
+      alert("Failed to update name");
+    }
+  };
+
   const startEditContact = (s) => {
     setEditingContactId(s.id);
-    setContactDraft({ email: s.email || '', mobile_number: s.mobile_number || '' });
+    setContactDraft({ name: s.name || '', email: s.email || '', mobile_number: s.mobile_number || '' });
   };
 
   const cancelEditContact = () => {
@@ -301,11 +315,31 @@ const AdminDashboard = () => {
   };
 
   const saveStaffContact = async (staffId) => {
+    const name = contactDraft.name.trim();
+    if (!name) return;
     await Promise.all([
+      updateStaffName(staffId, name),
       updateStaffEmail(staffId, contactDraft.email.trim()),
       updateStaffMobile(staffId, contactDraft.mobile_number.trim()),
     ]);
     setEditingContactId(null);
+  };
+
+  const handleDeleteStaff = (s) => {
+    askDouble(
+      async () => {
+        try {
+          await api.patch(`/admin/v2/institutions/${selectedInstitution.id}/hub/`, {
+            action: 'delete_staff', staff_id: s.id,
+          });
+          setHubData({ ...hubData, staff: hubData.staff.filter(st => st.id !== s.id) });
+        } catch (err) {
+          alert("Failed to delete staff: " + (err.response?.data?.error || err.message));
+        }
+      },
+      `Delete ${s.name}?`,
+      `This permanently removes ${s.name} (ID: ${s.faculty_id}) and their login. Contests/labs they created are kept, just unlinked from them. Proceed?`
+    );
   };
 
   const handleAddDept = async () => {
@@ -1368,6 +1402,7 @@ const AdminDashboard = () => {
                               <th style={{ padding: '0 20px' }}>FACULTY</th>
                               <th style={{ padding: '0 20px' }}>DEPARTMENT</th>
                               <th style={{ padding: '0 20px' }}>PROMOTE / ROLE</th>
+                              <th style={{ padding: '0 20px' }}></th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1378,14 +1413,25 @@ const AdminDashboard = () => {
                             }).map(s => (
                               <tr key={s.id} style={{ background: 'var(--bg-2)' }}>
                                 <td style={{ padding: 24, borderRadius: '24px 0 0 24px' }}>
-                                  <div style={{ fontWeight: 850, color: 'var(--olive-900)', fontSize: '1.1rem' }}>{s.name}</div>
-                                  <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: 8 }}>ID: {s.faculty_id}</div>
-
+                                  {editingContactId !== s.id && (
+                                    <>
+                                      <div style={{ fontWeight: 850, color: 'var(--olive-900)', fontSize: '1.1rem' }}>{s.name}</div>
+                                      <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600, marginBottom: 8 }}>ID: {s.faculty_id}</div>
+                                    </>
+                                  )}
                                   {editingContactId === s.id ? (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 220 }} onClick={(e) => e.stopPropagation()}>
                                       <input
-                                        type="email"
+                                        type="text"
                                         autoFocus
+                                        value={contactDraft.name}
+                                        placeholder="Full name"
+                                        onChange={(e) => setContactDraft({ ...contactDraft, name: e.target.value })}
+                                        style={{ width: '100%', padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.8rem', fontWeight: 700, boxSizing: 'border-box' }}
+                                      />
+                                      <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 600 }}>ID: {s.faculty_id}</div>
+                                      <input
+                                        type="email"
                                         value={contactDraft.email}
                                         placeholder="Email"
                                         onChange={(e) => setContactDraft({ ...contactDraft, email: e.target.value })}
@@ -1425,7 +1471,7 @@ const AdminDashboard = () => {
                                       </div>
                                       <button
                                         onClick={() => startEditContact(s)}
-                                        title="Edit contact info"
+                                        title="Edit name / contact info"
                                         style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-soft)', cursor: 'pointer' }}
                                       >
                                         <Pencil size={13} />
@@ -1445,9 +1491,9 @@ const AdminDashboard = () => {
                                     ))}
                                   </select>
                                 </td>
-                                <td style={{ padding: 24, borderRadius: '0 24px 24px 0' }}>
-                                  <select 
-                                    value={s.role} 
+                                <td style={{ padding: 24 }}>
+                                  <select
+                                    value={s.role}
                                     onChange={(e) => updateStaffRole(s.id, e.target.value)}
                                     style={{ padding: '10px 16px', borderRadius: 12, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--olive-900)', fontWeight: 800, cursor: 'pointer', width: '100%', maxWidth: 180 }}
                                   >
@@ -1459,6 +1505,15 @@ const AdminDashboard = () => {
                                     <option value="ja">Junior Admin (JA)</option>
                                     <option value="admin">Node Admin</option>
                                   </select>
+                                </td>
+                                <td style={{ padding: 24, borderRadius: '0 24px 24px 0' }}>
+                                  <button
+                                    onClick={() => handleDeleteStaff(s)}
+                                    title="Delete staff member"
+                                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 10, border: 'none', background: '#fee2e2', color: '#ef4444', cursor: 'pointer' }}
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
                                 </td>
                               </tr>
                             ))}

@@ -4318,7 +4318,7 @@ class ContestListCreateView(APIView):
                 "created_by": {
                     "faculty_id": contest.created_by.faculty_id,
                     "name": contest.created_by.name or contest.created_by.faculty_id,
-                },
+                } if contest.created_by else None,
                 "status": contest.status,
                 "start_time": contest.start_time,
                 "end_time": contest.end_time,
@@ -10114,9 +10114,11 @@ class InstitutionManagementView(APIView):
 
 class InstitutionDetailManagementView(APIView):
     """Management within a specific institution"""
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, pk):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         institution = get_object_or_404(Institution, pk=pk)
         
         # Get actual student count
@@ -10183,6 +10185,8 @@ class InstitutionDetailManagementView(APIView):
 
     def patch(self, request, pk):
         """Update institution maintenance or staff roles/depts"""
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         institution = get_object_or_404(Institution, pk=pk)
         action = request.data.get('action')
         
@@ -10301,6 +10305,28 @@ class InstitutionDetailManagementView(APIView):
             staff.mobile_number = mobile_number
             staff.save(update_fields=['mobile_number'])
             return Response({"message": "Contact number updated", "mobile_number": staff.mobile_number})
+
+        elif action == 'update_staff_name':
+            staff_id = request.data.get('staff_id')
+            name = (request.data.get('name') or '').strip()
+            if not name:
+                return Response({"error": "Name is required."}, status=400)
+            staff = get_object_or_404(StaffProfile, id=staff_id, institution=institution)
+            staff.name = name
+            staff.save(update_fields=['name'])
+            return Response({"message": "Name updated", "name": staff.name})
+
+        elif action == 'delete_staff':
+            staff_id = request.data.get('staff_id')
+            staff = get_object_or_404(StaffProfile, id=staff_id, institution=institution)
+            if staff.faculty_id == '0001':
+                return Response({"error": "Cannot delete the system admin account."}, status=400)
+            account = staff.account
+            if account:
+                account.delete()  # cascades to the StaffProfile
+            else:
+                staff.delete()
+            return Response({"message": "Staff deleted"})
 
         elif action == 'toggle_student_lock':
             student_id = request.data.get('student_id')
@@ -16698,6 +16724,26 @@ class HODManageStaffDetailView(APIView):
             "role_display": target.get_role_display(),
             "is_active": target.is_active,
         })
+
+    def delete(self, request, faculty_id):
+        hod = _staff_from_request(request)
+        if not hod or hod.role not in ("hod", "academics", "admin"):
+            return Response({"error": "HOD access required"}, status=403)
+
+        try:
+            target = StaffProfile.objects.get(faculty_id=faculty_id, department=hod.department)
+        except StaffProfile.DoesNotExist:
+            return Response({"error": "Staff not found in your department"}, status=404)
+
+        if target.id == hod.id:
+            return Response({"error": "You cannot delete your own account."}, status=400)
+
+        account = target.account
+        if account:
+            account.delete()  # cascades to the StaffProfile
+        else:
+            target.delete()
+        return Response({"message": "Staff deleted"})
 
 
 # ── TEMPORARY: production data-loss diagnostic — remove after investigation ──

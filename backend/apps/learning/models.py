@@ -1230,11 +1230,14 @@ class Contest(models.Model):
     title = models.CharField(max_length=200)
     description = models.TextField(blank=True, default="")
     
-    # Who created the contest
+    # Who created the contest — SET_NULL (not CASCADE) so deleting a staff
+    # account never silently wipes out contests students already took, along
+    # with their submissions and scores.
     created_by = models.ForeignKey(
         StaffProfile,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="contests",
+        null=True,
     )
     
     # Department and Institution (for filtering)
@@ -1384,7 +1387,8 @@ class Contest(models.Model):
         ordering = ["-created_at"]
     
     def __str__(self):
-        return f"{self.title} - {self.created_by.faculty_id} ({self.department.code if self.department else 'No Dept'})"
+        creator = self.created_by.faculty_id if self.created_by else "Unknown"
+        return f"{self.title} - {creator} ({self.department.code if self.department else 'No Dept'})"
     
     def is_student_assigned(self, student):
         """Strict check if a student is assigned to this contest (batch, section, or individual)"""

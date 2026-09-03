@@ -7,7 +7,7 @@ import {
   Settings, Bell, MoreVertical, ExternalLink, Shield, ShieldOff,
   UserPlus, Check, X, FileText, Briefcase, Layout, UserCheck, Building2,
   Calendar, Lock, Unlock, CheckCircle, BarChart, XCircle, Activity, Brain, MessageSquare,
-  Pencil, Plus, Eye, EyeOff, Download, Clock
+  Pencil, Plus, Eye, EyeOff, Download, Clock, Trash2
 } from 'lucide-react';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import { getCsrfToken } from '../../lib/appUtils';
@@ -573,6 +573,33 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
     setStaffForm(null);
     setStaffFormErr('');
     setStaffFormBusy(false);
+  }
+
+  function handleDeleteStaff(staff) {
+    askDouble(
+      async () => {
+        try {
+          const csrfToken = getCsrfToken();
+          const headers = {};
+          if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+          const res = await fetch(`/api/hod/staff/${staff.faculty_id}/`, {
+            method: 'DELETE',
+            credentials: 'include',
+            headers,
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            alert(data.error || 'Failed to delete staff');
+            return;
+          }
+          setStaffList(prev => prev.filter(s => s.faculty_id !== staff.faculty_id));
+        } catch {
+          alert('Network error. Please try again.');
+        }
+      },
+      `Delete ${staff.name}?`,
+      `This permanently removes ${staff.name} (ID: ${staff.faculty_id}) and their login. Contests/labs they created are kept, just unlinked from them. Proceed?`
+    );
   }
 
   async function submitStaffForm() {
@@ -1191,6 +1218,20 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                           >
                             <Pencil size={13} /> Edit
                           </button>
+
+                          {staff.role !== 'hod' && staff.role !== 'admin' && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleDeleteStaff(staff); }}
+                              title="Delete staff member"
+                              style={{
+                                padding: '8px', borderRadius: '10px', border: '1px solid #fecaca',
+                                background: '#fee2e2', color: '#ef4444', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
 
                           <button
                             onClick={() => handleStaffClick(staff.faculty_id)}
