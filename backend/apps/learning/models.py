@@ -1684,7 +1684,14 @@ class ContestParticipation(models.Model):
         # Calculate session end time after the first save when we have started_at
         if is_new and not self.session_end_time and self.started_at and self.contest:
             duration_minutes = self.contest.session_duration_minutes or self.contest.duration_minutes
-            self.session_end_time = self.started_at + timezone.timedelta(minutes=duration_minutes)
+            session_end = self.started_at + timezone.timedelta(minutes=duration_minutes)
+            # A student who starts late must still not get to solve past the
+            # contest's overall access window — cap the individual session at
+            # access_end_time so "60 min" never quietly becomes more than the
+            # slot the staff actually assigned.
+            if self.contest.access_end_time and session_end > self.contest.access_end_time:
+                session_end = self.contest.access_end_time
+            self.session_end_time = session_end
             # Save again to update session_end_time
             super().save(update_fields=['session_end_time'])
     
