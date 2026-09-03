@@ -12325,11 +12325,21 @@ class PasswordResetView(APIView):
             if not faculty_id:
                 return Response({'error': 'Faculty ID is required.'}, status=status.HTTP_400_BAD_REQUEST)
             staff = StaffProfile.objects.select_related('account').filter(faculty_id=faculty_id).first()
-            if not staff or not staff.account:
+            if not staff:
                 return Response({'error': 'No staff account found with that faculty ID.'}, status=status.HTTP_404_NOT_FOUND)
-            user = staff.account
+            if not staff.account:
+                # Staff added by an admin/HOD get no login User until their
+                # first successful login (see StaffLoginView) — someone who's
+                # never logged in yet but clicks "Forgot Password" would
+                # otherwise dead-end here. Create it now so this doubles as
+                # a valid way to set an initial password too.
+                user = User.objects.create_user(username=staff.faculty_id, first_name=staff.name)
+                staff.account = user
+                staff.save(update_fields=['account'])
+            else:
+                user = staff.account
             name = staff.name
-            email = (staff.email or staff.account.email or '').strip()
+            email = (staff.email or user.email or '').strip()
         else:
             return Response({'error': 'Invalid user type.'}, status=status.HTTP_400_BAD_REQUEST)
 
