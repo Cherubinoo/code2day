@@ -11591,54 +11591,126 @@ class AdminAptitudeQuestionValidateView(APIView):
         })
 
 
-def _run_explanation_audit(run_id):
-    """Background-thread worker for AptitudeExplanationAuditRun — walks every
-    AptitudeQuestion (id > run.last_question_id) in id order, checks/rewrites
-    its explanation, and checkpoints progress every few questions so a
-    server restart or explicit Stop never loses more than a handful of
-    questions' worth of work."""
+MAX_EXPLANATION_AUDIT_WORKERS = 8
+
+
+def _explanation_audit_worker(run_id, work_queue):
+    """One worker thread's loop — pulls a question id at a time off the
+    shared queue and checks/rewrites its explanation. Several of these run
+    concurrently (one per active LLM provider, up to a cap); each call to
+    check_aptitude_explanation independently rotates to whichever provider
+    was least-recently-used, so with several calls in flight at once work
+    naturally spreads across every active provider instead of the whole
+    audit funneling through one provider at a time."""
+    import queue as queue_module
     from django.db import close_old_connections
+    from django.db.models import F
+    from django.db.models.functions import Greatest
     from .services.aptitude_validator import check_aptitude_explanation
     from .services.testcase_generator import TestCaseGenError
 
+    close_old_connections()
+    try:
+        while True:
+            try:
+                qid = work_queue.get_nowait()
+            except queue_module.Empty:
+                return
+
+            if AptitudeExplanationAuditRun.objects.filter(id=run_id, stop_requested=True).exists():
+                return
+
+            q = AptitudeQuestion.objects.filter(id=qid).first()
+            if not q:
+                continue
+
+            corrected = False
+            error_text = ''
+            try:
+                result = check_aptitude_explanation(
+                    question_text=q.question_text, option_a=q.option_a, option_b=q.option_b,
+                    option_c=q.option_c, option_d=q.option_d, correct_option=q.correct_option,
+                    explanation=q.explanation,
+                )
+                if not result['explanation_correct'] or not (q.explanation or '').strip():
+                    q.explanation = result['corrected_explanation']
+                    q.save(update_fields=['explanation'])
+                    corrected = True
+            except TestCaseGenError as exc:
+                error_text = str(exc)[:2000]
+            except Exception as exc:  # noqa: BLE001 — one bad question must not kill the whole run
+                logger.exception("Explanation audit failed on question %s", qid)
+                error_text = str(exc)[:2000]
+
+            update_fields = {
+                'processed_count': F('processed_count') + 1,
+                # Greatest(), not a plain assignment — workers finish out of
+                # order, so a slower worker on an earlier id must not walk
+                # the resume cursor backwards past what a faster worker on a
+                # later id already checkpointed.
+                'last_question_id': Greatest(F('last_question_id'), qid),
+                'updated_at': timezone.now(),
+            }
+            if corrected:
+                update_fields['corrected_count'] = F('corrected_count') + 1
+            if error_text:
+                update_fields['failed_count'] = F('failed_count') + 1
+                update_fields['last_error'] = error_text
+            AptitudeExplanationAuditRun.objects.filter(id=run_id).update(**update_fields)
+    finally:
+        close_old_connections()
+
+
+def _run_explanation_audit(run_id):
+    """Background-thread worker for AptitudeExplanationAuditRun — balances
+    every AptitudeQuestion (id > run.last_question_id) across a pool of
+    concurrent workers, one per active LLM provider (capped), instead of
+    processing them one at a time through a single provider. Progress is
+    checkpointed atomically (via F()) after every question, so a server
+    restart or explicit Stop never loses more than whatever was in flight
+    at that instant."""
+    import queue as queue_module
+    from .services.testcase_generator import _providers_in_rotation_order
+
     run = AptitudeExplanationAuditRun.objects.get(id=run_id)
-    qs = AptitudeQuestion.objects.filter(id__gt=run.last_question_id).order_by('id').iterator(chunk_size=200)
 
-    for i, q in enumerate(qs):
-        run.refresh_from_db(fields=['stop_requested'])
-        if run.stop_requested:
-            run.status = 'stopped'
-            run.stop_requested = False
-            run.save(update_fields=['status', 'stop_requested', 'updated_at'])
-            return
+    try:
+        active_providers = _providers_in_rotation_order()
+    except Exception:
+        active_providers = []
 
-        try:
-            result = check_aptitude_explanation(
-                question_text=q.question_text, option_a=q.option_a, option_b=q.option_b,
-                option_c=q.option_c, option_d=q.option_d, correct_option=q.correct_option,
-                explanation=q.explanation,
-            )
-            if not result['explanation_correct'] or not (q.explanation or '').strip():
-                q.explanation = result['corrected_explanation']
-                q.save(update_fields=['explanation'])
-                run.corrected_count += 1
-        except TestCaseGenError as exc:
-            run.failed_count += 1
-            run.last_error = str(exc)[:2000]
-        except Exception as exc:  # noqa: BLE001 — one bad question must not kill the whole run
-            logger.exception("Explanation audit failed on question %s", q.id)
-            run.failed_count += 1
-            run.last_error = str(exc)[:2000]
+    if not active_providers:
+        run.status = 'stopped'
+        run.last_error = 'No active LLM providers configured — add/activate one under LLM Providers first.'
+        run.save(update_fields=['status', 'last_error', 'updated_at'])
+        return
 
-        run.processed_count += 1
-        run.last_question_id = q.id
+    worker_count = min(len(active_providers), MAX_EXPLANATION_AUDIT_WORKERS)
 
-        if (i + 1) % 5 == 0:
-            run.save(update_fields=['processed_count', 'corrected_count', 'failed_count', 'last_question_id', 'last_error', 'updated_at'])
-            close_old_connections()
+    question_ids = list(
+        AptitudeQuestion.objects.filter(id__gt=run.last_question_id).order_by('id').values_list('id', flat=True)
+    )
+    work_queue = queue_module.Queue()
+    for qid in question_ids:
+        work_queue.put(qid)
 
-    run.status = 'completed'
-    run.save(update_fields=['status', 'processed_count', 'corrected_count', 'failed_count', 'last_question_id', 'last_error', 'updated_at'])
+    threads = [
+        threading.Thread(target=_explanation_audit_worker, args=(run_id, work_queue), daemon=True)
+        for _ in range(worker_count)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    run.refresh_from_db()
+    if run.stop_requested:
+        run.status = 'stopped'
+        run.stop_requested = False
+        run.save(update_fields=['status', 'stop_requested', 'updated_at'])
+    else:
+        run.status = 'completed'
+        run.save(update_fields=['status', 'updated_at'])
 
 
 class AdminAptitudeExplanationAuditView(APIView):
@@ -11665,6 +11737,11 @@ class AdminAptitudeExplanationAuditView(APIView):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         run, _ = AptitudeExplanationAuditRun.objects.get_or_create(id=1)
+        from .services.testcase_generator import _providers_in_rotation_order
+        try:
+            active_provider_count = len(_providers_in_rotation_order())
+        except Exception:
+            active_provider_count = 0
         return Response({
             "status": run.status,
             "total": AptitudeQuestion.objects.count(),
@@ -11676,6 +11753,8 @@ class AdminAptitudeExplanationAuditView(APIView):
             "started_at": run.started_at,
             "updated_at": run.updated_at,
             "stalled": self._is_stale(run),
+            "worker_count": min(active_provider_count, MAX_EXPLANATION_AUDIT_WORKERS),
+            "active_provider_count": active_provider_count,
         })
 
     def post(self, request):

@@ -1121,7 +1121,7 @@ function ExplanationAuditPanel() {
             <div style={{ fontWeight: 800, color: 'var(--olive-900)', fontSize: 14 }}>AI Explanation Audit</div>
             <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>
               {isRunning
-                ? `Checking question ${status.processed}/${status.total} — ${status.corrected} corrected so far${status.failed ? `, ${status.failed} failed` : ''}`
+                ? `Checking question ${status.processed}/${status.total} — ${status.corrected} corrected so far${status.failed ? `, ${status.failed} failed` : ''}${status.worker_count > 1 ? ` (balanced across ${status.worker_count} providers)` : ''}`
                 : isCompleted
                 ? `Done — ${status.corrected} of ${status.total} explanations corrected${status.failed ? ` (${status.failed} failed)` : ''}`
                 : isStalled
@@ -1170,6 +1170,13 @@ function ExplanationAuditPanel() {
       {error && <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>{error}</div>}
       {status.last_error && !error && (
         <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-soft)' }}>Last error: {status.last_error.slice(0, 200)}</div>
+      )}
+      {!isRunning && status.active_provider_count <= 1 && (
+        <div style={{ marginTop: 8, fontSize: 11, color: '#d97706' }}>
+          {status.active_provider_count === 0
+            ? 'No active LLM providers — add/activate one under LLM Providers before running.'
+            : 'Only 1 active LLM provider — add more under LLM Providers to actually parallelize this across models.'}
+        </div>
       )}
     </div>
   );
