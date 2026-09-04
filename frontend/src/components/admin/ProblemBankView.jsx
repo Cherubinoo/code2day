@@ -25,6 +25,15 @@ function isArrayType(type) {
   return typeof type === 'string' && type.endsWith('[]');
 }
 
+// A design/class schema ({"kind":"design","class_name":...,"methods":{...}})
+// has a completely different shape from the function schema this file's
+// params/return_type form was built for — no .params array to read length
+// on, no single .return_type. Anywhere the function-shape UI would read
+// those fields must check this first instead of crashing on undefined.
+function isDesignSchema(schema) {
+  return !!schema && schema.kind === 'design';
+}
+
 function emptySchemaDraft() {
   return { params: [{ name: '', type: 'int', order: 0 }], return_type: 'int' };
 }
@@ -204,7 +213,22 @@ const ProblemBankView = ({ onBack }) => {
 
   function startEditSchema(problem) {
     const panel = tcPanels[problem.id] || {};
-    updatePanel(problem.id, { editingSchema: true, schemaError: '', schemaDraft: schemaToDraft(panel.schema) });
+    if (isDesignSchema(panel.schema)) {
+      // No dedicated class_name/methods form yet — a raw JSON textarea, still
+      // validated server-side by the same param-schema endpoint, beats either
+      // building a whole second form UI right now or (worse) silently running
+      // this design schema through the function-shape params/return_type
+      // editor and corrupting it on save.
+      updatePanel(problem.id, {
+        editingSchema: true, schemaError: '',
+        schemaDraftIsDesign: true, schemaDraftText: JSON.stringify(panel.schema, null, 2),
+      });
+      return;
+    }
+    updatePanel(problem.id, {
+      editingSchema: true, schemaError: '',
+      schemaDraftIsDesign: false, schemaDraft: schemaToDraft(panel.schema),
+    });
   }
 
   function updateSchemaDraft(problemId, patch) {
@@ -235,15 +259,28 @@ const ProblemBankView = ({ onBack }) => {
 
   async function saveSchema(problem) {
     const panel = tcPanels[problem.id] || {};
-    const draft = panel.schemaDraft;
-    if (!draft.params.length || draft.params.some((p) => !p.name.trim())) {
-      updatePanel(problem.id, { schemaError: 'Every parameter needs a name.' });
-      return;
+
+    let param_schema;
+    if (panel.schemaDraftIsDesign) {
+      try {
+        param_schema = JSON.parse(panel.schemaDraftText);
+      } catch {
+        updatePanel(problem.id, { schemaError: 'Not valid JSON.' });
+        return;
+      }
+    } else {
+      const draft = panel.schemaDraft;
+      if (!draft.params.length || draft.params.some((p) => !p.name.trim())) {
+        updatePanel(problem.id, { schemaError: 'Every parameter needs a name.' });
+        return;
+      }
+      param_schema = draftToSchema(draft);
     }
+
     updatePanel(problem.id, { savingSchema: true, schemaError: '' });
     try {
       const res = await apiFetch(`/api/admin/v2/problem-bank/${problem.id}/param-schema/`, 'PUT', {
-        param_schema: draftToSchema(draft),
+        param_schema,
       });
       const data = await res.json();
       if (!res.ok) {
@@ -710,7 +747,11 @@ const ProblemBankView = ({ onBack }) => {
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                                     <Settings2 size={14} style={{ color: panel.schema ? '#166534' : '#94a3b8' }} />
                                     <span style={{ fontSize: 12, fontWeight: 700, color: panel.schema ? '#166534' : 'var(--text-soft)' }}>
-                                      {panel.schema ? `Typed schema: ${panel.schema.params.length} param(s) → ${panel.schema.return_type}` : 'No typed schema — using auto-detected execution.'}
+                                      {!panel.schema
+                                        ? 'No typed schema — using auto-detected execution.'
+                                        : isDesignSchema(panel.schema)
+                                        ? `Design schema: ${panel.schema.class_name} (${Object.keys(panel.schema.methods || {}).length} method(s))`
+                                        : `Typed schema: ${panel.schema.params.length} param(s) → ${panel.schema.return_type}`}
                                     </span>
                                     <button
                                       onClick={() => startEditSchema(p)}
@@ -727,6 +768,34 @@ const ProblemBankView = ({ onBack }) => {
                                         Clear
                                       </button>
                                     )}
+                                  </div>
+                                ) : panel.schemaDraftIsDesign ? (
+                                  <div>
+                                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, color: 'var(--olive-900)' }}>
+                                      Design schema (raw JSON) — {'{'}"kind":"design","class_name":...,"methods":{'{'}...{'}'}{'}'}
+                                    </div>
+                                    <textarea
+                                      value={panel.schemaDraftText}
+                                      onChange={(e) => updatePanel(p.id, { schemaDraftText: e.target.value })}
+                                      rows={10}
+                                      style={{ width: '100%', boxSizing: 'border-box', padding: 8, borderRadius: 6, border: '1px solid var(--border-soft)', fontFamily: 'monospace', fontSize: 12, marginBottom: 10 }}
+                                    />
+                                    {panel.schemaError && <div style={{ color: '#dc2626', fontSize: 12, marginBottom: 8 }}>{panel.schemaError}</div>}
+                                    <div style={{ display: 'flex', gap: 8 }}>
+                                      <button
+                                        onClick={() => saveSchema(p)}
+                                        disabled={panel.savingSchema}
+                                        style={{ padding: '6px 14px', borderRadius: 8, border: 'none', background: 'var(--olive-900)', color: 'white', fontWeight: 700, fontSize: 12, cursor: panel.savingSchema ? 'not-allowed' : 'pointer' }}
+                                      >
+                                        {panel.savingSchema ? 'Saving…' : 'Save schema'}
+                                      </button>
+                                      <button
+                                        onClick={() => updatePanel(p.id, { editingSchema: false, schemaError: '' })}
+                                        style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
                                   </div>
                                 ) : (
                                   <div>
@@ -797,7 +866,7 @@ const ProblemBankView = ({ onBack }) => {
 
                               {(panel.testCases || []).length === 0 ? (
                                 <div style={{ fontSize: 12, color: 'var(--text-soft)', marginBottom: 12 }}>No test cases yet.</div>
-                              ) : panel.schema ? (
+                              ) : (panel.schema && !isDesignSchema(panel.schema)) ? (
                                 <table style={{ width: '100%', fontSize: 12, marginBottom: 16, background: 'white', borderRadius: 10, overflow: 'hidden' }}>
                                   <thead>
                                     <tr style={{ background: '#f1f5f9' }}>
@@ -856,7 +925,14 @@ const ProblemBankView = ({ onBack }) => {
                               )}
 
                               <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8, color: 'var(--olive-900)' }}>Add a test case manually</div>
-                              {panel.schema ? (
+                              {isDesignSchema(panel.schema) && (
+                                <div style={{ fontSize: 11, color: 'var(--text-soft)', marginBottom: 8 }}>
+                                  Design-schema test cases (operations/arguments sequences) aren't authorable from
+                                  this form yet — use the stdin field below with a raw <code>[operations,arguments]</code> JSON
+                                  array, e.g. <code>{'[["Vector2D","next","hasNext"],[[[[1,2],[3,4]]],[],[]]]'}</code>.
+                                </div>
+                              )}
+                              {(panel.schema && !isDesignSchema(panel.schema)) ? (
                                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
                                   {panel.schema.params.map((param) => (
                                     isArrayType(param.type) ? (

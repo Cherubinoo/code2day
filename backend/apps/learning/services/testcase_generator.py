@@ -464,7 +464,7 @@ def generate_explanation(*, title, description, examples=None, difficulty=None):
     return explanation
 
 
-PARAM_SCHEMA_PROMPT_TEMPLATE = """You are inferring a structured function signature for an online judge, given a problem statement.
+PARAM_SCHEMA_PROMPT_TEMPLATE = """You are inferring a structured execution schema for an online judge, given a problem statement.
 
 Title: {title}
 
@@ -472,25 +472,52 @@ Description:
 {description}
 {examples_block}
 
-Respond with ONLY a JSON object of this exact shape, nothing else:
-{{"params": [{{"name": "paramName", "type": "int", "order": 0}}, ...], "return_type": "int"}}
+First decide which shape this problem is:
 
-Rules:
-- "type" and "return_type" must each be one of: int, float, double, string, boolean, or one of those
-  with "[]" (1D array) or "[][]" (2D array) appended — nothing else (no objects, no other type names).
+(a) FUNCTION — the student writes one function/method that takes some arguments
+    and returns a single value (e.g. "Two Sum", "Reverse a Linked List", "Valid
+    Parentheses"). This is the common case.
+(b) DESIGN / CLASS — the problem statement describes a CLASS with a constructor
+    and several named methods that get called one after another, sharing state
+    between calls (e.g. "Design a Vector2D iterator with next()/hasNext()",
+    "Implement LRU Cache with get()/put()", "Design a Stack using Queues").
+    Recognize this from language like "design a ...", "implement a class ...",
+    or a statement that explicitly lists multiple method names to implement.
+
+For a FUNCTION problem, respond with ONLY a JSON object of this exact shape:
+{{"kind": "function", "params": [{{"name": "paramName", "type": "int", "order": 0}}, ...], "return_type": "int"}}
 - "order" values must be 0..N-1 matching each parameter's position in the function's argument list.
 - Pick param names that match the problem's natural variable names (e.g. "nums", "target").
 - Do not include a "self" or "this" parameter.
+
+For a DESIGN/CLASS problem, respond with ONLY a JSON object of this exact shape:
+{{"kind": "design", "class_name": "ClassName", "methods": {{"ClassName": {{"params": ["int[][]"], "return_type": "void"}}, "next": {{"params": [], "return_type": "int"}}, "hasNext": {{"params": [], "return_type": "boolean"}}}}}}
+- "class_name" is the exact class name the student must define, matching the problem statement.
+- "methods" must have one entry per constructor/method, keyed by name. Include an entry keyed by
+  the exact class_name itself for the constructor (its "return_type" is "void").
+- Each method's "params" is a plain list of types in declaration order (no names, no "order" field —
+  unlike the FUNCTION shape above).
+- A method that returns nothing uses "return_type": "void" (only valid for methods, never as a param type).
+
+Type vocabulary for every "type"/"return_type"/params entry, in BOTH shapes above:
+int, float, double, string, boolean, or one of those with "[]" (1D array) or "[][]" (2D array)
+appended — nothing else (no objects, no other type names).
+
+Rules:
+- Respond with ONLY the JSON object, no markdown fences, no commentary.
 """
 
 
 def generate_param_schema(*, title, description, examples=None):
-    """Returns a validated {"params": [...], "return_type": ...} dict inferred
-    by an LLM from the problem statement — the same structured schema a
-    staff member could hand-author in the Problem Bank's schema editor (see
-    services/param_types.py for the type vocabulary and validation rules).
-    Raises a TestCaseGenError subclass if every active provider fails, or if
-    every provider's response fails schema validation."""
+    """Returns a validated schema inferred by an LLM from the problem
+    statement — either the FUNCTION shape ({"kind":"function","params":[...],
+    "return_type":...}) or, for a class/design-style problem, the DESIGN
+    shape ({"kind":"design","class_name":...,"methods":{...}}) — the same
+    structured schema a staff member could hand-author in the Problem Bank's
+    schema editor (see services/param_types.py for the type vocabulary and
+    validation rules for both shapes). Raises a TestCaseGenError subclass if
+    every active provider fails, or if every provider's response fails
+    schema validation."""
     if examples:
         blocks = [f"Example input:\n{ex.get('input', '')}\nExample output:\n{ex.get('output', '')}" for ex in examples]
         examples_block = "\nExamples:\n\n" + "\n\n".join(blocks)
@@ -508,7 +535,7 @@ def _parse_and_validate_schema(content):
     from . import param_types
 
     parsed = _extract_json(content)
-    errors = param_types.validate_param_schema(parsed)
+    errors = param_types.validate_schema(parsed)
     if errors:
         raise TestCaseGenServiceError(f"LLM produced an invalid schema ({'; '.join(errors)}): {content[:300]!r}")
     return parsed

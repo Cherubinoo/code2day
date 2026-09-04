@@ -3086,17 +3086,26 @@ _JAVA_DESIGN_SCALAR_CONVERTERS = {
 _JAVA_DESIGN_LIST_CONVERTERS = {
     "int": "toIntList", "double": "toDoubleList", "boolean": "toBoolList", "string": "toStringList",
 }
+_JAVA_DESIGN_MATRIX_CONVERTERS = {
+    "int": "toIntMatrix", "double": "toDoubleMatrix", "boolean": "toBoolMatrix", "string": "toStringMatrix",
+}
 
 
 def _java_design_arg_expr(ptype: str, idx: int) -> str:
-    """Scalars and 1D arrays (as List<T> — the real LeetCode convention for
-    Design/OOP problem constructors/methods, e.g. ZigzagIterator(List<Integer>
-    v1, List<Integer> v2), not a raw Java array). 2D arrays aren't needed by
-    any Design/OOP problem yet and raise KeyError (caught by the caller as a
-    clear "can't build this driver" signal) rather than silently emitting a
-    broken conversion."""
+    """Scalars, 1D arrays (as List<T> — the real LeetCode convention for a
+    Design/OOP problem's flat list-shaped params, e.g. ZigzagIterator(
+    List<Integer> v1, List<Integer> v2)), and 2D arrays (as a raw T[][] —
+    LeetCode's own convention diverges here: matrix-shaped constructor args
+    like Vector2D(int[][] vec) use a native 2D array, not
+    List<List<Integer>>). No "float" entry in the list/matrix converter
+    maps (float arrays aren't needed by any design problem yet) — that
+    raises KeyError, caught by the caller as a clear "can't build this
+    driver" signal, same as any other genuinely unsupported type, rather
+    than silently emitting a broken conversion."""
     dims = param_types.array_dimensions(ptype)
     base = param_types.base_scalar_type(ptype)
+    if dims == 2:
+        return f"{_JAVA_DESIGN_MATRIX_CONVERTERS[base]}(argsFor.get({idx}))"
     if dims == 1:
         return f"{_JAVA_DESIGN_LIST_CONVERTERS[base]}(argsFor.get({idx}))"
     if ptype == "float":
@@ -3127,7 +3136,6 @@ def _build_java_design_wrapper(source_code: str, schema: dict) -> str:
 
     return r'''
 import java.io.*;
-import java.lang.reflect.*;
 import java.util.*;
 
 class TreeNode { int val; TreeNode left, right; TreeNode() {} TreeNode(int v) { val = v; } }
@@ -3152,37 +3160,9 @@ public class Main {
         for (int __i = 0; __i < operations.size(); __i++) {
             String op = (String) operations.get(__i);
             List<Object> argsFor = (List<Object>) arguments.get(__i);
-                default:
-                    Class<?> __targetClass = (obj != null) ? obj.getClass() : Class.forName("__CLASS_NAME__");
-                    if (op.equals(class_name) || op.equals(__targetClass.getSimpleName())) {
-                        Constructor<?>[] ctors = __targetClass.getDeclaredConstructors();
-                        Constructor<?> chosenCtor = ctors[0];
-                        chosenCtor.setAccessible(true);
-                        Object[] ctorArgs = convertReflectionArgs(argsFor, chosenCtor.getParameterTypes());
-                        obj = chosenCtor.newInstance(ctorArgs);
-                        results.add(null);
-                    } else {
-                        Method __targetMethod = null;
-                        for (Method m : __targetClass.getDeclaredMethods()) {
-                            if (m.getName().equals(op)) {
-                                __targetMethod = m;
-                                break;
-                            }
-                        }
-                        if (__targetMethod != null) {
-                            __targetMethod.setAccessible(true);
-                            Object[] methodArgs = convertReflectionArgs(argsFor, __targetMethod.getParameterTypes());
-                            Object res = __targetMethod.invoke(obj, methodArgs);
-                            if (__targetMethod.getReturnType().equals(void.class)) {
-                                results.add(null);
-                            } else {
-                                results.add(res);
-                            }
-                        } else {
-                            throw new RuntimeException("Unknown operation: " + op);
-                        }
-                    }
-                    break;
+            switch (op) {
+''' + switch_body + r'''
+                default: throw new RuntimeException("Unknown operation: " + op);
             }
         }
 
@@ -3231,22 +3211,48 @@ public class Main {
     static List<Integer> toIntList(Object v) { List<Integer> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toInt(o)); return out; }
     static List<Double> toDoubleList(Object v) { List<Double> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toDouble(o)); return out; }
     static List<Boolean> toBoolList(Object v) { List<Boolean> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toBool(o)); return out; }
-    static Object[] convertReflectionArgs(List<Object> rawArgs, Class<?>[] paramTypes) {
-        Object[] res = new Object[paramTypes.length];
-        for (int i = 0; i < paramTypes.length; i++) {
-            res[i] = convertOne(i < rawArgs.size() ? rawArgs.get(i) : null, paramTypes[i]);
+    static List<String> toStringList(Object v) { List<String> out = new ArrayList<>(); for (Object o : asList(v)) out.add(toStringValue(o)); return out; }
+    // Matrix-shaped constructor/method args (Vector2D(int[][] vec), etc.) —
+    // a native 2D array, matching LeetCode's own convention for these,
+    // unlike the flat List<T> convention used for 1D args above.
+    static int[][] toIntMatrix(Object v) {
+        List<Object> rows = asList(v);
+        int[][] out = new int[rows.size()][];
+        for (int i = 0; i < rows.size(); i++) {
+            List<Integer> r = toIntList(rows.get(i));
+            out[i] = new int[r.size()];
+            for (int j = 0; j < r.size(); j++) out[i][j] = r.get(j);
         }
-        return res;
+        return out;
     }
-
-    static Object convertOne(Object val, Class<?> type) {
-        if (val == null) return null;
-        if (type.equals(int.class) || type.equals(Integer.class)) return toInt(val);
-        if (type.equals(double.class) || type.equals(Double.class)) return toDouble(val);
-        if (type.equals(boolean.class) || type.equals(Boolean.class)) return toBool(val);
-        if (type.equals(String.class)) return toStringValue(val);
-        if (List.class.isAssignableFrom(type)) return asList(val);
-        return val;
+    static double[][] toDoubleMatrix(Object v) {
+        List<Object> rows = asList(v);
+        double[][] out = new double[rows.size()][];
+        for (int i = 0; i < rows.size(); i++) {
+            List<Double> r = toDoubleList(rows.get(i));
+            out[i] = new double[r.size()];
+            for (int j = 0; j < r.size(); j++) out[i][j] = r.get(j);
+        }
+        return out;
+    }
+    static boolean[][] toBoolMatrix(Object v) {
+        List<Object> rows = asList(v);
+        boolean[][] out = new boolean[rows.size()][];
+        for (int i = 0; i < rows.size(); i++) {
+            List<Boolean> r = toBoolList(rows.get(i));
+            out[i] = new boolean[r.size()];
+            for (int j = 0; j < r.size(); j++) out[i][j] = r.get(j);
+        }
+        return out;
+    }
+    static String[][] toStringMatrix(Object v) {
+        List<Object> rows = asList(v);
+        String[][] out = new String[rows.size()][];
+        for (int i = 0; i < rows.size(); i++) {
+            List<String> r = toStringList(rows.get(i));
+            out[i] = r.toArray(new String[0]);
+        }
+        return out;
     }
 
     static String serialize(Object obj) {
@@ -3258,6 +3264,147 @@ public class Main {
     }
 }
 '''
+
+
+_CPP_DESIGN_HELPERS = r"""
+static vector<double> __c2d_vec_double(const J& j) { vector<double> v; for (auto& x : j.aval) v.push_back(x.asDouble()); return v; }
+static vector<bool>   __c2d_vec_bool(const J& j)   { vector<bool> v; for (auto& x : j.aval) v.push_back(x.asBool()); return v; }
+static vector<string> __c2d_vec_string(const J& j) { vector<string> v; for (auto& x : j.aval) v.push_back(x.asStr()); return v; }
+static vector<vector<int>>    __c2d_vec_vec_int(const J& j)    { vector<vector<int>> v; for (auto& x : j.aval) v.push_back(x.asVecInt()); return v; }
+static vector<vector<double>> __c2d_vec_vec_double(const J& j) { vector<vector<double>> v; for (auto& x : j.aval) v.push_back(__c2d_vec_double(x)); return v; }
+static vector<vector<bool>>   __c2d_vec_vec_bool(const J& j)   { vector<vector<bool>> v; for (auto& x : j.aval) v.push_back(__c2d_vec_bool(x)); return v; }
+static vector<vector<string>> __c2d_vec_vec_string(const J& j) { vector<vector<string>> v; for (auto& x : j.aval) v.push_back(__c2d_vec_string(x)); return v; }
+
+static string __c2d_json_escape(const string& s) {
+    string out;
+    for (char c : s) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out;
+}
+
+// Minimal serializer for the design-problem output array — scoped to the
+// param_types.py vocabulary (int/float/double/string/boolean + 1D/2D arrays),
+// not the full LeetCode structural-type serializer the function-style
+// wrapper needs (TreeNode/graphs/etc. aren't valid design method types).
+static string serialize(long long v)     { return to_string(v); }
+static string serialize(int v)           { return to_string(v); }
+static string serialize(double v)        { ostringstream s; s << v; return s.str(); }
+static string serialize(bool v)          { return v ? "true" : "false"; }
+static string serialize(const string& v) { return "\"" + __c2d_json_escape(v) + "\""; }
+template<class T>
+static string serialize(const vector<T>& v) {
+    string s = "[";
+    for (size_t i = 0; i < v.size(); i++) { if (i) s += ","; s += serialize(v[i]); }
+    return s + "]";
+}
+"""
+
+# Only "int" gets a distinct 1D accessor (J::asVecInt already exists on the
+# shared parser) — the rest go through the __c2d_vec_* helpers above. No
+# "float" entry, deliberately: matches _JAVA_DESIGN_LIST_CONVERTERS's scope
+# limit (float arrays aren't needed by any design problem yet); a schema
+# that declares one raises KeyError here, caught by the caller the same way
+# an unbuildable Java driver already is.
+_CPP_DESIGN_SCALAR_ACCESSOR = {"int": "asInt", "float": "asDouble", "double": "asDouble", "boolean": "asBool", "string": "asStr"}
+_CPP_DESIGN_VEC1_FN = {"double": "__c2d_vec_double", "boolean": "__c2d_vec_bool", "string": "__c2d_vec_string"}
+_CPP_DESIGN_VEC2_FN = {"int": "__c2d_vec_vec_int", "double": "__c2d_vec_vec_double", "boolean": "__c2d_vec_vec_bool", "string": "__c2d_vec_vec_string"}
+
+
+def _cpp_design_arg_expr(ptype: str, idx: int) -> str:
+    base = param_types.base_scalar_type(ptype)
+    dims = param_types.array_dimensions(ptype)
+    src = f"argsFor[{idx}]"
+    if dims == 0:
+        expr = f"{src}.{_CPP_DESIGN_SCALAR_ACCESSOR[base]}()"
+    elif dims == 1:
+        expr = f"{src}.asVecInt()" if base == "int" else f"{_CPP_DESIGN_VEC1_FN[base]}({src})"
+    else:
+        expr = f"{_CPP_DESIGN_VEC2_FN[base]}({src})"
+    return f"(float)({expr})" if ptype == "float" else expr
+
+
+def _build_cpp_design_wrapper(source_code: str, schema: dict) -> str:
+    """Design/OOP driver for C++ — instantiates the student's class once and
+    replays the operations/arguments sequence against it, LeetCode-style
+    (Vector2D, LRUCache, ZigzagIterator, ...). Mirrors
+    _build_python_design_wrapper/_build_java_design_wrapper's wire format
+    ([operations, arguments] JSON array on stdin, a JSON array of per-op
+    results on stdout) but dispatches via an if/else-if chain on the
+    operation name since C++ has no string switch. May raise KeyError for a
+    param type outside the design vocabulary this builder covers (e.g. a
+    float array) — the caller (_prepare_design_execution_payload) already
+    catches that and falls back to a clean compile-time #error instead of
+    emitting broken C++."""
+    class_name = schema.get("class_name")
+    methods = schema.get("methods", {})
+
+    dispatch = []
+    for name, spec in methods.items():
+        params = spec.get("params", [])
+        return_type = spec.get("return_type", "void")
+        # Bind each converted argument to a named local first, then pass the
+        # locals by name — never a temporary directly. The student's method
+        # may take e.g. `vector<vector<int>>& vec` (a non-const reference,
+        # the actual LeetCode Vector2D signature); a temporary rvalue like
+        # __c2d_vec_vec_int(argsFor[0]) can't bind to that, but a named
+        # local variable is an lvalue and binds fine regardless of whether
+        # the student declared the parameter by value, by const ref, or by
+        # non-const ref.
+        arg_names = [f"__a{i}" for i in range(len(params))]
+        binds = "".join(
+            f" auto {arg_names[i]} = {_cpp_design_arg_expr(t, i)};"
+            for i, t in enumerate(params)
+        )
+        call_args = ", ".join(arg_names)
+        if name == class_name:
+            body = f'obj = new {class_name}({call_args}); results.push_back("null");'
+        elif return_type == "void":
+            body = f'obj->{name}({call_args}); results.push_back("null");'
+        else:
+            body = f'results.push_back(serialize(obj->{name}({call_args})));'
+        keyword = "if" if not dispatch else "else if"
+        dispatch.append(f'        {keyword} (op == {json.dumps(name)}) {{{binds} {body} }}')
+    dispatch_code = "\n".join(dispatch)
+
+    return r"""
+#include <bits/stdc++.h>
+using namespace std;
+
+struct TreeNode { int val; TreeNode *left; TreeNode *right; TreeNode(int x=0): val(x), left(nullptr), right(nullptr) {} };
+struct ListNode { int val; ListNode *next; ListNode(int x=0): val(x), next(nullptr) {} };
+
+""" + _CPP_JSON_PARSER + _CPP_DESIGN_HELPERS + r"""
+
+// ── Solution code ───────────────────────────────────────────────────────────
+""" + source_code + r"""
+
+// ── Driver ───────────────────────────────────────────────────────────────────
+int main() {
+    ios_base::sync_with_stdio(false);
+    cin.tie(NULL);
+    string __c2d_all_input((istreambuf_iterator<char>(cin)), istreambuf_iterator<char>());
+    vector<J> __c2d_top = parse_json_args(__c2d_all_input);   // stdin is [operations, arguments]
+    const J& __c2d_ops = __c2d_top[0];
+    const J& __c2d_args = __c2d_top[1];
+
+    """ + class_name + r"""* obj = nullptr;
+    vector<string> results;
+    for (size_t __i = 0; __i < __c2d_ops.aval.size(); __i++) {
+        string op = __c2d_ops.aval[__i].asStr();
+        vector<J> argsFor = __c2d_args.aval[__i].aval;
+""" + dispatch_code + r"""
+        else { throw runtime_error("Unknown operation: " + op); }
+    }
+
+    string out = "[";
+    for (size_t i = 0; i < results.size(); i++) { if (i) out += ","; out += results[i]; }
+    out += "]";
+    cout << out << "\n";
+    return 0;
+}
+"""
 
 
 def _build_go_wrapper(source_code: str, candidates: list[str]) -> str:
@@ -4242,6 +4389,8 @@ def _prepare_typed_execution_payload(
 _DESIGN_ADAPTERS = {
     "Python": _build_python_design_wrapper,
     "Java": _build_java_design_wrapper,
+    "C++": _build_cpp_design_wrapper,
+    "CPP": _build_cpp_design_wrapper,
 }
 
 
