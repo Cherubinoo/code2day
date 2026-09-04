@@ -89,6 +89,7 @@ from .models import (
     InterviewTrack,
     InterviewTopic,
     InterviewFolder,
+    InterviewFolderMedia,
     InterviewQuestion,
 )
 from .db_manager import create_institution_db, delete_institution_db
@@ -2819,7 +2820,9 @@ class InterviewTrackView(UnifiedAuthMixin, APIView):
         track = InterviewTrack.objects.filter(key=track_key).prefetch_related(
             'topics__questions',
             'topics__folders__questions',
+            'topics__folders__media_items',
             'topics__folders__subfolders__questions',
+            'topics__folders__subfolders__media_items',
         ).first()
 
         if track:
@@ -3688,11 +3691,23 @@ def _serialize_interview_question(q):
     }
 
 
+def _serialize_interview_folder_media(m):
+    return {
+        "id": m.id,
+        "title": m.title or m.file.name.rsplit('/', 1)[-1],
+        "url": f"/api/interview-media/{m.id}/",
+        "content_type": m.content_type,
+        "kind": _media_kind(m.content_type),
+        "order": m.order,
+    }
+
+
 def _serialize_interview_folder(folder):
     return {
         "id": folder.id,
         "title": folder.title,
         "questions": [_serialize_interview_question(q) for q in folder.questions.all()],
+        "media": [_serialize_interview_folder_media(m) for m in folder.media_items.all()],
         "subfolders": [_serialize_interview_folder(f) for f in folder.subfolders.all()],
     }
 
@@ -3791,7 +3806,9 @@ class AdminInterviewTrackTreeView(APIView):
             InterviewTrack.objects.prefetch_related(
                 'topics__questions',
                 'topics__folders__questions',
+                'topics__folders__media_items',
                 'topics__folders__subfolders__questions',
+                'topics__folders__subfolders__media_items',
             ),
             id=track_id,
         )
@@ -3884,6 +3901,89 @@ class AdminInterviewFolderDetailView(APIView):
         folder = get_object_or_404(InterviewFolder, id=folder_id)
         folder.delete()
         return Response({"message": "Folder deleted"})
+
+
+class AdminInterviewFolderMediaView(APIView):
+    """System Admin: list/upload real media files (images, PDFs, videos)
+    attached to one Interview folder — same idea as
+    AdminSyllabusFolderMediaView for Competitive Bank's folders."""
+    permission_classes = [IsAuthenticated]
+
+    ALLOWED_CONTENT_TYPES = {
+        'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/heic', 'image/heif',
+        'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska', 'video/3gpp', 'video/x-m4v',
+        'application/pdf',
+    }
+    MAX_UPLOAD_BYTES = 25 * 1024 * 1024        # 25MB — images, PDFs
+    MAX_VIDEO_UPLOAD_BYTES = 200 * 1024 * 1024  # 200MB — a several-minute explainer clip
+
+    def get(self, request, folder_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        folder = get_object_or_404(InterviewFolder, id=folder_id)
+        return Response([_serialize_interview_folder_media(m) for m in folder.media_items.all()])
+
+    def post(self, request, folder_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        folder = get_object_or_404(InterviewFolder, id=folder_id)
+
+        uploaded = request.FILES.get('file')
+        if not uploaded:
+            return Response({"error": "No file provided."}, status=400)
+        if uploaded.content_type not in self.ALLOWED_CONTENT_TYPES:
+            return Response({"error": f"Unsupported file type: {uploaded.content_type}."}, status=400)
+        is_video = uploaded.content_type.startswith('video/')
+        limit = self.MAX_VIDEO_UPLOAD_BYTES if is_video else self.MAX_UPLOAD_BYTES
+        if uploaded.size > limit:
+            return Response({"error": f"File too large. Maximum size is {limit // (1024 * 1024)}MB."}, status=400)
+
+        media = InterviewFolderMedia.objects.create(
+            folder=folder,
+            file=uploaded,
+            title=(request.data.get('title') or '').strip(),
+            content_type=uploaded.content_type,
+            order=folder.media_items.count(),
+        )
+        return Response(_serialize_interview_folder_media(media), status=201)
+
+
+class AdminInterviewFolderMediaDetailView(APIView):
+    """System Admin: rename or delete one uploaded Interview folder media
+    file. Delete also removes it from disk, not just the database row."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, media_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        media = get_object_or_404(InterviewFolderMedia, id=media_id)
+        if 'title' in request.data:
+            title = (request.data.get('title') or '').strip()
+            if not title:
+                return Response({"error": "title cannot be empty."}, status=400)
+            media.title = title
+            media.save(update_fields=['title'])
+        return Response(_serialize_interview_folder_media(media))
+
+    def delete(self, request, media_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        media = get_object_or_404(InterviewFolderMedia, id=media_id)
+        media.file.delete(save=False)
+        media.delete()
+        return Response({"message": "Media deleted"})
+
+
+def interview_folder_media_proxy(request, media_id):
+    """Serve one Interview folder-media file's bytes through the /api/
+    proxy path — same reasoning as syllabus_folder_media_proxy: production
+    has no /media/ passthrough, and this is student-visible course
+    material rendered as a plain <img>/<video> src, not sensitive."""
+    media = get_object_or_404(InterviewFolderMedia, id=media_id)
+    content_type = media.content_type or mimetypes.guess_type(media.file.name)[0] or "application/octet-stream"
+    response = FileResponse(media.file.open("rb"), content_type=content_type)
+    response["Cache-Control"] = "public, max-age=86400"
+    return response
 
 
 INTERVIEW_QUESTION_FIELDS = (
@@ -13595,12 +13695,15 @@ class DepartmentManagementView(APIView):
         institution = get_object_or_404(Institution, pk=inst_pk)
         name = request.data.get('name')
         code = request.data.get('code')
-        
+        interview_track = (request.data.get('interview_track') or '').strip()
+
         if Department.objects.filter(code=code).exists():
             return Response({"error": "Code already exists"}, status=400)
-            
-        dept = Department.objects.create(institution=institution, name=name, code=code)
-        return Response({"message": "Department added", "id": dept.id})
+
+        # Leaving interview_track blank keeps today's behavior — Department.save()
+        # auto-fills it via default_interview_track() when empty at save time.
+        dept = Department.objects.create(institution=institution, name=name, code=code, interview_track=interview_track)
+        return Response({"message": "Department added", "id": dept.id, "interview_track": dept.interview_track})
 
     def delete(self, request, inst_pk, pk):
         dept = get_object_or_404(Department, pk=pk, institution_id=inst_pk)

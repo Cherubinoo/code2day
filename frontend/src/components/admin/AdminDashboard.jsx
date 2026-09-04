@@ -66,7 +66,8 @@ const AdminDashboard = () => {
   const [newInstitution, setNewInstitution] = useState({ institution_id: '', name: '', short_code: '', address: '', contact_email: '', contact_phone: '' });
   const [editingContactId, setEditingContactId] = useState(null);
   const [contactDraft, setContactDraft] = useState({ name: '', email: '', mobile_number: '' });
-  const [newDept, setNewDept] = useState({ name: '', code: '' });
+  const [newDept, setNewDept] = useState({ name: '', code: '', interview_track: '' });
+  const [interviewTracks, setInterviewTracks] = useState([]);
   const [newStaff, setNewStaff] = useState({ faculty_id: '', name: '', email: '', mobile_number: '', role: 'staff', dept_id: '' });
   const [selectedDeptFilter, setSelectedDeptFilter] = useState('');
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('');
@@ -97,6 +98,7 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     fetchGlobalData();
+    api.get('/admin/v2/interview/tracks/').then((res) => setInterviewTracks(res.data)).catch(() => {});
   }, []);
 
   const fetchGlobalData = async () => {
@@ -348,7 +350,7 @@ const AdminDashboard = () => {
     if (!newDept.name || !newDept.code) return;
     try {
       await api.post(`/admin/v2/institutions/${selectedInstitution.id}/departments/`, newDept);
-      setNewDept({ name: '', code: '' });
+      setNewDept({ name: '', code: '', interview_track: '' });
       fetchInstitutionHub(selectedInstitution);
     } catch (err) {
       alert("Failed to add department");
@@ -1649,14 +1651,20 @@ const AdminDashboard = () => {
                         <div style={{ display: 'flex', gap: 12 }}>
                           <input placeholder="CODE" value={newDept.code} onChange={e => setNewDept({...newDept, code: e.target.value})} style={{ width: 80, padding: '14px', borderRadius: 14, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 700 }} />
                           <input placeholder="Name" value={newDept.name} onChange={e => setNewDept({...newDept, name: e.target.value})} style={{ width: 180, padding: '14px', borderRadius: 14, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 700 }} />
+                          <select
+                            value={newDept.interview_track}
+                            onChange={e => setNewDept({...newDept, interview_track: e.target.value})}
+                            title="Interview Practice track — leave on Auto to assign by department name"
+                            style={{ width: 200, padding: '14px', borderRadius: 14, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 700 }}
+                          >
+                            <option value="">Interview Track: Auto</option>
+                            {interviewTracks.map(t => (
+                              <option key={t.key} value={t.key}>{t.name}</option>
+                            ))}
+                          </select>
                           <button onClick={handleAddDept} className="primary-button" style={{ borderRadius: 14 }}>Add</button>
                         </div>
                       </div>
-                      <datalist id="interview-track-options">
-                        {[...new Set(hubData.departments.map(d => d.interview_track).filter(Boolean))].map(t => (
-                          <option key={t} value={t} />
-                        ))}
-                      </datalist>
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
                         {hubData.departments.map(d => (
                           <div key={d.id} style={{ padding: 24, background: 'var(--bg-2)', borderRadius: 24, border: '1px solid var(--border-soft)', display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1676,15 +1684,21 @@ const AdminDashboard = () => {
                               <label style={{ fontSize: '0.7rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
                                 Interview Track
                               </label>
-                              <input
-                                defaultValue={d.interview_track}
-                                list="interview-track-options"
-                                onBlur={(e) => {
-                                  const val = e.target.value.trim();
+                              <select
+                                value={d.interview_track}
+                                onChange={(e) => {
+                                  const val = e.target.value;
                                   if (val && val !== d.interview_track) updateDeptInterviewTrack(d.id, val);
                                 }}
                                 style={{ width: '100%', padding: '8px 12px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', fontWeight: 700, fontSize: '0.85rem' }}
-                              />
+                              >
+                                {!interviewTracks.some(t => t.key === d.interview_track) && (
+                                  <option value={d.interview_track} disabled>{d.interview_track || '(none)'} (legacy value)</option>
+                                )}
+                                {interviewTracks.map(t => (
+                                  <option key={t.key} value={t.key}>{t.name}</option>
+                                ))}
+                              </select>
                               <div style={{ fontSize: '0.72rem', color: 'var(--text-soft)', marginTop: 4 }}>
                                 Departments sharing the same track share one Interview Practice question bank.
                               </div>

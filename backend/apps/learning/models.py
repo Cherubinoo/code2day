@@ -1133,6 +1133,26 @@ class InterviewFolder(models.Model):
         return f"{self.topic} / {self.title}"
 
 
+class InterviewFolderMedia(models.Model):
+    """One uploaded media file (image/PDF/video/etc.) attached to an
+    InterviewFolder — same idea as SyllabusFolderMedia for Competitive
+    Bank's folders, served through a /api/ proxy (see
+    interview_folder_media_proxy) rather than raw MEDIA_URL."""
+    folder = models.ForeignKey(InterviewFolder, on_delete=models.CASCADE, related_name="media_items")
+    file = models.FileField(upload_to="interview_folder_media/")
+    title = models.CharField(max_length=255, blank=True, default="")
+    content_type = models.CharField(max_length=100, blank=True, default="")
+    order = models.PositiveIntegerField(default=0)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "interview_folder_media"
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.folder} / {self.title or self.file.name}"
+
+
 class InterviewQuestion(models.Model):
     """One interview-practice question — schema matches the admin's
     cybersecurity question-bank upload template (Question ID, Field/Topic/

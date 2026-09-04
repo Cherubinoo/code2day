@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Mic, Plus, Trash2, Upload, ChevronDown, ChevronRight, Loader2, Pencil, Check, X, Folder } from 'lucide-react';
+import { ArrowLeft, Mic, Plus, Trash2, Upload, ChevronDown, ChevronRight, Loader2, Pencil, Check, X, Folder, PlayCircle, FileText, File as FileIcon } from 'lucide-react';
 import api from '../../lib/api';
 
 function apiErrorMessage(err, fallback) {
@@ -176,8 +176,131 @@ function InterviewQuestionsManager({ topicId, folderId, questions, onAdd, onRemo
   );
 }
 
+function interviewMediaKindIcon(kind) {
+  if (kind === 'image') return null; // rendered as an actual thumbnail instead
+  if (kind === 'video') return <PlayCircle size={16} style={{ color: '#dc2626' }} />;
+  if (kind === 'pdf') return <FileText size={16} style={{ color: '#0891b2' }} />;
+  return <FileIcon size={16} style={{ color: 'var(--text-soft)' }} />;
+}
+
+// ── Real uploaded media (images/PDFs/videos) for one Interview folder —
+// same idea as CompetitiveBankView's FolderMediaManager, but operating on
+// the already-loaded tree (media prop + add/remove/update callbacks) like
+// every other mutation in this file, instead of its own query cache. ─────
+function InterviewFolderMediaManager({ folderId, media, onAdd, onRemove, onUpdate }) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // let the same file be picked again if the upload fails
+    if (!file) return;
+    setUploading(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post(`/admin/v2/interview/folders/${folderId}/media/`, formData);
+      onAdd(res.data);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Upload failed.'));
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeMedia = async (id) => {
+    if (!window.confirm('Delete this file?')) return;
+    try {
+      await api.delete(`/admin/v2/interview/folders/media/${id}/`);
+      onRemove(id);
+    } catch { /* leave the tile in place on failure */ }
+  };
+
+  const startEditMedia = (m) => { setEditingId(m.id); setEditTitle(m.title); };
+
+  const saveMediaTitle = async (id) => {
+    if (!editTitle.trim()) return;
+    try {
+      const res = await api.patch(`/admin/v2/interview/folders/media/${id}/`, { title: editTitle.trim() });
+      onUpdate(id, res.data);
+      setEditingId(null);
+    } catch (err) {
+      alert(apiErrorMessage(err, 'Failed to rename file.'));
+    }
+  };
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase' }}>
+          Media ({media.length})
+        </label>
+        <label style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: uploading ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          {uploading ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
+          {uploading ? 'Uploading…' : 'Upload File'}
+          <input type="file" onChange={handleUpload} disabled={uploading} accept="image/*,video/*,application/pdf" style={{ display: 'none' }} />
+        </label>
+      </div>
+      {error && <div style={{ fontSize: '0.75rem', color: '#dc2626', marginBottom: 8 }}>{error}</div>}
+      {media.length === 0 ? (
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No media uploaded yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {media.map((m) => (
+            <div key={m.id} style={{ position: 'relative', width: 84 }}>
+              <button onClick={() => removeMedia(m.id)} title="Delete" style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%', border: 'none', background: '#ef4444', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>
+                <X size={12} />
+              </button>
+              {editingId !== m.id && (
+                <button onClick={() => startEditMedia(m)} title="Rename" style={{ position: 'absolute', top: -6, left: -6, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'var(--olive-700)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>
+                  <Pencil size={10} />
+                </button>
+              )}
+              <a href={m.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', textDecoration: 'none' }}>
+                {m.kind === 'image' ? (
+                  <img src={m.url} alt={m.title} style={{ width: 84, height: 84, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border-soft)' }} />
+                ) : (
+                  <div style={{ width: 84, height: 84, borderRadius: 8, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {interviewMediaKindIcon(m.kind)}
+                  </div>
+                )}
+              </a>
+              {editingId === m.id ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 3 }} onClick={(e) => e.stopPropagation()}>
+                  <input
+                    autoFocus
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') saveMediaTitle(m.id); if (e.key === 'Escape') setEditingId(null); }}
+                    style={{ width: '100%', padding: '2px 4px', borderRadius: 4, border: '1px solid var(--border-soft)', fontSize: '0.65rem' }}
+                  />
+                  <div style={{ display: 'flex', gap: 3 }}>
+                    <button onClick={() => saveMediaTitle(m.id)} style={{ flex: 1, padding: '2px 0', borderRadius: 4, border: 'none', background: 'var(--olive-700)', color: 'white', fontSize: '0.6rem', cursor: 'pointer' }}>Save</button>
+                    <button onClick={() => setEditingId(null)} style={{ flex: 1, padding: '2px 0', borderRadius: 4, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.6rem', cursor: 'pointer' }}>×</button>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  onClick={() => startEditMedia(m)}
+                  title={`${m.title} (click to rename)`}
+                  style={{ fontSize: '0.68rem', color: 'var(--text-soft)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                >
+                  {m.title}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Recursive folder node — same nesting idea as Competitive Bank's
-// FolderNode, minus media/description (InterviewFolder has neither). ─────
+// FolderNode, now with media too. ─────────────────────────────────────────
 function InterviewFolderNode({ folder, topicId, onPatchTopic, depth = 0 }) {
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -248,7 +371,7 @@ function InterviewFolderNode({ folder, topicId, onPatchTopic, depth = 0 }) {
                 <Folder size={14} style={{ color: '#d97706' }} /> {folder.title}
               </div>
               <div style={{ fontSize: '0.72rem', color: 'var(--text-soft)' }}>
-                {questionCount} question{questionCount !== 1 ? 's' : ''} · {subfolders.length} subfolder{subfolders.length !== 1 ? 's' : ''}
+                {questionCount} question{questionCount !== 1 ? 's' : ''} · {(folder.media || []).length} media file{(folder.media || []).length !== 1 ? 's' : ''} · {subfolders.length} subfolder{subfolders.length !== 1 ? 's' : ''}
               </div>
             </div>
             <button onClick={() => setEditing(true)} title="Rename" style={{ background: 'none', border: 'none', color: 'var(--text-soft)', cursor: 'pointer', padding: 4 }}><Pencil size={14} /></button>
@@ -259,6 +382,13 @@ function InterviewFolderNode({ folder, topicId, onPatchTopic, depth = 0 }) {
       {expanded && (
         <div style={{ padding: '0 12px 14px', borderTop: '1px solid white' }}>
           <div style={{ paddingTop: 12 }}>
+            <InterviewFolderMediaManager
+              folderId={folder.id}
+              media={folder.media || []}
+              onAdd={(m) => onPatchTopic((t) => ({ ...t, folders: mapFolders(t.folders, folder.id, (f) => ({ ...f, media: [...(f.media || []), m] })) }))}
+              onRemove={(id) => onPatchTopic((t) => ({ ...t, folders: mapFolders(t.folders, folder.id, (f) => ({ ...f, media: (f.media || []).filter((m) => m.id !== id) })) }))}
+              onUpdate={(id, m) => onPatchTopic((t) => ({ ...t, folders: mapFolders(t.folders, folder.id, (f) => ({ ...f, media: (f.media || []).map((x) => x.id === id ? m : x) })) }))}
+            />
             <InterviewQuestionsManager
               topicId={topicId}
               folderId={folder.id}
@@ -401,16 +531,53 @@ export default function InterviewBankView({ onBack }) {
     patchTree((t) => ({ ...t, topics: t.topics.map((tp) => tp.id === topicId ? fn(tp) : tp) }));
   }
 
+  // Browser/mouse Back support for list <-> track <-> topic — without this,
+  // a Back press has no history entry of its own to land on and exits the
+  // whole admin panel instead of stepping back one level (same idea as
+  // CompetitiveBankView's exam-list <-> syllabus pushState, one level
+  // deeper here). The on-screen back buttons just call history.back() too,
+  // so popstate is the single place that actually updates state.
+  const pushedInitialHistoryRef = useRef(false);
+  useEffect(() => {
+    if (!pushedInitialHistoryRef.current) {
+      pushedInitialHistoryRef.current = true;
+      window.history.pushState({ interviewBank: 'list' }, '');
+    }
+  }, []);
+
+  useEffect(() => {
+    function handlePopState(e) {
+      const s = e.state;
+      if (!s || s.interviewBank === undefined) {
+        onBack();
+        return;
+      }
+      if (s.interviewBank === 'list') {
+        setSelectedTrackId(null);
+        setSelectedTopicId(null);
+        refetchTracks();
+      } else if (s.interviewBank === 'track') {
+        setSelectedTrackId(s.trackId);
+        setSelectedTopicId(null);
+      } else if (s.interviewBank === 'topic') {
+        setSelectedTrackId(s.trackId);
+        setSelectedTopicId(s.topicId);
+      }
+    }
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [onBack, refetchTracks]);
+
   const openTrack = (t) => {
+    window.history.pushState({ interviewBank: 'track', trackId: t.id }, '');
     setSelectedTrackId(t.id);
     setSelectedTopicId(null);
     setUploadResult(null);
     setUploadError('');
   };
-  const backToTracks = () => {
-    setSelectedTrackId(null);
-    setSelectedTopicId(null);
-    refetchTracks();
+  const openTopic = (topicId) => {
+    window.history.pushState({ interviewBank: 'topic', trackId: selectedTrackId, topicId }, '');
+    setSelectedTopicId(topicId);
   };
 
   const handleCreateTrack = async () => {
@@ -502,7 +669,7 @@ export default function InterviewBankView({ onBack }) {
     return (
       <div className="global-view animate-fade-in">
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24 }}>
-          <button onClick={() => setSelectedTopicId(null)} style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: 10, cursor: 'pointer', display: 'flex' }}>
+          <button onClick={() => window.history.back()} style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: 10, cursor: 'pointer', display: 'flex' }}>
             <ArrowLeft size={20} />
           </button>
           <div style={{ flex: 1 }}>
@@ -540,7 +707,7 @@ export default function InterviewBankView({ onBack }) {
     return (
       <div className="global-view animate-fade-in">
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 24, flexWrap: 'wrap' }}>
-          <button onClick={backToTracks} style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: 10, cursor: 'pointer', display: 'flex' }}>
+          <button onClick={() => window.history.back()} style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: 10, cursor: 'pointer', display: 'flex' }}>
             <ArrowLeft size={20} />
           </button>
           <div style={{ flex: 1 }}>
@@ -604,7 +771,7 @@ export default function InterviewBankView({ onBack }) {
             {track.topics.map((topic) => (
               <div key={topic.id} style={{ padding: 18, borderRadius: 18, border: '1px solid var(--border-soft)', background: 'white', display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
-                  <button onClick={() => setSelectedTopicId(topic.id)} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
+                  <button onClick={() => openTopic(topic.id)} style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}>
                     <div style={{ fontWeight: 800, color: 'var(--olive-900)', fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{topic.title}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-soft)', fontWeight: 700, marginTop: 4 }}>{topicTotalQuestions(topic)} question(s) · {(topic.folders || []).length} folder(s)</div>
                   </button>
@@ -612,7 +779,7 @@ export default function InterviewBankView({ onBack }) {
                     <Trash2 size={14} />
                   </button>
                 </div>
-                <button onClick={() => setSelectedTopicId(topic.id)} className="primary-button" style={{ borderRadius: 10, padding: '8px 14px', fontSize: '0.8rem' }}>
+                <button onClick={() => openTopic(topic.id)} className="primary-button" style={{ borderRadius: 10, padding: '8px 14px', fontSize: '0.8rem' }}>
                   Manage
                 </button>
               </div>
@@ -627,7 +794,7 @@ export default function InterviewBankView({ onBack }) {
   return (
     <div className="global-view animate-fade-in">
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 32, flexWrap: 'wrap' }}>
-        <button onClick={onBack} style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: 10, cursor: 'pointer', display: 'flex' }}>
+        <button onClick={() => window.history.back()} style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: 10, cursor: 'pointer', display: 'flex' }}>
           <ArrowLeft size={20} />
         </button>
         <div style={{ flex: 1 }}>
