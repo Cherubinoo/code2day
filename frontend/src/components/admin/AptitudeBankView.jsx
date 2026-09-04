@@ -1059,6 +1059,119 @@ function PassageList({ onSelect, onBack }) {
   );
 }
 
+// ── "AI Explanation Audit" — hit Run and it walks every aptitude question,
+// asking an LLM to check/rewrite the explanation, in a background thread on
+// the server (there can be 10,000+ questions). Polls for progress while
+// running; safe to navigate away and come back, or Resume after a restart. ──
+function ExplanationAuditPanel() {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function loadStatus() {
+    try {
+      const res = await apiFetch('/api/admin/v2/aptitude-bank/explanation-audit/', 'GET');
+      if (res.ok) setStatus(await res.json());
+    } catch { /* keep last known status on a transient network blip */ }
+  }
+
+  useEffect(() => {
+    loadStatus();
+    const interval = setInterval(() => {
+      setStatus((s) => {
+        if (s && s.status === 'running') loadStatus();
+        return s;
+      });
+    }, 3000);
+    return () => clearInterval(interval);
+  }, []);
+
+  async function doAction(action) {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await apiFetch('/api/admin/v2/aptitude-bank/explanation-audit/', 'POST', { action });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Action failed.');
+      } else {
+        await loadStatus();
+      }
+    } catch {
+      setError('Network error.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!status) return null;
+
+  const pct = status.total > 0 ? Math.min(100, Math.round((status.processed / status.total) * 100)) : 0;
+  const isRunning = status.status === 'running';
+  const canResume = status.status === 'stopped' && status.processed > 0 && status.processed < status.total;
+  const isCompleted = status.status === 'completed';
+
+  return (
+    <div style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 16, padding: '16px 20px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Sparkles size={18} color="var(--olive-700)" />
+          <div>
+            <div style={{ fontWeight: 800, color: 'var(--olive-900)', fontSize: 14 }}>AI Explanation Audit</div>
+            <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>
+              {isRunning
+                ? `Checking question ${status.processed}/${status.total} — ${status.corrected} corrected so far${status.failed ? `, ${status.failed} failed` : ''}`
+                : isCompleted
+                ? `Done — ${status.corrected} of ${status.total} explanations corrected${status.failed ? ` (${status.failed} failed)` : ''}`
+                : canResume
+                ? `Paused at ${status.processed}/${status.total} — ${status.corrected} corrected so far`
+                : 'Reviews every aptitude question and rewrites the explanation if it’s wrong or missing.'}
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {isRunning ? (
+            <button onClick={() => doAction('stop')} disabled={busy}
+              style={{ padding: '8px 16px', borderRadius: 10, border: 'none', background: '#fee2e2', color: '#dc2626', fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer' }}>
+              Stop
+            </button>
+          ) : canResume ? (
+            <>
+              <button onClick={() => doAction('start')} disabled={busy}
+                style={{ padding: '8px 16px', borderRadius: 10, border: 'none', background: 'var(--olive-700)', color: 'white', fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer' }}>
+                Resume
+              </button>
+              <button onClick={() => doAction('reset')} disabled={busy}
+                style={{ padding: '8px 16px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-soft)', fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer' }}>
+                Start Over
+              </button>
+            </>
+          ) : isCompleted ? (
+            <button onClick={() => doAction('reset').then(() => doAction('start'))} disabled={busy}
+              style={{ padding: '8px 16px', borderRadius: 10, border: 'none', background: 'var(--olive-700)', color: 'white', fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer' }}>
+              Run Again
+            </button>
+          ) : (
+            <button onClick={() => doAction('start')} disabled={busy}
+              style={{ padding: '8px 16px', borderRadius: 10, border: 'none', background: 'var(--olive-700)', color: 'white', fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer' }}>
+              {busy ? 'Starting…' : 'Run Audit'}
+            </button>
+          )}
+        </div>
+      </div>
+      {(isRunning || canResume || isCompleted) && (
+        <div style={{ marginTop: 12, height: 8, background: 'var(--bg-2)', borderRadius: 8, overflow: 'hidden' }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: isCompleted ? '#059669' : 'var(--olive-700)', borderRadius: 8, transition: 'width 0.4s ease' }} />
+        </div>
+      )}
+      {error && <div style={{ marginTop: 8, fontSize: 12, color: '#dc2626' }}>{error}</div>}
+      {status.last_error && !error && (
+        <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-soft)' }}>Last error: {status.last_error.slice(0, 200)}</div>
+      )}
+    </div>
+  );
+}
+
 export default function AptitudeBankView({ onBack }) {
   const [mode, setMode] = useState('topics'); // 'topics' | 'passages'
   const [selectedTopic, setSelectedTopic] = useState(null); // { id, label, kind? }
@@ -1078,6 +1191,7 @@ export default function AptitudeBankView({ onBack }) {
 
   return (
     <div>
+      <ExplanationAuditPanel />
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
         <button onClick={() => setMode('passages')}
           style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', fontWeight: 700, color: 'var(--olive-900)' }}>

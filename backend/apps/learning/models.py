@@ -596,6 +596,37 @@ class AptitudeQuestion(models.Model):
         return f"{parent} - {self.question_text[:50]}..."
 
 
+class AptitudeExplanationAuditRun(models.Model):
+    """Singleton (id=1) tracking the System Admin's "AI Explanation Audit"
+    job — walks every AptitudeQuestion in id order, asks an LLM to check
+    the stored explanation against the question/options/correct answer,
+    and rewrites it if wrong or missing. Runs in a background thread since
+    there can be 10,000+ questions; progress is persisted here so the
+    admin can navigate away, come back, or resume after a server restart
+    instead of losing the run."""
+    STATUS_CHOICES = (
+        ("idle", "Idle"),
+        ("running", "Running"),
+        ("stopped", "Stopped"),
+        ("completed", "Completed"),
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="idle")
+    last_question_id = models.IntegerField(default=0, help_text="Cursor — resume processing questions with id > this")
+    processed_count = models.IntegerField(default=0)
+    corrected_count = models.IntegerField(default=0)
+    failed_count = models.IntegerField(default=0)
+    stop_requested = models.BooleanField(default=False)
+    last_error = models.TextField(blank=True, default="")
+    started_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "aptitude_explanation_audit_runs"
+
+    def __str__(self):
+        return f"Explanation audit ({self.status}) — {self.processed_count} processed"
+
+
 class Achievement(models.Model):
     CATEGORY_CHOICES = [
         ('coding', 'Coding'),

@@ -51,6 +51,7 @@ from .models import (
     SystemUpdate,
     AptitudeTopic,
     AptitudeQuestion,
+    AptitudeExplanationAuditRun,
     ReadingPassage,
     Achievement,
     UserAchievement,
@@ -11588,6 +11589,122 @@ class AdminAptitudeQuestionValidateView(APIView):
             "changed_fields": changed_fields,
             "reason": result["reason"],
         })
+
+
+def _run_explanation_audit(run_id):
+    """Background-thread worker for AptitudeExplanationAuditRun — walks every
+    AptitudeQuestion (id > run.last_question_id) in id order, checks/rewrites
+    its explanation, and checkpoints progress every few questions so a
+    server restart or explicit Stop never loses more than a handful of
+    questions' worth of work."""
+    from django.db import close_old_connections
+    from .services.aptitude_validator import check_aptitude_explanation
+    from .services.testcase_generator import TestCaseGenError
+
+    run = AptitudeExplanationAuditRun.objects.get(id=run_id)
+    qs = AptitudeQuestion.objects.filter(id__gt=run.last_question_id).order_by('id').iterator(chunk_size=200)
+
+    for i, q in enumerate(qs):
+        run.refresh_from_db(fields=['stop_requested'])
+        if run.stop_requested:
+            run.status = 'stopped'
+            run.stop_requested = False
+            run.save(update_fields=['status', 'stop_requested', 'updated_at'])
+            return
+
+        try:
+            result = check_aptitude_explanation(
+                question_text=q.question_text, option_a=q.option_a, option_b=q.option_b,
+                option_c=q.option_c, option_d=q.option_d, correct_option=q.correct_option,
+                explanation=q.explanation,
+            )
+            if not result['explanation_correct'] or not (q.explanation or '').strip():
+                q.explanation = result['corrected_explanation']
+                q.save(update_fields=['explanation'])
+                run.corrected_count += 1
+        except TestCaseGenError as exc:
+            run.failed_count += 1
+            run.last_error = str(exc)[:2000]
+        except Exception as exc:  # noqa: BLE001 — one bad question must not kill the whole run
+            logger.exception("Explanation audit failed on question %s", q.id)
+            run.failed_count += 1
+            run.last_error = str(exc)[:2000]
+
+        run.processed_count += 1
+        run.last_question_id = q.id
+
+        if (i + 1) % 5 == 0:
+            run.save(update_fields=['processed_count', 'corrected_count', 'failed_count', 'last_question_id', 'last_error', 'updated_at'])
+            close_old_connections()
+
+    run.status = 'completed'
+    run.save(update_fields=['status', 'processed_count', 'corrected_count', 'failed_count', 'last_question_id', 'last_error', 'updated_at'])
+
+
+class AdminAptitudeExplanationAuditView(APIView):
+    """System Admin: "hit and run" AI audit over every aptitude question's
+    explanation — runs in a background thread (there can be 10,000+
+    questions) and checkpoints progress in AptitudeExplanationAuditRun so
+    GET can be polled for live status and the run survives navigating away
+    or a server restart (Resume just continues from last_question_id)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        run, _ = AptitudeExplanationAuditRun.objects.get_or_create(id=1)
+        return Response({
+            "status": run.status,
+            "total": AptitudeQuestion.objects.count(),
+            "processed": run.processed_count,
+            "corrected": run.corrected_count,
+            "failed": run.failed_count,
+            "last_question_id": run.last_question_id,
+            "last_error": run.last_error,
+            "started_at": run.started_at,
+            "updated_at": run.updated_at,
+        })
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        action = request.data.get('action')
+        run, _ = AptitudeExplanationAuditRun.objects.get_or_create(id=1)
+
+        if action == 'start':
+            if run.status == 'running':
+                return Response({"error": "Already running."}, status=400)
+            run.status = 'running'
+            run.stop_requested = False
+            run.last_error = ''
+            if not run.started_at:
+                run.started_at = timezone.now()
+            run.save()
+            threading.Thread(target=_run_explanation_audit, args=(run.id,), daemon=True).start()
+            return Response({"status": "running"})
+
+        elif action == 'stop':
+            if run.status != 'running':
+                return Response({"error": "Not running."}, status=400)
+            run.stop_requested = True
+            run.save(update_fields=['stop_requested'])
+            return Response({"status": "stopping"})
+
+        elif action == 'reset':
+            if run.status == 'running':
+                return Response({"error": "Stop the run before resetting."}, status=400)
+            run.status = 'idle'
+            run.last_question_id = 0
+            run.processed_count = 0
+            run.corrected_count = 0
+            run.failed_count = 0
+            run.started_at = None
+            run.last_error = ''
+            run.save()
+            return Response({"status": "idle"})
+
+        return Response({"error": "Unknown action."}, status=400)
 
 
 class AdminAptitudeBulkDeleteView(APIView):

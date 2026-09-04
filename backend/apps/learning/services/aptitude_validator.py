@@ -96,3 +96,54 @@ def validate_aptitude_question(*, question_text, option_a, option_b, option_c, o
     )
     content = generate_text_with_fallback(prompt, log_label="aptitude-validate")
     return _parse_validation_reply(content)
+
+
+EXPLANATION_PROMPT_TEMPLATE = """You are reviewing the worked explanation for a multiple-choice aptitude question in a competitive-exam practice bank.
+
+Question: {question_text}
+Option A: {option_a}
+Option B: {option_b}
+Option C: {option_c}
+Option D: {option_d}
+Correct answer: Option {correct_option}
+Current explanation: {explanation}
+
+Work out the solution yourself, step by step, assuming the marked correct answer above is correct. Then check whether the current explanation correctly and clearly justifies that answer.
+
+Respond with ONLY a JSON object, no markdown fences, no commentary, in exactly this shape:
+{{"explanation_correct": true/false, "corrected_explanation": "..."}}
+
+Rules:
+- "explanation_correct" is true only if the current explanation is present, factually correct, and actually walks through how to reach Option {correct_option} specifically.
+- "corrected_explanation" must always be a complete, clear, step-by-step explanation for why Option {correct_option} is correct — write your own regardless of "explanation_correct", so callers always have a fresh explanation ready. Keep it concise (2-5 sentences) unless the calculation genuinely needs more steps.
+"""
+
+
+class AptitudeExplanationCheckError(TestCaseGenError):
+    """Raised when the LLM's explanation-check reply can't be parsed/trusted."""
+
+
+def _parse_explanation_reply(content):
+    parsed = _extract_json(content)
+    corrected = str(parsed.get("corrected_explanation", "")).strip()
+    if not corrected:
+        raise AptitudeExplanationCheckError("LLM did not return a corrected_explanation.")
+    return {
+        "explanation_correct": bool(parsed.get("explanation_correct")),
+        "corrected_explanation": corrected,
+    }
+
+
+def check_aptitude_explanation(*, question_text, option_a, option_b, option_c, option_d,
+                                correct_option, explanation):
+    """Returns {explanation_correct, corrected_explanation} — the latter is
+    always a freshly-written explanation for the marked correct answer, so
+    callers can just overwrite when explanation_correct is False. Raises a
+    TestCaseGenError subclass if every provider fails."""
+    prompt = EXPLANATION_PROMPT_TEMPLATE.format(
+        question_text=question_text, option_a=option_a, option_b=option_b,
+        option_c=option_c, option_d=option_d, correct_option=correct_option,
+        explanation=explanation or "(none provided)",
+    )
+    content = generate_text_with_fallback(prompt, log_label="aptitude-explanation-check")
+    return _parse_explanation_reply(content)
