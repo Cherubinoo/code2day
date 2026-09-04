@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Swords, ChevronLeft, ChevronDown, ChevronRight, Link2, Loader2, BookOpen, Code2, ExternalLink, CheckCircle2, XCircle, FileText, Folder } from "lucide-react";
 import { getYoutubeEmbedUrl, getMediaKind, buildJsonPostOptions } from "../../../lib/appUtils";
+import CompetitiveProblemWorkspace from "./CompetitiveProblemWorkspace";
 
 const OPTION_LETTERS = ["A", "B", "C", "D"];
 
@@ -109,7 +110,7 @@ function QuestionsPractice({ subtopicId, folderId }) {
   );
 }
 
-function ResourceCard({ item }) {
+function ResourceCard({ item, onOpenProblem }) {
   if (item.type === "aptitude_topic") {
     return (
       <a href={`/aptitude?topic=${item.aptitude_topic_id}`} className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
@@ -127,7 +128,12 @@ function ResourceCard({ item }) {
 
   if (item.type === "problem") {
     return (
-      <a href={`/problems?slug=${encodeURIComponent(item.problem_slug)}`} className="surface-card resource-card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none" }}>
+      <button
+        type="button"
+        onClick={() => onOpenProblem?.(item.problem_slug)}
+        className="surface-card resource-card"
+        style={{ display: "flex", alignItems: "center", gap: 12, padding: 16, textDecoration: "none", border: "none", cursor: "pointer", width: "100%", textAlign: "left" }}
+      >
         <div style={{ width: 36, height: 36, borderRadius: 10, background: "#e0f2fe", color: "#0891b2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <Code2 size={18} />
         </div>
@@ -136,7 +142,7 @@ function ResourceCard({ item }) {
           <div style={{ fontWeight: 700, color: "var(--text-hard)" }}>{item.label || item.problem_title}</div>
         </div>
         <ExternalLink size={14} style={{ color: "var(--text-soft)", flexShrink: 0 }} />
-      </a>
+      </button>
     );
   }
 
@@ -215,7 +221,7 @@ function FolderMediaGrid({ media }) {
   );
 }
 
-function FolderSection({ subtopicId, folder }) {
+function FolderSection({ subtopicId, folder, onOpenProblem }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="surface-card" style={{ padding: 0, overflow: "hidden" }}>
@@ -238,7 +244,7 @@ function FolderSection({ subtopicId, folder }) {
           <FolderMediaGrid media={folder.media} />
           {(folder.resource_links || []).length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
-              {folder.resource_links.map((item, i) => <ResourceCard key={i} item={item} />)}
+              {folder.resource_links.map((item, i) => <ResourceCard key={i} item={item} onOpenProblem={onOpenProblem} />)}
             </div>
           )}
           <QuestionsPractice subtopicId={subtopicId} folderId={folder.id} />
@@ -248,7 +254,7 @@ function FolderSection({ subtopicId, folder }) {
   );
 }
 
-function TopicLearnView({ examName, section, topic, onOpenSubtopic, onBack }) {
+function TopicLearnView({ examName, section, topic, onOpenSubtopic, onOpenProblem, onBack }) {
   return (
     <div className="page-stack problem-page">
       <section className="page-header compact-header problem-page-header">
@@ -290,11 +296,20 @@ function TopicLearnView({ examName, section, topic, onOpenSubtopic, onBack }) {
           ))}
         </div>
       )}
+
+      {(topic.resource_links || []).length > 0 && (
+        <div>
+          <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Resources</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {topic.resource_links.map((item, i) => <ResourceCard key={i} item={item} onOpenProblem={onOpenProblem} />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function SubtopicLearnView({ examName, topicTitle, subtopic, onBack }) {
+function SubtopicLearnView({ examName, topicTitle, subtopic, onOpenProblem, onBack }) {
   return (
     <div className="page-stack problem-page">
       <section className="page-header compact-header problem-page-header">
@@ -324,7 +339,7 @@ function SubtopicLearnView({ examName, topicTitle, subtopic, onBack }) {
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {subtopic.folders.map((folder) => (
-              <FolderSection key={folder.id} subtopicId={subtopic.id} folder={folder} />
+              <FolderSection key={folder.id} subtopicId={subtopic.id} folder={folder} onOpenProblem={onOpenProblem} />
             ))}
           </div>
         </div>
@@ -338,7 +353,7 @@ function SubtopicLearnView({ examName, topicTitle, subtopic, onBack }) {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {subtopic.resource_links.map((item, i) => <ResourceCard key={i} item={item} />)}
+            {subtopic.resource_links.map((item, i) => <ResourceCard key={i} item={item} onOpenProblem={onOpenProblem} />)}
           </div>
         )}
       </div>
@@ -346,7 +361,7 @@ function SubtopicLearnView({ examName, topicTitle, subtopic, onBack }) {
   );
 }
 
-export default function CompetitivePracticePage() {
+export default function CompetitivePracticePage({ dashboard }) {
   const [examinations, setExaminations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -357,6 +372,7 @@ export default function CompetitivePracticePage() {
   const [expandedSections, setExpandedSections] = useState({});
   const [activeTopic, setActiveTopic] = useState(null); // { section, topic }
   const [activeSubtopic, setActiveSubtopic] = useState(null); // syllabus subtopic object
+  const [activeProblemSlug, setActiveProblemSlug] = useState(null); // embedded coding workspace
 
   useEffect(() => {
     fetch("/api/competitive/examinations/", { credentials: "include" })
@@ -392,6 +408,7 @@ export default function CompetitivePracticePage() {
     setSelectedExam(exam);
     setActiveTopic(null);
     setActiveSubtopic(null);
+    setActiveProblemSlug(null);
     fetchSyllabusFor(exam.id);
   };
 
@@ -402,6 +419,7 @@ export default function CompetitivePracticePage() {
     );
     setActiveTopic({ section, topic });
     setActiveSubtopic(null);
+    setActiveProblemSlug(null);
   };
 
   const openSubtopic = (subtopic) => {
@@ -413,6 +431,23 @@ export default function CompetitivePracticePage() {
       "",
     );
     setActiveSubtopic(subtopic);
+    setActiveProblemSlug(null);
+  };
+
+  // Opens a "Programming" resource's coding workspace inline, layered on
+  // top of whatever topic/subtopic view is currently showing — carries that
+  // same state forward in the pushed entry so Back closes the workspace
+  // back to exactly where it was opened from, not further up the tree.
+  const openProblem = (slug) => {
+    window.history.pushState(
+      {
+        competitivePractice: "problem", examId: selectedExam.id,
+        sectionId: activeTopic?.section?.id, topicId: activeTopic?.topic?.id, subtopicId: activeSubtopic?.id,
+        problemSlug: slug,
+      },
+      "",
+    );
+    setActiveProblemSlug(slug);
   };
 
   useEffect(() => {
@@ -426,6 +461,7 @@ export default function CompetitivePracticePage() {
         setSyllabus(null);
         setActiveTopic(null);
         setActiveSubtopic(null);
+        setActiveProblemSlug(null);
         return;
       }
 
@@ -434,6 +470,10 @@ export default function CompetitivePracticePage() {
 
       const restore = (data) => {
         setSelectedExam(exam);
+        // "problem" carries whichever of section/topic/subtopic were active
+        // when it was opened — restore those the same way "topic"/"subtopic"
+        // do, then layer the workspace back on top.
+        setActiveProblemSlug(s.competitivePractice === "problem" ? s.problemSlug : null);
         if (s.competitivePractice === "exam") {
           setActiveTopic(null);
           setActiveSubtopic(null);
@@ -443,7 +483,7 @@ export default function CompetitivePracticePage() {
         const topic = section?.topics.find((t) => t.id === s.topicId);
         if (!section || !topic) { setActiveTopic(null); setActiveSubtopic(null); return; }
         setActiveTopic({ section, topic });
-        if (s.competitivePractice === "subtopic") {
+        if (s.competitivePractice === "subtopic" || (s.competitivePractice === "problem" && s.subtopicId)) {
           const subtopic = topic.subtopics.find((st) => st.id === s.subtopicId);
           setActiveSubtopic(subtopic || null);
         } else {
@@ -462,12 +502,23 @@ export default function CompetitivePracticePage() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, [examinations, syllabus, selectedExam]);
 
+  if (selectedExam && activeProblemSlug) {
+    return (
+      <CompetitiveProblemWorkspace
+        problemSlug={activeProblemSlug}
+        dashboard={dashboard}
+        onBack={() => window.history.back()}
+      />
+    );
+  }
+
   if (selectedExam && activeTopic && activeSubtopic) {
     return (
       <SubtopicLearnView
         examName={selectedExam.name}
         topicTitle={activeTopic.topic.title}
         subtopic={activeSubtopic}
+        onOpenProblem={openProblem}
         onBack={() => window.history.back()}
       />
     );
@@ -480,6 +531,7 @@ export default function CompetitivePracticePage() {
         section={activeTopic.section}
         topic={activeTopic.topic}
         onOpenSubtopic={openSubtopic}
+        onOpenProblem={openProblem}
         onBack={() => window.history.back()}
       />
     );

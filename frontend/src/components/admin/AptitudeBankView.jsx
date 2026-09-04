@@ -2,27 +2,19 @@
 // students see, then add/edit/delete/bulk-upload questions scoped to one
 // topic at a time (never an "everything at once" flat list).
 import { Fragment, useState, useEffect, useMemo, useRef } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, Search, Loader2, RefreshCw, Trash2, Plus, Pencil, Save, Upload,
   ChevronDown, Calculator, Brain, MessageSquare, Sparkles, X,
 } from 'lucide-react';
-import { getCsrfToken } from '../../lib/appUtils';
+import api from '../../lib/api';
 import FormattedText from '../common/FormattedText';
 
-function apiFetch(url, method, body) {
-  const token = getCsrfToken();
-  const opts = { method, credentials: 'include', headers: { 'Content-Type': 'application/json' } };
-  if (token) opts.headers['X-CSRFToken'] = token;
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  return fetch(url, opts);
+function apiErrorMessage(err, fallback) {
+  return err?.response?.data?.error || err?.message || fallback;
 }
 
-function apiFetchForm(url, formData) {
-  const token = getCsrfToken();
-  const opts = { method: 'POST', credentials: 'include', headers: {}, body: formData };
-  if (token) opts.headers['X-CSRFToken'] = token;
-  return fetch(url, opts);
-}
+const APTITUDE_TOPICS_QUERY_KEY = ['aptitude-topics'];
 
 const BLANK_FORM = {
   question_text: '', question_image: '',
@@ -72,10 +64,9 @@ function InlineTitleForm({ value, onChange, onSubmit, onCancel, busy, placeholde
 
 // ── Topic tree browser (mirrors the student Aptitude page's structure) ────────
 function TopicTree({ onSelect, onBack }) {
-  const [categories, setCategories] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const queryClient = useQueryClient();
   const [expandedCats, setExpandedCats] = useState({});
+  const [mutationError, setMutationError] = useState('');
 
   // Rename-in-place — shared by category rows and main-topic cards; only one
   // node can be renamed at a time so a single id/value pair is enough.
@@ -94,40 +85,46 @@ function TopicTree({ onSelect, onBack }) {
   const [addTopicBusy, setAddTopicBusy] = useState(false);
   const [addTopicError, setAddTopicError] = useState('');
 
-  useEffect(() => { load(); }, []);
+  const {
+    data: categories = [],
+    isLoading: loading,
+    error: loadErrorObj,
+    refetch,
+  } = useQuery({
+    queryKey: APTITUDE_TOPICS_QUERY_KEY,
+    queryFn: async () => (await api.get('/aptitude/topics/')).data.categories || [],
+  });
+  const error = loadErrorObj ? apiErrorMessage(loadErrorObj, 'Failed to load topics') : mutationError;
 
-  async function load() {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await apiFetch('/api/aptitude/topics/', 'GET');
-      if (!res.ok) throw new Error('Failed to load topics');
-      const data = await res.json();
-      setCategories(data.categories || []);
-      if ((data.categories || []).length > 0) setExpandedCats({ [data.categories[0].id]: true });
-    } catch (err) {
-      setError(err.message || 'Failed to load topics');
-    } finally {
-      setLoading(false);
+  // Expand the first category once, the first time data actually arrives —
+  // useQuery (v5) has no onSuccess callback, so this replaces what the old
+  // load() did inline after a successful fetch.
+  const didAutoExpand = useRef(false);
+  useEffect(() => {
+    if (!didAutoExpand.current && categories.length > 0) {
+      didAutoExpand.current = true;
+      setExpandedCats({ [categories[0].id]: true });
     }
+  }, [categories]);
+
+  function invalidate() {
+    return queryClient.invalidateQueries({ queryKey: APTITUDE_TOPICS_QUERY_KEY });
   }
 
-  async function createTopic(parentId, title) {
-    const res = await apiFetch('/api/admin/v2/aptitude-topics/', 'POST', { title, parent_id: parentId });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to create topic.');
-  }
+  const createTopicMutation = useMutation({
+    mutationFn: ({ parentId, title }) => api.post('/admin/v2/aptitude-topics/', { title, parent_id: parentId }),
+    onSuccess: invalidate,
+  });
 
   async function submitNewCategory() {
     const title = newCategoryTitle.trim();
     if (!title) { setAddCategoryError('Name is required.'); return; }
     setAddCategoryBusy(true); setAddCategoryError('');
     try {
-      await createTopic(null, title);
+      await createTopicMutation.mutateAsync({ parentId: null, title });
       setNewCategoryTitle(''); setAddingCategory(false);
-      load();
     } catch (err) {
-      setAddCategoryError(err.message || 'Network error.');
+      setAddCategoryError(apiErrorMessage(err, 'Failed to create topic.'));
     } finally {
       setAddCategoryBusy(false);
     }
@@ -138,11 +135,10 @@ function TopicTree({ onSelect, onBack }) {
     if (!title) { setAddTopicError('Name is required.'); return; }
     setAddTopicBusy(true); setAddTopicError('');
     try {
-      await createTopic(catId, title);
+      await createTopicMutation.mutateAsync({ parentId: catId, title });
       setNewTopicTitle(''); setAddingTopicForCat(null);
-      load();
     } catch (err) {
-      setAddTopicError(err.message || 'Network error.');
+      setAddTopicError(apiErrorMessage(err, 'Failed to create topic.'));
     } finally {
       setAddTopicBusy(false);
     }
@@ -152,39 +148,38 @@ function TopicTree({ onSelect, onBack }) {
     setRenamingId(id); setRenameValue(currentTitle); setRenameError('');
   }
 
+  const renameMutation = useMutation({
+    mutationFn: ({ id, title }) => api.patch(`/admin/v2/aptitude-topics/${id}/`, { title }),
+    onSuccess: invalidate,
+  });
+
   async function submitRename() {
     const title = renameValue.trim();
     if (!title) { setRenameError('Name is required.'); return; }
     setRenameBusy(true); setRenameError('');
     try {
-      const res = await apiFetch(`/api/admin/v2/aptitude-topics/${renamingId}/`, 'PATCH', { title });
-      const data = await res.json();
-      if (!res.ok) { setRenameError(data.error || 'Failed to rename.'); return; }
+      await renameMutation.mutateAsync({ id: renamingId, title });
       setRenamingId(null);
-      load();
-    } catch {
-      setRenameError('Network error.');
+    } catch (err) {
+      setRenameError(apiErrorMessage(err, 'Failed to rename.'));
     } finally {
       setRenameBusy(false);
     }
   }
 
-  async function deleteTopic(node, isCategory) {
+  const deleteTopicMutation = useMutation({
+    mutationFn: (node) => api.delete(`/admin/v2/aptitude-topics/${node.id}/`),
+    onSuccess: invalidate,
+    onError: (err) => setMutationError(apiErrorMessage(err, 'Failed to delete.')),
+  });
+
+  function deleteTopic(node, isCategory) {
     const warning = isCategory
       ? `Delete category "${node.title}"? This also deletes all ${node.subcategories.length} sub-topic(s) under it and every question in them. This cannot be undone.`
       : `Delete topic "${node.title}" and all ${node.question_count} question(s) in it? This cannot be undone.`;
     if (!window.confirm(warning)) return;
-    try {
-      const res = await apiFetch(`/api/admin/v2/aptitude-topics/${node.id}/`, 'DELETE');
-      if (!res.ok && res.status !== 204) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error || 'Failed to delete.');
-        return;
-      }
-      load();
-    } catch {
-      setError('Network error while deleting.');
-    }
+    setMutationError('');
+    deleteTopicMutation.mutate(node);
   }
 
   const catIcon = (title) => (
@@ -207,7 +202,7 @@ function TopicTree({ onSelect, onBack }) {
           style={{ marginLeft: 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
           <Plus size={16} /> New Category
         </button>
-        <button onClick={load} disabled={loading}
+        <button onClick={() => refetch()} disabled={loading}
           style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
           <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
         </button>
@@ -406,12 +401,10 @@ function QuestionForm({ initial, topicOptions, showTopicSelect, busy, error, onC
 
 // ── Questions for ONE topic — add/edit/delete/bulk-upload, scoped ─────────────
 function TopicQuestionsManager({ topic, onBack }) {
+  const queryClient = useQueryClient();
   const isPassage = topic.kind === 'passage';
   const parentField = isPassage ? 'passage_id' : 'topic_id';
-  const [loading, setLoading] = useState(true);
-  const [questions, setQuestions] = useState([]);
-  const [topicOptions, setTopicOptions] = useState([]);
-  const [error, setError] = useState('');
+  const questionsQueryKey = ['aptitude-bank-questions', parentField, topic.id];
   const [search, setSearch] = useState('');
   const [difficultyFilter, setDifficultyFilter] = useState('all');
   const [page, setPage] = useState(1);
@@ -433,31 +426,29 @@ function TopicQuestionsManager({ topic, onBack }) {
   const fileInputRef = useRef(null);
   const PAGE_SIZE = 50;
 
-  useEffect(() => { load(); if (!isPassage) loadTopics(); }, [topic.id]);
+  useEffect(() => { setSelectedIds(new Set()); }, [topic.id]);
 
-  async function load() {
-    setLoading(true);
-    setError('');
-    setSelectedIds(new Set());
-    try {
-      const res = await apiFetch(`/api/admin/v2/aptitude-bank/?${parentField}=${topic.id}`, 'GET');
-      if (!res.ok) throw new Error('Failed to load questions');
-      const data = await res.json();
-      setQuestions(data.questions || []);
-    } catch (err) {
-      setError(err.message || 'Failed to load questions');
-    } finally {
-      setLoading(false);
-    }
-  }
+  const {
+    data: questions = [],
+    isLoading: loading,
+    error: loadErrorObj,
+    refetch,
+  } = useQuery({
+    queryKey: questionsQueryKey,
+    queryFn: async () => (await api.get(`/admin/v2/aptitude-bank/?${parentField}=${topic.id}`)).data.questions || [],
+  });
+  const [mutationError, setMutationError] = useState('');
+  const error = loadErrorObj ? apiErrorMessage(loadErrorObj, 'Failed to load questions') : mutationError;
 
-  async function loadTopics() {
-    try {
-      const res = await apiFetch('/api/aptitude/topics/', 'GET');
-      if (!res.ok) return;
-      const data = await res.json();
-      setTopicOptions(flattenTopics(data.categories));
-    } catch { /* non-fatal */ }
+  const { data: topicOptions = [] } = useQuery({
+    queryKey: APTITUDE_TOPICS_QUERY_KEY,
+    queryFn: async () => (await api.get('/aptitude/topics/')).data.categories || [],
+    enabled: !isPassage,
+    select: flattenTopics,
+  });
+
+  function setQuestionsCache(updater) {
+    queryClient.setQueryData(questionsQueryKey, (prev) => updater(prev || []));
   }
 
   const filtered = useMemo(() => {
@@ -495,13 +486,11 @@ function TopicQuestionsManager({ topic, onBack }) {
   async function createQuestion(form) {
     setAddBusy(true); setAddError('');
     try {
-      const res = await apiFetch('/api/admin/v2/aptitude-bank/', 'POST', { ...form, [parentField]: topic.id });
-      const data = await res.json();
-      if (!res.ok) { setAddError(data.error || 'Failed to create question.'); return; }
-      setQuestions((prev) => [data, ...prev]);
+      const res = await api.post('/admin/v2/aptitude-bank/', { ...form, [parentField]: topic.id });
+      setQuestionsCache((prev) => [res.data, ...prev]);
       setShowAddForm(false);
-    } catch {
-      setAddError('Network error.');
+    } catch (err) {
+      setAddError(apiErrorMessage(err, 'Failed to create question.'));
     } finally {
       setAddBusy(false);
     }
@@ -510,18 +499,17 @@ function TopicQuestionsManager({ topic, onBack }) {
   async function saveEdit(id, form) {
     setEditBusy(true); setEditError('');
     try {
-      const res = await apiFetch(`/api/admin/v2/aptitude-bank/${id}/`, 'PUT', form);
-      const data = await res.json();
-      if (!res.ok) { setEditError(data.error || 'Failed to save.'); return; }
+      const res = await api.put(`/admin/v2/aptitude-bank/${id}/`, form);
+      const data = res.data;
       if (String(data[parentField]) !== String(topic.id)) {
         // Moved to a different topic/passage — no longer belongs in this scoped list.
-        setQuestions((prev) => prev.filter((q) => q.id !== id));
+        setQuestionsCache((prev) => prev.filter((q) => q.id !== id));
       } else {
-        setQuestions((prev) => prev.map((q) => (q.id === id ? data : q)));
+        setQuestionsCache((prev) => prev.map((q) => (q.id === id ? data : q)));
       }
       setEditingId(null);
-    } catch {
-      setEditError('Network error.');
+    } catch (err) {
+      setEditError(apiErrorMessage(err, 'Failed to save.'));
     } finally {
       setEditBusy(false);
     }
@@ -530,20 +518,16 @@ function TopicQuestionsManager({ topic, onBack }) {
   async function validateQuestion(q) {
     setValidateStates((s) => ({ ...s, [q.id]: { busy: true, msg: '', ok: true } }));
     try {
-      const res = await apiFetch(`/api/admin/v2/aptitude-bank/${q.id}/validate/`, 'POST');
-      const data = await res.json();
-      if (!res.ok) {
-        setValidateStates((s) => ({ ...s, [q.id]: { busy: false, msg: data.error || 'Validation failed.', ok: false } }));
-        return;
-      }
-      setQuestions((prev) => prev.map((x) => (x.id === q.id ? data : x)));
+      const res = await api.post(`/admin/v2/aptitude-bank/${q.id}/validate/`);
+      const data = res.data;
+      setQuestionsCache((prev) => prev.map((x) => (x.id === q.id ? data : x)));
       const changed = data.changed_fields || [];
       const msg = changed.length === 0
         ? 'Verified — already correct.'
         : `Fixed (${changed.join(', ')})${data.reason ? `: ${data.reason}` : '.'}`;
       setValidateStates((s) => ({ ...s, [q.id]: { busy: false, msg, ok: true } }));
-    } catch {
-      setValidateStates((s) => ({ ...s, [q.id]: { busy: false, msg: 'Network error during validation.', ok: false } }));
+    } catch (err) {
+      setValidateStates((s) => ({ ...s, [q.id]: { busy: false, msg: apiErrorMessage(err, 'Validation failed.'), ok: false } }));
     }
   }
 
@@ -551,12 +535,11 @@ function TopicQuestionsManager({ topic, onBack }) {
     if (!window.confirm('Delete this aptitude question? This cannot be undone.')) return;
     setDeletingId(q.id);
     try {
-      const res = await apiFetch(`/api/admin/v2/aptitude-bank/${q.id}/`, 'DELETE');
-      if (!res.ok && res.status !== 204) { setError('Failed to delete question.'); return; }
-      setQuestions((prev) => prev.filter((x) => x.id !== q.id));
+      await api.delete(`/admin/v2/aptitude-bank/${q.id}/`);
+      setQuestionsCache((prev) => prev.filter((x) => x.id !== q.id));
       setSelectedIds((prev) => { const next = new Set(prev); next.delete(q.id); return next; });
-    } catch {
-      setError('Network error while deleting.');
+    } catch (err) {
+      setMutationError(apiErrorMessage(err, 'Failed to delete question.'));
     } finally {
       setDeletingId(null);
     }
@@ -567,13 +550,11 @@ function TopicQuestionsManager({ topic, onBack }) {
     if (!window.confirm(`Delete ${selectedIds.size} selected question(s) from "${topic.label}"? This cannot be undone.`)) return;
     setBulkDeleting(true);
     try {
-      const res = await apiFetch('/api/admin/v2/aptitude-bank/bulk-delete/', 'POST', { ids: Array.from(selectedIds) });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || 'Bulk delete failed.'); return; }
-      setQuestions((prev) => prev.filter((q) => !selectedIds.has(q.id)));
+      await api.post('/admin/v2/aptitude-bank/bulk-delete/', { ids: Array.from(selectedIds) });
+      setQuestionsCache((prev) => prev.filter((q) => !selectedIds.has(q.id)));
       setSelectedIds(new Set());
-    } catch {
-      setError('Network error during bulk delete.');
+    } catch (err) {
+      setMutationError(apiErrorMessage(err, 'Bulk delete failed.'));
     } finally {
       setBulkDeleting(false);
     }
@@ -586,15 +567,13 @@ function TopicQuestionsManager({ topic, onBack }) {
       const formData = new FormData();
       formData.append('topic_id', topic.id);
       formData.append('file', bulkFile);
-      const res = await apiFetchForm('/api/admin/v2/aptitude-bank/bulk-upload/', formData);
-      const data = await res.json();
-      if (!res.ok) { setBulkError(data.error || 'Bulk upload failed.'); return; }
-      setBulkResult(data);
+      const res = await api.post('/admin/v2/aptitude-bank/bulk-upload/', formData);
+      setBulkResult(res.data);
       setBulkFile(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
-      load();
-    } catch {
-      setBulkError('Network error during upload.');
+      refetch();
+    } catch (err) {
+      setBulkError(apiErrorMessage(err, 'Bulk upload failed.'));
     } finally {
       setBulkBusy(false);
     }
@@ -632,7 +611,7 @@ function TopicQuestionsManager({ topic, onBack }) {
             <Upload size={16} /> Bulk Upload
           </button>
         )}
-        <button onClick={load} disabled={loading}
+        <button onClick={() => refetch()} disabled={loading}
           style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
           <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
         </button>
@@ -814,11 +793,9 @@ function TopicQuestionsManager({ topic, onBack }) {
 }
 
 function PassageList({ onSelect, onBack }) {
-  const [passages, setPassages] = useState([]);
-  const [topicOptions, setTopicOptions] = useState([]);
+  const queryClient = useQueryClient();
   const [topicFilter, setTopicFilter] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [mutationError, setMutationError] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [newPassage, setNewPassage] = useState({ title: '', passage_text: '', difficulty: 'Medium', topic_id: '' });
   const [addBusy, setAddBusy] = useState(false);
@@ -835,30 +812,29 @@ function PassageList({ onSelect, onBack }) {
   const [importResult, setImportResult] = useState(null);
   const importFileRef = useRef(null);
 
-  useEffect(() => { load(); loadTopics(); }, [topicFilter]);
-
-  async function load() {
-    setLoading(true); setError('');
-    try {
+  const passagesQueryKey = ['reading-passages', topicFilter];
+  const {
+    data: passages = [],
+    isLoading: loading,
+    error: loadErrorObj,
+    refetch,
+  } = useQuery({
+    queryKey: passagesQueryKey,
+    queryFn: async () => {
       const qs = topicFilter ? `?topic_id=${topicFilter}` : '';
-      const res = await apiFetch(`/api/admin/v2/reading-passages/${qs}`, 'GET');
-      if (!res.ok) throw new Error('Failed to load passages');
-      const data = await res.json();
-      setPassages(data.passages || []);
-    } catch (err) {
-      setError(err.message || 'Failed to load passages');
-    } finally {
-      setLoading(false);
-    }
-  }
+      return (await api.get(`/admin/v2/reading-passages/${qs}`)).data.passages || [];
+    },
+  });
+  const error = loadErrorObj ? apiErrorMessage(loadErrorObj, 'Failed to load passages') : mutationError;
 
-  async function loadTopics() {
-    try {
-      const res = await apiFetch('/api/aptitude/topics/', 'GET');
-      if (!res.ok) return;
-      const data = await res.json();
-      setTopicOptions(flattenTopics(data.categories));
-    } catch { /* non-fatal */ }
+  const { data: topicOptions = [] } = useQuery({
+    queryKey: APTITUDE_TOPICS_QUERY_KEY,
+    queryFn: async () => (await api.get('/aptitude/topics/')).data.categories || [],
+    select: flattenTopics,
+  });
+
+  function setPassagesCache(updater) {
+    queryClient.setQueryData(passagesQueryKey, (prev) => updater(prev || []));
   }
 
   async function createPassage() {
@@ -868,14 +844,12 @@ function PassageList({ onSelect, onBack }) {
     }
     setAddBusy(true); setAddError('');
     try {
-      const res = await apiFetch('/api/admin/v2/reading-passages/', 'POST', newPassage);
-      const data = await res.json();
-      if (!res.ok) { setAddError(data.error || 'Failed to create passage.'); return; }
-      setPassages((prev) => [data, ...prev]);
+      const res = await api.post('/admin/v2/reading-passages/', newPassage);
+      setPassagesCache((prev) => [res.data, ...prev]);
       setShowAdd(false);
       setNewPassage({ title: '', passage_text: '', difficulty: 'Medium', topic_id: '' });
-    } catch {
-      setAddError('Network error.');
+    } catch (err) {
+      setAddError(apiErrorMessage(err, 'Failed to create passage.'));
     } finally {
       setAddBusy(false);
     }
@@ -891,15 +865,13 @@ function PassageList({ onSelect, onBack }) {
       formData.append('questions_per_passage', String(importQuestionsPerPassage));
       formData.append('difficulty', importDifficulty);
       if (importTopicId) formData.append('topic_id', importTopicId);
-      const res = await apiFetchForm('/api/admin/v2/reading-passages/import-qa/', formData);
-      const data = await res.json();
-      if (!res.ok) { setImportError(data.error || 'Import failed.'); return; }
-      setImportResult(data);
+      const res = await api.post('/admin/v2/reading-passages/import-qa/', formData);
+      setImportResult(res.data);
       setImportFile(null);
       if (importFileRef.current) importFileRef.current.value = '';
-      load();
-    } catch {
-      setImportError('Network error during import.');
+      refetch();
+    } catch (err) {
+      setImportError(apiErrorMessage(err, 'Import failed.'));
     } finally {
       setImportBusy(false);
     }
@@ -908,11 +880,10 @@ function PassageList({ onSelect, onBack }) {
   async function deletePassage(p) {
     if (!window.confirm(`Delete "${p.title}" and all ${p.question_count} of its questions? This cannot be undone.`)) return;
     try {
-      const res = await apiFetch(`/api/admin/v2/reading-passages/${p.id}/`, 'DELETE');
-      if (!res.ok && res.status !== 204) { setError('Failed to delete passage.'); return; }
-      setPassages((prev) => prev.filter((x) => x.id !== p.id));
-    } catch {
-      setError('Network error while deleting.');
+      await api.delete(`/admin/v2/reading-passages/${p.id}/`);
+      setPassagesCache((prev) => prev.filter((x) => x.id !== p.id));
+    } catch (err) {
+      setMutationError(apiErrorMessage(err, 'Failed to delete passage.'));
     }
   }
 
@@ -1063,46 +1034,36 @@ function PassageList({ onSelect, onBack }) {
 // asking an LLM to check/rewrite the explanation, in a background thread on
 // the server (there can be 10,000+ questions). Polls for progress while
 // running; safe to navigate away and come back, or Resume after a restart. ──
+const EXPLANATION_AUDIT_QUERY_KEY = ['aptitude-explanation-audit'];
+
 function ExplanationAuditPanel() {
-  const [status, setStatus] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const queryClient = useQueryClient();
+  const [mutationError, setMutationError] = useState('');
 
-  async function loadStatus() {
-    try {
-      const res = await apiFetch('/api/admin/v2/aptitude-bank/explanation-audit/', 'GET');
-      if (res.ok) setStatus(await res.json());
-    } catch { /* keep last known status on a transient network blip */ }
+  // refetchInterval keeps polling every 3s only while a run is actually in
+  // progress — same "poll while running" behavior as the old manual
+  // setInterval, just driven by the query itself instead of a second timer
+  // racing the fetch.
+  const { data: status } = useQuery({
+    queryKey: EXPLANATION_AUDIT_QUERY_KEY,
+    queryFn: async () => (await api.get('/admin/v2/aptitude-bank/explanation-audit/')).data,
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 3000 : false),
+  });
+
+  const actionMutation = useMutation({
+    mutationFn: (action) => api.post('/admin/v2/aptitude-bank/explanation-audit/', { action }),
+    onSuccess: () => {
+      setMutationError('');
+      queryClient.invalidateQueries({ queryKey: EXPLANATION_AUDIT_QUERY_KEY });
+    },
+    onError: (err) => setMutationError(apiErrorMessage(err, 'Action failed.')),
+  });
+
+  function doAction(action) {
+    actionMutation.mutate(action);
   }
-
-  useEffect(() => {
-    loadStatus();
-    const interval = setInterval(() => {
-      setStatus((s) => {
-        if (s && s.status === 'running') loadStatus();
-        return s;
-      });
-    }, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  async function doAction(action) {
-    setBusy(true);
-    setError('');
-    try {
-      const res = await apiFetch('/api/admin/v2/aptitude-bank/explanation-audit/', 'POST', { action });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Action failed.');
-      } else {
-        await loadStatus();
-      }
-    } catch {
-      setError('Network error.');
-    } finally {
-      setBusy(false);
-    }
-  }
+  const busy = actionMutation.isPending;
+  const error = mutationError;
 
   if (!status) return null;
 

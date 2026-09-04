@@ -13,6 +13,7 @@ import { runCodeExecution, getLanguageIdForChoice } from "../../../lib/codeExecu
 import { starterCodeByLanguage, editorLanguageByChoice } from "../../../lib/appData";
 import { formatDuration, buildJsonPostOptions, configureEditorProtection } from "../../../lib/appUtils";
 import DoubleConfirmModal from "../../common/DoubleConfirmModal";
+import { useDrillDownParam } from "../../../lib/useDrillDownParam";
 
 loader.config({ monaco });
 
@@ -181,7 +182,10 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
   const [error, setError] = useState(null);
   const [answers, setAnswers] = useState({}); // {questionId: selectedOption} — aptitude + reading
 
-  const [activeTab, setActiveTab] = useState(null); // 'coding' | 'aptitude' | 'reading'
+  // useDrillDownParam (not plain useState) on activeTab / selectedProblemIndex
+  // / selectedPassageId below so the browser Back button steps back through
+  // this combined workspace's sections instead of exiting it mid-contest.
+  const [activeTab, setActiveTab] = useDrillDownParam("tab", { defaultValue: null, parse: (v) => v || null }); // 'coding' | 'aptitude' | 'reading'
   const [confirmState, setConfirmState] = useState({ show: false, m1: "", m2: "", onConfirm: null, firstOk: false });
   const [toast, setToast] = useState(null);
   const [contestSecondsLeft, setContestSecondsLeft] = useState(null);
@@ -203,7 +207,14 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
   const snapshotsTakenRef = useRef(0);
 
   // Coding tab state
-  const [selectedProblemIndex, setSelectedProblemIndex] = useState(0);
+  const [selectedProblemIndex, setSelectedProblemIndex] = useDrillDownParam("p", {
+    defaultValue: 0,
+    parse: (v) => {
+      const n = parseInt(v, 10);
+      return !isNaN(n) && n >= 1 ? n - 1 : 0;
+    },
+    serialize: (v) => String(v + 1),
+  });
   const [selectedProblemDetails, setSelectedProblemDetails] = useState(null);
   const selectedProblem = problems[selectedProblemIndex] || null;
   const [code, setCode] = useState("");
@@ -216,7 +227,10 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
 
   // Aptitude / Reading tab state
   const [selectedMcqIndex, setSelectedMcqIndex] = useState(0);
-  const [selectedPassageId, setSelectedPassageId] = useState(null);
+  const [selectedPassageId, setSelectedPassageId] = useDrillDownParam("passage", {
+    defaultValue: null,
+    parse: (v) => v || null,
+  });
 
   const registerNumber = (() => {
     try { return window.localStorage.getItem("code2day-register-number") || ""; } catch { return ""; }

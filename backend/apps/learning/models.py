@@ -1082,6 +1082,97 @@ class CompetitiveQuestion(models.Model):
         return f"{self.subtopic} — {self.question_text[:50]}"
 
 
+class InterviewTrack(models.Model):
+    """Top-level Interview Practice content group — matches the free-text
+    key already stored in Department.interview_track (civil/mech/eee/ece/
+    cs_common by default, admin-creatable beyond that, e.g. "cybersecurity").
+    A department resolves to a track by this key (see
+    Department.default_interview_track / InterviewTrackView); a track with
+    no matching InterviewTrack row yet just means no content has been
+    added for it, not an error."""
+    key = models.SlugField(max_length=40, unique=True)
+    name = models.CharField(max_length=150)
+    description = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "interview_tracks"
+
+    def __str__(self):
+        return self.name
+
+
+class InterviewTopic(models.Model):
+    track = models.ForeignKey(InterviewTrack, on_delete=models.CASCADE, related_name="topics")
+    title = models.CharField(max_length=200)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "interview_topics"
+        unique_together = ("track", "title")
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.track} / {self.title}"
+
+
+class InterviewFolder(models.Model):
+    """Same self-referential nesting as SyllabusFolder (parent may be null
+    for a top-level folder) — folders inside a topic, nestable, exactly
+    like Competitive Bank's folders."""
+    topic = models.ForeignKey(InterviewTopic, on_delete=models.CASCADE, related_name="folders")
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name="subfolders")
+    title = models.CharField(max_length=200)
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "interview_folders"
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.topic} / {self.title}"
+
+
+class InterviewQuestion(models.Model):
+    """One interview-practice question — schema matches the admin's
+    cybersecurity question-bank upload template (Question ID, Field/Topic/
+    Subtopic, Question Type, Difficulty, Question, Answer, Follow-up Q&A,
+    Tools/Technologies, Key Concepts, Source Reference) so bulk upload maps
+    onto it column-for-column, but the shape isn't cybersecurity-specific
+    — any track's questions use the same fields."""
+    QUESTION_TYPE_CHOICES = (
+        ("conceptual", "Conceptual"), ("technical", "Technical"),
+        ("scenario", "Scenario-Based"), ("tool", "Tool-Based"),
+        ("troubleshooting", "Troubleshooting"), ("comparison", "Comparison"),
+        ("process", "Process / Procedure"), ("behavioral", "Behavioral / Experience"),
+    )
+    DIFFICULTY_CHOICES = (("Beginner", "Beginner"), ("Intermediate", "Intermediate"), ("Advanced", "Advanced"))
+
+    topic = models.ForeignKey(InterviewTopic, on_delete=models.CASCADE, related_name="questions")
+    # Optional, like CompetitiveQuestion.folder — a question with no folder
+    # sits directly under the topic.
+    folder = models.ForeignKey(InterviewFolder, on_delete=models.CASCADE, null=True, blank=True, related_name="questions")
+    external_id = models.CharField(max_length=30, blank=True, default="", help_text='Source id, e.g. "CYB-0001" — display only, not a DB key.')
+    question_type = models.CharField(max_length=20, choices=QUESTION_TYPE_CHOICES, default="conceptual")
+    difficulty = models.CharField(max_length=20, choices=DIFFICULTY_CHOICES, default="Beginner")
+    question_text = models.TextField()
+    answer = models.TextField()
+    follow_up_question = models.TextField(blank=True, default="")
+    follow_up_answer = models.TextField(blank=True, default="")
+    tools_technologies = models.CharField(max_length=500, blank=True, default="")
+    key_concepts = models.CharField(max_length=500, blank=True, default="")
+    source_reference = models.CharField(max_length=300, blank=True, default="")
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "interview_questions"
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.topic} — {self.question_text[:50]}"
+
+
 class AptitudeAttempt(models.Model):
     """Logs every free-practice aptitude answer — correct or wrong.
     SolvedAptitude only records correct answers, so it can show "questions

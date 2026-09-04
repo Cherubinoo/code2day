@@ -1,20 +1,11 @@
 import { useState, useEffect } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Swords, Plus, Trash2, Upload, ChevronDown, ChevronRight, Loader2, Link2, X, PlayCircle, BookOpen, Code2, Pencil, Check, FileText, File as FileIcon, Folder } from 'lucide-react';
-import { getCsrfToken, getYoutubeEmbedUrl } from '../../lib/appUtils';
+import { getYoutubeEmbedUrl, getMediaKind } from '../../lib/appUtils';
+import api from '../../lib/api';
 
-function apiFetch(url, method, body) {
-  const token = getCsrfToken();
-  const opts = { method, credentials: 'include', headers: { 'Content-Type': 'application/json' } };
-  if (token) opts.headers['X-CSRFToken'] = token;
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  return fetch(url, opts);
-}
-
-function apiFetchForm(url, formData) {
-  const token = getCsrfToken();
-  const opts = { method: 'POST', credentials: 'include', headers: {}, body: formData };
-  if (token) opts.headers['X-CSRFToken'] = token;
-  return fetch(url, opts);
+function apiErrorMessage(err, fallback) {
+  return err?.response?.data?.error || err?.message || fallback;
 }
 
 // Flattens the Aptitude Category > Topic tree down to just the leaf topics
@@ -48,8 +39,8 @@ const BLANK_QUESTION = { question_text: '', option_a: '', option_b: '', option_c
 // ── MCQ question bank for one subtopic (or one folder within it, when
 // folderId is given) — authored directly here, or imported (copied) from
 // an existing Aptitude topic's questions. ──────────────────────────────────
-function QuestionsManager({ subtopicId, folderId }) {
-  const [questions, setQuestions] = useState(null);
+function QuestionsManager({ subtopicId, folderId, onCountChange }) {
+  const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
   const [newQ, setNewQ] = useState(BLANK_QUESTION);
   const [saving, setSaving] = useState(false);
@@ -61,34 +52,38 @@ function QuestionsManager({ subtopicId, folderId }) {
   const [selectedImportIds, setSelectedImportIds] = useState([]);
   const [importing, setImporting] = useState(false);
 
-  const questionsUrl = `/api/admin/v2/examinations/subtopics/${subtopicId}/questions/${folderId ? `?folder_id=${folderId}` : ''}`;
+  const questionsUrlPath = `/admin/v2/examinations/subtopics/${subtopicId}/questions/${folderId ? `?folder_id=${folderId}` : ''}`;
+  const questionsQueryKey = ['competitive-questions', subtopicId, folderId ?? null];
 
-  useEffect(() => { fetchQuestions(); }, [subtopicId, folderId]);
+  const { data: questions } = useQuery({
+    queryKey: questionsQueryKey,
+    queryFn: async () => (await api.get(questionsUrlPath)).data,
+  });
 
-  const fetchQuestions = async () => {
-    const res = await fetch(questionsUrl, { credentials: 'include' });
-    if (res.ok) setQuestions(await res.json());
-  };
+  function setQuestionsCache(updater) {
+    queryClient.setQueryData(questionsQueryKey, (prev) => updater(prev || []));
+  }
 
   const removeQuestion = async (id) => {
     if (!window.confirm('Delete this question?')) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/questions/${id}/`, 'DELETE');
-    if (res.ok) setQuestions((prev) => prev.filter((q) => q.id !== id));
+    try {
+      await api.delete(`/admin/v2/examinations/subtopics/${subtopicId}/questions/${id}/`);
+      setQuestionsCache((prev) => prev.filter((q) => q.id !== id));
+      onCountChange?.(-1);
+    } catch { /* leave the row in place on failure */ }
   };
 
   const addQuestion = async () => {
     if (!newQ.question_text.trim() || !newQ.option_a.trim() || !newQ.option_b.trim() || !newQ.option_c.trim() || !newQ.option_d.trim()) return;
     setSaving(true);
     try {
-      const res = await apiFetch(questionsUrl, 'POST', folderId ? { ...newQ, folder_id: folderId } : newQ);
-      if (res.ok) {
-        const q = await res.json();
-        setQuestions((prev) => [...(prev || []), q]);
-        setNewQ(BLANK_QUESTION);
-        setShowAddForm(false);
-      } else {
-        alert('Failed to add question');
-      }
+      const res = await api.post(questionsUrlPath, folderId ? { ...newQ, folder_id: folderId } : newQ);
+      setQuestionsCache((prev) => [...prev, res.data]);
+      setNewQ(BLANK_QUESTION);
+      setShowAddForm(false);
+      onCountChange?.(1);
+    } catch {
+      alert('Failed to add question');
     } finally {
       setSaving(false);
     }
@@ -136,20 +131,18 @@ function QuestionsManager({ subtopicId, folderId }) {
     if (selectedImportIds.length === 0) return;
     setImporting(true);
     try {
-      const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/questions/import/`, 'POST', {
+      const res = await api.post(`/admin/v2/examinations/subtopics/${subtopicId}/questions/import/`, {
         aptitude_question_ids: selectedImportIds,
         ...(folderId ? { folder_id: folderId } : {}),
       });
-      if (res.ok) {
-        const body = await res.json();
-        setQuestions((prev) => [...(prev || []), ...body.questions]);
-        setShowImport(false);
-        setImportTopicId('');
-        setImportCandidates(null);
-        setSelectedImportIds([]);
-      } else {
-        alert('Import failed');
-      }
+      setQuestionsCache((prev) => [...prev, ...res.data.questions]);
+      setShowImport(false);
+      setImportTopicId('');
+      setImportCandidates(null);
+      setSelectedImportIds([]);
+      onCountChange?.(res.data.questions.length);
+    } catch {
+      alert('Import failed');
     } finally {
       setImporting(false);
     }
@@ -171,7 +164,7 @@ function QuestionsManager({ subtopicId, folderId }) {
         </div>
       </div>
 
-      {questions === null ? (
+      {questions === undefined ? (
         <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)' }}>Loading…</div>
       ) : questions.length === 0 && !showAddForm ? (
         <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No questions yet.</div>
@@ -272,18 +265,21 @@ function mediaKindIcon(kind) {
 // from the link/Aptitude-topic/Problem "paste a URL" resources every other
 // syllabus level carries. ───────────────────────────────────────────────────
 function FolderMediaManager({ folderId }) {
-  const [media, setMedia] = useState(null);
+  const queryClient = useQueryClient();
+  const mediaQueryKey = ['competitive-folder-media', folderId];
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState('');
 
-  useEffect(() => { fetchMedia(); }, [folderId]);
+  const { data: media } = useQuery({
+    queryKey: mediaQueryKey,
+    queryFn: async () => (await api.get(`/admin/v2/examinations/folders/${folderId}/media/`)).data,
+  });
 
-  const fetchMedia = async () => {
-    const res = await fetch(`/api/admin/v2/examinations/folders/${folderId}/media/`, { credentials: 'include' });
-    if (res.ok) setMedia(await res.json());
-  };
+  function setMediaCache(updater) {
+    queryClient.setQueryData(mediaQueryKey, (prev) => updater(prev || []));
+  }
 
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -294,16 +290,10 @@ function FolderMediaManager({ folderId }) {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await apiFetchForm(`/api/admin/v2/examinations/folders/${folderId}/media/`, formData);
-      if (res.ok) {
-        const item = await res.json();
-        setMedia((prev) => [...(prev || []), item]);
-      } else {
-        const body = await res.json().catch(() => ({}));
-        setError(body.error || 'Upload failed.');
-      }
-    } catch {
-      setError('Network error during upload.');
+      const res = await api.post(`/admin/v2/examinations/folders/${folderId}/media/`, formData);
+      setMediaCache((prev) => [...prev, res.data]);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Upload failed.'));
     } finally {
       setUploading(false);
     }
@@ -311,8 +301,10 @@ function FolderMediaManager({ folderId }) {
 
   const removeMedia = async (id) => {
     if (!window.confirm('Delete this file?')) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/folders/media/${id}/`, 'DELETE');
-    if (res.ok) setMedia((prev) => prev.filter((m) => m.id !== id));
+    try {
+      await api.delete(`/admin/v2/examinations/folders/media/${id}/`);
+      setMediaCache((prev) => prev.filter((m) => m.id !== id));
+    } catch { /* leave the tile in place on failure */ }
   };
 
   const startEditMedia = (m) => {
@@ -322,14 +314,12 @@ function FolderMediaManager({ folderId }) {
 
   const saveMediaTitle = async (id) => {
     if (!editTitle.trim()) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/folders/media/${id}/`, 'PATCH', { title: editTitle.trim() });
-    if (res.ok) {
-      const updated = await res.json();
-      setMedia((prev) => prev.map((m) => (m.id === id ? updated : m)));
+    try {
+      const res = await api.patch(`/admin/v2/examinations/folders/media/${id}/`, { title: editTitle.trim() });
+      setMediaCache((prev) => prev.map((m) => (m.id === id ? res.data : m)));
       setEditingId(null);
-    } else {
-      const body = await res.json().catch(() => ({}));
-      alert(body.error || 'Failed to rename file.');
+    } catch (err) {
+      alert(apiErrorMessage(err, 'Failed to rename file.'));
     }
   };
 
@@ -346,7 +336,7 @@ function FolderMediaManager({ folderId }) {
         </label>
       </div>
       {error && <div style={{ fontSize: '0.75rem', color: '#dc2626', marginBottom: 8 }}>{error}</div>}
-      {media === null ? (
+      {media === undefined ? (
         <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)' }}>Loading…</div>
       ) : media.length === 0 ? (
         <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No media uploaded yet.</div>
@@ -431,23 +421,23 @@ function FolderNode({ folder: initialFolder, subtopicId, onDeleted, depth = 0 })
 
   const saveEdit = async () => {
     if (!editTitle.trim()) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/folders/${folder.id}/`, 'PATCH', {
-      title: editTitle.trim(), description: editDescription.trim(),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setFolder((f) => ({ ...f, title: updated.title, description: updated.description }));
+    try {
+      const res = await api.patch(`/admin/v2/examinations/folders/${folder.id}/`, {
+        title: editTitle.trim(), description: editDescription.trim(),
+      });
+      setFolder((f) => ({ ...f, title: res.data.title, description: res.data.description }));
       setEditing(false);
-    } else {
-      const body = await res.json().catch(() => ({}));
-      alert(body.error || 'Failed to update folder.');
+    } catch (err) {
+      alert(apiErrorMessage(err, 'Failed to update folder.'));
     }
   };
 
   const removeFolder = async () => {
     if (!window.confirm('Delete this folder? Its questions, media, and any subfolders are deleted too — this cannot be undone.')) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/folders/${folder.id}/`, 'DELETE');
-    if (res.ok) onDeleted(folder.id);
+    try {
+      await api.delete(`/admin/v2/examinations/folders/${folder.id}/`);
+      onDeleted(folder.id);
+    } catch { /* leave the node in place on failure */ }
   };
 
   const addSubfolder = async () => {
@@ -455,20 +445,16 @@ function FolderNode({ folder: initialFolder, subtopicId, onDeleted, depth = 0 })
     setSavingSub(true);
     setSubError('');
     try {
-      const res = await apiFetch(`/api/admin/v2/examinations/folders/${folder.id}/subfolders/`, 'POST', {
+      const res = await api.post(`/admin/v2/examinations/folders/${folder.id}/subfolders/`, {
         title: newSubTitle.trim(), description: newSubDescription.trim(),
       });
-      if (res.ok) {
-        const sub = await res.json();
-        setSubfolders((prev) => [...prev, sub]);
-        setNewSubTitle('');
-        setNewSubDescription('');
-        setShowAddSub(false);
-        setExpanded(true);
-      } else {
-        const body = await res.json().catch(() => ({}));
-        setSubError(body.error || 'Failed to create subfolder.');
-      }
+      setSubfolders((prev) => [...prev, res.data]);
+      setNewSubTitle('');
+      setNewSubDescription('');
+      setShowAddSub(false);
+      setExpanded(true);
+    } catch (err) {
+      setSubError(apiErrorMessage(err, 'Failed to create subfolder.'));
     } finally {
       setSavingSub(false);
     }
@@ -513,7 +499,11 @@ function FolderNode({ folder: initialFolder, subtopicId, onDeleted, depth = 0 })
         <div style={{ padding: '0 12px 14px', borderTop: '1px solid white' }}>
           <div style={{ paddingTop: 12 }}>
             <FolderMediaManager folderId={folder.id} />
-            <QuestionsManager subtopicId={subtopicId} folderId={folder.id} />
+            <QuestionsManager
+              subtopicId={subtopicId}
+              folderId={folder.id}
+              onCountChange={(delta) => setFolder((f) => ({ ...f, question_count: Math.max(0, (f.question_count || 0) + delta) }))}
+            />
 
             <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 12, marginTop: 4 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -557,44 +547,43 @@ function FolderNode({ folder: initialFolder, subtopicId, onDeleted, depth = 0 })
 // for the recursive per-folder rendering (a folder can itself contain
 // subfolders). ─────────────────────────────────────────────────────────
 function FoldersManager({ subtopicId }) {
-  const [folders, setFolders] = useState(null);
+  const queryClient = useQueryClient();
+  const foldersQueryKey = ['competitive-folders', subtopicId];
   const [showAddForm, setShowAddForm] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => { fetchFolders(); }, [subtopicId]);
+  const { data: folders } = useQuery({
+    queryKey: foldersQueryKey,
+    queryFn: async () => (await api.get(`/admin/v2/examinations/subtopics/${subtopicId}/folders/`)).data,
+  });
 
-  const fetchFolders = async () => {
-    const res = await fetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/folders/`, { credentials: 'include' });
-    if (res.ok) setFolders(await res.json());
-  };
+  function setFoldersCache(updater) {
+    queryClient.setQueryData(foldersQueryKey, (prev) => updater(prev || []));
+  }
 
   const addFolder = async () => {
     if (!newTitle.trim()) return;
     setSaving(true);
     setError('');
     try {
-      const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/folders/`, 'POST', {
+      const res = await api.post(`/admin/v2/examinations/subtopics/${subtopicId}/folders/`, {
         title: newTitle.trim(), description: newDescription.trim(),
       });
-      if (res.ok) {
-        const folder = await res.json();
-        setFolders((prev) => [...(prev || []), folder]);
-        setNewTitle('');
-        setNewDescription('');
-        setShowAddForm(false);
-      } else {
-        const body = await res.json().catch(() => ({}));
-        setError(body.error || 'Failed to create folder.');
-      }
+      setFoldersCache((prev) => [...prev, res.data]);
+      setNewTitle('');
+      setNewDescription('');
+      setShowAddForm(false);
+    } catch (err) {
+      setError(apiErrorMessage(err, 'Failed to create folder.'));
     } finally {
       setSaving(false);
     }
   };
 
-  const removeFolder = (folderId) => setFolders((prev) => prev.filter((f) => f.id !== folderId));
+  const removeFolder = (folderId) => setFoldersCache((prev) => prev.filter((f) => f.id !== folderId));
 
   return (
     <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 16, marginBottom: 16 }}>
@@ -618,7 +607,7 @@ function FoldersManager({ subtopicId }) {
         </div>
       )}
 
-      {folders === null ? (
+      {folders === undefined ? (
         <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)' }}>Loading…</div>
       ) : folders.length === 0 && !showAddForm ? (
         <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No folders yet — questions/media can still be added directly below.</div>
@@ -639,31 +628,31 @@ function FoldersManager({ subtopicId }) {
 // parent. `entity` is the topic or subtopic object; `saveUrl` is its
 // resources endpoint; `showDescription` renders a subtopic's description
 // field too (topics don't have one). ──────────────────────────────────────
-function ResourceEditorModal({ entity, saveUrl, showDescription, onClose, onSaved }) {
+function ResourceEditorModal({ entity, saveUrl, showDescription, onClose, onSaved, onQuestionCountChange }) {
   const [description, setDescription] = useState(entity.description || '');
   const [items, setItems] = useState(entity.resource_links || []);
   const [saving, setSaving] = useState(false);
+  const [previewIdx, setPreviewIdx] = useState(null);
 
   const [linkLabel, setLinkLabel] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
 
-  const [aptitudeTopics, setAptitudeTopics] = useState(null);
   const [pickedAptitudeId, setPickedAptitudeId] = useState('');
-
-  const [problems, setProblems] = useState(null);
   const [problemSearch, setProblemSearch] = useState('');
   const [pickedProblemSlug, setPickedProblemSlug] = useState('');
 
-  useEffect(() => {
-    fetch('/api/aptitude/topics/', { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setAptitudeTopics(flattenAptitudeTopics(d?.categories)))
-      .catch(() => setAptitudeTopics([]));
-    fetch('/api/admin/v2/problem-bank/', { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setProblems(d?.problems || []))
-      .catch(() => setProblems([]));
-  }, []);
+  // Same query keys AptitudeBankView / ProblemBankView use for these two
+  // reference lists — the QueryClient is shared app-wide, so this reuses
+  // whatever's already cached from those admin pages instead of refetching.
+  const { data: aptitudeTopics = [] } = useQuery({
+    queryKey: ['aptitude-topics'],
+    queryFn: async () => (await api.get('/aptitude/topics/')).data.categories || [],
+    select: flattenAptitudeTopics,
+  });
+  const { data: problems = [] } = useQuery({
+    queryKey: ['problem-bank-list'],
+    queryFn: async () => (await api.get('/admin/v2/problem-bank/')).data.problems || [],
+  });
 
   const removeItem = (idx) => setItems((prev) => prev.filter((_, i) => i !== idx));
 
@@ -701,13 +690,12 @@ function ResourceEditorModal({ entity, saveUrl, showDescription, onClose, onSave
       };
       if (showDescription) payload.description = description;
 
-      const res = await apiFetch(saveUrl, 'PATCH', payload);
-      if (res.ok) {
-        const body = await res.json();
-        onSaved(body.description, body.resource_links || []);
-      } else {
-        alert('Failed to save resources');
-      }
+      // saveUrl is handed down as a full "/api/..." path (see the two call
+      // sites below) — strip the prefix since api.js's client adds it back.
+      const res = await api.patch(saveUrl.replace(/^\/api/, ''), payload);
+      onSaved(res.data.description, res.data.resource_links || []);
+    } catch {
+      alert('Failed to save resources');
     } finally {
       setSaving(false);
     }
@@ -746,13 +734,48 @@ function ResourceEditorModal({ entity, saveUrl, showDescription, onClose, onSave
           {items.length === 0 && (
             <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No resources attached yet.</div>
           )}
-          {items.map((item, idx) => (
-            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--bg-2)', borderRadius: 10 }}>
-              {resourceIcon(item)}
-              <span style={{ flex: 1, fontSize: '0.85rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{resourceLabel(item)}</span>
-              <button onClick={() => removeItem(idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}><X size={14} /></button>
-            </div>
-          ))}
+          {items.map((item, idx) => {
+            const kind = item.type === 'link' ? getMediaKind(item.url) : null;
+            const previewable = kind === 'youtube' || kind === 'image' || kind === 'video';
+            const isOpen = previewIdx === idx;
+            return (
+              <div key={idx} style={{ background: 'var(--bg-2)', borderRadius: 10, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
+                  {resourceIcon(item)}
+                  <span style={{ flex: 1, fontSize: '0.85rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{resourceLabel(item)}</span>
+                  {previewable && (
+                    <button
+                      onClick={() => setPreviewIdx(isOpen ? null : idx)}
+                      title={isOpen ? 'Hide preview' : 'Preview'}
+                      style={{ background: 'none', border: 'none', color: 'var(--olive-700)', cursor: 'pointer', padding: 4, display: 'flex' }}
+                    >
+                      <PlayCircle size={16} />
+                    </button>
+                  )}
+                  <button onClick={() => removeItem(idx)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}><X size={14} /></button>
+                </div>
+                {isOpen && previewable && (
+                  <div style={{ padding: '0 12px 12px' }}>
+                    {kind === 'youtube' ? (
+                      <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, borderRadius: 10, overflow: 'hidden' }}>
+                        <iframe
+                          src={getYoutubeEmbedUrl(item.url)}
+                          title={item.label || 'Video preview'}
+                          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none' }}
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                        />
+                      </div>
+                    ) : kind === 'image' ? (
+                      <img src={item.url} alt={item.label || ''} style={{ width: '100%', borderRadius: 10, display: 'block' }} />
+                    ) : (
+                      <video src={item.url} controls style={{ width: '100%', borderRadius: 10, display: 'block' }} />
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Add a link */}
@@ -792,7 +815,7 @@ function ResourceEditorModal({ entity, saveUrl, showDescription, onClose, onSave
         </div>
 
         {showDescription && <FoldersManager subtopicId={entity.id} />}
-        {showDescription && <QuestionsManager subtopicId={entity.id} />}
+        {showDescription && <QuestionsManager subtopicId={entity.id} onCountChange={onQuestionCountChange} />}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button onClick={onClose} style={{ padding: '10px 20px', borderRadius: 10, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontWeight: 700 }}>Cancel</button>
@@ -810,16 +833,15 @@ function ResourceEditorModal({ entity, saveUrl, showDescription, onClose, onSave
 // shot via an Excel upload. Each topic tile can then be configured with
 // resources: external links (auto-embedded if YouTube), or pointers at
 // existing Aptitude topics / coding Problems already in the platform.
+const EXAMINATIONS_QUERY_KEY = ['competitive-examinations'];
+
 export default function CompetitiveBankView({ onBack }) {
-  const [examinations, setExaminations] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
   const [newExam, setNewExam] = useState({ name: '', description: '' });
   const [creating, setCreating] = useState(false);
 
   const [selectedExam, setSelectedExam] = useState(null);
-  const [syllabus, setSyllabus] = useState(null);
-  const [syllabusLoading, setSyllabusLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [uploadError, setUploadError] = useState('');
@@ -843,35 +865,45 @@ export default function CompetitiveBankView({ onBack }) {
   const [newSubtopicTitle, setNewSubtopicTitle] = useState('');
   const [addingSubtopic, setAddingSubtopic] = useState(false);
 
-  useEffect(() => { fetchExaminations(); }, []);
+  const {
+    data: examinations = [],
+    isLoading: loading,
+    refetch: refetchExaminations,
+  } = useQuery({
+    queryKey: EXAMINATIONS_QUERY_KEY,
+    queryFn: async () => (await api.get('/admin/v2/examinations/')).data,
+  });
+  function setExaminations(updater) {
+    queryClient.setQueryData(EXAMINATIONS_QUERY_KEY, (prev) => updater(prev || []));
+  }
+  async function fetchExaminations() {
+    return refetchExaminations();
+  }
 
-  const fetchExaminations = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/admin/v2/examinations/', { credentials: 'include' });
-      if (res.ok) setExaminations(await res.json());
-    } catch (err) {
-      console.error('Failed to load examinations', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchSyllabus = async (examId) => {
-    setSyllabusLoading(true);
-    try {
-      const res = await fetch(`/api/admin/v2/examinations/${examId}/syllabus/`, { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        setSyllabus(data);
-        setExpandedSections(Object.fromEntries((data.sections || []).map(s => [s.id, true])));
-      }
-    } catch (err) {
-      console.error('Failed to load syllabus', err);
-    } finally {
-      setSyllabusLoading(false);
-    }
-  };
+  const syllabusQueryKey = ['competitive-syllabus', selectedExam?.id ?? null];
+  const {
+    data: syllabus,
+    isLoading: syllabusLoading,
+    refetch: refetchSyllabus,
+  } = useQuery({
+    queryKey: syllabusQueryKey,
+    queryFn: async () => {
+      const data = (await api.get(`/admin/v2/examinations/${selectedExam.id}/syllabus/`)).data;
+      setExpandedSections(Object.fromEntries((data.sections || []).map((s) => [s.id, true])));
+      return data;
+    },
+    enabled: !!selectedExam?.id,
+  });
+  function setSyllabus(updater) {
+    queryClient.setQueryData(syllabusQueryKey, (prev) => (typeof updater === 'function' ? updater(prev) : updater));
+  }
+  async function fetchSyllabus(examId) {
+    if (examId === selectedExam?.id) return refetchSyllabus();
+    // selectedExam hasn't been updated to this id yet (callers set it right
+    // before/after calling this) — the query above is keyed on selectedExam.id
+    // reactively, so it'll fetch on its own once that state lands; nothing
+    // else to do here.
+  }
 
   const openExam = (exam) => {
     window.history.pushState({ competitiveBank: 'exam', examId: exam.id }, '');
@@ -907,17 +939,14 @@ export default function CompetitiveBankView({ onBack }) {
     if (!newExam.name.trim()) return;
     setCreating(true);
     try {
-      const res = await apiFetch('/api/admin/v2/examinations/', 'POST', {
+      await api.post('/admin/v2/examinations/', {
         name: newExam.name.trim(), description: newExam.description.trim(),
       });
-      if (res.ok) {
-        setShowAddForm(false);
-        setNewExam({ name: '', description: '' });
-        fetchExaminations();
-      } else {
-        const body = await res.json().catch(() => ({}));
-        alert(body.error || 'Failed to create examination');
-      }
+      setShowAddForm(false);
+      setNewExam({ name: '', description: '' });
+      fetchExaminations();
+    } catch (err) {
+      alert(apiErrorMessage(err, 'Failed to create examination'));
     } finally {
       setCreating(false);
     }
@@ -925,8 +954,10 @@ export default function CompetitiveBankView({ onBack }) {
 
   const handleDeleteExam = async (examId) => {
     if (!window.confirm('Delete this examination and its entire syllabus? This cannot be undone.')) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/${examId}/`, 'DELETE');
-    if (res.ok) fetchExaminations();
+    try {
+      await api.delete(`/admin/v2/examinations/${examId}/`);
+      fetchExaminations();
+    } catch { /* leave the row in place on failure */ }
   };
 
   const startEditExam = (exam) => {
@@ -938,17 +969,13 @@ export default function CompetitiveBankView({ onBack }) {
     if (!examDraft.name.trim()) return;
     setSavingExam(true);
     try {
-      const res = await apiFetch(`/api/admin/v2/examinations/${examId}/`, 'PATCH', {
+      const res = await api.patch(`/admin/v2/examinations/${examId}/`, {
         name: examDraft.name.trim(), description: examDraft.description.trim(),
       });
-      if (res.ok) {
-        const body = await res.json();
-        setExaminations((prev) => prev.map((e) => e.id === examId ? { ...e, name: body.name, description: body.description } : e));
-        setEditingExamId(null);
-      } else {
-        const body = await res.json().catch(() => ({}));
-        alert(body.error || 'Failed to update examination');
-      }
+      setExaminations((prev) => prev.map((e) => e.id === examId ? { ...e, name: res.data.name, description: res.data.description } : e));
+      setEditingExamId(null);
+    } catch (err) {
+      alert(apiErrorMessage(err, 'Failed to update examination'));
     } finally {
       setSavingExam(false);
     }
@@ -962,17 +989,12 @@ export default function CompetitiveBankView({ onBack }) {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await apiFetchForm(`/api/admin/v2/examinations/${selectedExam.id}/syllabus/upload/`, formData);
-      const body = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setUploadResult(body);
-        fetchSyllabus(selectedExam.id);
-        fetchExaminations();
-      } else {
-        setUploadError(body.error || 'Upload failed');
-      }
+      const res = await api.post(`/admin/v2/examinations/${selectedExam.id}/syllabus/upload/`, formData);
+      setUploadResult(res.data);
+      fetchSyllabus(selectedExam.id);
+      fetchExaminations();
     } catch (err) {
-      setUploadError('Upload failed');
+      setUploadError(apiErrorMessage(err, 'Upload failed'));
     } finally {
       setUploading(false);
     }
@@ -982,17 +1004,14 @@ export default function CompetitiveBankView({ onBack }) {
     if (!newSectionTitle.trim() || !selectedExam) return;
     setAddingSection(true);
     try {
-      const res = await apiFetch(`/api/admin/v2/examinations/${selectedExam.id}/sections/`, 'POST', { title: newSectionTitle.trim() });
-      const body = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setSyllabus((prev) => ({ ...(prev || { examination: null }), sections: [...((prev && prev.sections) || []), body] }));
-        setExpandedSections((prev) => ({ ...prev, [body.id]: true }));
-        setNewSectionTitle('');
-        setAddSectionOpen(false);
-        fetchExaminations();
-      } else {
-        alert(body.error || 'Failed to add section');
-      }
+      const res = await api.post(`/admin/v2/examinations/${selectedExam.id}/sections/`, { title: newSectionTitle.trim() });
+      setSyllabus((prev) => ({ ...(prev || { examination: null }), sections: [...((prev && prev.sections) || []), res.data] }));
+      setExpandedSections((prev) => ({ ...prev, [res.data.id]: true }));
+      setNewSectionTitle('');
+      setAddSectionOpen(false);
+      fetchExaminations();
+    } catch (err) {
+      alert(apiErrorMessage(err, 'Failed to add section'));
     } finally {
       setAddingSection(false);
     }
@@ -1000,30 +1019,27 @@ export default function CompetitiveBankView({ onBack }) {
 
   const handleDeleteSection = async (sectionId) => {
     if (!window.confirm('Delete this section and everything under it (topics, subtopics, folders, questions)? This cannot be undone.')) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/sections/${sectionId}/`, 'DELETE');
-    if (res.ok) {
+    try {
+      await api.delete(`/admin/v2/examinations/sections/${sectionId}/`);
       setSyllabus((prev) => prev ? { ...prev, sections: prev.sections.filter((s) => s.id !== sectionId) } : prev);
       fetchExaminations();
-    }
+    } catch { /* leave the section in place on failure */ }
   };
 
   const handleAddTopic = async (sectionId) => {
     if (!newTopicTitle.trim()) return;
     setAddingTopic(true);
     try {
-      const res = await apiFetch(`/api/admin/v2/examinations/sections/${sectionId}/topics/`, 'POST', { title: newTopicTitle.trim() });
-      const body = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setSyllabus((prev) => ({
-          ...prev,
-          sections: prev.sections.map((s) => s.id === sectionId ? { ...s, topics: [...s.topics, body] } : s),
-        }));
-        setNewTopicTitle('');
-        setAddTopicFor(null);
-        fetchExaminations();
-      } else {
-        alert(body.error || 'Failed to add topic');
-      }
+      const res = await api.post(`/admin/v2/examinations/sections/${sectionId}/topics/`, { title: newTopicTitle.trim() });
+      setSyllabus((prev) => ({
+        ...prev,
+        sections: prev.sections.map((s) => s.id === sectionId ? { ...s, topics: [...s.topics, res.data] } : s),
+      }));
+      setNewTopicTitle('');
+      setAddTopicFor(null);
+      fetchExaminations();
+    } catch (err) {
+      alert(apiErrorMessage(err, 'Failed to add topic'));
     } finally {
       setAddingTopic(false);
     }
@@ -1031,36 +1047,33 @@ export default function CompetitiveBankView({ onBack }) {
 
   const handleDeleteTopic = async (sectionId, topicId) => {
     if (!window.confirm('Delete this topic and everything under it (subtopics, folders, questions)? This cannot be undone.')) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/topics/${topicId}/`, 'DELETE');
-    if (res.ok) {
+    try {
+      await api.delete(`/admin/v2/examinations/topics/${topicId}/`);
       setSyllabus((prev) => ({
         ...prev,
         sections: prev.sections.map((s) => s.id === sectionId ? { ...s, topics: s.topics.filter((t) => t.id !== topicId) } : s),
       }));
       fetchExaminations();
-    }
+    } catch { /* leave the topic in place on failure */ }
   };
 
   const handleAddSubtopic = async (sectionId, topicId) => {
     if (!newSubtopicTitle.trim()) return;
     setAddingSubtopic(true);
     try {
-      const res = await apiFetch(`/api/admin/v2/examinations/topics/${topicId}/subtopics/`, 'POST', { title: newSubtopicTitle.trim() });
-      const body = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setSyllabus((prev) => ({
-          ...prev,
-          sections: prev.sections.map((s) => s.id === sectionId ? {
-            ...s,
-            topics: s.topics.map((t) => t.id === topicId ? { ...t, subtopics: [...t.subtopics, body] } : t),
-          } : s),
-        }));
-        setNewSubtopicTitle('');
-        setAddSubtopicFor(null);
-        fetchExaminations();
-      } else {
-        alert(body.error || 'Failed to add subtopic');
-      }
+      const res = await api.post(`/admin/v2/examinations/topics/${topicId}/subtopics/`, { title: newSubtopicTitle.trim() });
+      setSyllabus((prev) => ({
+        ...prev,
+        sections: prev.sections.map((s) => s.id === sectionId ? {
+          ...s,
+          topics: s.topics.map((t) => t.id === topicId ? { ...t, subtopics: [...t.subtopics, res.data] } : t),
+        } : s),
+      }));
+      setNewSubtopicTitle('');
+      setAddSubtopicFor(null);
+      fetchExaminations();
+    } catch (err) {
+      alert(apiErrorMessage(err, 'Failed to add subtopic'));
     } finally {
       setAddingSubtopic(false);
     }
@@ -1068,8 +1081,8 @@ export default function CompetitiveBankView({ onBack }) {
 
   const handleDeleteSubtopic = async (sectionId, topicId, subtopicId) => {
     if (!window.confirm('Delete this subtopic and everything under it (folders, media, questions)? This cannot be undone.')) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/`, 'DELETE');
-    if (res.ok) {
+    try {
+      await api.delete(`/admin/v2/examinations/subtopics/${subtopicId}/`);
       setSyllabus((prev) => ({
         ...prev,
         sections: prev.sections.map((s) => s.id === sectionId ? {
@@ -1078,7 +1091,7 @@ export default function CompetitiveBankView({ onBack }) {
         } : s),
       }));
       fetchExaminations();
-    }
+    } catch { /* leave the subtopic in place on failure */ }
   };
 
   const handleResourcesSaved = (topicId, resourceLinks) => {
@@ -1361,6 +1374,21 @@ export default function CompetitiveBankView({ onBack }) {
             showDescription={true}
             onClose={() => { setResourceModalSubtopic(null); fetchSyllabus(selectedExam.id); }}
             onSaved={(description, resourceLinks) => handleSubtopicSaved(resourceModalSubtopic.id, description, resourceLinks)}
+            onQuestionCountChange={(delta) => {
+              const subtopicId = resourceModalSubtopic.id;
+              setSyllabus((prev) => prev ? {
+                ...prev,
+                sections: prev.sections.map((s) => ({
+                  ...s,
+                  topics: s.topics.map((t) => ({
+                    ...t,
+                    subtopics: t.subtopics.map((st) => st.id === subtopicId
+                      ? { ...st, question_count: Math.max(0, (st.question_count || 0) + delta) }
+                      : st),
+                  })),
+                })),
+              } : prev);
+            }}
           />
         )}
       </div>

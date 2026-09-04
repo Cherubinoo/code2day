@@ -34,17 +34,34 @@ the parent (and its sibling children) untouched.
 
 `key` matches the `id` used in frontend/src/lib/appData.js's `navItems`
 for every top-level module that has a student-facing nav entry, so the
-same key drives both nav-hiding and backend enforcement without a
-separate mapping.
+same key drives both nav-hiding (App.jsx filters `navItems` by
+`locked_modules` directly, independent of anything below) and backend
+enforcement without a separate mapping.
 
-Not included: "roadmaps" (no backend API — a static page, nothing to
-enforce) and "progress" (reads shared analytics endpoints also used
-elsewhere, no clean boundary to lock without collateral effects).
+Nav-only entries: "explore", "roadmaps", and "progress" have
+`api_path_prefixes: []` on purpose — they have no dedicated backend
+surface of their own to block (Explore and Progress render off shared
+dashboard/analytics endpoints other unlocked pages also depend on, so
+blocking those endpoints would lock collateral pages too; Roadmaps is a
+static page with no API at all). An empty prefix list makes
+`_matches_prefix` never match, so `locked_module_for_request` always
+skips these — they're locked from the nav only, same as before, just
+now with an actual toggle in the admin UI instead of no toggle at all.
 """
 
 import re
 
 MODULE_REGISTRY = [
+    {
+        "key": "explore",
+        "label": "Explore",
+        "api_path_prefixes": [],  # nav-only — see module docstring
+    },
+    {
+        "key": "roadmaps",
+        "label": "Roadmaps",
+        "api_path_prefixes": [],  # nav-only — see module docstring
+    },
     {
         "key": "problems",
         "label": "Coding Practice",
@@ -127,6 +144,11 @@ MODULE_REGISTRY = [
         ],
     },
     {
+        "key": "leaderboard",
+        "label": "Leaderboard",
+        "api_path_prefixes": ["/api/student/leaderboard/"],
+    },
+    {
         "key": "discuss",
         "label": "Discuss",
         "api_path_prefixes": ["/api/discussions/"],
@@ -140,6 +162,11 @@ MODULE_REGISTRY = [
         "key": "competitive",
         "label": "Competitive Practice",
         "api_path_prefixes": ["/api/competitive/"],
+    },
+    {
+        "key": "progress",
+        "label": "Progress",
+        "api_path_prefixes": [],  # nav-only — see module docstring
     },
 ]
 

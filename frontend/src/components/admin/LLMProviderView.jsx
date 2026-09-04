@@ -1,16 +1,15 @@
 // Admin LLM Providers — manage the fallback chain used for automatic test
 // case / lab report generation. Providers are tried in priority order (lowest
 // first); if one errors or times out the next active one is tried.
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Trash2, Pencil, Loader2, RefreshCw, Sparkles } from 'lucide-react';
-import { getCsrfToken } from '../../lib/appUtils';
+import api from '../../lib/api';
 
-function apiFetch(url, method, body) {
-  const token = getCsrfToken();
-  const opts = { method, credentials: 'include', headers: { 'Content-Type': 'application/json' } };
-  if (token) opts.headers['X-CSRFToken'] = token;
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  return fetch(url, opts);
+const PROVIDERS_QUERY_KEY = ['llm-providers'];
+
+function apiErrorMessage(err, fallback) {
+  return err?.response?.data?.error || err?.message || fallback;
 }
 
 const BLANK_FORM = {
@@ -20,34 +19,65 @@ const BLANK_FORM = {
 };
 
 const LLMProviderView = ({ onBack }) => {
-  const [loading, setLoading] = useState(true);
-  const [providers, setProviders] = useState([]);
-  const [error, setError] = useState('');
+  const queryClient = useQueryClient();
+
+  const {
+    data: providers = [],
+    isLoading: loading,
+    isRefetching,
+    error: loadError,
+    refetch,
+  } = useQuery({
+    queryKey: PROVIDERS_QUERY_KEY,
+    queryFn: async () => {
+      const res = await api.get('/admin/v2/llm-providers/');
+      return res.data.providers || [];
+    },
+  });
+  const error = loadError ? apiErrorMessage(loadError, 'Failed to load providers') : '';
 
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(BLANK_FORM);
   const [snippet, setSnippet] = useState('');
-  const [parsing, setParsing] = useState(false);
   const [parseErr, setParseErr] = useState('');
-  const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState('');
 
-  useEffect(() => { load(); }, []);
+  const parseSnippetMutation = useMutation({
+    mutationFn: (text) => api.post('/admin/v2/llm-providers/parse-snippet/', { snippet: text }),
+    onSuccess: (res) => setForm((f) => ({ ...f, ...res.data.parsed })),
+    onError: (err) => setParseErr(apiErrorMessage(err, 'Could not parse this snippet.')),
+  });
 
-  async function load() {
-    setLoading(true); setError('');
-    try {
-      const res = await apiFetch('/api/admin/v2/llm-providers/', 'GET');
-      if (!res.ok) throw new Error('Failed to load providers');
-      const data = await res.json();
-      setProviders(data.providers || []);
-    } catch (err) {
-      setError(err.message || 'Failed to load providers');
-    } finally {
-      setLoading(false);
-    }
-  }
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const url = editingId ? `/admin/v2/llm-providers/${editingId}/` : '/admin/v2/llm-providers/';
+      return editingId ? api.patch(url, form) : api.post(url, form);
+    },
+    onSuccess: () => {
+      setShowForm(false);
+      queryClient.invalidateQueries({ queryKey: PROVIDERS_QUERY_KEY });
+    },
+    onError: (err) => setSaveErr(apiErrorMessage(err, 'Save failed.')),
+  });
+
+  const toggleActiveMutation = useMutation({
+    mutationFn: (p) => api.patch(`/admin/v2/llm-providers/${p.id}/`, { is_active: !p.is_active }),
+    // Flip it optimistically in the cache instead of waiting on a refetch —
+    // this is a single boolean flip, not worth a loading flicker for.
+    onSuccess: (_res, p) => {
+      queryClient.setQueryData(PROVIDERS_QUERY_KEY, (prev) =>
+        (prev || []).map((x) => (x.id === p.id ? { ...x, is_active: !x.is_active } : x)),
+      );
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (p) => api.delete(`/admin/v2/llm-providers/${p.id}/`),
+    onSuccess: (_res, p) => {
+      queryClient.setQueryData(PROVIDERS_QUERY_KEY, (prev) => (prev || []).filter((x) => x.id !== p.id));
+    },
+  });
 
   function openCreateForm() {
     setEditingId(null);
@@ -72,57 +102,30 @@ const LLMProviderView = ({ onBack }) => {
     setShowForm(true);
   }
 
-  async function parseSnippet() {
+  function parseSnippet() {
     if (!snippet.trim()) { setParseErr('Paste a code snippet first.'); return; }
-    setParsing(true); setParseErr('');
-    try {
-      const res = await apiFetch('/api/admin/v2/llm-providers/parse-snippet/', 'POST', { snippet });
-      const data = await res.json();
-      if (!res.ok) {
-        setParseErr(data.error || 'Could not parse this snippet.');
-        return;
-      }
-      setForm((f) => ({ ...f, ...data.parsed }));
-    } catch {
-      setParseErr('Network error.');
-    } finally {
-      setParsing(false);
-    }
+    setParseErr('');
+    parseSnippetMutation.mutate(snippet);
   }
 
-  async function save() {
+  function save() {
     if (!form.name.trim()) { setSaveErr('Name is required.'); return; }
     if (!editingId && !form.api_key.trim()) { setSaveErr('API key is required.'); return; }
-    setSaving(true); setSaveErr('');
-    try {
-      const url = editingId ? `/api/admin/v2/llm-providers/${editingId}/` : '/api/admin/v2/llm-providers/';
-      const res = await apiFetch(url, editingId ? 'PATCH' : 'POST', form);
-      const data = await res.json();
-      if (!res.ok) {
-        setSaveErr(data.error || 'Save failed.');
-        return;
-      }
-      setShowForm(false);
-      load();
-    } catch {
-      setSaveErr('Network error.');
-    } finally {
-      setSaving(false);
-    }
+    setSaveErr('');
+    saveMutation.mutate();
   }
 
-  async function toggleActive(p) {
-    await apiFetch(`/api/admin/v2/llm-providers/${p.id}/`, 'PATCH', { is_active: !p.is_active });
-    setProviders((prev) => prev.map((x) => (x.id === p.id ? { ...x, is_active: !x.is_active } : x)));
+  function toggleActive(p) {
+    toggleActiveMutation.mutate(p);
   }
 
-  async function remove(p) {
+  function remove(p) {
     if (!window.confirm(`Delete provider "${p.name}"? This can't be undone.`)) return;
-    const res = await apiFetch(`/api/admin/v2/llm-providers/${p.id}/`, 'DELETE');
-    if (res.ok || res.status === 204) {
-      setProviders((prev) => prev.filter((x) => x.id !== p.id));
-    }
+    removeMutation.mutate(p);
   }
+
+  const parsing = parseSnippetMutation.isPending;
+  const saving = saveMutation.isPending;
 
   return (
     <div className="animate-fade-in">
@@ -139,8 +142,8 @@ const LLMProviderView = ({ onBack }) => {
             Fallback chain for automatic generation — tried in priority order, lowest first.
           </p>
         </div>
-        <button onClick={load} disabled={loading} style={{ marginLeft: 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
-          <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
+        <button onClick={() => refetch()} disabled={loading || isRefetching} style={{ marginLeft: 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
+          <RefreshCw size={16} className={(loading || isRefetching) ? 'spin' : ''} /> Refresh
         </button>
         <button onClick={openCreateForm} className="primary-button" style={{ borderRadius: 12, padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
           <Plus size={16} /> Add Provider

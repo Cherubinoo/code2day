@@ -1,17 +1,16 @@
 import { useState, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Building2, Plus, Users, Calendar,
   UserCheck, Pencil, Trash2, BookOpen, X, Save,
 } from "lucide-react";
-import { getCsrfToken } from "../../lib/appUtils";
+import api from "../../lib/api";
 import { LAB_LANGUAGES } from "../../lib/appData";
 
-function apiFetch(url, method, body) {
-  const token = getCsrfToken();
-  const opts = { method, credentials: "include", headers: { "Content-Type": "application/json" } };
-  if (token) opts.headers["X-CSRFToken"] = token;
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  return fetch(url, opts);
+const COMPANIES_QUERY_KEY = ["hod-companies"];
+
+function apiErrorMessage(err, fallback) {
+  return err?.response?.data?.error || err?.message || fallback;
 }
 
 function fmt(iso) {
@@ -65,8 +64,21 @@ function CompanyDrawer({ open, onClose, onSave, deptInfo, staffList, editCompany
     allowed_languages: [...LAB_LANGUAGES],
   };
   const [form, setForm] = useState(blank);
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const url = editing ? `/hod/companies/${editCompany.id}/` : "/hod/companies/";
+      const payload = { ...form, name: form.name.trim(), staff_in_charge_id: form.staff_in_charge_id || null };
+      return editing ? api.put(url, payload) : api.post(url, payload);
+    },
+    onSuccess: (res) => {
+      onSave(res.data, editing);
+      onClose();
+    },
+    onError: (e) => setErr(apiErrorMessage(e, "Save failed")),
+  });
+  const busy = saveMutation.isPending;
 
   useEffect(() => {
     if (!open) return;
@@ -89,26 +101,15 @@ function CompanyDrawer({ open, onClose, onSave, deptInfo, staffList, editCompany
 
   const sections = form.batch ? (deptInfo.sections_by_batch?.[form.batch] ?? []) : [];
 
-  async function submit(e) {
+  function submit(e) {
     e.preventDefault();
     if (!form.name.trim()) { setErr("Company name is required"); return; }
     if (!form.batch) { setErr("Select a batch"); return; }
     if (!form.start_date || !form.end_date) { setErr("Both start and end dates are required"); return; }
     if (new Date(form.start_date) >= new Date(form.end_date)) { setErr("End date must be after start date"); return; }
     if (form.allowed_languages.length === 0) { setErr("Select at least one allowed language"); return; }
-    setBusy(true); setErr("");
-    try {
-      const url = editing ? `/api/hod/companies/${editCompany.id}/` : "/api/hod/companies/";
-      const res = await apiFetch(url, editing ? "PUT" : "POST", {
-        ...form,
-        name: form.name.trim(),
-        staff_in_charge_id: form.staff_in_charge_id || null,
-      });
-      if (!res.ok) { const d = await res.json(); setErr(d.error || "Save failed"); return; }
-      onSave(await res.json(), editing);
-      onClose();
-    } catch { setErr("Network error"); }
-    finally { setBusy(false); }
+    setErr("");
+    saveMutation.mutate();
   }
 
   if (!open) return null;
@@ -223,46 +224,48 @@ function CompanyCard({ company, onEdit, onDelete }) {
 }
 
 export default function HODCompanyCenter() {
-  const [companies, setCompanies] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [deptInfo, setDeptInfo] = useState({ batches: [], sections: [], sections_by_batch: {} });
-  const [staffList, setStaffList] = useState([]);
+  const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editCompany, setEditCompany] = useState(null);
   const [delConfirm, setDelConfirm] = useState(null);
 
-  useEffect(() => { load(); }, []);
+  const { data: companies = [], isLoading: companiesLoading } = useQuery({
+    queryKey: COMPANIES_QUERY_KEY,
+    queryFn: async () => (await api.get("/hod/companies/")).data,
+  });
+  const { data: deptInfoRaw } = useQuery({
+    queryKey: ["hod-dept-info"],
+    queryFn: async () => (await api.get("/lab/assignments/hod/dept-info/")).data,
+  });
+  const deptInfo = {
+    batches: deptInfoRaw?.batches || [],
+    sections: deptInfoRaw?.sections || [],
+    sections_by_batch: deptInfoRaw?.sections_by_batch || {},
+  };
+  const { data: staffList = [] } = useQuery({
+    queryKey: ["hod-lab-staff"],
+    queryFn: async () => (await api.get("/lab/assignments/hod/staff/")).data,
+  });
+  const loading = companiesLoading;
 
-  async function load() {
-    setLoading(true);
-    const [cr, ir, sr] = await Promise.all([
-      fetch("/api/hod/companies/", { credentials: "include" }),
-      fetch("/api/lab/assignments/hod/dept-info/", { credentials: "include" }),
-      fetch("/api/lab/assignments/hod/staff/", { credentials: "include" }),
-    ]);
-    if (cr.ok) setCompanies(await cr.json());
-    if (ir.ok) {
-      const info = await ir.json();
-      setDeptInfo({
-        batches: info.batches || [],
-        sections: info.sections || [],
-        sections_by_batch: info.sections_by_batch || {},
-      });
-    }
-    if (sr.ok) setStaffList(await sr.json());
-    setLoading(false);
-  }
-
+  // Query-cache patch instead of a full refetch — the mutation already
+  // returns the saved/created row, no need to re-fetch the whole list.
   function onSaved(company, isEdit) {
-    setCompanies((prev) => isEdit ? prev.map((c) => c.id === company.id ? company : c) : [company, ...prev]);
+    queryClient.setQueryData(COMPANIES_QUERY_KEY, (prev) =>
+      isEdit ? (prev || []).map((c) => (c.id === company.id ? company : c)) : [company, ...(prev || [])],
+    );
   }
 
-  async function confirmDelete(company) {
-    const res = await apiFetch(`/api/hod/companies/${company.id}/`, "DELETE");
-    if (res.ok) {
-      setCompanies((prev) => prev.filter((c) => c.id !== company.id));
+  const deleteMutation = useMutation({
+    mutationFn: (company) => api.delete(`/hod/companies/${company.id}/`),
+    onSuccess: (_res, company) => {
+      queryClient.setQueryData(COMPANIES_QUERY_KEY, (prev) => (prev || []).filter((c) => c.id !== company.id));
       setDelConfirm(null);
-    }
+    },
+  });
+
+  function confirmDelete(company) {
+    deleteMutation.mutate(company);
   }
 
   const active = companies.filter((c) => !c.is_expired);

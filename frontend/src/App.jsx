@@ -92,6 +92,7 @@ import {
   normalizeProblems,
 } from "./lib/appUtils";
 import { useHistoryNav } from "./lib/useHistoryNav";
+import { useDrillDownParam } from "./lib/useDrillDownParam";
 
 function App() {
   const [activePage, navigate] = useHistoryNav(() => {
@@ -112,9 +113,11 @@ function App() {
   const [selectedLanguage, setSelectedLanguage] = useState(() => {
     return window.localStorage.getItem("code2day-language") || "Python";
   });
-  const [selectedProblemSlug, setSelectedProblemSlug] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get("slug") || "";
+  // useDrillDownParam (not plain useState) so the browser Back button
+  // correctly closes the problem workspace back to the list instead of
+  // exiting past it to whatever page came before "problems" in history.
+  const [selectedProblemSlug, setSelectedProblemSlug] = useDrillDownParam("slug", {
+    defaultValue: "",
   });
   const [problemDetailTab, setProblemDetailTab] = useState("current");
   const [code, setCode] = useState(() => {
@@ -1408,7 +1411,7 @@ function App() {
       activeView = <InterviewPracticePage />;
       break;
     case "competitive":
-      activeView = <CompetitivePracticePage />;
+      activeView = <CompetitivePracticePage dashboard={dashboard} />;
       break;
     case "discuss":
       activeView = (

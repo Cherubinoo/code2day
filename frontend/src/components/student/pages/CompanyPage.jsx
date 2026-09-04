@@ -1,13 +1,19 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { Building2, Search, ArrowLeft } from "lucide-react";
 import ProblemsPage from "./ProblemsPage";
+import { useDrillDownParam } from "../../../lib/useDrillDownParam";
 
 export default function CompanyPage(props) {
   const { problemSet, setSelectedProblemSlug, selectedProblem } = props;
-  
-  // Persistent company selection
-  const [selectedCompany, setSelectedCompany] = useState(() => {
-    return window.localStorage.getItem("code2day-selected-company") || null;
+
+  // useDrillDownParam (not plain useState) so the browser Back button
+  // correctly returns to the company grid instead of exiting the page.
+  // defaultValue falls back to the last localStorage selection only when
+  // there's no ?company= in the URL yet (e.g. very first load) — same
+  // fallback behavior as before, just without a wasted pushState for it.
+  const [selectedCompany, setSelectedCompany] = useDrillDownParam("company", {
+    defaultValue: window.localStorage.getItem("code2day-selected-company") || null,
+    parse: (v) => v || null,
   });
   
   const [searchQuery, setSearchQuery] = useState("");

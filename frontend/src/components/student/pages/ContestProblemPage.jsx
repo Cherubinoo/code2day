@@ -493,10 +493,20 @@ const ContestProblemPage = ({ contestId, problemSlug, onBack }) => {
               {problem.explanation ? (
                 <div className="info-box">
                   <h4>Explanation</h4>
-                  <p className="body-copy formatted-explanation">{problem.explanation}</p>
+                  <div className="problem-description">
+                    {renderDescription(problem.explanation)}
+                  </div>
                 </div>
               ) : (
                 <p className="body-copy">No explanation available for this problem.</p>
+              )}
+              {problem.hints && problem.hints.length > 0 && (
+                <div className="info-box" style={{ marginTop: 16 }}>
+                  <h4>Hints</h4>
+                  <ol className="desc-numbered">
+                    {problem.hints.map((hint, idx) => <li key={idx}>{hint}</li>)}
+                  </ol>
+                </div>
               )}
             </>
           )}

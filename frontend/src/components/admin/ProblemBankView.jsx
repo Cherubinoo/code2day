@@ -2,15 +2,12 @@
 // generate test cases (via the LLM fallback chain) for any problem missing
 // them, or regenerate for any problem.
 import { Fragment, useState, useEffect, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles } from 'lucide-react';
-import { getCsrfToken } from '../../lib/appUtils';
+import api from '../../lib/api';
 
-function apiFetch(url, method, body) {
-  const token = getCsrfToken();
-  const opts = { method, credentials: 'include', headers: { 'Content-Type': 'application/json' } };
-  if (token) opts.headers['X-CSRFToken'] = token;
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  return fetch(url, opts);
+function apiErrorMessage(err, fallback) {
+  return err?.response?.data?.error || err?.message || fallback;
 }
 
 // Mirrors backend/apps/learning/services/param_types.py VALID_TYPES — primitives
@@ -58,48 +55,37 @@ function draftToSchema(draft) {
 // and only fetching/polling while its tile is expanded (there can be 40+
 // tiles — polling all of them at once would be wasteful).
 function TopicMetadataPanel({ topic, onProgress }) {
-  const [status, setStatus] = useState(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  const queryClient = useQueryClient();
+  const [mutationError, setMutationError] = useState('');
   const encTopic = encodeURIComponent(topic);
+  const queryKey = ['problem-topic-metadata-run', topic];
 
-  async function loadStatus() {
-    try {
-      const res = await apiFetch(`/api/admin/v2/problem-bank/topics/${encTopic}/metadata-run/`, 'GET');
-      if (res.ok) {
-        const data = await res.json();
-        setStatus(data);
-        onProgress?.(data);
-      }
-    } catch { /* keep last known status on a transient network blip */ }
+  // refetchInterval polls every 3s only while a run is actually in progress
+  // — same "poll while running" behavior the old manual setInterval had.
+  const { data: status } = useQuery({
+    queryKey,
+    queryFn: async () => {
+      const data = (await api.get(`/admin/v2/problem-bank/topics/${encTopic}/metadata-run/`)).data;
+      onProgress?.(data);
+      return data;
+    },
+    refetchInterval: (query) => (query.state.data?.status === 'running' ? 3000 : false),
+  });
+
+  const actionMutation = useMutation({
+    mutationFn: (action) => api.post(`/admin/v2/problem-bank/topics/${encTopic}/metadata-run/`, { action }),
+    onSuccess: () => {
+      setMutationError('');
+      queryClient.invalidateQueries({ queryKey });
+    },
+    onError: (err) => setMutationError(apiErrorMessage(err, 'Action failed.')),
+  });
+
+  function doAction(action) {
+    actionMutation.mutate(action);
   }
-
-  useEffect(() => {
-    loadStatus();
-    const interval = setInterval(() => {
-      setStatus((s) => {
-        if (s && s.status === 'running') loadStatus();
-        return s;
-      });
-    }, 3000);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic]);
-
-  async function doAction(action) {
-    setBusy(true);
-    setError('');
-    try {
-      const res = await apiFetch(`/api/admin/v2/problem-bank/topics/${encTopic}/metadata-run/`, 'POST', { action });
-      const data = await res.json();
-      if (!res.ok) setError(data.error || 'Action failed.');
-      else await loadStatus();
-    } catch {
-      setError('Network error.');
-    } finally {
-      setBusy(false);
-    }
-  }
+  const busy = actionMutation.isPending;
+  const error = mutationError;
 
   if (!status) return <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>Loading…</div>;
 
@@ -168,24 +154,17 @@ function TopicMetadataPanel({ topic, onProgress }) {
 // "Untagged" tile, each expandable into its own TopicMetadataPanel — lets an
 // admin work through metadata generation in topic-sized chunks instead of
 // one all-problems sweep.
+const PROBLEM_TOPIC_TILES_QUERY_KEY = ['problem-bank-topics'];
+
 function ProblemTopicTiles({ onViewTopic }) {
-  const [topics, setTopics] = useState(null);
-  const [error, setError] = useState('');
+  const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(null);
 
-  async function load() {
-    setError('');
-    try {
-      const res = await apiFetch('/api/admin/v2/problem-bank/topics/', 'GET');
-      const data = await res.json();
-      if (!res.ok) setError(data.detail || 'Failed to load topics.');
-      else setTopics(data.topics);
-    } catch {
-      setError('Network error.');
-    }
-  }
-
-  useEffect(() => { load(); }, []);
+  const { data: topics, error: loadErrorObj } = useQuery({
+    queryKey: PROBLEM_TOPIC_TILES_QUERY_KEY,
+    queryFn: async () => (await api.get('/admin/v2/problem-bank/topics/')).data.topics,
+  });
+  const error = loadErrorObj ? apiErrorMessage(loadErrorObj, 'Failed to load topics.') : '';
 
   if (error) return <div style={{ padding: 16, background: '#fef2f2', color: '#dc2626', borderRadius: 12 }}>{error}</div>;
   if (!topics) return <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-soft)' }}>Loading topics…</div>;
@@ -221,7 +200,9 @@ function ProblemTopicTiles({ onViewTopic }) {
               <TopicMetadataPanel
                 topic={t.topic}
                 onProgress={(data) => {
-                  setTopics((prev) => prev.map((x) => x.topic === t.topic ? { ...x, missing_metadata: data.missing_metadata } : x));
+                  queryClient.setQueryData(PROBLEM_TOPIC_TILES_QUERY_KEY, (prev) =>
+                    (prev || []).map((x) => (x.topic === t.topic ? { ...x, missing_metadata: data.missing_metadata } : x)),
+                  );
                 }}
               />
             )}
@@ -233,10 +214,8 @@ function ProblemTopicTiles({ onViewTopic }) {
 }
 
 const ProblemBankView = ({ onBack }) => {
+  const queryClient = useQueryClient();
   const [mode, setMode] = useState('topics'); // 'topics' | 'list'
-  const [loading, setLoading] = useState(true);
-  const [problems, setProblems] = useState([]);
-  const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [missingOnly, setMissingOnly] = useState(true);
   const [page, setPage] = useState(1);
@@ -247,25 +226,27 @@ const ProblemBankView = ({ onBack }) => {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [fillMissing, setFillMissing] = useState({ busy: false, msg: '' });
+  const [mutationError, setMutationError] = useState('');
   const PAGE_SIZE = 50;
 
-  useEffect(() => {
-    load();
-  }, []);
+  const PROBLEMS_QUERY_KEY = ['problem-bank-list'];
+  const {
+    data: problems = [],
+    isLoading: loading,
+    error: loadErrorObj,
+    refetch,
+  } = useQuery({
+    queryKey: PROBLEMS_QUERY_KEY,
+    queryFn: async () => (await api.get('/admin/v2/problem-bank/')).data.problems || [],
+  });
+  const error = loadErrorObj ? apiErrorMessage(loadErrorObj, 'Failed to load problem bank') : mutationError;
+
+  function setProblems(updater) {
+    queryClient.setQueryData(PROBLEMS_QUERY_KEY, (prev) => updater(prev || []));
+  }
 
   async function load() {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await apiFetch('/api/admin/v2/problem-bank/', 'GET');
-      if (!res.ok) throw new Error('Failed to load problem bank');
-      const data = await res.json();
-      setProblems(data.problems || []);
-    } catch (err) {
-      setError(err.message || 'Failed to load problem bank');
-    } finally {
-      setLoading(false);
-    }
+    return refetch();
   }
 
   const isSearching = search.trim().length > 0;
@@ -300,12 +281,12 @@ const ProblemBankView = ({ onBack }) => {
     // nothing to hand off between them — fire both at once instead of
     // waiting for one to finish before starting the other.
     const [tcOutcome, expOutcome] = await Promise.all([
-      apiFetch(`/api/admin/v2/problem-bank/${problem.id}/generate-test-cases/`, 'POST', body)
-        .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
-        .catch(() => ({ ok: false, data: null, networkError: true })),
-      apiFetch(`/api/admin/v2/problem-bank/${problem.id}/generate-explanation/`, 'POST', body)
-        .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
-        .catch(() => ({ ok: false, data: null, networkError: true })),
+      api.post(`/admin/v2/problem-bank/${problem.id}/generate-test-cases/`, body)
+        .then((res) => ({ ok: true, data: res.data }))
+        .catch((err) => ({ ok: false, data: err?.response?.data || null, networkError: !err?.response })),
+      api.post(`/admin/v2/problem-bank/${problem.id}/generate-explanation/`, body)
+        .then((res) => ({ ok: true, data: res.data }))
+        .catch((err) => ({ ok: false, data: err?.response?.data || null, networkError: !err?.response })),
     ]);
 
     const messages = [];
@@ -333,12 +314,7 @@ const ProblemBankView = ({ onBack }) => {
   async function generateSchema(problem) {
     setGenStates((s) => ({ ...s, [problem.id]: { ...(s[problem.id] || {}), schemaBusy: true, schemaMsg: '' } }));
     try {
-      const res = await apiFetch(`/api/admin/v2/problem-bank/${problem.id}/generate-schema/`, 'POST');
-      const data = await res.json();
-      if (!res.ok) {
-        setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], schemaBusy: false, schemaMsg: data.error || 'Failed.' } }));
-        return;
-      }
+      const data = (await api.post(`/admin/v2/problem-bank/${problem.id}/generate-schema/`)).data;
       const messages = [];
       messages.push(data.schema_generated ? 'Schema generated.' : 'Schema already existed — skipped.');
       messages.push(data.explanation_generated ? 'Explanation generated.' : 'Explanation already existed — skipped.');
@@ -355,8 +331,8 @@ const ProblemBankView = ({ onBack }) => {
         s[problem.id] ? { ...s, [problem.id]: { ...s[problem.id], schema: data.param_schema ?? s[problem.id].schema } } : s
       ));
       setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], schemaBusy: false, schemaMsg: messages.join(' ') } }));
-    } catch {
-      setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], schemaBusy: false, schemaMsg: 'Network error.' } }));
+    } catch (err) {
+      setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], schemaBusy: false, schemaMsg: apiErrorMessage(err, 'Failed.') } }));
     }
   }
 
@@ -375,15 +351,13 @@ const ProblemBankView = ({ onBack }) => {
       },
     }));
     try {
-      const res = await apiFetch(`/api/admin/v2/problem-bank/${problem.id}/test-cases/`, 'GET');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to load test cases');
+      const data = (await api.get(`/admin/v2/problem-bank/${problem.id}/test-cases/`)).data;
       setTcPanels((s) => ({
         ...s,
         [problem.id]: { ...s[problem.id], loading: false, testCases: data.test_cases, schema: data.problem.param_schema },
       }));
     } catch (err) {
-      setTcPanels((s) => ({ ...s, [problem.id]: { ...s[problem.id], loading: false, error: err.message } }));
+      setTcPanels((s) => ({ ...s, [problem.id]: { ...s[problem.id], loading: false, error: apiErrorMessage(err, 'Failed to load test cases') } }));
     }
   }
 
@@ -459,18 +433,13 @@ const ProblemBankView = ({ onBack }) => {
 
     updatePanel(problem.id, { savingSchema: true, schemaError: '' });
     try {
-      const res = await apiFetch(`/api/admin/v2/problem-bank/${problem.id}/param-schema/`, 'PUT', {
-        param_schema,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        updatePanel(problem.id, { savingSchema: false, schemaError: (data.details || [data.error]).join(' ') });
-        return;
-      }
+      const data = (await api.put(`/admin/v2/problem-bank/${problem.id}/param-schema/`, { param_schema })).data;
       updatePanel(problem.id, { savingSchema: false, editingSchema: false, schema: data.param_schema });
       setProblems((prev) => prev.map((p) => (p.id === problem.id ? { ...p, has_param_schema: true } : p)));
-    } catch {
-      updatePanel(problem.id, { savingSchema: false, schemaError: 'Network error.' });
+    } catch (err) {
+      const details = err?.response?.data?.details;
+      const msg = details ? details.join(' ') : apiErrorMessage(err, 'Network error.');
+      updatePanel(problem.id, { savingSchema: false, schemaError: msg });
     }
   }
 
@@ -478,15 +447,11 @@ const ProblemBankView = ({ onBack }) => {
     if (!window.confirm('Clear the typed schema for this problem? It will fall back to the existing auto-detected execution.')) return;
     updatePanel(problem.id, { savingSchema: true, schemaError: '' });
     try {
-      const res = await apiFetch(`/api/admin/v2/problem-bank/${problem.id}/param-schema/`, 'DELETE');
-      if (!res.ok && res.status !== 204) {
-        updatePanel(problem.id, { savingSchema: false, schemaError: 'Failed to clear schema.' });
-        return;
-      }
+      await api.delete(`/admin/v2/problem-bank/${problem.id}/param-schema/`);
       updatePanel(problem.id, { savingSchema: false, editingSchema: false, schema: null });
       setProblems((prev) => prev.map((p) => (p.id === problem.id ? { ...p, has_param_schema: false } : p)));
-    } catch {
-      updatePanel(problem.id, { savingSchema: false, schemaError: 'Network error.' });
+    } catch (err) {
+      updatePanel(problem.id, { savingSchema: false, schemaError: apiErrorMessage(err, 'Failed to clear schema.') });
     }
   }
 
@@ -498,16 +463,11 @@ const ProblemBankView = ({ onBack }) => {
     }
     updatePanel(problem.id, { saving: true, error: '' });
     try {
-      const res = await apiFetch(`/api/admin/v2/problem-bank/${problem.id}/test-cases/`, 'POST', {
+      const data = (await api.post(`/admin/v2/problem-bank/${problem.id}/test-cases/`, {
         stdin: panel.newStdin || '',
         expected_output: panel.newOutput,
         is_sample: !!panel.newIsSample,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        updatePanel(problem.id, { saving: false, error: data.error || 'Failed to add test case.' });
-        return;
-      }
+      })).data;
       updatePanel(problem.id, {
         saving: false, newStdin: '', newOutput: '', newIsSample: false,
         testCases: [...(panel.testCases || []), data],
@@ -515,8 +475,8 @@ const ProblemBankView = ({ onBack }) => {
       setProblems((prev) => prev.map((p) => (
         p.id === problem.id ? { ...p, test_case_count: (p.test_case_count || 0) + 1 } : p
       )));
-    } catch {
-      updatePanel(problem.id, { saving: false, error: 'Network error.' });
+    } catch (err) {
+      updatePanel(problem.id, { saving: false, error: apiErrorMessage(err, 'Failed to add test case.') });
     }
   }
 
@@ -563,16 +523,11 @@ const ProblemBankView = ({ onBack }) => {
 
     updatePanel(problem.id, { saving: true, error: '' });
     try {
-      const res = await apiFetch(`/api/admin/v2/problem-bank/${problem.id}/test-cases/`, 'POST', {
+      const data = (await api.post(`/admin/v2/problem-bank/${problem.id}/test-cases/`, {
         input_data: inputData,
         expected_output: expectedOutput,
         is_sample: !!panel.newIsSample,
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        updatePanel(problem.id, { saving: false, error: data.error || 'Failed to add test case.' });
-        return;
-      }
+      })).data;
       updatePanel(problem.id, {
         saving: false, newTypedInputs: {}, newTypedOutput: '', newIsSample: false,
         testCases: [...(panel.testCases || []), data],
@@ -580,25 +535,21 @@ const ProblemBankView = ({ onBack }) => {
       setProblems((prev) => prev.map((p) => (
         p.id === problem.id ? { ...p, test_case_count: (p.test_case_count || 0) + 1 } : p
       )));
-    } catch {
-      updatePanel(problem.id, { saving: false, error: 'Network error.' });
+    } catch (err) {
+      updatePanel(problem.id, { saving: false, error: apiErrorMessage(err, 'Failed to add test case.') });
     }
   }
 
   async function deleteTestCase(problem, tcId) {
     const panel = tcPanels[problem.id] || {};
     try {
-      const res = await apiFetch(`/api/admin/v2/problem-bank/${problem.id}/test-cases/${tcId}/`, 'DELETE');
-      if (!res.ok && res.status !== 204) {
-        updatePanel(problem.id, { error: 'Failed to delete test case.' });
-        return;
-      }
+      await api.delete(`/admin/v2/problem-bank/${problem.id}/test-cases/${tcId}/`);
       updatePanel(problem.id, { testCases: (panel.testCases || []).filter((tc) => tc.id !== tcId) });
       setProblems((prev) => prev.map((p) => (
         p.id === problem.id ? { ...p, test_case_count: Math.max(0, (p.test_case_count || 0) - 1) } : p
       )));
-    } catch {
-      updatePanel(problem.id, { error: 'Network error.' });
+    } catch (err) {
+      updatePanel(problem.id, { error: apiErrorMessage(err, 'Failed to delete test case.') });
     }
   }
 
@@ -627,15 +578,11 @@ const ProblemBankView = ({ onBack }) => {
     if (!window.confirm(`Delete "${problem.title}"? This permanently removes the problem and all its test cases.`)) return;
     setDeletingId(problem.id);
     try {
-      const res = await apiFetch(`/api/admin/v2/problem-bank/${problem.id}/`, 'DELETE');
-      if (!res.ok && res.status !== 204) {
-        setError('Failed to delete problem.');
-        return;
-      }
+      await api.delete(`/admin/v2/problem-bank/${problem.id}/`);
       setProblems((prev) => prev.filter((p) => p.id !== problem.id));
       setSelectedIds((prev) => { const next = new Set(prev); next.delete(problem.id); return next; });
-    } catch {
-      setError('Network error while deleting.');
+    } catch (err) {
+      setMutationError(apiErrorMessage(err, 'Failed to delete problem.'));
     } finally {
       setDeletingId(null);
     }
@@ -646,16 +593,11 @@ const ProblemBankView = ({ onBack }) => {
     if (!window.confirm(`Delete ${selectedIds.size} selected problem(s)? This permanently removes them and all their test cases.`)) return;
     setBulkDeleting(true);
     try {
-      const res = await apiFetch('/api/admin/v2/problem-bank/bulk-delete/', 'POST', { ids: Array.from(selectedIds) });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Bulk delete failed.');
-        return;
-      }
+      await api.post('/admin/v2/problem-bank/bulk-delete/', { ids: Array.from(selectedIds) });
       setProblems((prev) => prev.filter((p) => !selectedIds.has(p.id)));
       setSelectedIds(new Set());
-    } catch {
-      setError('Network error during bulk delete.');
+    } catch (err) {
+      setMutationError(apiErrorMessage(err, 'Bulk delete failed.'));
     } finally {
       setBulkDeleting(false);
     }
@@ -667,12 +609,7 @@ const ProblemBankView = ({ onBack }) => {
   async function fillMissingData() {
     setFillMissing({ busy: true, msg: '' });
     try {
-      const res = await apiFetch('/api/admin/v2/problem-bank/fill-missing/', 'POST');
-      const data = await res.json();
-      if (!res.ok) {
-        setFillMissing({ busy: false, msg: data.error || 'Failed.' });
-        return;
-      }
+      const data = (await api.post('/admin/v2/problem-bank/fill-missing/')).data;
       const tcCount = data.processed.filter((p) => p.test_cases_generated).length;
       const schemaCount = data.processed.filter((p) => p.schema_generated).length;
       const expCount = data.processed.filter((p) => p.explanation_generated).length;
@@ -686,8 +623,8 @@ const ProblemBankView = ({ onBack }) => {
 
       setFillMissing({ busy: false, msg });
       await load(); // refresh test_case_count / has_param_schema / explanation across the list
-    } catch {
-      setFillMissing({ busy: false, msg: 'Network error.' });
+    } catch (err) {
+      setFillMissing({ busy: false, msg: apiErrorMessage(err, 'Network error.') });
     }
   }
 

@@ -9,6 +9,7 @@ import { formatDuration, buildJsonPostOptions, configureEditorProtection } from 
 import { validateLanguageMatch, getLanguageMismatchError, detectLanguageFromCode } from "../../../lib/languageDetector";
 import { AlertCircle, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import DoubleConfirmModal from "../../common/DoubleConfirmModal";
+import { useDrillDownParam } from "../../../lib/useDrillDownParam";
 
 loader.config({ monaco });
 
@@ -168,9 +169,19 @@ function ContestWorkspacePage({ contestId, onBack }) {
   const cacheKey = (slug, lang) => `c2d-contest-${contestId}-${slug}-${lang}`;
   const sessionKey = `c2d-contest-session-${contestId}`;
 
-  // Selected problem — restore last position from cache
-  const [selectedProblemIndex, setSelectedProblemIndex] = useState(() => {
-    try { return parseInt(localStorage.getItem(`${sessionKey}-idx`) || '0', 10) || 0; } catch { return 0; }
+  // Selected problem — useDrillDownParam (not plain useState) so the
+  // browser Back button steps back through previously-viewed contest
+  // problems instead of exiting the workspace mid-contest. Falls back to
+  // the last cached position from localStorage, same as before.
+  const [selectedProblemIndex, setSelectedProblemIndex] = useDrillDownParam("p", {
+    defaultValue: (() => {
+      try { return parseInt(localStorage.getItem(`${sessionKey}-idx`) || '0', 10) || 0; } catch { return 0; }
+    })(),
+    parse: (v) => {
+      const n = parseInt(v, 10);
+      return !isNaN(n) && n >= 1 ? n - 1 : 0;
+    },
+    serialize: (v) => String(v + 1),
   });
   const [selectedProblemDetails, setSelectedProblemDetails] = useState(null);
   const [problemDetailTab, setProblemDetailTab] = useState('current');

@@ -1,17 +1,16 @@
 import { useState, useEffect } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   FlaskConical, Plus, ChevronLeft, Users, Calendar,
   UserCheck, Pencil, Trash2, BookOpen, AlertCircle, X, Save,
 } from "lucide-react";
-import { getCsrfToken } from "../../lib/appUtils";
+import api from "../../lib/api";
 import { LAB_LANGUAGES } from "../../lib/appData";
 
-function apiFetch(url, method, body) {
-  const token = getCsrfToken();
-  const opts = { method, credentials: "include", headers: { "Content-Type": "application/json" } };
-  if (token) opts.headers["X-CSRFToken"] = token;
-  if (body !== undefined) opts.body = JSON.stringify(body);
-  return fetch(url, opts);
+const LABS_QUERY_KEY = ["hod-labs"];
+
+function apiErrorMessage(err, fallback) {
+  return err?.response?.data?.error || err?.message || fallback;
 }
 
 function fmt(iso) {
@@ -69,8 +68,21 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab, labs =
     linked_lab_id: "",
   };
   const [form, setForm] = useState(blank);
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const url = editing ? `/lab/v2/${editLab.id}/` : "/lab/v2/";
+      const payload = { ...form, staff_in_charge_id: form.staff_in_charge_id || null };
+      return editing ? api.put(url, payload) : api.post(url, payload);
+    },
+    onSuccess: (res) => {
+      onSave(res.data, editing);
+      onClose();
+    },
+    onError: (e) => setErr(apiErrorMessage(e, "Save failed")),
+  });
+  const busy = saveMutation.isPending;
 
   useEffect(() => {
     if (!open) return;
@@ -100,25 +112,15 @@ function LabDrawer({ open, onClose, onSave, deptInfo, staffList, editLab, labs =
 
   const sections = form.batch ? (deptInfo.sections_by_batch?.[form.batch] ?? []) : [];
 
-  async function submit(e) {
+  function submit(e) {
     e.preventDefault();
     if (!form.name.trim()) { setErr("Lab name is required"); return; }
     if (!form.batch) { setErr("Select a batch"); return; }
     if (!form.start_date || !form.end_date) { setErr("Both start and end dates are required"); return; }
     if (new Date(form.start_date) >= new Date(form.end_date)) { setErr("End date must be after start date"); return; }
     if (form.allowed_languages.length === 0) { setErr("Select at least one allowed language"); return; }
-    setBusy(true); setErr("");
-    try {
-      const url = editing ? `/api/lab/v2/${editLab.id}/` : "/api/lab/v2/";
-      const res = await apiFetch(url, editing ? "PUT" : "POST", {
-        ...form,
-        staff_in_charge_id: form.staff_in_charge_id || null,
-      });
-      if (!res.ok) { const d = await res.json(); setErr(d.error || "Save failed"); return; }
-      onSave(await res.json(), editing);
-      onClose();
-    } catch { setErr("Network error"); }
-    finally { setBusy(false); }
+    setErr("");
+    saveMutation.mutate();
   }
 
   if (!open) return null;
@@ -371,7 +373,6 @@ function ManagePage({ lab: init, staffList, onBack, onLabUpdated }) {
   const [lab, setLab] = useState(init);
   const [editStaff, setEditStaff] = useState(false);
   const [newStaffId, setNewStaffId] = useState(String(init.staff_in_charge?.id ?? ""));
-  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
 
   const [editSettings, setEditSettings] = useState(false);
@@ -380,34 +381,37 @@ function ManagePage({ lab: init, staffList, onBack, onLabUpdated }) {
   );
   const [settingsErr, setSettingsErr] = useState("");
 
-  async function saveStaff() {
-    setBusy(true);
-    const res = await apiFetch(`/api/lab/v2/${lab.id}/`, "PUT", { staff_in_charge_id: newStaffId || null });
-    if (res.ok) {
-      const updated = await res.json();
-      setLab(updated); onLabUpdated(updated); setEditStaff(false);
+  const staffMutation = useMutation({
+    mutationFn: (staffId) => api.put(`/lab/v2/${lab.id}/`, { staff_in_charge_id: staffId || null }),
+    onSuccess: (res) => {
+      setLab(res.data); onLabUpdated(res.data); setEditStaff(false);
       setMsg("Staff updated successfully");
       setTimeout(() => setMsg(""), 3000);
-    }
-    setBusy(false);
+    },
+  });
+
+  const settingsMutation = useMutation({
+    mutationFn: (languages) => api.put(`/lab/v2/${lab.id}/`, { allowed_languages: languages }),
+    onSuccess: (res) => {
+      setLab(res.data); onLabUpdated(res.data); setEditSettings(false);
+      setMsg("Lab settings updated successfully");
+      setTimeout(() => setMsg(""), 3000);
+    },
+    onError: (e) => setSettingsErr(apiErrorMessage(e, "Save failed")),
+  });
+
+  const busy = staffMutation.isPending || settingsMutation.isPending;
+
+  function saveStaff() {
+    staffMutation.mutate(newStaffId);
   }
 
-  async function saveSettings() {
+  function saveSettings() {
     if (settingsLanguages.length === 0) {
       setSettingsErr("Select at least one language"); return;
     }
-    setBusy(true); setSettingsErr("");
-    const res = await apiFetch(`/api/lab/v2/${lab.id}/`, "PUT", { allowed_languages: settingsLanguages });
-    if (res.ok) {
-      const updated = await res.json();
-      setLab(updated); onLabUpdated(updated); setEditSettings(false);
-      setMsg("Lab settings updated successfully");
-      setTimeout(() => setMsg(""), 3000);
-    } else {
-      const d = await res.json();
-      setSettingsErr(d.error || "Save failed");
-    }
-    setBusy(false);
+    setSettingsErr("");
+    settingsMutation.mutate(settingsLanguages);
   }
 
   return (
@@ -531,55 +535,57 @@ function ManagePage({ lab: init, staffList, onBack, onLabUpdated }) {
 }
 
 export default function HODLabCenter() {
-  const [labs, setLabs] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [deptInfo, setDeptInfo] = useState({ batches: [], sections: [], sections_by_batch: {} });
-  const [staffList, setStaffList] = useState([]);
+  const queryClient = useQueryClient();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editLab, setEditLab] = useState(null);
   const [manageLab, setManageLab] = useState(null);
   const [delConfirm, setDelConfirm] = useState(null);
 
-  useEffect(() => { load(); }, []);
-
-  async function load() {
-    setLoading(true);
-    const [lr, ir, sr] = await Promise.all([
-      fetch("/api/lab/v2/", { credentials: "include" }),
-      fetch("/api/lab/assignments/hod/dept-info/", { credentials: "include" }),
-      fetch("/api/lab/assignments/hod/staff/", { credentials: "include" }),
-    ]);
-    if (lr.ok) setLabs(await lr.json());
-    if (ir.ok) {
-      const info = await ir.json();
-      setDeptInfo({
-        batches: info.batches || [],
-        sections: info.sections || [],
-        sections_by_batch: info.sections_by_batch || {},
-      });
-    }
-    if (sr.ok) setStaffList(await sr.json());
-    setLoading(false);
-  }
+  const { data: labs = [], isLoading: loading } = useQuery({
+    queryKey: LABS_QUERY_KEY,
+    queryFn: async () => (await api.get("/lab/v2/")).data,
+  });
+  const { data: deptInfoRaw } = useQuery({
+    queryKey: ["hod-dept-info"],
+    queryFn: async () => (await api.get("/lab/assignments/hod/dept-info/")).data,
+  });
+  const deptInfo = {
+    batches: deptInfoRaw?.batches || [],
+    sections: deptInfoRaw?.sections || [],
+    sections_by_batch: deptInfoRaw?.sections_by_batch || {},
+  };
+  const { data: staffList = [] } = useQuery({
+    queryKey: ["hod-lab-staff"],
+    queryFn: async () => (await api.get("/lab/assignments/hod/staff/")).data,
+  });
 
   function onSaved(lab, isEdit) {
-    setLabs((prev) => isEdit ? prev.map((l) => l.id === lab.id ? lab : l) : [lab, ...prev]);
+    queryClient.setQueryData(LABS_QUERY_KEY, (prev) =>
+      isEdit ? (prev || []).map((l) => (l.id === lab.id ? lab : l)) : [lab, ...(prev || [])],
+    );
   }
 
-  async function confirmDelete(lab) {
-    const res = await apiFetch(`/api/lab/v2/${lab.id}/`, "DELETE");
-    if (res.ok) {
-      setLabs((prev) => prev.filter((l) => l.id !== lab.id));
+  const deleteMutation = useMutation({
+    mutationFn: (lab) => api.delete(`/lab/v2/${lab.id}/`),
+    onSuccess: (_res, lab) => {
+      queryClient.setQueryData(LABS_QUERY_KEY, (prev) => (prev || []).filter((l) => l.id !== lab.id));
       setDelConfirm(null);
       if (manageLab?.id === lab.id) setManageLab(null);
-    }
+    },
+  });
+
+  function confirmDelete(lab) {
+    deleteMutation.mutate(lab);
   }
 
   if (manageLab) {
     return (
       <ManagePage lab={manageLab} staffList={staffList}
         onBack={() => setManageLab(null)}
-        onLabUpdated={(u) => { setManageLab(u); setLabs((p) => p.map((l) => l.id === u.id ? u : l)); }}
+        onLabUpdated={(u) => {
+          setManageLab(u);
+          queryClient.setQueryData(LABS_QUERY_KEY, (prev) => (prev || []).map((l) => (l.id === u.id ? u : l)));
+        }}
       />
     );
   }

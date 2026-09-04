@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, CheckCircle, XCircle, ArrowLeft } from 'lucide-react';
 import { buildJsonPostOptions } from '../../../lib/appUtils';
+import { useDrillDownParam } from '../../../lib/useDrillDownParam';
 
 function PassageList({ onSelect }) {
   const [passages, setPassages] = useState([]);
@@ -193,7 +194,12 @@ function PassageDetail({ passageId, onBack }) {
 }
 
 export default function ReadingComprehensionPage() {
-  const [selectedPassageId, setSelectedPassageId] = useState(null);
+  // useDrillDownParam (not plain useState) so the browser Back button
+  // correctly closes a passage back to the list instead of exiting.
+  const [selectedPassageId, setSelectedPassageId] = useDrillDownParam("passage", {
+    defaultValue: null,
+    parse: (v) => v || null,
+  });
 
   return (
     <div style={{ padding: '24px', width: '100%' }}>

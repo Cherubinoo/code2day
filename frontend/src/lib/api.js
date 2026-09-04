@@ -105,7 +105,7 @@ const api = {
                 headers,
                 body: isFormData ? data : JSON.stringify(data),
             }, DEFAULT_TIMEOUT);
-            
+
             if (!response.ok) {
                 const error = await response.json().catch(() => ({}));
                 throw { response: { data: error }, message: response.statusText, status: response.status };
@@ -113,8 +113,42 @@ const api = {
             return { data: await response.json() };
         } catch (error) {
             if (error instanceof TypeError && error.message === 'Failed to fetch') {
-                throw { 
-                    response: { data: { detail: 'Network error. Please check your connection.' } }, 
+                throw {
+                    response: { data: { detail: 'Network error. Please check your connection.' } },
+                    message: 'Failed to fetch',
+                    status: 0
+                };
+            }
+            throw error;
+        }
+    },
+
+    async put(url, data) {
+        const isFormData = data instanceof FormData;
+        try {
+            const headers = {
+                'X-CSRFToken': getCsrfToken(),
+            };
+            if (!isFormData) {
+                headers['Content-Type'] = 'application/json';
+            }
+
+            const response = await fetchWithTimeout(`${BASE_URL}${url}`, {
+                method: 'PUT',
+                credentials: 'include',
+                headers,
+                body: isFormData ? data : JSON.stringify(data),
+            }, DEFAULT_TIMEOUT);
+
+            if (!response.ok) {
+                const error = await response.json().catch(() => ({}));
+                throw { response: { data: error }, message: response.statusText, status: response.status };
+            }
+            return { data: await response.json() };
+        } catch (error) {
+            if (error instanceof TypeError && error.message === 'Failed to fetch') {
+                throw {
+                    response: { data: { detail: 'Network error. Please check your connection.' } },
                     message: 'Failed to fetch',
                     status: 0
                 };

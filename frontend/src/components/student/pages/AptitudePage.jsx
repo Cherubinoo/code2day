@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Brain, Calculator, MessageSquare, ChevronDown, BookOpen } from 'lucide-react';
 import AptitudeQuizPage from './AptitudeQuizPage';
 import ReadingComprehensionPage from './ReadingComprehensionPage';
+import { useDrillDownParam } from '../../../lib/useDrillDownParam';
 
 export default function AptitudePage({ dashboard, onToggleWorkspace }) {
   const lockedModules = dashboard?.locked_modules || [];
@@ -11,28 +12,27 @@ export default function AptitudePage({ dashboard, onToggleWorkspace }) {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedCats, setExpandedCats] = useState({});
-  const [practiceTopicId, setPracticeTopicIdState] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tParam = params.get("topic") || params.get("topic_id");
-    if (tParam) return tParam;
-    const saved = sessionStorage.getItem("code2day-aptitude-topic-id");
-    return saved || null;
+
+  // useDrillDownParam (not plain useState + replaceState) so the browser
+  // Back button actually closes the quiz back to the topic list — the
+  // previous replaceState-only version never created a back-able history
+  // entry, so Back fell straight through to the top-level page router.
+  const [practiceTopicId, setPracticeTopicIdRaw] = useDrillDownParam("topic", {
+    defaultValue: (() => {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("topic") || params.get("topic_id") || sessionStorage.getItem("code2day-aptitude-topic-id") || null;
+    })(),
+    parse: (v) => v || null,
   });
 
   const setPracticeTopicId = (id) => {
-    setPracticeTopicIdState(id);
-    const url = new URL(window.location.href);
     if (id) {
       sessionStorage.setItem("code2day-aptitude-topic-id", String(id));
-      url.searchParams.set("topic", String(id));
     } else {
       sessionStorage.removeItem("code2day-aptitude-topic-id");
       sessionStorage.removeItem("code2day-aptitude-question-index");
-      url.searchParams.delete("topic");
-      url.searchParams.delete("topic_id");
-      url.searchParams.delete("q");
     }
-    window.history.replaceState(window.history.state, "", url.href);
+    setPracticeTopicIdRaw(id);
   };
 
   // Sync isInsideWorkspace state with parent

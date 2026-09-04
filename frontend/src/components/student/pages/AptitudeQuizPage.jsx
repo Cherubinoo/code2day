@@ -3,29 +3,31 @@ import React, { useState, useEffect } from 'react';
 import { ChevronLeft, ChevronRight, CheckCircle, XCircle, Info, Brain, Clock, Award } from 'lucide-react';
 import { getCsrfToken, extractApiError } from '../../../lib/appUtils';
 import FormattedText from '../../common/FormattedText';
+import { useDrillDownParam } from '../../../lib/useDrillDownParam';
 
 const AptitudeQuizPage = ({ topicId, onBack }) => {
   const [questions, setQuestions] = useState([]);
-  const [currentIndex, setCurrentIndexState] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    const qParam = params.get("q");
-    if (qParam) {
-      const parsedQ = parseInt(qParam, 10);
-      if (!isNaN(parsedQ) && parsedQ >= 1) return parsedQ - 1;
-    }
-    const saved = sessionStorage.getItem(`code2day-aptitude-question-index-${topicId}`);
-    return saved ? parseInt(saved, 10) : 0;
+
+  // useDrillDownParam (not plain useState + replaceState) so the browser
+  // Back button steps back through previously-viewed questions instead of
+  // exiting the quiz — the previous replaceState-only version never
+  // created a back-able history entry.
+  const [currentIndex, setCurrentIndexRaw] = useDrillDownParam("q", {
+    defaultValue: (() => {
+      const saved = sessionStorage.getItem(`code2day-aptitude-question-index-${topicId}`);
+      return saved ? parseInt(saved, 10) : 0;
+    })(),
+    parse: (v) => {
+      const n = parseInt(v, 10);
+      return !isNaN(n) && n >= 1 ? n - 1 : 0;
+    },
+    serialize: (v) => String(v + 1),
   });
 
   const setCurrentIndex = (val) => {
-    setCurrentIndexState((prev) => {
-      const next = typeof val === 'function' ? val(prev) : val;
-      sessionStorage.setItem(`code2day-aptitude-question-index-${topicId}`, String(next));
-      const url = new URL(window.location.href);
-      url.searchParams.set("q", String(next + 1));
-      window.history.replaceState(window.history.state, "", url.href);
-      return next;
-    });
+    const next = typeof val === 'function' ? val(currentIndex) : val;
+    sessionStorage.setItem(`code2day-aptitude-question-index-${topicId}`, String(next));
+    setCurrentIndexRaw(next);
   };
 
   const [loading, setLoading] = useState(true);
