@@ -1,6 +1,6 @@
 // Staff Dashboard - Staff view with contests and batch-wise analytics
 import { useState, useEffect } from 'react';
-import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare, GraduationCap, UserCheck, FlaskConical, Download, Loader2, Trash2 } from 'lucide-react';
+import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare, GraduationCap, UserCheck, FlaskConical, Download, Loader2, Trash2, Library, Sparkles } from 'lucide-react';
 import EnhancedContestCreator from './EnhancedContestCreator';
 import StudentAnalyticsModal from './StudentAnalyticsModal';
 import ContestDetailModal from '../common/ContestDetailModal';
@@ -302,6 +302,7 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
     { id: 'advisor', label: 'Class Advisor', icon: GraduationCap },
     { id: 'reports', label: 'Reports', icon: FileText },
     { id: 'labs', label: 'Lab', icon: FlaskConical },
+    { id: 'lms', label: 'LMS', icon: Library },
     { id: 'chat', label: 'Discuss', icon: MessageSquare },
   ].filter((item) => !MODULE_BY_TAB[item.id] || !lockedModules.includes(MODULE_BY_TAB[item.id]));
 
@@ -1584,6 +1585,22 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
         {activeTab === 'advisor' && (
           <div className="tab-container">
             <StaffAdvisorTab />
+          </div>
+        )}
+
+        {/* LMS Tab — placeholder until course content is built out */}
+        {activeTab === 'lms' && (
+          <div className="tab-container">
+            <div style={{ padding: 48, textAlign: 'center', background: 'white', borderRadius: 24, border: '1px solid var(--border-soft)' }}>
+              <div style={{ width: 56, height: 56, borderRadius: 16, margin: '0 auto 16px', background: 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Library size={26} style={{ color: 'var(--olive-700)' }} />
+              </div>
+              <h2 style={{ margin: '0 0 6px' }}>Coming Soon</h2>
+              <p style={{ color: 'var(--text-soft)', margin: '0 0 20px' }}>The LMS is being built out — course content will appear here once it's added.</p>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--bg-2)', padding: '10px 18px', borderRadius: 12, color: 'var(--text-soft)', fontSize: '0.9rem', fontWeight: 600 }}>
+                <Sparkles size={16} /> Check back soon.
+              </div>
+            </div>
           </div>
         )}
 

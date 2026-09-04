@@ -7,7 +7,7 @@ import {
   Settings, Bell, MoreVertical, ExternalLink, Shield, ShieldOff,
   UserPlus, Check, X, FileText, Briefcase, Layout, UserCheck, Building2,
   Calendar, Lock, Unlock, CheckCircle, BarChart, XCircle, Activity, Brain, MessageSquare,
-  Pencil, Plus, Eye, EyeOff, Download, Clock, Trash2
+  Pencil, Plus, Eye, EyeOff, Download, Clock, Trash2, Library, Sparkles
 } from 'lucide-react';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import { getCsrfToken } from '../../lib/appUtils';
@@ -43,6 +43,7 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
     { id: 'labs', label: 'Lab Center', icon: FlaskConical },
     { id: 'companies', label: 'Companies', icon: Briefcase },
     { id: 'my-practicals', label: 'My Practicals', icon: Pencil },
+    { id: 'lms', label: 'LMS', icon: Library },
     { id: 'discuss', label: 'Discuss', icon: MessageSquare },
   ].filter((item) => !MODULE_BY_TAB[item.id] || !lockedModules.includes(MODULE_BY_TAB[item.id]));
 
@@ -2882,6 +2883,21 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
         {activeTab === 'my-practicals' && (
           <div className="tab-container">
             <StaffLabPanel />
+          </div>
+        )}
+
+        {activeTab === 'lms' && (
+          <div className="tab-container">
+            <div style={{ padding: 48, textAlign: 'center', background: 'white', borderRadius: 24, border: '1px solid var(--border-soft)' }}>
+              <div style={{ width: 56, height: 56, borderRadius: 16, margin: '0 auto 16px', background: 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Library size={26} style={{ color: 'var(--olive-700)' }} />
+              </div>
+              <h2 style={{ margin: '0 0 6px' }}>Coming Soon</h2>
+              <p style={{ color: 'var(--text-soft)', margin: '0 0 20px' }}>The LMS is being built out — course content will appear here once it's added.</p>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, background: 'var(--bg-2)', padding: '10px 18px', borderRadius: 12, color: 'var(--text-soft)', fontSize: '0.9rem', fontWeight: 600 }}>
+                <Sparkles size={16} /> Check back soon.
+              </div>
+            </div>
           </div>
         )}
 

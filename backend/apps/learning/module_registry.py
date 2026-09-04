@@ -38,15 +38,17 @@ same key drives both nav-hiding (App.jsx filters `navItems` by
 `locked_modules` directly, independent of anything below) and backend
 enforcement without a separate mapping.
 
-Nav-only entries: "explore", "roadmaps", and "progress" have
-`api_path_prefixes: []` on purpose — they have no dedicated backend
+Nav-only entries: "explore", "roadmaps", "progress", "lms", and "sql"
+have `api_path_prefixes: []` on purpose — they have no dedicated backend
 surface of their own to block (Explore and Progress render off shared
 dashboard/analytics endpoints other unlocked pages also depend on, so
 blocking those endpoints would lock collateral pages too; Roadmaps is a
-static page with no API at all). An empty prefix list makes
-`_matches_prefix` never match, so `locked_module_for_request` always
-skips these — they're locked from the nav only, same as before, just
-now with an actual toggle in the admin UI instead of no toggle at all.
+static page with no API at all; LMS and SQL Practice are still
+placeholder pages with no backend of their own yet). An empty prefix
+list makes `_matches_prefix` never match, so `locked_module_for_request`
+always skips these — they're locked from the nav only, same as before,
+just now with an actual toggle in the admin UI instead of no toggle at
+all.
 """
 
 import re
@@ -162,6 +164,16 @@ MODULE_REGISTRY = [
         "key": "competitive",
         "label": "Competitive Practice",
         "api_path_prefixes": ["/api/competitive/"],
+    },
+    {
+        "key": "lms",
+        "label": "LMS",
+        "api_path_prefixes": [],  # nav-only — see module docstring
+    },
+    {
+        "key": "sql",
+        "label": "SQL Practice",
+        "api_path_prefixes": [],  # nav-only — see module docstring
     },
     {
         "key": "progress",
