@@ -108,6 +108,39 @@ def _build_prompt(title, description, examples, num_cases):
     )
 
 
+_JSON_SIMPLE_ESCAPES = set('"\\/bfnrt')
+
+
+def _repair_invalid_json_escapes(raw):
+    """Models frequently emit raw backslashes inside JSON string values —
+    LaTeX-style math ("\\times", "\\frac"), Windows paths, etc. — without
+    escaping them for JSON, which json.loads rejects as "Invalid \\escape".
+    Doubles any backslash that isn't already part of a valid JSON escape
+    (\\", \\\\, \\/, \\b, \\f, \\n, \\r, \\t, \\uXXXX) so those strings parse
+    instead of the whole response being thrown away."""
+    out = []
+    i, n = 0, len(raw)
+    while i < n:
+        c = raw[i]
+        if c == "\\" and i + 1 < n:
+            nxt = raw[i + 1]
+            if nxt in _JSON_SIMPLE_ESCAPES:
+                out.append(c)
+                out.append(nxt)
+                i += 2
+                continue
+            if nxt == "u" and re.match(r"[0-9a-fA-F]{4}", raw[i + 2:i + 6]):
+                out.append(raw[i:i + 6])
+                i += 6
+                continue
+            out.append("\\\\")
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
+
+
 def _extract_json(text):
     """LLMs sometimes wrap JSON in ```json fences or add stray prose around
     it — strip fences and pull out the first {...} block."""
@@ -118,7 +151,14 @@ def _extract_json(text):
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
         raise TestCaseGenServiceError(f"No JSON object found in LLM response: {text[:200]!r}")
-    return json.loads(match.group(0))
+    raw = match.group(0)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            return json.loads(_repair_invalid_json_escapes(raw))
+        except json.JSONDecodeError as exc:
+            raise TestCaseGenServiceError(f"Unparseable JSON from LLM response: {exc}") from exc
 
 
 def _call_provider_once(provider, prompt):
