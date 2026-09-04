@@ -3443,6 +3443,138 @@ class AdminSubtopicQuestionDetailView(APIView):
         return Response({"message": "Question deleted"})
 
 
+class AdminSubtopicQuestionBulkUploadView(APIView):
+    """System Admin: bulk-add MCQ questions straight into one Competitive
+    Practice subtopic (or one of its Folders, via optional ?folder_id=)
+    from an uploaded .xlsx/.xls/.csv — same idea as
+    AdminInterviewTopicQuestionBulkUploadView. Header matching is
+    case-insensitive and treats spaces/underscores the same, so both
+    friendly headers (Question, Option A-D, Correct Answer, Explanation,
+    Question Image, Video URL) and the model's own field names
+    (question_text, option_a-d, correct_option, ...) work. correct_option
+    accepts a bare letter, a prefixed form like "Option A", or the option's
+    own text — see _resolve_aptitude_correct_option (shared with Aptitude
+    Bank's bulk upload, generic despite the name)."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, subtopic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
+        folder = None
+        folder_id = request.query_params.get('folder_id')
+        if folder_id:
+            folder = SyllabusFolder.objects.filter(id=folder_id, subtopic=subtopic).first()
+            if not folder:
+                return Response({"error": "Folder not found in this subtopic."}, status=404)
+
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response({"error": "No file uploaded."}, status=400)
+
+        filename = upload.name.lower()
+        try:
+            if filename.endswith((".xlsx", ".xls")):
+                rows = self._read_excel(upload)
+            elif filename.endswith(".csv"):
+                rows = self._read_csv(upload)
+            else:
+                return Response({"error": "Only .xlsx, .xls, or .csv files are supported."}, status=400)
+        except Exception as e:
+            return Response({"error": f"Could not read file: {e}"}, status=400)
+
+        if not rows:
+            return Response({"error": "File is empty."}, status=400)
+
+        header = rows[0]
+        col_idx = {c: i for i, c in enumerate(header) if c}
+
+        def col(row, *names):
+            for n in names:
+                idx = col_idx.get(n)
+                if idx is not None and idx < len(row) and row[idx] is not None:
+                    val = str(row[idx]).strip()
+                    if val and val.lower() != "nan":
+                        return val
+            return ""
+
+        required_any = [
+            ("question_text", "question"),
+            ("option_a",), ("option_b",), ("option_c",), ("option_d",),
+            ("correct_option", "answer", "correct_answer"),
+        ]
+        missing = [names[0] for names in required_any if not any(n in col_idx for n in names)]
+        if missing:
+            return Response({
+                "error": f"Missing required column(s): {', '.join(missing)}. "
+                         f"Expected: Question, Option A-D, Correct Answer (Explanation, Question Image, Video URL are optional).",
+            }, status=400)
+
+        created = []
+        skipped = 0
+        next_order = folder.questions.count() if folder else subtopic.questions.filter(folder__isnull=True).count()
+
+        for row in rows[1:]:
+            if not any(row):
+                continue
+
+            question_text = col(row, "question_text", "question")
+            option_a = col(row, "option_a")
+            option_b = col(row, "option_b")
+            option_c = col(row, "option_c")
+            option_d = col(row, "option_d")
+            raw_answer = col(row, "correct_option", "answer", "correct_answer")
+
+            if not question_text or not all([option_a, option_b, option_c, option_d]):
+                skipped += 1
+                continue
+
+            correct_option = _resolve_aptitude_correct_option(raw_answer, option_a, option_b, option_c, option_d)
+            if correct_option is None:
+                skipped += 1
+                continue
+
+            q = CompetitiveQuestion.objects.create(
+                subtopic=subtopic, folder=folder,
+                question_text=question_text,
+                question_image=_resolve_drive_image(col(row, "question_image", "image")),
+                video_url=col(row, "video_url", "video"),
+                option_a=option_a, option_b=option_b, option_c=option_c, option_d=option_d,
+                correct_option=correct_option,
+                explanation=col(row, "explanation"),
+                order=next_order,
+            )
+            next_order += 1
+            created.append(q)
+
+        return Response({
+            "message": "Questions imported",
+            "created_questions": len(created),
+            "skipped_rows": skipped,
+            "questions": [_serialize_competitive_question(q) for q in created],
+        }, status=201)
+
+    def _read_excel(self, upload):
+        import openpyxl
+        wb = openpyxl.load_workbook(upload, data_only=True)
+        ws = wb.active
+        rows = [[cell.value for cell in row] for row in ws.iter_rows()]
+        if not rows:
+            return []
+        header = [str(h).strip().lower().replace(" ", "_") if h else "" for h in rows[0]]
+        return [header] + rows[1:]
+
+    def _read_csv(self, upload):
+        import csv
+        import io
+        text = upload.read().decode("utf-8-sig")
+        raw_rows = list(csv.reader(io.StringIO(text)))
+        if not raw_rows:
+            return []
+        header = [h.strip().lower().replace(" ", "_") for h in raw_rows[0]]
+        return [header] + raw_rows[1:]
+
+
 class AdminSubtopicQuestionImportView(APIView):
     """System Admin: import (copy) existing AptitudeQuestion rows into a
     Competitive Practice subtopic's own question bank. A one-time copy,
@@ -4212,6 +4344,119 @@ class AdminInterviewQuestionBulkUploadView(APIView):
             "created_folders": created_folders,
             "created_questions": created_questions,
             "skipped_rows": skipped,
+        }, status=201)
+
+    def _read_excel(self, upload):
+        import openpyxl
+        wb = openpyxl.load_workbook(upload, data_only=True)
+        ws = wb["Questions"] if "Questions" in wb.sheetnames else wb.active
+        return [[cell.value for cell in row] for row in ws.iter_rows()]
+
+    def _read_csv(self, upload):
+        import csv
+        import io
+        text = upload.read().decode("utf-8-sig")
+        return list(csv.reader(io.StringIO(text)))
+
+
+class AdminInterviewTopicQuestionBulkUploadView(APIView):
+    """System Admin: bulk-add questions straight into one Topic (or one of
+    its Folders, via optional ?folder_id=) from an uploaded .xlsx/.xls/.csv.
+    Same column set and parsing as AdminInterviewQuestionBulkUploadView, but
+    Field/Topic/Subtopic columns are ignored if present — the target is
+    already fixed by the URL, so admins can upload straight from inside a
+    folder without needing the sheet's Field/Topic/Subtopic values to
+    exactly match what's already there."""
+    permission_classes = [IsAuthenticated]
+
+    QUESTION_TYPE_LABEL_TO_KEY = {label.lower(): key for key, label in InterviewQuestion.QUESTION_TYPE_CHOICES}
+
+    def post(self, request, topic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        topic = get_object_or_404(InterviewTopic, id=topic_id)
+        folder = None
+        folder_id = request.query_params.get('folder_id')
+        if folder_id:
+            folder = InterviewFolder.objects.filter(id=folder_id, topic=topic).first()
+            if not folder:
+                return Response({"error": "Folder not found in this topic."}, status=404)
+
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response({"error": "No file uploaded."}, status=400)
+
+        filename = upload.name.lower()
+        try:
+            if filename.endswith((".xlsx", ".xls")):
+                rows = self._read_excel(upload)
+            elif filename.endswith(".csv"):
+                rows = self._read_csv(upload)
+            else:
+                return Response({"error": "Only .xlsx, .xls, or .csv files are supported."}, status=400)
+        except Exception as e:
+            return Response({"error": f"Could not read file: {e}"}, status=400)
+
+        if not rows:
+            return Response({"error": "File is empty."}, status=400)
+
+        header = [str(h or '').strip().lower() for h in rows[0]]
+        col_idx = {h: i for i, h in enumerate(header) if h}
+
+        def col(row, name):
+            idx = col_idx.get(name)
+            if idx is None or idx >= len(row) or row[idx] is None:
+                return ""
+            val = str(row[idx]).strip()
+            return "" if val.lower() == "nan" else val
+
+        missing = [n for n in ("question", "answer / model answer") if n not in col_idx]
+        if missing:
+            return Response({"error": f"Missing required column(s): {', '.join(missing)}."}, status=400)
+
+        created = []
+        skipped = 0
+        next_order = folder.questions.count() if folder else topic.questions.filter(folder__isnull=True).count()
+
+        for row in rows[1:]:
+            if not row or all(not str(c or '').strip() for c in row):
+                continue
+
+            question_text = col(row, "question")
+            answer_text = col(row, "answer / model answer")
+            if not question_text or not answer_text:
+                skipped += 1
+                continue
+
+            question_type_raw = col(row, "question type").lower()
+            difficulty_raw = col(row, "difficulty").lower()
+            question_type = self.QUESTION_TYPE_LABEL_TO_KEY.get(question_type_raw, 'conceptual')
+            difficulty = dict(InterviewQuestion.DIFFICULTY_CHOICES).get(
+                difficulty_raw.title(), 'Beginner',
+            ) if difficulty_raw else 'Beginner'
+
+            q = InterviewQuestion.objects.create(
+                topic=topic, folder=folder,
+                external_id=col(row, "question id"),
+                question_type=question_type,
+                difficulty=difficulty,
+                question_text=question_text,
+                answer=answer_text,
+                follow_up_question=col(row, "follow-up question"),
+                follow_up_answer=col(row, "follow-up answer"),
+                tools_technologies=col(row, "tools / technologies"),
+                key_concepts=col(row, "key concepts / keywords"),
+                source_reference=col(row, "source reference"),
+                order=next_order,
+            )
+            next_order += 1
+            created.append(q)
+
+        return Response({
+            "message": "Questions imported",
+            "created_questions": len(created),
+            "skipped_rows": skipped,
+            "questions": [_serialize_interview_question(q) for q in created],
         }, status=201)
 
     def _read_excel(self, upload):
@@ -11048,6 +11293,7 @@ class SystemAdminDashboardView(APIView):
             total_staff = StaffProfile.objects.count()
             total_problems = Problem.objects.count()
             total_aptitude = AptitudeQuestion.objects.count()
+            total_competitive = CompetitiveQuestion.objects.count()
             total_interview_tracks = InterviewTrack.objects.count()
 
             # Fetch all institutions for the management table
@@ -11066,6 +11312,7 @@ class SystemAdminDashboardView(APIView):
                     "total_staff": total_staff,
                     "total_problems": total_problems,
                     "total_aptitude": total_aptitude,
+                    "total_competitive": total_competitive,
                     "total_interview_tracks": total_interview_tracks
                 },
                 "institutions": list(institutions),

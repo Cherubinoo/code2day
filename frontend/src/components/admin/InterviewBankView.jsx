@@ -79,15 +79,39 @@ function QuestionForm({ value, onChange, onCancel, onSave, saving, saveLabel }) 
 // ── Question list + add/edit for one topic (or one folder within it, via
 // folderId) — questions come from the already-fetched tree, so this has no
 // fetch of its own; it just calls back to the parent to patch that tree. ──
-function InterviewQuestionsManager({ topicId, folderId, questions, onAdd, onRemove, onUpdate }) {
+function InterviewQuestionsManager({ topicId, folderId, questions, onAdd, onRemove, onUpdate, onBulkAdd }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newQ, setNewQ] = useState(BLANK_QUESTION);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState(BLANK_QUESTION);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkError, setBulkError] = useState('');
+  const [bulkResult, setBulkResult] = useState(null);
 
   const questionsUrlPath = `/admin/v2/interview/topics/${topicId}/questions/${folderId ? `?folder_id=${folderId}` : ''}`;
+
+  const handleBulkUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBulkUploading(true);
+    setBulkError('');
+    setBulkResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const uploadPath = `/admin/v2/interview/topics/${topicId}/questions/bulk-upload/${folderId ? `?folder_id=${folderId}` : ''}`;
+      const res = await api.post(uploadPath, formData);
+      onBulkAdd(res.data.questions || []);
+      setBulkResult(res.data);
+    } catch (err) {
+      setBulkError(apiErrorMessage(err, 'Bulk upload failed.'));
+    } finally {
+      setBulkUploading(false);
+    }
+  };
 
   const addQuestion = async () => {
     if (!newQ.question_text.trim() || !newQ.answer.trim()) return;
@@ -129,14 +153,32 @@ function InterviewQuestionsManager({ topicId, folderId, questions, onAdd, onRemo
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 6 }}>
         <label style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase' }}>
           Practice Questions ({questions.length})
         </label>
-        <button onClick={() => { setShowAddForm((v) => !v); setEditingId(null); }} style={{ padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}>
-          + Add Question
-        </button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <label style={{ padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.7rem', fontWeight: 700, cursor: bulkUploading ? 'default' : 'pointer', opacity: bulkUploading ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            {bulkUploading ? <Loader2 size={12} className="spin" /> : <Upload size={12} />}
+            {bulkUploading ? 'Uploading…' : 'Bulk Upload'}
+            <input type="file" accept=".xlsx,.xls,.csv" hidden disabled={bulkUploading} onChange={handleBulkUpload} />
+          </label>
+          <button onClick={() => { setShowAddForm((v) => !v); setEditingId(null); }} style={{ padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}>
+            + Add Question
+          </button>
+        </div>
       </div>
+
+      {bulkResult && (
+        <div style={{ padding: '8px 10px', borderRadius: 8, background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', fontSize: '0.72rem', fontWeight: 700, marginBottom: 8 }}>
+          Imported {bulkResult.created_questions} question(s){bulkResult.skipped_rows > 0 ? ` (${bulkResult.skipped_rows} row(s) skipped)` : ''}.
+        </div>
+      )}
+      {bulkError && (
+        <div style={{ padding: '8px 10px', borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', fontSize: '0.72rem', fontWeight: 700, marginBottom: 8 }}>
+          {bulkError}
+        </div>
+      )}
 
       {showAddForm && (
         <QuestionForm value={newQ} onChange={setNewQ} onCancel={() => setShowAddForm(false)} onSave={addQuestion} saving={saving} saveLabel="Add Question" />
@@ -396,6 +438,7 @@ function InterviewFolderNode({ folder, topicId, onPatchTopic, depth = 0 }) {
               onAdd={(q) => onPatchTopic((t) => ({ ...t, folders: mapFolders(t.folders, folder.id, (f) => ({ ...f, questions: [...f.questions, q] })) }))}
               onRemove={(id) => onPatchTopic((t) => ({ ...t, folders: mapFolders(t.folders, folder.id, (f) => ({ ...f, questions: f.questions.filter((q) => q.id !== id) })) }))}
               onUpdate={(id, q) => onPatchTopic((t) => ({ ...t, folders: mapFolders(t.folders, folder.id, (f) => ({ ...f, questions: f.questions.map((x) => x.id === id ? q : x) })) }))}
+              onBulkAdd={(qs) => onPatchTopic((t) => ({ ...t, folders: mapFolders(t.folders, folder.id, (f) => ({ ...f, questions: [...f.questions, ...qs] })) }))}
             />
             <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 12, marginTop: 4 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -695,6 +738,7 @@ export default function InterviewBankView({ onBack }) {
               onAdd={(q) => patchTopic(selectedTopic.id, (t) => ({ ...t, questions: [...t.questions, q] }))}
               onRemove={(id) => patchTopic(selectedTopic.id, (t) => ({ ...t, questions: t.questions.filter((q) => q.id !== id) }))}
               onUpdate={(id, q) => patchTopic(selectedTopic.id, (t) => ({ ...t, questions: t.questions.map((x) => x.id === id ? q : x) }))}
+              onBulkAdd={(qs) => patchTopic(selectedTopic.id, (t) => ({ ...t, questions: [...t.questions, ...qs] }))}
             />
           </div>
         </div>

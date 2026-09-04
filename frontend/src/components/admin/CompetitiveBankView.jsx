@@ -52,6 +52,10 @@ function QuestionsManager({ subtopicId, folderId, onCountChange }) {
   const [selectedImportIds, setSelectedImportIds] = useState([]);
   const [importing, setImporting] = useState(false);
 
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkError, setBulkError] = useState('');
+  const [bulkResult, setBulkResult] = useState(null);
+
   const questionsUrlPath = `/admin/v2/examinations/subtopics/${subtopicId}/questions/${folderId ? `?folder_id=${folderId}` : ''}`;
   const questionsQueryKey = ['competitive-questions', subtopicId, folderId ?? null];
 
@@ -71,6 +75,28 @@ function QuestionsManager({ subtopicId, folderId, onCountChange }) {
       setQuestionsCache((prev) => prev.filter((q) => q.id !== id));
       onCountChange?.(-1);
     } catch { /* leave the row in place on failure */ }
+  };
+
+  const handleBulkUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBulkUploading(true);
+    setBulkError('');
+    setBulkResult(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const uploadPath = `/admin/v2/examinations/subtopics/${subtopicId}/questions/bulk-upload/${folderId ? `?folder_id=${folderId}` : ''}`;
+      const res = await api.post(uploadPath, formData);
+      setQuestionsCache((prev) => [...prev, ...(res.data.questions || [])]);
+      onCountChange?.(res.data.created_questions || 0);
+      setBulkResult(res.data);
+    } catch (err) {
+      setBulkError(apiErrorMessage(err, 'Bulk upload failed.'));
+    } finally {
+      setBulkUploading(false);
+    }
   };
 
   const addQuestion = async () => {
@@ -155,6 +181,11 @@ function QuestionsManager({ subtopicId, folderId, onCountChange }) {
           Practice Questions {questions ? `(${questions.length})` : ''}
         </label>
         <div style={{ display: 'flex', gap: 6 }}>
+          <label style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: bulkUploading ? 'default' : 'pointer', opacity: bulkUploading ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            {bulkUploading ? <Loader2 size={12} className="spin" /> : <Upload size={12} />}
+            {bulkUploading ? 'Uploading…' : 'Bulk Upload'}
+            <input type="file" accept=".xlsx,.xls,.csv" hidden disabled={bulkUploading} onChange={handleBulkUpload} />
+          </label>
           <button onClick={openImportPicker} style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>
             Import from Aptitude
           </button>
@@ -163,6 +194,17 @@ function QuestionsManager({ subtopicId, folderId, onCountChange }) {
           </button>
         </div>
       </div>
+
+      {bulkResult && (
+        <div style={{ padding: '8px 10px', borderRadius: 8, background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', fontSize: '0.72rem', fontWeight: 700, marginBottom: 8 }}>
+          Imported {bulkResult.created_questions} question(s){bulkResult.skipped_rows > 0 ? ` (${bulkResult.skipped_rows} row(s) skipped)` : ''}.
+        </div>
+      )}
+      {bulkError && (
+        <div style={{ padding: '8px 10px', borderRadius: 8, background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', fontSize: '0.72rem', fontWeight: 700, marginBottom: 8 }}>
+          {bulkError}
+        </div>
+      )}
 
       {questions === undefined ? (
         <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)' }}>Loading…</div>
