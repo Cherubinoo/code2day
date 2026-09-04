@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Mic, ChevronLeft, ChevronDown, ChevronRight, Loader2, Folder, FileText, Link2 } from "lucide-react";
+import { Mic, ChevronLeft, ChevronDown, ChevronRight, Loader2, Folder, FileText, Link2, PlayCircle } from "lucide-react";
 import MediaViewerModal from "../../common/MediaViewerModal";
 
 const QUESTION_TYPE_LABELS = {
@@ -20,19 +20,28 @@ function FolderMediaGrid({ media }) {
   const [viewerMedia, setViewerMedia] = useState(null);
   if (!media || media.length === 0) return null;
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 16, marginBottom: 16 }}>
       {media.map((m) => (
-        <div key={m.id} onClick={() => setViewerMedia(m)} style={{ display: "block", cursor: "pointer" }}>
-          {m.kind === "image" ? (
-            <img src={m.url} alt={m.title} style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 10, border: "1px solid var(--border-soft)" }} />
-          ) : m.kind === "video" ? (
-            <video src={m.url} style={{ width: 160, height: 120, objectFit: "cover", borderRadius: 10, border: "1px solid var(--border-soft)" }} />
-          ) : (
-            <div style={{ width: 120, height: 80, borderRadius: 10, border: "1px solid var(--border-soft)", background: "var(--bg-2)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 4, padding: 8 }}>
-              {m.kind === "pdf" ? <FileText size={22} style={{ color: "#0891b2" }} /> : <Link2 size={22} style={{ color: "var(--text-soft)" }} />}
-              <span style={{ fontSize: "0.68rem", color: "var(--text-soft)", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 104 }}>{m.title}</span>
-            </div>
-          )}
+        <div key={m.id} onClick={() => setViewerMedia(m)} style={{ cursor: "pointer" }}>
+          <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 9", borderRadius: 12, overflow: "hidden", border: "1px solid var(--border-soft)", background: "var(--bg-2)" }}>
+            {m.kind === "image" ? (
+              <img src={m.url} alt={m.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            ) : m.kind === "video" ? (
+              <>
+                <video src={m.url} preload="metadata" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <div style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <PlayCircle size={28} color="white" />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {m.kind === "pdf" ? <FileText size={30} style={{ color: "#0891b2" }} /> : <Link2 size={30} style={{ color: "var(--text-soft)" }} />}
+              </div>
+            )}
+          </div>
+          <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-hard)", marginTop: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.title}</div>
         </div>
       ))}
       {viewerMedia && <MediaViewerModal media={viewerMedia} onClose={() => setViewerMedia(null)} />}

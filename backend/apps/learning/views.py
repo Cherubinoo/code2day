@@ -3800,6 +3800,64 @@ class AdminSyllabusFolderMediaDetailView(APIView):
         return Response({"message": "Media deleted"})
 
 
+class _RangeFileWrapper:
+    """Wraps an open file object so reads stop after `length` bytes have
+    been served from wherever the file was seeked to — lets FileResponse
+    stream exactly one HTTP Range (start-end) without reading the rest of
+    the file into memory. FileResponse drives this by calling .read(size)
+    in a loop until it gets back an empty bytes, same as a plain file."""
+    def __init__(self, f, length):
+        self.f = f
+        self.remaining = length
+
+    def read(self, size=-1):
+        if self.remaining <= 0:
+            return b''
+        size = self.remaining if size is None or size < 0 else min(size, self.remaining)
+        data = self.f.read(size)
+        self.remaining -= len(data)
+        return data
+
+    def close(self):
+        self.f.close()
+
+
+_RANGE_HEADER_RE = re.compile(r'bytes=(\d*)-(\d*)')
+
+
+def _serve_media_file(request, file_field, content_type):
+    """Serve a FieldFile with HTTP Range support, so a <video> element can
+    start playing immediately and seek without downloading the whole file
+    first — a plain FileResponse (no Range handling) forces the browser to
+    wait for the entire file before it can play anything, which is what
+    made large video uploads feel slow to start."""
+    file_size = file_field.size
+    range_match = _RANGE_HEADER_RE.match(request.META.get('HTTP_RANGE', '').strip())
+
+    if range_match:
+        start_str, end_str = range_match.groups()
+        start = int(start_str) if start_str else 0
+        end = int(end_str) if end_str else file_size - 1
+        end = min(end, file_size - 1)
+        if start > end or start >= file_size:
+            response = HttpResponse(status=416)
+            response['Content-Range'] = f'bytes */{file_size}'
+            return response
+        length = end - start + 1
+        f = file_field.open('rb')
+        f.seek(start)
+        response = FileResponse(_RangeFileWrapper(f, length), content_type=content_type, status=206)
+        response['Content-Range'] = f'bytes {start}-{end}/{file_size}'
+        response['Content-Length'] = str(length)
+    else:
+        response = FileResponse(file_field.open('rb'), content_type=content_type)
+        response['Content-Length'] = str(file_size)
+
+    response['Accept-Ranges'] = 'bytes'
+    response['Cache-Control'] = 'public, max-age=86400'
+    return response
+
+
 def syllabus_folder_media_proxy(request, media_id):
     """Serve one folder-media file's bytes through the /api/ proxy path —
     same reasoning as institution_logo_proxy: production has no /media/
@@ -3809,9 +3867,7 @@ def syllabus_folder_media_proxy(request, media_id):
     src, which can't attach auth headers anyway."""
     media = get_object_or_404(SyllabusFolderMedia, id=media_id)
     content_type = media.content_type or mimetypes.guess_type(media.file.name)[0] or "application/octet-stream"
-    response = FileResponse(media.file.open("rb"), content_type=content_type)
-    response["Cache-Control"] = "public, max-age=86400"
-    return response
+    return _serve_media_file(request, media.file, content_type)
 
 
 def _serialize_interview_question(q):
@@ -4129,9 +4185,7 @@ def interview_folder_media_proxy(request, media_id):
     material rendered as a plain <img>/<video> src, not sensitive."""
     media = get_object_or_404(InterviewFolderMedia, id=media_id)
     content_type = media.content_type or mimetypes.guess_type(media.file.name)[0] or "application/octet-stream"
-    response = FileResponse(media.file.open("rb"), content_type=content_type)
-    response["Cache-Control"] = "public, max-age=86400"
-    return response
+    return _serve_media_file(request, media.file, content_type)
 
 
 INTERVIEW_QUESTION_FIELDS = (

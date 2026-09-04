@@ -19,7 +19,7 @@ export default function MediaViewerModal({ media, onClose }) {
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'white', borderRadius: 20, width: '100%', maxWidth: 720, maxHeight: '90vh',
+          background: 'white', borderRadius: 20, width: '100%', maxWidth: 1100, maxHeight: '94vh',
           overflow: 'auto', boxShadow: '0 30px 60px rgba(0,0,0,0.5)',
         }}
       >
@@ -33,11 +33,11 @@ export default function MediaViewerModal({ media, onClose }) {
         <div style={{ padding: 20 }}>
           <div style={{ background: 'black', borderRadius: 12, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             {media.kind === 'video' ? (
-              <video controls autoPlay src={media.url} style={{ width: '100%', maxHeight: '60vh', display: 'block' }} />
+              <video controls autoPlay src={media.url} style={{ width: '100%', maxHeight: '78vh', display: 'block' }} />
             ) : media.kind === 'image' ? (
-              <img src={media.url} alt={media.title} style={{ width: '100%', maxHeight: '60vh', objectFit: 'contain', display: 'block' }} />
+              <img src={media.url} alt={media.title} style={{ width: '100%', maxHeight: '78vh', objectFit: 'contain', display: 'block' }} />
             ) : media.kind === 'pdf' ? (
-              <iframe src={media.url} title={media.title} style={{ width: '100%', height: '60vh', border: 'none', background: 'white' }} />
+              <iframe src={media.url} title={media.title} style={{ width: '100%', height: '78vh', border: 'none', background: 'white' }} />
             ) : (
               <a href={media.url} target="_blank" rel="noopener noreferrer" style={{ padding: 24, color: 'white', textDecoration: 'underline' }}>
                 Open file
