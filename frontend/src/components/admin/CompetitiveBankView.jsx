@@ -410,21 +410,159 @@ function FolderMediaManager({ folderId }) {
   );
 }
 
-// ── Named sub-folders inside one subtopic — each groups its own questions
-// (via QuestionsManager with folderId) and uploaded media (via
-// FolderMediaManager), e.g. splitting "Time and Work" into "Basic" /
-// "Advanced" / "Formula Sheet" instead of one flat question list. ─────────
+// ── One folder node — recursive: a folder can itself contain subfolders
+// (SyllabusFolder.parent), so this component renders itself again for
+// whatever's nested underneath, to arbitrary depth. Each node groups its
+// own questions (via QuestionsManager with folderId) and uploaded media
+// (via FolderMediaManager), e.g. splitting "Time and Work" into "Basic" /
+// "Advanced" / "Formula Sheet", with "Advanced" itself split further. ────
+function FolderNode({ folder: initialFolder, subtopicId, onDeleted, depth = 0 }) {
+  const [folder, setFolder] = useState(initialFolder);
+  const [subfolders, setSubfolders] = useState(initialFolder.subfolders || []);
+  const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editTitle, setEditTitle] = useState(initialFolder.title);
+  const [editDescription, setEditDescription] = useState(initialFolder.description || '');
+  const [showAddSub, setShowAddSub] = useState(false);
+  const [newSubTitle, setNewSubTitle] = useState('');
+  const [newSubDescription, setNewSubDescription] = useState('');
+  const [savingSub, setSavingSub] = useState(false);
+  const [subError, setSubError] = useState('');
+
+  const saveEdit = async () => {
+    if (!editTitle.trim()) return;
+    const res = await apiFetch(`/api/admin/v2/examinations/folders/${folder.id}/`, 'PATCH', {
+      title: editTitle.trim(), description: editDescription.trim(),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setFolder((f) => ({ ...f, title: updated.title, description: updated.description }));
+      setEditing(false);
+    } else {
+      const body = await res.json().catch(() => ({}));
+      alert(body.error || 'Failed to update folder.');
+    }
+  };
+
+  const removeFolder = async () => {
+    if (!window.confirm('Delete this folder? Its questions, media, and any subfolders are deleted too — this cannot be undone.')) return;
+    const res = await apiFetch(`/api/admin/v2/examinations/folders/${folder.id}/`, 'DELETE');
+    if (res.ok) onDeleted(folder.id);
+  };
+
+  const addSubfolder = async () => {
+    if (!newSubTitle.trim()) return;
+    setSavingSub(true);
+    setSubError('');
+    try {
+      const res = await apiFetch(`/api/admin/v2/examinations/folders/${folder.id}/subfolders/`, 'POST', {
+        title: newSubTitle.trim(), description: newSubDescription.trim(),
+      });
+      if (res.ok) {
+        const sub = await res.json();
+        setSubfolders((prev) => [...prev, sub]);
+        setNewSubTitle('');
+        setNewSubDescription('');
+        setShowAddSub(false);
+        setExpanded(true);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setSubError(body.error || 'Failed to create subfolder.');
+      }
+    } finally {
+      setSavingSub(false);
+    }
+  };
+
+  const removeSubfolder = (id) => setSubfolders((prev) => prev.filter((f) => f.id !== id));
+
+  return (
+    <div style={{ background: 'var(--bg-2)', borderRadius: 12, overflow: 'hidden', marginLeft: depth > 0 ? 16 : 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)', display: 'flex', padding: 0 }}
+        >
+          {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        </button>
+        {editing ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }} onClick={(e) => e.stopPropagation()}>
+            <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: '0.82rem' }} />
+            <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={2} placeholder="Description" style={{ padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical' }} />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={saveEdit} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--olive-700)', color: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Save</button>
+              <button onClick={() => setEditing(false)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', cursor: 'pointer' }}>Cancel</button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpanded((v) => !v)}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--olive-900)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Folder size={14} style={{ color: '#d97706' }} /> {folder.title}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-soft)' }}>
+                {folder.question_count} question{folder.question_count !== 1 ? 's' : ''} · {folder.media.length} media file{folder.media.length !== 1 ? 's' : ''} · {subfolders.length} subfolder{subfolders.length !== 1 ? 's' : ''}
+              </div>
+            </div>
+            <button onClick={() => setEditing(true)} title="Rename / edit" style={{ background: 'none', border: 'none', color: 'var(--text-soft)', cursor: 'pointer', padding: 4 }}><Pencil size={14} /></button>
+            <button onClick={removeFolder} title="Delete folder" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}><Trash2 size={14} /></button>
+          </>
+        )}
+      </div>
+      {expanded && (
+        <div style={{ padding: '0 12px 14px', borderTop: '1px solid white' }}>
+          <div style={{ paddingTop: 12 }}>
+            <FolderMediaManager folderId={folder.id} />
+            <QuestionsManager subtopicId={subtopicId} folderId={folder.id} />
+
+            <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 12, marginTop: 4 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <label style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase' }}>
+                  Subfolders {subfolders.length ? `(${subfolders.length})` : ''}
+                </label>
+                <button onClick={() => setShowAddSub((v) => !v)} style={{ padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}>
+                  + Add Folder
+                </button>
+              </div>
+
+              {showAddSub && (
+                <div style={{ background: 'white', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10 }}>
+                  <input placeholder="Folder name" value={newSubTitle} onChange={(e) => setNewSubTitle(e.target.value)} style={{ padding: 7, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.8rem' }} />
+                  <textarea placeholder="Description (optional)" value={newSubDescription} onChange={(e) => setNewSubDescription(e.target.value)} rows={2} style={{ padding: 7, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical' }} />
+                  {subError && <div style={{ fontSize: '0.72rem', color: '#dc2626' }}>{subError}</div>}
+                  <button onClick={addSubfolder} disabled={savingSub || !newSubTitle.trim()} className="primary-button" style={{ borderRadius: 8, padding: '7px 12px', fontSize: '0.78rem', alignSelf: 'flex-start' }}>
+                    {savingSub ? 'Creating…' : 'Create Folder'}
+                  </button>
+                </div>
+              )}
+
+              {subfolders.length === 0 && !showAddSub ? (
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No subfolders.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {subfolders.map((sf) => (
+                    <FolderNode key={sf.id} folder={sf} subtopicId={subtopicId} onDeleted={removeSubfolder} depth={depth + 1} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Top-level named sub-folders inside one subtopic — see FolderNode above
+// for the recursive per-folder rendering (a folder can itself contain
+// subfolders). ─────────────────────────────────────────────────────────
 function FoldersManager({ subtopicId }) {
   const [folders, setFolders] = useState(null);
-  const [expandedId, setExpandedId] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [editingId, setEditingId] = useState(null);
-  const [editTitle, setEditTitle] = useState('');
-  const [editDescription, setEditDescription] = useState('');
 
   useEffect(() => { fetchFolders(); }, [subtopicId]);
 
@@ -456,35 +594,7 @@ function FoldersManager({ subtopicId }) {
     }
   };
 
-  const startEdit = (folder) => {
-    setEditingId(folder.id);
-    setEditTitle(folder.title);
-    setEditDescription(folder.description || '');
-  };
-
-  const saveEdit = async (folderId) => {
-    if (!editTitle.trim()) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/folders/${folderId}/`, 'PATCH', {
-      title: editTitle.trim(), description: editDescription.trim(),
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      setFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, ...updated } : f)));
-      setEditingId(null);
-    } else {
-      const body = await res.json().catch(() => ({}));
-      alert(body.error || 'Failed to update folder.');
-    }
-  };
-
-  const removeFolder = async (folderId) => {
-    if (!window.confirm('Delete this folder? Its questions and media are deleted too — this cannot be undone.')) return;
-    const res = await apiFetch(`/api/admin/v2/examinations/folders/${folderId}/`, 'DELETE');
-    if (res.ok) {
-      setFolders((prev) => prev.filter((f) => f.id !== folderId));
-      if (expandedId === folderId) setExpandedId(null);
-    }
-  };
+  const removeFolder = (folderId) => setFolders((prev) => prev.filter((f) => f.id !== folderId));
 
   return (
     <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 16, marginBottom: 16 }}>
@@ -515,47 +625,7 @@ function FoldersManager({ subtopicId }) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {folders.map((folder) => (
-            <div key={folder.id} style={{ background: 'var(--bg-2)', borderRadius: 12, overflow: 'hidden' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
-                <button
-                  onClick={() => setExpandedId(expandedId === folder.id ? null : folder.id)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)', display: 'flex', padding: 0 }}
-                >
-                  {expandedId === folder.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                </button>
-                {editingId === folder.id ? (
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }} onClick={(e) => e.stopPropagation()}>
-                    <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: '0.82rem' }} />
-                    <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={2} placeholder="Description" style={{ padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical' }} />
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button onClick={() => saveEdit(folder.id)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--olive-700)', color: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Save</button>
-                      <button onClick={() => setEditingId(null)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', cursor: 'pointer' }}>Cancel</button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === folder.id ? null : folder.id)}>
-                      <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--olive-900)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Folder size={14} style={{ color: '#d97706' }} /> {folder.title}
-                      </div>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-soft)' }}>
-                        {folder.question_count} question{folder.question_count !== 1 ? 's' : ''} · {folder.media.length} media file{folder.media.length !== 1 ? 's' : ''}
-                      </div>
-                    </div>
-                    <button onClick={() => startEdit(folder)} title="Rename / edit" style={{ background: 'none', border: 'none', color: 'var(--text-soft)', cursor: 'pointer', padding: 4 }}><Pencil size={14} /></button>
-                    <button onClick={() => removeFolder(folder.id)} title="Delete folder" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}><Trash2 size={14} /></button>
-                  </>
-                )}
-              </div>
-              {expandedId === folder.id && (
-                <div style={{ padding: '0 12px 14px', borderTop: '1px solid white' }}>
-                  <div style={{ paddingTop: 12 }}>
-                    <FolderMediaManager folderId={folder.id} />
-                    <QuestionsManager subtopicId={subtopicId} folderId={folder.id} />
-                  </div>
-                </div>
-              )}
-            </div>
+            <FolderNode key={folder.id} folder={folder} subtopicId={subtopicId} onDeleted={removeFolder} depth={0} />
           ))}
         </div>
       )}

@@ -2875,6 +2875,7 @@ def _serialize_syllabus_folder(folder):
         "resource_links": _resolve_resource_display(folder.resource_links),
         "media": [_serialize_folder_media(m) for m in folder.media_items.all()],
         "question_count": len(folder.questions.all()),
+        "subfolders": [_serialize_syllabus_folder(f) for f in folder.subfolders.all()],
     }
 
 
@@ -2886,6 +2887,8 @@ def _serialize_examination_syllabus(examination):
         'topics__subtopics__questions',
         'topics__subtopics__folders__media_items',
         'topics__subtopics__folders__questions',
+        'topics__subtopics__folders__subfolders__media_items',
+        'topics__subtopics__folders__subfolders__questions',
     ):
         topics = []
         for topic in section.topics.all():
@@ -2902,7 +2905,11 @@ def _serialize_examination_syllabus(examination):
                         # Only the unfoldered questions — folder-scoped ones are
                         # nested under their own folder entry below, not double-counted here.
                         "question_count": len([q for q in st.questions.all() if q.folder_id is None]),
-                        "folders": [_serialize_syllabus_folder(f) for f in st.folders.all()],
+                        # Only top-level folders — nested ones are already
+                        # included via each parent's own "subfolders" list
+                        # (_serialize_syllabus_folder is recursive), so listing
+                        # every depth here too would double them up.
+                        "folders": [_serialize_syllabus_folder(f) for f in st.folders.all() if f.parent_id is None],
                     }
                     for st in topic.subtopics.all()
                 ],
@@ -3447,17 +3454,22 @@ class AdminSubtopicQuestionImportView(APIView):
 
 
 class AdminSyllabusFolderListCreateView(APIView):
-    """System Admin: list/create named sub-folders inside one Competitive
-    Practice subtopic — each folder groups its own questions and media,
-    e.g. a "Time and Work" subtopic split into "Basic"/"Advanced"/"Formula
-    Sheet" folders instead of one flat question list."""
+    """System Admin: list/create named top-level sub-folders inside one
+    Competitive Practice subtopic — each folder groups its own questions
+    and media, e.g. a "Time and Work" subtopic split into "Basic"/
+    "Advanced"/"Formula Sheet" folders instead of one flat question list.
+    Folders can themselves be nested (see AdminSyllabusSubfolderListCreateView) —
+    this endpoint only lists/creates at the subtopic's top level; each
+    returned folder's own "subfolders" carries whatever is nested under it."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, subtopic_id):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
-        folders = subtopic.folders.prefetch_related('media_items', 'questions')
+        folders = subtopic.folders.filter(parent__isnull=True).prefetch_related(
+            'media_items', 'questions', 'subfolders__media_items', 'subfolders__questions',
+        )
         return Response([_serialize_syllabus_folder(f) for f in folders])
 
     def post(self, request, subtopic_id):
@@ -3467,20 +3479,44 @@ class AdminSyllabusFolderListCreateView(APIView):
         title = (request.data.get('title') or '').strip()
         if not title:
             return Response({"error": "title is required."}, status=400)
-        if subtopic.folders.filter(title__iexact=title).exists():
+        if subtopic.folders.filter(parent__isnull=True, title__iexact=title).exists():
             return Response({"error": "A folder with this name already exists in this subtopic."}, status=400)
         folder = SyllabusFolder.objects.create(
             subtopic=subtopic, title=title,
             description=(request.data.get('description') or '').strip(),
-            order=subtopic.folders.count(),
+            order=subtopic.folders.filter(parent__isnull=True).count(),
+        )
+        return Response(_serialize_syllabus_folder(folder), status=201)
+
+
+class AdminSyllabusSubfolderListCreateView(APIView):
+    """System Admin: create a folder nested inside another folder (not
+    directly under the subtopic) — same idea as AdminSyllabusFolderListCreateView
+    one level down, so folders can nest to arbitrary depth."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, folder_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        parent = get_object_or_404(SyllabusFolder, id=folder_id)
+        title = (request.data.get('title') or '').strip()
+        if not title:
+            return Response({"error": "title is required."}, status=400)
+        if parent.subfolders.filter(title__iexact=title).exists():
+            return Response({"error": "A folder with this name already exists here."}, status=400)
+        folder = SyllabusFolder.objects.create(
+            subtopic=parent.subtopic, parent=parent, title=title,
+            description=(request.data.get('description') or '').strip(),
+            order=parent.subfolders.count(),
         )
         return Response(_serialize_syllabus_folder(folder), status=201)
 
 
 class AdminSyllabusFolderDetailView(APIView):
-    """System Admin: rename/edit or delete one syllabus folder. Deleting a
-    folder cascades to its questions and uploaded media (CASCADE FKs) —
-    it does not fall back to becoming "unfoldered" content."""
+    """System Admin: rename/edit or delete one syllabus folder (at any
+    nesting depth). Deleting a folder cascades to its questions, uploaded
+    media, and any subfolders (CASCADE FKs) — it does not fall back to
+    becoming "unfoldered" content."""
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, folder_id):
@@ -3492,8 +3528,9 @@ class AdminSyllabusFolderDetailView(APIView):
             title = (request.data.get('title') or '').strip()
             if not title:
                 return Response({"error": "title cannot be empty."}, status=400)
-            if folder.subtopic.folders.exclude(id=folder.id).filter(title__iexact=title).exists():
-                return Response({"error": "A folder with this name already exists in this subtopic."}, status=400)
+            siblings = SyllabusFolder.objects.filter(subtopic=folder.subtopic, parent=folder.parent)
+            if siblings.exclude(id=folder.id).filter(title__iexact=title).exists():
+                return Response({"error": "A folder with this name already exists here."}, status=400)
             folder.title = title
         if 'description' in request.data:
             folder.description = (request.data.get('description') or '').strip()
@@ -3521,11 +3558,15 @@ class AdminSyllabusFolderMediaView(APIView):
     permission_classes = [IsAuthenticated]
 
     ALLOWED_CONTENT_TYPES = {
-        'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
-        'video/mp4', 'video/webm', 'video/quicktime',
+        'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/heic', 'image/heif',
+        'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska', 'video/3gpp', 'video/x-m4v',
         'application/pdf',
     }
-    MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB — comfortably covers a short video clip or a scanned PDF
+    # Video files are legitimately much larger than an image or a scanned
+    # PDF, so it gets its own, higher cap instead of one shared limit that
+    # would either reject reasonable videos or let huge images through.
+    MAX_UPLOAD_BYTES = 25 * 1024 * 1024        # 25MB — images, PDFs
+    MAX_VIDEO_UPLOAD_BYTES = 200 * 1024 * 1024  # 200MB — a several-minute explainer clip
 
     def get(self, request, folder_id):
         if not request.user.is_superuser:
@@ -3543,8 +3584,10 @@ class AdminSyllabusFolderMediaView(APIView):
             return Response({"error": "No file provided."}, status=400)
         if uploaded.content_type not in self.ALLOWED_CONTENT_TYPES:
             return Response({"error": f"Unsupported file type: {uploaded.content_type}."}, status=400)
-        if uploaded.size > self.MAX_UPLOAD_BYTES:
-            return Response({"error": "File too large. Maximum size is 25MB."}, status=400)
+        is_video = uploaded.content_type.startswith('video/')
+        limit = self.MAX_VIDEO_UPLOAD_BYTES if is_video else self.MAX_UPLOAD_BYTES
+        if uploaded.size > limit:
+            return Response({"error": f"File too large. Maximum size is {limit // (1024 * 1024)}MB."}, status=400)
 
         media = SyllabusFolderMedia.objects.create(
             folder=folder,

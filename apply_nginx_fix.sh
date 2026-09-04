@@ -90,7 +90,7 @@ server {
     proxy_read_timeout 120s;
     proxy_connect_timeout 10s;
     proxy_send_timeout 120s;
-    client_max_body_size 20M;
+    client_max_body_size 220M;
 
     location /api/ {
         proxy_pass http://127.0.0.1:8000/api/;

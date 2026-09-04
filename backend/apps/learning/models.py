@@ -996,8 +996,15 @@ class SyllabusFolder(models.Model):
     link/Aptitude-topic/Problem resource pointers every other syllabus
     level already carries. Optional — questions/media can still be added
     directly under a subtopic with no folder at all (folder=None), exactly
-    as before this model existed."""
+    as before this model existed.
+
+    `parent` makes folders nestable to arbitrary depth (a folder inside a
+    folder inside a folder...) — null for a top-level folder directly
+    under the subtopic. `subtopic` stays set on every folder regardless of
+    depth (not just top-level ones) so "all folders under this subtopic"
+    stays a single flat query without walking the tree."""
     subtopic = models.ForeignKey(SyllabusSubtopic, on_delete=models.CASCADE, related_name="folders")
+    parent = models.ForeignKey('self', null=True, blank=True, on_delete=models.CASCADE, related_name="subfolders")
     title = models.CharField(max_length=255)
     order = models.PositiveIntegerField(default=0)
     description = models.TextField(blank=True, default="")
@@ -1006,7 +1013,11 @@ class SyllabusFolder(models.Model):
 
     class Meta:
         db_table = "syllabus_folders"
-        unique_together = ("subtopic", "title")
+        # No DB-level unique_together on title: with `parent` nullable,
+        # NULL isn't reliably treated as "equal to itself" for uniqueness
+        # across SQLite/Postgres, so sibling-scoped duplicate titles are
+        # instead checked in the view (scoped to subtopic+parent, not just
+        # subtopic — nested folders under different parents may share a name).
         ordering = ["order", "id"]
 
     def __str__(self):
