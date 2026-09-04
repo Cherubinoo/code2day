@@ -275,6 +275,8 @@ function FolderMediaManager({ folderId }) {
   const [media, setMedia] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
 
   useEffect(() => { fetchMedia(); }, [folderId]);
 
@@ -313,6 +315,24 @@ function FolderMediaManager({ folderId }) {
     if (res.ok) setMedia((prev) => prev.filter((m) => m.id !== id));
   };
 
+  const startEditMedia = (m) => {
+    setEditingId(m.id);
+    setEditTitle(m.title);
+  };
+
+  const saveMediaTitle = async (id) => {
+    if (!editTitle.trim()) return;
+    const res = await apiFetch(`/api/admin/v2/examinations/folders/media/${id}/`, 'PATCH', { title: editTitle.trim() });
+    if (res.ok) {
+      const updated = await res.json();
+      setMedia((prev) => prev.map((m) => (m.id === id ? updated : m)));
+      setEditingId(null);
+    } else {
+      const body = await res.json().catch(() => ({}));
+      alert(body.error || 'Failed to rename file.');
+    }
+  };
+
   return (
     <div style={{ marginBottom: 16 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -341,6 +361,15 @@ function FolderMediaManager({ folderId }) {
               >
                 <X size={12} />
               </button>
+              {editingId !== m.id && (
+                <button
+                  onClick={() => startEditMedia(m)}
+                  title="Rename"
+                  style={{ position: 'absolute', top: -6, left: -6, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'var(--olive-700)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}
+                >
+                  <Pencil size={10} />
+                </button>
+              )}
               <a href={m.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', textDecoration: 'none' }}>
                 {m.kind === 'image' ? (
                   <img src={m.url} alt={m.title} style={{ width: 84, height: 84, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border-soft)' }} />
@@ -349,10 +378,30 @@ function FolderMediaManager({ folderId }) {
                     {mediaKindIcon(m.kind)}
                   </div>
                 )}
-                <div style={{ fontSize: '0.68rem', color: 'var(--text-soft)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.title}>
+              </a>
+              {editingId === m.id ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 3 }} onClick={(e) => e.stopPropagation()}>
+                  <input
+                    autoFocus
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') saveMediaTitle(m.id); if (e.key === 'Escape') setEditingId(null); }}
+                    style={{ width: '100%', padding: '2px 4px', borderRadius: 4, border: '1px solid var(--border-soft)', fontSize: '0.65rem' }}
+                  />
+                  <div style={{ display: 'flex', gap: 3 }}>
+                    <button onClick={() => saveMediaTitle(m.id)} style={{ flex: 1, padding: '2px 0', borderRadius: 4, border: 'none', background: 'var(--olive-700)', color: 'white', fontSize: '0.6rem', cursor: 'pointer' }}>Save</button>
+                    <button onClick={() => setEditingId(null)} style={{ flex: 1, padding: '2px 0', borderRadius: 4, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.6rem', cursor: 'pointer' }}>×</button>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  onClick={() => startEditMedia(m)}
+                  title={`${m.title} (click to rename)`}
+                  style={{ fontSize: '0.68rem', color: 'var(--text-soft)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                >
                   {m.title}
                 </div>
-              </a>
+              )}
             </div>
           ))}
         </div>
@@ -711,6 +760,19 @@ export default function CompetitiveBankView({ onBack }) {
   const [examDraft, setExamDraft] = useState({ name: '', description: '' });
   const [savingExam, setSavingExam] = useState(false);
 
+  // Manual Section > Topic > Subtopic creation — the Excel upload isn't the
+  // only way to build a syllabus tree; one add-form of each kind is open at
+  // a time, keyed by the parent id it's adding into.
+  const [addSectionOpen, setAddSectionOpen] = useState(false);
+  const [newSectionTitle, setNewSectionTitle] = useState('');
+  const [addingSection, setAddingSection] = useState(false);
+  const [addTopicFor, setAddTopicFor] = useState(null);
+  const [newTopicTitle, setNewTopicTitle] = useState('');
+  const [addingTopic, setAddingTopic] = useState(false);
+  const [addSubtopicFor, setAddSubtopicFor] = useState(null);
+  const [newSubtopicTitle, setNewSubtopicTitle] = useState('');
+  const [addingSubtopic, setAddingSubtopic] = useState(false);
+
   useEffect(() => { fetchExaminations(); }, []);
 
   const fetchExaminations = async () => {
@@ -846,6 +908,109 @@ export default function CompetitiveBankView({ onBack }) {
     }
   };
 
+  const handleAddSection = async () => {
+    if (!newSectionTitle.trim() || !selectedExam) return;
+    setAddingSection(true);
+    try {
+      const res = await apiFetch(`/api/admin/v2/examinations/${selectedExam.id}/sections/`, 'POST', { title: newSectionTitle.trim() });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setSyllabus((prev) => ({ ...(prev || { examination: null }), sections: [...((prev && prev.sections) || []), body] }));
+        setExpandedSections((prev) => ({ ...prev, [body.id]: true }));
+        setNewSectionTitle('');
+        setAddSectionOpen(false);
+        fetchExaminations();
+      } else {
+        alert(body.error || 'Failed to add section');
+      }
+    } finally {
+      setAddingSection(false);
+    }
+  };
+
+  const handleDeleteSection = async (sectionId) => {
+    if (!window.confirm('Delete this section and everything under it (topics, subtopics, folders, questions)? This cannot be undone.')) return;
+    const res = await apiFetch(`/api/admin/v2/examinations/sections/${sectionId}/`, 'DELETE');
+    if (res.ok) {
+      setSyllabus((prev) => prev ? { ...prev, sections: prev.sections.filter((s) => s.id !== sectionId) } : prev);
+      fetchExaminations();
+    }
+  };
+
+  const handleAddTopic = async (sectionId) => {
+    if (!newTopicTitle.trim()) return;
+    setAddingTopic(true);
+    try {
+      const res = await apiFetch(`/api/admin/v2/examinations/sections/${sectionId}/topics/`, 'POST', { title: newTopicTitle.trim() });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setSyllabus((prev) => ({
+          ...prev,
+          sections: prev.sections.map((s) => s.id === sectionId ? { ...s, topics: [...s.topics, body] } : s),
+        }));
+        setNewTopicTitle('');
+        setAddTopicFor(null);
+        fetchExaminations();
+      } else {
+        alert(body.error || 'Failed to add topic');
+      }
+    } finally {
+      setAddingTopic(false);
+    }
+  };
+
+  const handleDeleteTopic = async (sectionId, topicId) => {
+    if (!window.confirm('Delete this topic and everything under it (subtopics, folders, questions)? This cannot be undone.')) return;
+    const res = await apiFetch(`/api/admin/v2/examinations/topics/${topicId}/`, 'DELETE');
+    if (res.ok) {
+      setSyllabus((prev) => ({
+        ...prev,
+        sections: prev.sections.map((s) => s.id === sectionId ? { ...s, topics: s.topics.filter((t) => t.id !== topicId) } : s),
+      }));
+      fetchExaminations();
+    }
+  };
+
+  const handleAddSubtopic = async (sectionId, topicId) => {
+    if (!newSubtopicTitle.trim()) return;
+    setAddingSubtopic(true);
+    try {
+      const res = await apiFetch(`/api/admin/v2/examinations/topics/${topicId}/subtopics/`, 'POST', { title: newSubtopicTitle.trim() });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setSyllabus((prev) => ({
+          ...prev,
+          sections: prev.sections.map((s) => s.id === sectionId ? {
+            ...s,
+            topics: s.topics.map((t) => t.id === topicId ? { ...t, subtopics: [...t.subtopics, body] } : t),
+          } : s),
+        }));
+        setNewSubtopicTitle('');
+        setAddSubtopicFor(null);
+        fetchExaminations();
+      } else {
+        alert(body.error || 'Failed to add subtopic');
+      }
+    } finally {
+      setAddingSubtopic(false);
+    }
+  };
+
+  const handleDeleteSubtopic = async (sectionId, topicId, subtopicId) => {
+    if (!window.confirm('Delete this subtopic and everything under it (folders, media, questions)? This cannot be undone.')) return;
+    const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/`, 'DELETE');
+    if (res.ok) {
+      setSyllabus((prev) => ({
+        ...prev,
+        sections: prev.sections.map((s) => s.id === sectionId ? {
+          ...s,
+          topics: s.topics.map((t) => t.id === topicId ? { ...t, subtopics: t.subtopics.filter((st) => st.id !== subtopicId) } : t),
+        } : s),
+      }));
+      fetchExaminations();
+    }
+  };
+
   const handleResourcesSaved = (topicId, resourceLinks) => {
     setSyllabus((prev) => {
       if (!prev) return prev;
@@ -889,6 +1054,16 @@ export default function CompetitiveBankView({ onBack }) {
             <h2 style={{ fontSize: '1.8rem', fontWeight: 900, margin: 0, color: 'var(--olive-950)' }}>{selectedExam.name}</h2>
             <p style={{ color: 'var(--text-soft)', margin: '4px 0 0' }}>{selectedExam.description || 'Syllabus structure'}</p>
           </div>
+          <button
+            onClick={() => setAddSectionOpen((v) => !v)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px', borderRadius: 14,
+              background: 'white', border: '1px solid var(--border-soft)', color: 'var(--olive-900)',
+              fontWeight: 800, fontSize: '0.9rem', cursor: 'pointer',
+            }}
+          >
+            <Plus size={16} /> Add Section
+          </button>
           <label
             style={{
               display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px', borderRadius: 14,
@@ -908,6 +1083,25 @@ export default function CompetitiveBankView({ onBack }) {
           </label>
         </div>
 
+        {addSectionOpen && (
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: 16, background: 'white', borderRadius: 16, border: '1px solid var(--border-soft)', marginBottom: 20 }}>
+            <input
+              autoFocus
+              placeholder="Section title (e.g. Quantitative Aptitude)"
+              value={newSectionTitle}
+              onChange={(e) => setNewSectionTitle(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleAddSection(); }}
+              style={{ padding: '10px 14px', borderRadius: 10, border: '1px solid var(--border-soft)', fontWeight: 700, flex: 1, minWidth: 220 }}
+            />
+            <button onClick={handleAddSection} disabled={addingSection || !newSectionTitle.trim()} className="primary-button" style={{ borderRadius: 10, padding: '10px 18px' }}>
+              {addingSection ? 'Adding…' : 'Add'}
+            </button>
+            <button onClick={() => { setAddSectionOpen(false); setNewSectionTitle(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)', padding: 8 }}>
+              <X size={18} />
+            </button>
+          </div>
+        )}
+
         {uploadResult && (
           <div style={{ padding: '14px 20px', borderRadius: 14, background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', fontWeight: 700, fontSize: '0.9rem', marginBottom: 20 }}>
             Imported — {uploadResult.created_sections} new section(s), {uploadResult.created_topics} new topic(s), {uploadResult.created_subtopics} new subtopic(s)
@@ -920,7 +1114,7 @@ export default function CompetitiveBankView({ onBack }) {
           </div>
         )}
         <p style={{ color: 'var(--text-soft)', fontSize: '0.85rem', marginTop: -8, marginBottom: 24 }}>
-          Expects a Section, Topic, Subtopic column (an Exam column is fine too, it's ignored). Re-uploading an updated sheet is safe — existing entries aren't duplicated. Click a topic tile to attach resources.
+          Upload expects a Section, Topic, Subtopic column (an Exam column is fine too, it's ignored) and is safe to re-run — existing entries aren't duplicated. Or build the tree by hand with Add Section, then Add Topic / Add Subtopic inside it. Click a topic tile to attach resources, a subtopic to add folders, media, and questions.
         </p>
 
         {syllabusLoading ? (
@@ -928,21 +1122,30 @@ export default function CompetitiveBankView({ onBack }) {
         ) : !syllabus || (syllabus.sections || []).length === 0 ? (
           <div style={{ padding: '80px 40px', textAlign: 'center', background: 'white', borderRadius: 32, border: '2px dashed var(--border-soft)' }}>
             <Upload size={48} style={{ color: 'var(--text-soft)', opacity: 0.3, marginBottom: 20 }} />
-            <h3 style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-soft)', marginBottom: 8 }}>No syllabus uploaded yet</h3>
-            <p style={{ color: 'var(--text-soft)' }}>Upload a syllabus spreadsheet to populate this examination's structure.</p>
+            <h3 style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--text-soft)', marginBottom: 8 }}>No syllabus yet</h3>
+            <p style={{ color: 'var(--text-soft)' }}>Upload a syllabus spreadsheet, or click "Add Section" above to build the structure by hand.</p>
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {syllabus.sections.map((section) => (
               <div key={section.id} className="surface-card" style={{ background: 'white', borderRadius: 20, border: '1px solid var(--border-soft)', overflow: 'hidden' }}>
-                <button
-                  onClick={() => setExpandedSections(prev => ({ ...prev, [section.id]: !prev[section.id] }))}
-                  style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', background: 'var(--bg-2)', border: 'none', cursor: 'pointer', textAlign: 'left' }}
-                >
-                  {expandedSections[section.id] ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                  <span style={{ fontWeight: 850, fontSize: '1.05rem', color: 'var(--olive-950)' }}>{section.title}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 700 }}>{section.topics.length} topics</span>
-                </button>
+                <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '18px 24px', background: 'var(--bg-2)' }}>
+                  <button
+                    onClick={() => setExpandedSections(prev => ({ ...prev, [section.id]: !prev[section.id] }))}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}
+                  >
+                    {expandedSections[section.id] ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                    <span style={{ fontWeight: 850, fontSize: '1.05rem', color: 'var(--olive-950)' }}>{section.title}</span>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontWeight: 700 }}>{section.topics.length} topics</span>
+                  </button>
+                  <button
+                    onClick={() => handleDeleteSection(section.id)}
+                    title="Delete section"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 6, display: 'flex' }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
 
                 {expandedSections[section.id] && (
                   <div style={{ padding: '16px 24px 24px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12, alignItems: 'start' }}>
@@ -954,18 +1157,27 @@ export default function CompetitiveBankView({ onBack }) {
                           background: 'var(--bg-2)', display: 'flex', flexDirection: 'column', gap: 10,
                         }}
                       >
-                        <button
-                          onClick={() => setResourceModalTopic(topic)}
-                          style={{ textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 6 }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <Link2 size={14} style={{ color: 'var(--olive-600)', flexShrink: 0 }} />
-                            <span style={{ fontWeight: 750, color: 'var(--olive-900)', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{topic.title}</span>
-                          </div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-soft)', fontWeight: 700 }}>
-                            {topic.resource_links.length > 0 ? `${topic.resource_links.length} topic resource${topic.resource_links.length > 1 ? 's' : ''} — click to edit` : 'click to add topic resources'}
-                          </div>
-                        </button>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                          <button
+                            onClick={() => setResourceModalTopic(topic)}
+                            style={{ flex: 1, minWidth: 0, textAlign: 'left', background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 6 }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <Link2 size={14} style={{ color: 'var(--olive-600)', flexShrink: 0 }} />
+                              <span style={{ fontWeight: 750, color: 'var(--olive-900)', fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{topic.title}</span>
+                            </div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-soft)', fontWeight: 700 }}>
+                              {topic.resource_links.length > 0 ? `${topic.resource_links.length} topic resource${topic.resource_links.length > 1 ? 's' : ''} — click to edit` : 'click to add topic resources'}
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => handleDeleteTopic(section.id, topic.id)}
+                            title="Delete topic"
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc2626', padding: 2, flexShrink: 0, display: 'flex' }}
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
 
                         {topic.subtopics.length > 0 && (
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, paddingTop: 8, borderTop: '1px solid var(--border-soft)' }}>
@@ -973,7 +1185,7 @@ export default function CompetitiveBankView({ onBack }) {
                               <button
                                 key={st.id}
                                 onClick={() => setResourceModalSubtopic(st)}
-                                title="Edit description, resources & questions"
+                                title="Edit description, resources, folders & questions"
                                 style={{
                                   textAlign: 'left', padding: '8px 10px', borderRadius: 10, border: '1px solid var(--border-soft)',
                                   background: 'white', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 650, color: 'var(--olive-900)',
@@ -991,8 +1203,71 @@ export default function CompetitiveBankView({ onBack }) {
                             ))}
                           </div>
                         )}
+
+                        {addSubtopicFor === topic.id ? (
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center', paddingTop: topic.subtopics.length > 0 ? 0 : 8, borderTop: topic.subtopics.length > 0 ? 'none' : '1px solid var(--border-soft)' }}>
+                            <input
+                              autoFocus
+                              placeholder="Subtopic title"
+                              value={newSubtopicTitle}
+                              onChange={(e) => setNewSubtopicTitle(e.target.value)}
+                              onKeyDown={(e) => { if (e.key === 'Enter') handleAddSubtopic(section.id, topic.id); if (e.key === 'Escape') setAddSubtopicFor(null); }}
+                              style={{ flex: 1, minWidth: 0, padding: '6px 8px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.75rem' }}
+                            />
+                            <button onClick={() => handleAddSubtopic(section.id, topic.id)} disabled={addingSubtopic || !newSubtopicTitle.trim()} style={{ background: 'var(--olive-700)', border: 'none', borderRadius: 8, padding: '6px 8px', cursor: 'pointer', display: 'flex' }}>
+                              <Check size={13} color="white" />
+                            </button>
+                            <button onClick={() => { setAddSubtopicFor(null); setNewSubtopicTitle(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)', padding: '6px 4px', display: 'flex' }}>
+                              <X size={13} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => { setAddSubtopicFor(topic.id); setNewSubtopicTitle(''); }}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'center',
+                              padding: '6px 8px', borderRadius: 8, border: '1px dashed var(--border-soft)', background: 'none',
+                              cursor: 'pointer', fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-soft)',
+                              marginTop: topic.subtopics.length > 0 ? 0 : 8,
+                            }}
+                          >
+                            <Plus size={12} /> Add Subtopic
+                          </button>
+                        )}
                       </div>
                     ))}
+
+                    {addTopicFor === section.id ? (
+                      <div style={{ padding: 14, borderRadius: 14, border: '1px dashed var(--border-soft)', background: 'var(--bg-2)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <input
+                          autoFocus
+                          placeholder="Topic title"
+                          value={newTopicTitle}
+                          onChange={(e) => setNewTopicTitle(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleAddTopic(section.id); if (e.key === 'Escape') setAddTopicFor(null); }}
+                          style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }}
+                        />
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button onClick={() => handleAddTopic(section.id)} disabled={addingTopic || !newTopicTitle.trim()} className="primary-button" style={{ flex: 1, borderRadius: 8, padding: '6px 10px', fontSize: '0.8rem' }}>
+                            {addingTopic ? 'Adding…' : 'Add'}
+                          </button>
+                          <button onClick={() => { setAddTopicFor(null); setNewTopicTitle(''); }} style={{ background: 'none', border: '1px solid var(--border-soft)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-soft)', padding: '6px 10px' }}>
+                            <X size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setAddTopicFor(section.id); setNewTopicTitle(''); }}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                          padding: 14, borderRadius: 14, border: '1px dashed var(--border-soft)', background: 'none',
+                          cursor: 'pointer', fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-soft)', minHeight: 60,
+                        }}
+                      >
+                        <Plus size={16} /> Add Topic
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

@@ -3201,6 +3201,98 @@ class AdminSyllabusSubtopicView(APIView):
             "resource_links": _resolve_resource_display(subtopic.resource_links),
         })
 
+    def delete(self, request, subtopic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
+        subtopic.delete()
+        return Response({"message": "Subtopic deleted"})
+
+
+class AdminSyllabusSectionListCreateView(APIView):
+    """System Admin: manually add a Section to an Examination's syllabus
+    tree, without going through the Excel upload — so an exam can be built
+    by hand (and folders/media added under it) before any spreadsheet
+    exists, not only as a bulk import."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, exam_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        exam = get_object_or_404(Examination, id=exam_id)
+        title = (request.data.get('title') or '').strip()
+        if not title:
+            return Response({"error": "title is required."}, status=400)
+        if SyllabusSection.objects.filter(examination=exam, title__iexact=title).exists():
+            return Response({"error": "A section with this title already exists."}, status=400)
+        order = exam.sections.count()
+        section = SyllabusSection.objects.create(examination=exam, title=title, order=order)
+        return Response({"id": section.id, "title": section.title, "topics": []}, status=201)
+
+
+class AdminSyllabusSectionDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, section_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        section = get_object_or_404(SyllabusSection, id=section_id)
+        section.delete()
+        return Response({"message": "Section deleted"})
+
+
+class AdminSyllabusTopicListCreateView(APIView):
+    """System Admin: manually add a Topic under one Section."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, section_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        section = get_object_or_404(SyllabusSection, id=section_id)
+        title = (request.data.get('title') or '').strip()
+        if not title:
+            return Response({"error": "title is required."}, status=400)
+        if SyllabusTopic.objects.filter(section=section, title__iexact=title).exists():
+            return Response({"error": "A topic with this title already exists in this section."}, status=400)
+        order = section.topics.count()
+        topic = SyllabusTopic.objects.create(section=section, title=title, order=order)
+        return Response({"id": topic.id, "title": topic.title, "resource_links": [], "subtopics": []}, status=201)
+
+
+class AdminSyllabusTopicDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, topic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        topic = get_object_or_404(SyllabusTopic, id=topic_id)
+        topic.delete()
+        return Response({"message": "Topic deleted"})
+
+
+class AdminSyllabusSubtopicListCreateView(APIView):
+    """System Admin: manually add a Subtopic under one Topic — the level
+    folders/media/questions actually attach to, so this is the endpoint
+    that unblocks "add folders and media" for an exam with no uploaded
+    spreadsheet at all."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, topic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        topic = get_object_or_404(SyllabusTopic, id=topic_id)
+        title = (request.data.get('title') or '').strip()
+        if not title:
+            return Response({"error": "title is required."}, status=400)
+        if SyllabusSubtopic.objects.filter(topic=topic, title__iexact=title).exists():
+            return Response({"error": "A subtopic with this title already exists in this topic."}, status=400)
+        order = topic.subtopics.count()
+        subtopic = SyllabusSubtopic.objects.create(topic=topic, title=title, order=order)
+        return Response({
+            "id": subtopic.id, "title": subtopic.title, "description": "",
+            "resource_links": [], "question_count": 0, "folders": [],
+        }, status=201)
+
 
 def _serialize_competitive_question(q, include_answer=True):
     data = {
@@ -3465,9 +3557,21 @@ class AdminSyllabusFolderMediaView(APIView):
 
 
 class AdminSyllabusFolderMediaDetailView(APIView):
-    """System Admin: delete one uploaded media file — also removes it from
-    disk, not just the database row."""
+    """System Admin: rename or delete one uploaded media file. Delete also
+    removes it from disk, not just the database row."""
     permission_classes = [IsAuthenticated]
+
+    def patch(self, request, media_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        media = get_object_or_404(SyllabusFolderMedia, id=media_id)
+        if 'title' in request.data:
+            title = (request.data.get('title') or '').strip()
+            if not title:
+                return Response({"error": "title cannot be empty."}, status=400)
+            media.title = title
+            media.save(update_fields=['title'])
+        return Response(_serialize_folder_media(media))
 
     def delete(self, request, media_id):
         if not request.user.is_superuser:
