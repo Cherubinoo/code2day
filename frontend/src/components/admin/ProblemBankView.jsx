@@ -2,7 +2,7 @@
 // generate test cases (via the LLM fallback chain) for any problem missing
 // them, or regenerate for any problem.
 import { Fragment, useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles } from 'lucide-react';
 import { getCsrfToken } from '../../lib/appUtils';
 
 function apiFetch(url, method, body) {
@@ -53,7 +53,187 @@ function draftToSchema(draft) {
   };
 }
 
+// Per-topic "Generate Missing Metadata" — same start/stop/resume/poll shape
+// as AptitudeBankView's ExplanationAuditPanel, just scoped to one topic tile
+// and only fetching/polling while its tile is expanded (there can be 40+
+// tiles — polling all of them at once would be wasteful).
+function TopicMetadataPanel({ topic, onProgress }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const encTopic = encodeURIComponent(topic);
+
+  async function loadStatus() {
+    try {
+      const res = await apiFetch(`/api/admin/v2/problem-bank/topics/${encTopic}/metadata-run/`, 'GET');
+      if (res.ok) {
+        const data = await res.json();
+        setStatus(data);
+        onProgress?.(data);
+      }
+    } catch { /* keep last known status on a transient network blip */ }
+  }
+
+  useEffect(() => {
+    loadStatus();
+    const interval = setInterval(() => {
+      setStatus((s) => {
+        if (s && s.status === 'running') loadStatus();
+        return s;
+      });
+    }, 3000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topic]);
+
+  async function doAction(action) {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await apiFetch(`/api/admin/v2/problem-bank/topics/${encTopic}/metadata-run/`, 'POST', { action });
+      const data = await res.json();
+      if (!res.ok) setError(data.error || 'Action failed.');
+      else await loadStatus();
+    } catch {
+      setError('Network error.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!status) return <div style={{ fontSize: 12, color: 'var(--text-soft)' }}>Loading…</div>;
+
+  const pct = status.total > 0 ? Math.min(100, Math.round((status.processed / status.total) * 100)) : 0;
+  const isStalled = status.status === 'running' && status.stalled;
+  const isRunning = status.status === 'running' && !isStalled;
+  const canResume = (status.status === 'stopped' || isStalled) && status.processed > 0 && status.processed < status.total;
+  const isCompleted = status.status === 'completed' || (status.status === 'idle' && status.missing_metadata === 0);
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--bg-1)' }}>
+      <div style={{ fontSize: 12, color: 'var(--text-soft)', marginBottom: 8 }}>
+        {isRunning
+          ? `Generating ${status.processed}/${status.total} — ${status.schema_generated} schema(s), ${status.explanation_generated} explanation(s)${status.failed ? `, ${status.failed} failed` : ''}${status.worker_count > 1 ? ` (across ${status.worker_count} providers)` : ''}`
+          : isCompleted
+          ? status.missing_metadata === 0
+            ? 'Nothing missing in this topic.'
+            : `Done — ${status.schema_generated} schema(s), ${status.explanation_generated} explanation(s) generated${status.failed ? ` (${status.failed} failed)` : ''}`
+          : isStalled
+          ? `Stalled at ${status.processed}/${status.total} — click Resume`
+          : canResume
+          ? `Paused at ${status.processed}/${status.total}`
+          : `${status.missing_metadata} problem(s) missing schema or explanation.`}
+      </div>
+      {(isRunning || canResume) && (
+        <div style={{ height: 6, background: 'var(--bg-2)', borderRadius: 6, overflow: 'hidden', marginBottom: 8 }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: 'var(--olive-700)', borderRadius: 6, transition: 'width 0.4s ease' }} />
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 8 }}>
+        {isRunning ? (
+          <button onClick={() => doAction('stop')} disabled={busy}
+            style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: '#fee2e2', color: '#dc2626', fontWeight: 700, fontSize: 12, cursor: busy ? 'not-allowed' : 'pointer' }}>
+            Stop
+          </button>
+        ) : canResume ? (
+          <>
+            <button onClick={() => doAction('start')} disabled={busy}
+              style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--olive-700)', color: 'white', fontWeight: 700, fontSize: 12, cursor: busy ? 'not-allowed' : 'pointer' }}>
+              Resume
+            </button>
+            <button onClick={() => doAction('reset')} disabled={busy}
+              style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-soft)', fontWeight: 700, fontSize: 12, cursor: busy ? 'not-allowed' : 'pointer' }}>
+              Start Over
+            </button>
+          </>
+        ) : status.missing_metadata > 0 ? (
+          <button onClick={() => doAction('start')} disabled={busy}
+            style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--olive-700)', color: 'white', fontWeight: 700, fontSize: 12, cursor: busy ? 'not-allowed' : 'pointer' }}>
+            {busy ? 'Starting…' : isCompleted ? 'Run Again' : 'Generate Missing Metadata'}
+          </button>
+        ) : null}
+      </div>
+      {error && <div style={{ marginTop: 6, fontSize: 11, color: '#dc2626' }}>{error}</div>}
+      {status.last_error && !error && (
+        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-soft)' }}>Last error: {status.last_error.slice(0, 160)}</div>
+      )}
+      {!isRunning && status.active_provider_count === 0 && (
+        <div style={{ marginTop: 6, fontSize: 11, color: '#d97706' }}>No active LLM providers — add/activate one under LLM Providers first.</div>
+      )}
+    </div>
+  );
+}
+
+// Splits the bank into per-tag tiles (Array, Dynamic Programming, …) plus an
+// "Untagged" tile, each expandable into its own TopicMetadataPanel — lets an
+// admin work through metadata generation in topic-sized chunks instead of
+// one all-problems sweep.
+function ProblemTopicTiles({ onViewTopic }) {
+  const [topics, setTopics] = useState(null);
+  const [error, setError] = useState('');
+  const [expanded, setExpanded] = useState(null);
+
+  async function load() {
+    setError('');
+    try {
+      const res = await apiFetch('/api/admin/v2/problem-bank/topics/', 'GET');
+      const data = await res.json();
+      if (!res.ok) setError(data.detail || 'Failed to load topics.');
+      else setTopics(data.topics);
+    } catch {
+      setError('Network error.');
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  if (error) return <div style={{ padding: 16, background: '#fef2f2', color: '#dc2626', borderRadius: 12 }}>{error}</div>;
+  if (!topics) return <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-soft)' }}>Loading topics…</div>;
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 14 }}>
+      {topics.map((t) => {
+        const isOpen = expanded === t.topic;
+        return (
+          <div key={t.topic} style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 16, padding: '16px 18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 800, color: 'var(--olive-900)', fontSize: 15 }}>{t.label}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-soft)', marginTop: 2 }}>{t.total} problem{t.total === 1 ? '' : 's'}</div>
+              </div>
+              {t.missing_metadata > 0 && (
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '3px 8px', whiteSpace: 'nowrap' }}>
+                  {t.missing_metadata} missing
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+              <button onClick={() => onViewTopic(t.topic === '__untagged__' ? '' : t.label)}
+                style={{ flex: 1, padding: '7px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--olive-900)', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+                View
+              </button>
+              <button onClick={() => setExpanded(isOpen ? null : t.topic)}
+                style={{ flex: 1, padding: '7px 10px', borderRadius: 8, border: 'none', background: isOpen ? 'var(--bg-2)' : 'var(--olive-700)', color: isOpen ? 'var(--olive-900)' : 'white', fontWeight: 700, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Sparkles size={13} /> {isOpen ? 'Hide' : 'Generate'}
+              </button>
+            </div>
+            {isOpen && (
+              <TopicMetadataPanel
+                topic={t.topic}
+                onProgress={(data) => {
+                  setTopics((prev) => prev.map((x) => x.topic === t.topic ? { ...x, missing_metadata: data.missing_metadata } : x));
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const ProblemBankView = ({ onBack }) => {
+  const [mode, setMode] = useState('topics'); // 'topics' | 'list'
   const [loading, setLoading] = useState(true);
   const [problems, setProblems] = useState([]);
   const [error, setError] = useState('');
@@ -527,11 +707,17 @@ const ProblemBankView = ({ onBack }) => {
             {problems.length} problems total &middot; {missingCount} missing test cases
           </p>
         </div>
+        <button
+          onClick={() => setMode((m) => (m === 'topics' ? 'list' : 'topics'))}
+          style={{ marginLeft: 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}
+        >
+          {mode === 'topics' ? <><List size={16} /> All Problems</> : <><LayoutGrid size={16} /> Browse by Topic</>}
+        </button>
         {selectedIds.size > 0 && (
           <button
             onClick={deleteSelected}
             disabled={bulkDeleting}
-            style={{ marginLeft: 'auto', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '10px 16px', cursor: bulkDeleting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#dc2626', fontWeight: 700 }}
+            style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 12, padding: '10px 16px', cursor: bulkDeleting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: '#dc2626', fontWeight: 700 }}
           >
             {bulkDeleting ? <Loader2 size={16} className="spin" /> : <Trash2 size={16} />}
             Delete Selected ({selectedIds.size})
@@ -542,7 +728,7 @@ const ProblemBankView = ({ onBack }) => {
           disabled={fillMissing.busy}
           title="Sweep every problem in the bank and generate whatever it's missing — test cases, schema, explanation — skipping anything already present"
           style={{
-            marginLeft: selectedIds.size > 0 ? 0 : 'auto', background: 'white', border: '1px solid var(--border-soft)',
+            background: 'white', border: '1px solid var(--border-soft)',
             borderRadius: 12, padding: '10px 16px', cursor: fillMissing.busy ? 'not-allowed' : 'pointer',
             display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
           }}
@@ -565,6 +751,10 @@ const ProblemBankView = ({ onBack }) => {
         </div>
       )}
 
+      {mode === 'topics' ? (
+        <ProblemTopicTiles onViewTopic={(label) => { setSearch(label); setMissingOnly(false); setMode('list'); }} />
+      ) : (
+      <>
       <div style={{ display: 'flex', gap: 16, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: 240 }}>
           <Search size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
@@ -1056,6 +1246,8 @@ const ProblemBankView = ({ onBack }) => {
             </div>
           )}
         </>
+      )}
+      </>
       )}
     </div>
   );

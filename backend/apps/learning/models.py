@@ -627,6 +627,39 @@ class AptitudeExplanationAuditRun(models.Model):
         return f"Explanation audit ({self.status}) — {self.processed_count} processed"
 
 
+class ProblemMetadataGenerationRun(models.Model):
+    """Tracks one "Generate Missing Metadata" job for one Problem topic tile
+    (a Problem.tags value, e.g. "Array" — or "__untagged__" for problems
+    with no tags at all). One row per topic (not a singleton like
+    AptitudeExplanationAuditRun) since the admin Problem Bank splits
+    problems into topic tiles and each tile gets its own independent
+    run/progress/Resume, same background-thread-with-persisted-progress
+    pattern as the aptitude explanation audit."""
+    STATUS_CHOICES = (
+        ("idle", "Idle"),
+        ("running", "Running"),
+        ("stopped", "Stopped"),
+        ("completed", "Completed"),
+    )
+    topic = models.CharField(max_length=100, unique=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="idle")
+    last_problem_id = models.IntegerField(default=0, help_text="Cursor — resume processing problems with id > this")
+    processed_count = models.IntegerField(default=0)
+    schema_generated_count = models.IntegerField(default=0)
+    explanation_generated_count = models.IntegerField(default=0)
+    failed_count = models.IntegerField(default=0)
+    stop_requested = models.BooleanField(default=False)
+    last_error = models.TextField(blank=True, default="")
+    started_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "problem_metadata_generation_runs"
+
+    def __str__(self):
+        return f"Metadata generation for {self.topic} ({self.status}) — {self.processed_count} processed"
+
+
 class Achievement(models.Model):
     CATEGORY_CHOICES = [
         ('coding', 'Coding'),

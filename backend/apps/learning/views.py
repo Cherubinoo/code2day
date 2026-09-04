@@ -84,6 +84,7 @@ from .models import (
     SyllabusFolderMedia,
     QuestionUsageMark,
     PasswordResetOTP,
+    ProblemMetadataGenerationRun,
 )
 from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
@@ -11197,6 +11198,49 @@ class AdminProblemGenerateTestCasesView(APIView):
         })
 
 
+def _fill_missing_problem_metadata(problem):
+    """Fills in whatever "necessary data" one Problem is missing — the
+    typed param_schema and/or the explanation — via the LLM fallback
+    chain. Both pieces are skip-if-exists: never overwrites a
+    hand-authored schema or an already-generated explanation, only fills
+    in what's actually missing. Shared by the single-problem admin action
+    (AdminProblemGenerateSchemaAndDescriptionView) and the per-topic bulk
+    generation background job below — one place, not two copies that can
+    drift."""
+    from .services.testcase_generator import generate_param_schema, generate_explanation, TestCaseGenError
+
+    result = {"schema_generated": False, "explanation_generated": False, "errors": {}}
+
+    if not problem.param_schema:
+        try:
+            schema = generate_param_schema(title=problem.title, description=problem.description, examples=problem.examples)
+            problem.param_schema = schema
+            problem.save(update_fields=["param_schema"])
+            result["schema_generated"] = True
+            result["param_schema"] = schema
+        except TestCaseGenError as exc:
+            result["errors"]["param_schema"] = str(exc)
+    else:
+        result["param_schema"] = problem.param_schema
+
+    if not problem.explanation:
+        try:
+            explanation = generate_explanation(
+                title=problem.title, description=problem.description,
+                examples=problem.examples, difficulty=problem.difficulty,
+            )
+            problem.explanation = explanation
+            problem.save(update_fields=["explanation"])
+            result["explanation_generated"] = True
+            result["explanation"] = explanation
+        except TestCaseGenError as exc:
+            result["errors"]["explanation"] = str(exc)
+    else:
+        result["explanation"] = problem.explanation
+
+    return result
+
+
 class AdminProblemGenerateSchemaAndDescriptionView(APIView):
     """System Admin: single button that fills in whatever "necessary data"
     a problem is missing — the typed param_schema and/or the explanation —
@@ -11214,38 +11258,7 @@ class AdminProblemGenerateSchemaAndDescriptionView(APIView):
         if not problem:
             return Response({"error": "Not found"}, status=404)
 
-        from .services.testcase_generator import generate_param_schema, generate_explanation, TestCaseGenError
-
-        result = {"schema_generated": False, "explanation_generated": False, "errors": {}}
-
-        if not problem.param_schema:
-            try:
-                schema = generate_param_schema(title=problem.title, description=problem.description, examples=problem.examples)
-                problem.param_schema = schema
-                problem.save(update_fields=["param_schema"])
-                result["schema_generated"] = True
-                result["param_schema"] = schema
-            except TestCaseGenError as exc:
-                result["errors"]["param_schema"] = str(exc)
-        else:
-            result["param_schema"] = problem.param_schema
-
-        if not problem.explanation:
-            try:
-                explanation = generate_explanation(
-                    title=problem.title, description=problem.description,
-                    examples=problem.examples, difficulty=problem.difficulty,
-                )
-                problem.explanation = explanation
-                problem.save(update_fields=["explanation"])
-                result["explanation_generated"] = True
-                result["explanation"] = explanation
-            except TestCaseGenError as exc:
-                result["errors"]["explanation"] = str(exc)
-        else:
-            result["explanation"] = problem.explanation
-
-        return Response(result)
+        return Response(_fill_missing_problem_metadata(problem))
 
 
 class AdminProblemGenerateExplanationView(APIView):
@@ -11434,6 +11447,257 @@ class AdminProblemBankFillMissingView(APIView):
             "elapsed_seconds": round(time.monotonic() - start, 1),
             "remaining_problems": remaining,
         })
+
+
+# Sentinel topic key for problems with no tags at all — Problem.tags is
+# `default=list`, so "untagged" means an empty list, not NULL.
+UNTAGGED_PROBLEM_TOPIC = "__untagged__"
+
+
+def _problems_in_topic(topic):
+    if topic == UNTAGGED_PROBLEM_TOPIC:
+        return Problem.objects.filter(tags=[])
+    return Problem.objects.filter(tags__contains=[topic])
+
+
+class AdminProblemTopicsView(APIView):
+    """System Admin: every Problem tag as a topic tile (Array, Dynamic
+    Programming, ...) plus an "Untagged" tile, each with how many of its
+    problems are still missing param_schema/explanation — the entry point
+    for the per-topic "Generate Missing Metadata" background job below,
+    so admins can work through the bank in manageable, topic-sized chunks
+    instead of one all-1800-problems sweep."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        tag_counts = {}
+        for tags in Problem.objects.values_list("tags", flat=True):
+            if not tags:
+                tag_counts[UNTAGGED_PROBLEM_TOPIC] = tag_counts.get(UNTAGGED_PROBLEM_TOPIC, 0) + 1
+                continue
+            for t in tags:
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+
+        missing_qs = Problem.objects.filter(Q(param_schema__isnull=True) | Q(explanation=""))
+        missing_counts = {UNTAGGED_PROBLEM_TOPIC: 0}
+        for tags in missing_qs.values_list("tags", flat=True):
+            if not tags:
+                missing_counts[UNTAGGED_PROBLEM_TOPIC] += 1
+                continue
+            for t in tags:
+                missing_counts[t] = missing_counts.get(t, 0) + 1
+
+        topics = [
+            {
+                "topic": topic,
+                "label": "Untagged" if topic == UNTAGGED_PROBLEM_TOPIC else topic,
+                "total": count,
+                "missing_metadata": missing_counts.get(topic, 0),
+            }
+            for topic, count in tag_counts.items()
+        ]
+        topics.sort(key=lambda t: (-t["total"], t["label"]))
+        return Response({"topics": topics})
+
+
+def _topic_metadata_worker(run_id, work_queue):
+    """One worker thread's loop — pulls a problem id off the shared queue
+    and fills in whatever metadata it's missing. Mirrors
+    _explanation_audit_worker's concurrency pattern exactly: several of
+    these run at once (one per active LLM provider), each independent call
+    naturally rotates to a different least-recently-used provider."""
+    import queue as queue_module
+    from django.db import close_old_connections
+    from django.db.models import F
+    from django.db.models.functions import Greatest
+
+    close_old_connections()
+    try:
+        while True:
+            try:
+                pid = work_queue.get_nowait()
+            except queue_module.Empty:
+                return
+
+            if ProblemMetadataGenerationRun.objects.filter(id=run_id, stop_requested=True).exists():
+                return
+
+            problem = Problem.objects.filter(id=pid).first()
+            if not problem:
+                continue
+
+            schema_generated = False
+            explanation_generated = False
+            error_text = ''
+            try:
+                result = _fill_missing_problem_metadata(problem)
+                schema_generated = bool(result.get("schema_generated"))
+                explanation_generated = bool(result.get("explanation_generated"))
+                if result.get("errors"):
+                    error_text = "; ".join(f"{k}: {v}" for k, v in result["errors"].items())[:2000]
+            except Exception as exc:  # noqa: BLE001 — one bad problem must not kill the whole run
+                logger.exception("Topic metadata generation failed on problem %s", pid)
+                error_text = str(exc)[:2000]
+
+            update_fields = {
+                'processed_count': F('processed_count') + 1,
+                'last_problem_id': Greatest(F('last_problem_id'), pid),
+                'updated_at': timezone.now(),
+            }
+            if schema_generated:
+                update_fields['schema_generated_count'] = F('schema_generated_count') + 1
+            if explanation_generated:
+                update_fields['explanation_generated_count'] = F('explanation_generated_count') + 1
+            if error_text:
+                update_fields['failed_count'] = F('failed_count') + 1
+                update_fields['last_error'] = error_text
+            ProblemMetadataGenerationRun.objects.filter(id=run_id).update(**update_fields)
+    finally:
+        close_old_connections()
+
+
+def _run_topic_metadata_generation(run_id, topic):
+    """Background-thread worker for ProblemMetadataGenerationRun — balances
+    every Problem in one topic (tags contains `topic`, or untagged) missing
+    param_schema/explanation across a pool of concurrent workers, one per
+    active LLM provider. Same checkpoint-per-problem, stop/resume-safe
+    design as _run_explanation_audit."""
+    import queue as queue_module
+    from .services.testcase_generator import _providers_in_rotation_order
+
+    run = ProblemMetadataGenerationRun.objects.get(id=run_id)
+
+    try:
+        active_providers = _providers_in_rotation_order()
+    except Exception:
+        active_providers = []
+
+    if not active_providers:
+        run.status = 'stopped'
+        run.last_error = 'No active LLM providers configured — add/activate one under LLM Providers first.'
+        run.save(update_fields=['status', 'last_error', 'updated_at'])
+        return
+
+    worker_count = min(len(active_providers), MAX_EXPLANATION_AUDIT_WORKERS)
+
+    problem_ids = list(
+        _problems_in_topic(topic)
+        .filter(Q(param_schema__isnull=True) | Q(explanation=""))
+        .filter(id__gt=run.last_problem_id)
+        .order_by('id')
+        .values_list('id', flat=True)
+    )
+    work_queue = queue_module.Queue()
+    for pid in problem_ids:
+        work_queue.put(pid)
+
+    threads = [
+        threading.Thread(target=_topic_metadata_worker, args=(run_id, work_queue), daemon=True)
+        for _ in range(worker_count)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    run.refresh_from_db()
+    if run.stop_requested:
+        run.status = 'stopped'
+        run.stop_requested = False
+        run.save(update_fields=['status', 'stop_requested', 'updated_at'])
+    else:
+        run.status = 'completed'
+        run.save(update_fields=['status', 'updated_at'])
+
+
+class AdminProblemTopicMetadataRunView(APIView):
+    """System Admin: "Generate Missing Metadata" for one topic tile — same
+    stale-detection/Resume design as AdminAptitudeExplanationAuditView, see
+    that class's docstring for why (a deploy/crash kills the background
+    thread with no chance to update its own row, so a stale "running" row
+    needs to be treated as recoverable, not just refused)."""
+    permission_classes = [IsAuthenticated]
+    STALE_SECONDS = 90
+
+    def _is_stale(self, run):
+        return run.status == 'running' and (timezone.now() - run.updated_at).total_seconds() > self.STALE_SECONDS
+
+    def get(self, request, topic):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        run, _ = ProblemMetadataGenerationRun.objects.get_or_create(topic=topic)
+        from .services.testcase_generator import _providers_in_rotation_order
+        try:
+            active_provider_count = len(_providers_in_rotation_order())
+        except Exception:
+            active_provider_count = 0
+        return Response({
+            "topic": topic,
+            "status": run.status,
+            "total": _problems_in_topic(topic).count(),
+            "missing_metadata": _problems_in_topic(topic).filter(Q(param_schema__isnull=True) | Q(explanation="")).count(),
+            "processed": run.processed_count,
+            "schema_generated": run.schema_generated_count,
+            "explanation_generated": run.explanation_generated_count,
+            "failed": run.failed_count,
+            "last_error": run.last_error,
+            "started_at": run.started_at,
+            "updated_at": run.updated_at,
+            "stalled": self._is_stale(run),
+            "worker_count": min(active_provider_count, MAX_EXPLANATION_AUDIT_WORKERS),
+            "active_provider_count": active_provider_count,
+        })
+
+    def post(self, request, topic):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        action = request.data.get('action')
+        run, _ = ProblemMetadataGenerationRun.objects.get_or_create(topic=topic)
+        stale = self._is_stale(run)
+
+        if action == 'start':
+            if run.status == 'running' and not stale:
+                return Response({"error": "Already running."}, status=400)
+            run.status = 'running'
+            run.stop_requested = False
+            run.last_error = ''
+            if not run.started_at:
+                run.started_at = timezone.now()
+            run.save()
+            threading.Thread(target=_run_topic_metadata_generation, args=(run.id, topic), daemon=True).start()
+            return Response({"status": "running"})
+
+        elif action == 'stop':
+            if run.status != 'running':
+                return Response({"error": "Not running."}, status=400)
+            if stale:
+                run.status = 'stopped'
+                run.stop_requested = False
+                run.save(update_fields=['status', 'stop_requested', 'updated_at'])
+                return Response({"status": "stopped"})
+            run.stop_requested = True
+            run.save(update_fields=['stop_requested'])
+            return Response({"status": "stopping"})
+
+        elif action == 'reset':
+            if run.status == 'running' and not stale:
+                return Response({"error": "Stop the run before resetting."}, status=400)
+            run.status = 'idle'
+            run.last_problem_id = 0
+            run.processed_count = 0
+            run.schema_generated_count = 0
+            run.explanation_generated_count = 0
+            run.failed_count = 0
+            run.started_at = None
+            run.last_error = ''
+            run.save()
+            return Response({"status": "idle"})
+
+        return Response({"error": "Unknown action."}, status=400)
 
 
 _DRIVE_FILE_ID_RE = re.compile(r'^[A-Za-z0-9_-]{20,}$')
