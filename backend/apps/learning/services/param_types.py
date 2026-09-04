@@ -237,16 +237,150 @@ def _py_type_hint(t: str) -> str:
     return _mapped_type(_PY_TYPE_HINT, t, lambda inner: f"List[{inner}]")
 
 
+def _slug_function_name(slug: str) -> str:
+    """camelCase name derived from a problem's slug, e.g. "two-sum" ->
+    "twoSum" — the same convention execution_adapter.build_function_name_
+    candidates() tries first. Almost every problem leaves function_name
+    blank and relies on this slug-based detection (see Problem.function_
+    name's help_text), so the starter stub must derive the same name the
+    execution engine will look for, or the two would silently disagree."""
+    parts = [p for p in (slug or "").split("-") if p]
+    if not parts:
+        return ""
+    return parts[0] + "".join(p.capitalize() for p in parts[1:])
+
+
+def _design_prefix(class_name: str) -> str:
+    """Same lowerCamelCase convention as execution_adapter._c_design_prefix
+    (duplicated, not imported, to keep this module's zero execution_adapter
+    dependency — see the module docstring)."""
+    if not class_name:
+        return "obj"
+    return class_name[0].lower() + class_name[1:]
+
+
+def _design_method_fn(prefix: str, method_name: str) -> str:
+    if not method_name:
+        return prefix
+    return prefix + method_name[0].upper() + method_name[1:]
+
+
+def _generate_design_starter_code(schema: dict, language: str) -> str | None:
+    """Design/class-kind counterpart to generate_starter_code() below —
+    schema['methods'] params are unnamed (just a type list, see the design
+    schema shape), so stub params are synthesized as arg1, arg2, ... which
+    is fine: the injected driver calls methods positionally, never by
+    keyword, so the student's own parameter names are never consulted."""
+    class_name = schema["class_name"]
+    methods = schema["methods"]
+    ctor = methods.get(class_name) or {"params": [], "return_type": "void"}
+    other_methods = [(name, spec) for name, spec in methods.items() if name != class_name]
+
+    def names(params):
+        return [f"arg{i + 1}" for i in range(len(params))]
+
+    if language == "Python":
+        needs_list = any(array_dimensions(t) > 0 for spec in methods.values() for t in spec.get("params", []))
+        header = "from typing import List\n\n\n" if needs_list else ""
+        ctor_args = ", ".join(f"{n}: {_py_type_hint(t)}" for n, t in zip(names(ctor["params"]), ctor["params"]))
+        lines = [f"{header}class {class_name}:", "", f"    def __init__(self, {ctor_args}):", "        pass", ""]
+        for name, spec in other_methods:
+            args = ", ".join(f"{n}: {_py_type_hint(t)}" for n, t in zip(names(spec.get("params", [])), spec.get("params", [])))
+            ret = "None" if spec.get("return_type") == "void" else _py_type_hint(spec["return_type"])
+            lines += [f"    def {name}(self, {args}) -> {ret}:", "        pass", ""]
+        return "\n".join(lines).rstrip("\n") + "\n"
+
+    if language == "Java":
+        ctor_args = ", ".join(f"{_java_type(t)} {n}" for n, t in zip(names(ctor["params"]), ctor["params"]))
+        lines = [f"class {class_name} {{", f"    public {class_name}({ctor_args}) {{", "        ", "    }", ""]
+        for name, spec in other_methods:
+            args = ", ".join(f"{_java_type(t)} {n}" for n, t in zip(names(spec.get("params", [])), spec.get("params", [])))
+            ret = "void" if spec.get("return_type") == "void" else _java_type(spec["return_type"])
+            lines += [f"    public {ret} {name}({args}) {{", "        ", "    }", ""]
+        lines.append("}")
+        return "\n".join(lines) + "\n"
+
+    if language in ("C++", "CPP"):
+        all_types = [t for spec in methods.values() for t in spec.get("params", [])]
+        needs_vector = any(array_dimensions(t) > 0 for t in all_types)
+        needs_string = any(base_scalar_type(t) == "string" for t in all_types)
+        headers = ("#include <string>\n" if needs_string else "") + ("#include <vector>\nusing namespace std;\n\n" if needs_vector else "\n")
+        ctor_args = ", ".join(f"{_cpp_type(t)} {n}" for n, t in zip(names(ctor["params"]), ctor["params"]))
+        lines = [f"{headers}class {class_name} {{", "public:", f"    {class_name}({ctor_args}) {{", "        ", "    }", ""]
+        for name, spec in other_methods:
+            args = ", ".join(f"{_cpp_type(t)} {n}" for n, t in zip(names(spec.get("params", [])), spec.get("params", [])))
+            ret = "void" if spec.get("return_type") == "void" else _cpp_type(spec["return_type"])
+            lines += [f"    {ret} {name}({args}) {{", "        ", "    }", ""]
+        lines.append("};")
+        return "\n".join(lines) + "\n"
+
+    if language == "C":
+        # Mirrors execution_adapter._build_c_design_wrapper's own limits:
+        # only scalar + 1D-array types (no 2D arrays) are supported.
+        all_types = [t for spec in methods.values() for t in spec.get("params", [])]
+        all_types += [spec["return_type"] for spec in methods.values() if spec.get("return_type") != "void"]
+        if any(array_dimensions(t) > 1 for t in all_types):
+            return None
+
+        prefix = _design_prefix(class_name)
+
+        def c_params(params):
+            parts = []
+            for i, t in enumerate(params):
+                base = _C_TYPE_MAP[base_scalar_type(t)]
+                if array_dimensions(t) == 1:
+                    parts.append(f"{base}* arg{i + 1}, int arg{i + 1}Size")
+                else:
+                    parts.append(f"{base} arg{i + 1}")
+            return ", ".join(parts)
+
+        lines = [
+            f"typedef struct {{",
+            f"    ",
+            f"}} {class_name};",
+            "",
+            f"{class_name}* {prefix}Create({c_params(ctor['params'])}) {{",
+            "    ",
+            "}",
+            "",
+        ]
+        for name, spec in other_methods:
+            return_type = spec.get("return_type", "void")
+            if return_type == "void":
+                ret = "void"
+            elif array_dimensions(return_type) == 1:
+                ret = f"{_C_TYPE_MAP[base_scalar_type(return_type)]}*"
+            else:
+                ret = _C_TYPE_MAP[base_scalar_type(return_type)]
+            params_str = c_params(spec.get("params", []))
+            full_params = f"{class_name}* obj" + (", " + params_str if params_str else "")
+            if array_dimensions(return_type) == 1:
+                full_params += ", int* returnSize"
+            fn = _design_method_fn(prefix, name)
+            lines += [f"{ret} {fn}({full_params}) {{", "    ", "}", ""]
+        return "\n".join(lines).rstrip("\n") + "\n"
+
+    return None
+
+
 def generate_starter_code(problem, language: str) -> str | None:
     """Return an idiomatic empty stub for `language` derived from
-    problem.param_schema, or None when there's no schema/function_name to
-    derive one from (or, for C, when the schema uses a 2D array — the C
-    execution path only supports scalars + 1D arrays, see
-    _build_c_wrapper_typed in execution_adapter.py, so a starter stub the
-    platform can't actually run would be misleading)."""
+    problem.param_schema, or None when there's no schema to derive one
+    from (or, for C, when the schema uses a 2D array — the C execution
+    path only supports scalars + 1D arrays, see _build_c_wrapper_typed in
+    execution_adapter.py, so a starter stub the platform can't actually
+    run would be misleading)."""
     schema = getattr(problem, "param_schema", None)
-    fn = getattr(problem, "function_name", "") or ""
-    if not schema or not fn:
+    if not schema:
+        return None
+
+    if is_design_schema(schema):
+        if validate_design_schema(schema):
+            return None
+        return _generate_design_starter_code(schema, language)
+
+    fn = getattr(problem, "function_name", "") or _slug_function_name(getattr(problem, "slug", ""))
+    if not fn:
         return None
 
     errors = validate_param_schema(schema)
