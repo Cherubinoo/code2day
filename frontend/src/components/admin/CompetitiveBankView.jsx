@@ -108,8 +108,21 @@ function QuestionsManager({ subtopicId }) {
     if (!topicId) return;
     fetch(`/api/admin/v2/aptitude-bank/?topic_id=${topicId}`, { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => setImportCandidates(d?.questions || []))
+      .then((d) => {
+        const qs = d?.questions || [];
+        setImportCandidates(qs);
+        // Picking a topic imports the whole topic by default — every
+        // question starts checked, so a plain "pick topic → Import" click
+        // brings in everything. The checkboxes stay there to deselect a
+        // specific question, not to build the selection up from nothing.
+        setSelectedImportIds(qs.map((q) => q.id));
+      })
       .catch(() => setImportCandidates([]));
+  };
+
+  const allImportSelected = importCandidates !== null && importCandidates.length > 0 && selectedImportIds.length === importCandidates.length;
+  const toggleSelectAllImport = () => {
+    setSelectedImportIds(allImportSelected ? [] : (importCandidates || []).map((q) => q.id));
   };
 
   const toggleImportSelection = (id) => {
@@ -207,6 +220,19 @@ function QuestionsManager({ subtopicId }) {
 
           {importCandidates !== null && (
             <>
+              {importCandidates.length > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-soft)', fontWeight: 700 }}>
+                    Whole topic selected by default — {selectedImportIds.length} of {importCandidates.length}
+                  </span>
+                  <button
+                    onClick={toggleSelectAllImport}
+                    style={{ padding: '3px 8px', borderRadius: 6, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    {allImportSelected ? 'Deselect All' : 'Select All'}
+                  </button>
+                </div>
+              )}
               <div style={{ maxHeight: 200, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {importCandidates.length === 0 ? (
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No questions in this topic.</div>

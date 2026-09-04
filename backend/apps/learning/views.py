@@ -1320,6 +1320,80 @@ class UpdateTrackedCompaniesView(UnifiedAuthMixin, APIView):
         return Response({"status": "success", "tracked_companies": profile.tracked_companies})
 
 
+class StudentLeaderboardView(UnifiedAuthMixin, APIView):
+    """Institution-wide student leaderboard — every student at the caller's
+    institution (not just their department/batch), ranked by a single
+    composite "points" score combining problems solved, aptitude solved,
+    contest performance, and activity streak. Previously these lived as
+    disconnected numbers nowhere a student could see themselves ranked
+    against the whole institution (DailyLeaderboardView below is scoped to
+    just today's problem; the HOD dashboard's leaderboard is department-only
+    and staff-facing)."""
+
+    # Point weights: coding problems count for more than aptitude questions
+    # (aptitude MCQs take less effort per item), a contest's total_score is
+    # already 0-100 so it's added directly, and streak gives a modest
+    # per-day bonus for consistency rather than dominating the ranking.
+    POINTS_PER_PROBLEM = 10
+    POINTS_PER_APTITUDE = 5
+    POINTS_PER_STREAK_DAY = 2
+
+    def get(self, request):
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+        if profile_type != "student":
+            return Response({"detail": "Student access required."}, status=status.HTTP_403_FORBIDDEN)
+        if not profile.institution:
+            return Response({"leaderboard": [], "current_student": None})
+
+        from django.db.models.functions import Coalesce
+
+        students = StudentProfile.objects.filter(institution=profile.institution).select_related('department').annotate(
+            problems_solved=Count('solved_problems', distinct=True),
+            aptitude_solved=Count('solved_aptitude', distinct=True),
+            contest_score=Coalesce(Sum('contest_participations__total_score'), 0),
+        )
+
+        ranked = []
+        for s in students:
+            points = (
+                s.problems_solved * self.POINTS_PER_PROBLEM
+                + s.aptitude_solved * self.POINTS_PER_APTITUDE
+                + s.contest_score
+                + s.current_streak * self.POINTS_PER_STREAK_DAY
+            )
+            ranked.append((points, s))
+        ranked.sort(key=lambda t: (-t[0], t[1].name or ""))
+
+        leaderboard = []
+        current_entry = None
+        for idx, (points, s) in enumerate(ranked, 1):
+            entry = {
+                "rank": idx,
+                "register_number": s.register_number,
+                "name": s.name,
+                "department": s.department.code if s.department else "",
+                "batch": s.batch,
+                "points": points,
+                "problems_solved": s.problems_solved,
+                "aptitude_solved": s.aptitude_solved,
+                "contest_score": s.contest_score,
+                "streak": s.current_streak,
+                "is_you": s.id == profile.id,
+            }
+            if s.id == profile.id:
+                current_entry = entry
+            if idx <= 100:
+                leaderboard.append(entry)
+
+        return Response({
+            "leaderboard": leaderboard,
+            "current_student": current_entry,
+            "total_students": len(ranked),
+        })
+
+
 class DailyLeaderboardView(UnifiedAuthMixin, APIView):
     def get(self, request):
         profile, profile_type, error = self.get_authenticated_profile(request)

@@ -53,6 +53,7 @@ import ProblemsPage from "./components/student/pages/ProblemsPage";
 import PlaygroundPage from "./components/student/pages/PlaygroundPage";
 import CompanyPage from "./components/student/pages/CompanyPage";
 import ProgressPage from "./components/student/pages/ProgressPage";
+import LeaderboardPage from "./components/student/pages/LeaderboardPage";
 import RoadmapsPage from "./components/student/pages/RoadmapsPage";
 import DevelopersProfile from "./components/common/DevelopersProfile";
 import Footer from "./components/common/Footer";
@@ -1357,6 +1358,9 @@ function App() {
           onToggleWorkspace={setIsInsideWorkspace}
         />
       );
+      break;
+    case "leaderboard":
+      activeView = <LeaderboardPage />;
       break;
     case "progress":
       // Redirect staff and admin to their dashboards
