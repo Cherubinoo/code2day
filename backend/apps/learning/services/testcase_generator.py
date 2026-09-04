@@ -47,6 +47,14 @@ class TestCaseGenServiceError(TestCaseGenError):
     """Raised when the LLM service returns an error or an unusable response."""
 
 
+class TestCaseGenTruncatedError(TestCaseGenServiceError):
+    """Raised when the reply looks cut off mid-JSON (an opening { with no
+    matching closing }) — most often a reasoning model burning its whole
+    max_tokens budget on hidden reasoning before it gets to the actual
+    answer. Callers can retry the same provider with a larger max_tokens
+    instead of just giving up."""
+
+
 class NoProvidersAvailableError(TestCaseGenError):
     """Raised when there are no active LLMProvider rows to try, or every one failed."""
 
@@ -150,6 +158,10 @@ def _extract_json(text):
         text = re.sub(r"\s*```$", "", text)
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if not match:
+        if "{" in text and "}" not in text:
+            # An opening brace with no closing one anywhere in the reply —
+            # the response was cut off mid-JSON, not malformed/absent.
+            raise TestCaseGenTruncatedError(f"LLM reply was truncated mid-JSON: {text[:200]!r}")
         raise TestCaseGenServiceError(f"No JSON object found in LLM response: {text[:200]!r}")
     raw = match.group(0)
     try:
@@ -161,15 +173,17 @@ def _extract_json(text):
             raise TestCaseGenServiceError(f"Unparseable JSON from LLM response: {exc}") from exc
 
 
-def _call_provider_once(provider, prompt):
+def _call_provider_once(provider, prompt, max_tokens=None):
     """POST to one provider and return the raw text content of its reply.
+    `max_tokens` overrides the provider's configured value — used to retry
+    with a larger budget when a first attempt came back truncated.
     Raises TestCaseGenTimeoutError / TestCaseGenServiceError on failure."""
     payload = {
         "model": provider.model_name,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": provider.temperature,
         "top_p": provider.top_p,
-        "max_tokens": provider.max_tokens,
+        "max_tokens": max_tokens or provider.max_tokens,
         "stream": provider.use_streaming,
         **(provider.extra_body or {}),
     }
@@ -283,6 +297,22 @@ def _try_providers_in_order(providers, prompt, *, transform=lambda content: cont
         try:
             content = _call_provider_once(provider, prompt)
             result = transform(content)
+        except TestCaseGenTruncatedError:
+            # Likely a reasoning model that burned its budget on hidden
+            # reasoning before reaching the answer — same provider, more
+            # room, once, before giving up on it and moving on.
+            bigger_budget = min(provider.max_tokens * 2, 16000)
+            logger.warning(
+                "Provider %r truncated for %s — retrying with max_tokens=%d",
+                provider.name, label, bigger_budget,
+            )
+            try:
+                content = _call_provider_once(provider, prompt, max_tokens=bigger_budget)
+                result = transform(content)
+            except Exception as exc:  # noqa: BLE001 — any failure just means "try the next one"
+                logger.warning("Provider %r failed for %s after retry: %s — trying next", provider.name, label, exc)
+                errors[provider.name] = exc
+                continue
         except Exception as exc:  # noqa: BLE001 — any failure just means "try the next one"
             logger.warning("Provider %r failed for %s: %s — trying next", provider.name, label, exc)
             errors[provider.name] = exc
