@@ -205,11 +205,11 @@ function ProblemStatement({ text, explanation }) {
               marginTop: 16,
               padding: 16,
               borderRadius: 10,
-              background: "#0f172a",
-              border: "1px solid #1e293b",
-              color: "#f8fafc"
+              background: "var(--bg-1)",
+              border: "1px solid var(--border-soft)",
+              color: "var(--olive-950)"
             }}>
-              <div style={{ fontWeight: 700, fontSize: 13, color: "#38bdf8", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "var(--olive-700)", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
                 💡 Detailed Explanation &amp; Walkthrough
               </div>
               <div style={{
@@ -218,7 +218,7 @@ function ProblemStatement({ text, explanation }) {
                 lineHeight: 1.6,
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
-                color: "#cbd5e1"
+                color: "var(--text-soft)"
               }}>
                 {explanation}
               </div>

@@ -406,7 +406,7 @@ function FolderMediaManager({ folderId }) {
 // own questions (via QuestionsManager with folderId) and uploaded media
 // (via FolderMediaManager), e.g. splitting "Time and Work" into "Basic" /
 // "Advanced" / "Formula Sheet", with "Advanced" itself split further. ────
-function FolderNode({ folder: initialFolder, subtopicId, onDeleted, depth = 0 }) {
+function FolderNode({ folder: initialFolder, subtopicId, onDeleted, onSubtopicCountChange, depth = 0 }) {
   const [folder, setFolder] = useState(initialFolder);
   const [subfolders, setSubfolders] = useState(initialFolder.subfolders || []);
   const [expanded, setExpanded] = useState(false);
@@ -502,7 +502,10 @@ function FolderNode({ folder: initialFolder, subtopicId, onDeleted, depth = 0 })
             <QuestionsManager
               subtopicId={subtopicId}
               folderId={folder.id}
-              onCountChange={(delta) => setFolder((f) => ({ ...f, question_count: Math.max(0, (f.question_count || 0) + delta) }))}
+              onCountChange={(delta) => {
+                setFolder((f) => ({ ...f, question_count: Math.max(0, (f.question_count || 0) + delta) }));
+                onSubtopicCountChange?.(delta);
+              }}
             />
 
             <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 12, marginTop: 4 }}>
@@ -531,7 +534,7 @@ function FolderNode({ folder: initialFolder, subtopicId, onDeleted, depth = 0 })
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {subfolders.map((sf) => (
-                    <FolderNode key={sf.id} folder={sf} subtopicId={subtopicId} onDeleted={removeSubfolder} depth={depth + 1} />
+                    <FolderNode key={sf.id} folder={sf} subtopicId={subtopicId} onDeleted={removeSubfolder} onSubtopicCountChange={onSubtopicCountChange} depth={depth + 1} />
                   ))}
                 </div>
               )}
@@ -546,7 +549,7 @@ function FolderNode({ folder: initialFolder, subtopicId, onDeleted, depth = 0 })
 // ── Top-level named sub-folders inside one subtopic — see FolderNode above
 // for the recursive per-folder rendering (a folder can itself contain
 // subfolders). ─────────────────────────────────────────────────────────
-function FoldersManager({ subtopicId }) {
+function FoldersManager({ subtopicId, onSubtopicCountChange }) {
   const queryClient = useQueryClient();
   const foldersQueryKey = ['competitive-folders', subtopicId];
   const [showAddForm, setShowAddForm] = useState(false);
@@ -614,7 +617,7 @@ function FoldersManager({ subtopicId }) {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {folders.map((folder) => (
-            <FolderNode key={folder.id} folder={folder} subtopicId={subtopicId} onDeleted={removeFolder} depth={0} />
+            <FolderNode key={folder.id} folder={folder} subtopicId={subtopicId} onDeleted={removeFolder} onSubtopicCountChange={onSubtopicCountChange} depth={0} />
           ))}
         </div>
       )}
@@ -814,7 +817,7 @@ function ResourceEditorModal({ entity, saveUrl, showDescription, onClose, onSave
           </div>
         </div>
 
-        {showDescription && <FoldersManager subtopicId={entity.id} />}
+        {showDescription && <FoldersManager subtopicId={entity.id} onSubtopicCountChange={onQuestionCountChange} />}
         {showDescription && <QuestionsManager subtopicId={entity.id} onCountChange={onQuestionCountChange} />}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>

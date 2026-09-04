@@ -2898,6 +2898,15 @@ def _serialize_syllabus_folder(folder):
     }
 
 
+def _count_folder_questions_recursive(folder):
+    """A folder's own questions plus every subfolder's, all the way down —
+    used for the subtopic-level total below, which needs to reflect content
+    added inside folders, not just the folder's own badge."""
+    return len(folder.questions.all()) + sum(
+        _count_folder_questions_recursive(f) for f in folder.subfolders.all()
+    )
+
+
 def _serialize_examination_syllabus(examination):
     """Full Section > Topic > Subtopic tree for one examination — shared by
     the admin management view and the student-facing browse view."""
@@ -2921,9 +2930,13 @@ def _serialize_examination_syllabus(examination):
                         "title": st.title,
                         "description": st.description,
                         "resource_links": _resolve_resource_display(st.resource_links),
-                        # Only the unfoldered questions — folder-scoped ones are
-                        # nested under their own folder entry below, not double-counted here.
-                        "question_count": len([q for q in st.questions.all() if q.folder_id is None]),
+                        # Total across the whole subtopic — unfoldered questions
+                        # plus everything nested inside its folders/subfolders,
+                        # so this badge reflects adds made either way.
+                        "question_count": (
+                            len([q for q in st.questions.all() if q.folder_id is None])
+                            + sum(_count_folder_questions_recursive(f) for f in st.folders.all() if f.parent_id is None)
+                        ),
                         # Only top-level folders — nested ones are already
                         # included via each parent's own "subfolders" list
                         # (_serialize_syllabus_folder is recursive), so listing
@@ -10935,9 +10948,7 @@ class SystemAdminDashboardView(APIView):
             total_staff = StaffProfile.objects.count()
             total_problems = Problem.objects.count()
             total_aptitude = AptitudeQuestion.objects.count()
-            total_interview_tracks = Department.objects.exclude(
-                interview_track=''
-            ).values('interview_track').distinct().count()
+            total_interview_tracks = InterviewTrack.objects.count()
 
             # Fetch all institutions for the management table
             institutions = Institution.objects.all().values(

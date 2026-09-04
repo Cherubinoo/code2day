@@ -15,6 +15,7 @@ import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import ProblemBankView from './ProblemBankView';
 import AptitudeBankView from './AptitudeBankView';
 import CompetitiveBankView from './CompetitiveBankView';
+import InterviewBankView from './InterviewBankView';
 import LLMProviderView from './LLMProviderView';
 import DAUAnalyticsChart from './DAUAnalyticsChart';
 import SystemUpdatesModal from './SystemUpdatesModal';
@@ -27,6 +28,7 @@ const AdminDashboard = () => {
   const [showProblemBank, setShowProblemBank] = useState(false);
   const [showAptitudeBank, setShowAptitudeBank] = useState(false);
   const [showCompetitiveBank, setShowCompetitiveBank] = useState(false);
+  const [showInterviewBank, setShowInterviewBank] = useState(false);
   const [showLLMProviders, setShowLLMProviders] = useState(false);
   const [showSystemUpdates, setShowSystemUpdates] = useState(false);
   const [activeTab, setActiveTab] = useTabNav('dashboard');
@@ -500,6 +502,8 @@ const AdminDashboard = () => {
           <AptitudeBankView onBack={() => setShowAptitudeBank(false)} />
         ) : showCompetitiveBank ? (
           <CompetitiveBankView onBack={() => setShowCompetitiveBank(false)} />
+        ) : showInterviewBank ? (
+          <InterviewBankView onBack={() => setShowInterviewBank(false)} />
         ) : showLLMProviders ? (
           <LLMProviderView onBack={() => setShowLLMProviders(false)} />
         ) : !selectedInstitution ? (
@@ -514,7 +518,7 @@ const AdminDashboard = () => {
                 { label: 'Problem Bank', value: metrics.total_problems, icon: Database, color: '#ef4444', onClick: () => setShowProblemBank(true) },
                 { label: 'Aptitude Bank', value: metrics.total_aptitude, icon: Brain, color: '#8b5cf6', onClick: () => setShowAptitudeBank(true) },
                 { label: 'Competitive Bank', value: 0, icon: Swords, color: '#0891b2', onClick: () => setShowCompetitiveBank(true) },
-                { label: 'Interview Practice', value: metrics.total_interview_tracks, icon: Mic, color: '#d946ef' },
+                { label: 'Interview Practice', value: metrics.total_interview_tracks, icon: Mic, color: '#d946ef', onClick: () => setShowInterviewBank(true) },
               ].map((m, i) => (
                 <div
                   key={i}
