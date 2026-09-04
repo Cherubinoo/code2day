@@ -1107,8 +1107,9 @@ function ExplanationAuditPanel() {
   if (!status) return null;
 
   const pct = status.total > 0 ? Math.min(100, Math.round((status.processed / status.total) * 100)) : 0;
-  const isRunning = status.status === 'running';
-  const canResume = status.status === 'stopped' && status.processed > 0 && status.processed < status.total;
+  const isStalled = status.status === 'running' && status.stalled;
+  const isRunning = status.status === 'running' && !isStalled;
+  const canResume = (status.status === 'stopped' || isStalled) && status.processed > 0 && status.processed < status.total;
   const isCompleted = status.status === 'completed';
 
   return (
@@ -1123,6 +1124,8 @@ function ExplanationAuditPanel() {
                 ? `Checking question ${status.processed}/${status.total} — ${status.corrected} corrected so far${status.failed ? `, ${status.failed} failed` : ''}`
                 : isCompleted
                 ? `Done — ${status.corrected} of ${status.total} explanations corrected${status.failed ? ` (${status.failed} failed)` : ''}`
+                : isStalled
+                ? `Stalled at ${status.processed}/${status.total} (a deploy or restart likely killed it) — click Resume to continue`
                 : canResume
                 ? `Paused at ${status.processed}/${status.total} — ${status.corrected} corrected so far`
                 : 'Reviews every aptitude question and rewrites the explanation if it’s wrong or missing.'}

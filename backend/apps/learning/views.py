@@ -11646,8 +11646,20 @@ class AdminAptitudeExplanationAuditView(APIView):
     explanation — runs in a background thread (there can be 10,000+
     questions) and checkpoints progress in AptitudeExplanationAuditRun so
     GET can be polled for live status and the run survives navigating away
-    or a server restart (Resume just continues from last_question_id)."""
+    or a server restart (Resume just continues from last_question_id).
+
+    A deploy/crash kills the thread outright with no chance to update its
+    own row — nothing else was watching for that, so status would be stuck
+    on "running" forever with no way to recover short of a DB edit. Every
+    checkpoint touches updated_at, so a "running" row that hasn't been
+    touched in a while is almost certainly an orphan from a dead thread;
+    treat it as stale and let Start/Stop/Reset recover from it instead of
+    just refusing because status still says "running"."""
     permission_classes = [IsAuthenticated]
+    STALE_SECONDS = 90
+
+    def _is_stale(self, run):
+        return run.status == 'running' and (timezone.now() - run.updated_at).total_seconds() > self.STALE_SECONDS
 
     def get(self, request):
         if not request.user.is_superuser:
@@ -11663,6 +11675,7 @@ class AdminAptitudeExplanationAuditView(APIView):
             "last_error": run.last_error,
             "started_at": run.started_at,
             "updated_at": run.updated_at,
+            "stalled": self._is_stale(run),
         })
 
     def post(self, request):
@@ -11671,9 +11684,10 @@ class AdminAptitudeExplanationAuditView(APIView):
 
         action = request.data.get('action')
         run, _ = AptitudeExplanationAuditRun.objects.get_or_create(id=1)
+        stale = self._is_stale(run)
 
         if action == 'start':
-            if run.status == 'running':
+            if run.status == 'running' and not stale:
                 return Response({"error": "Already running."}, status=400)
             run.status = 'running'
             run.stop_requested = False
@@ -11687,12 +11701,19 @@ class AdminAptitudeExplanationAuditView(APIView):
         elif action == 'stop':
             if run.status != 'running':
                 return Response({"error": "Not running."}, status=400)
+            if stale:
+                # No live thread will ever see stop_requested — just mark it
+                # stopped directly rather than waiting on a dead worker.
+                run.status = 'stopped'
+                run.stop_requested = False
+                run.save(update_fields=['status', 'stop_requested', 'updated_at'])
+                return Response({"status": "stopped"})
             run.stop_requested = True
             run.save(update_fields=['stop_requested'])
             return Response({"status": "stopping"})
 
         elif action == 'reset':
-            if run.status == 'running':
+            if run.status == 'running' and not stale:
                 return Response({"error": "Stop the run before resetting."}, status=400)
             run.status = 'idle'
             run.last_question_id = 0
