@@ -315,16 +315,23 @@ def normalize_comparable_output(value: str) -> str:
     parsed = _coerce_literal(cleaned)
 
     if isinstance(parsed, str):
+        # Space-separated numeric tokens are a legitimate legacy stdout
+        # convention (e.g. "1 2 3" meaning an array) — safe to normalize as
+        # a list regardless of exact spacing. Anything else is treated as
+        # literal text and must NOT have its internal whitespace touched:
+        # collapsing multiple/leading/trailing spaces here would silently
+        # turn a correct answer to a whitespace-sensitive problem (Text
+        # Justification, pattern printing, ...) into a false Wrong Answer.
         if re.fullmatch(r"-?\d+(?:\s+-?\d+)+", parsed):
             values = [int(part) for part in parsed.split()]
             return json.dumps(values, separators=(",", ":"), ensure_ascii=False)
         if re.fullmatch(r"-?\d+(?:\.\d+)?(?:\s+-?\d+(?:\.\d+)?)+", parsed):
             values = [float(part) for part in parsed.split()]
             return json.dumps(_canonicalize_numbers(values), separators=(",", ":"), ensure_ascii=False)
-        return " ".join(parsed.split())
+        return parsed
     if isinstance(parsed, (list, dict, bool, int, float)) or parsed is None:
         return json.dumps(_canonicalize_numbers(parsed), separators=(",", ":"), ensure_ascii=False)
-    return " ".join(cleaned.split())
+    return cleaned
 
 
 def _parse_typed_value(raw: str):
@@ -4386,11 +4393,404 @@ def _prepare_typed_execution_payload(
     }
 
 
+_C_DESIGN_RUNTIME = r'''
+/* ---- Minimal recursive-descent JSON parser for the design-problem wire
+   format ([operations, arguments]) — C has no vector/string/dynamic-typing
+   to lean on like the other three languages, so this is genuinely new
+   parsing code rather than a small delta on existing C helpers (which only
+   ever parse one flat, non-nested bracketed list at a time — see
+   _c_parse_int_array and friends — not a document containing strings,
+   nested arrays, and mixed types together). ---- */
+typedef enum { C2D_J_INT, C2D_J_DOUBLE, C2D_J_BOOL, C2D_J_STR, C2D_J_ARR, C2D_J_NUL } C2DJType;
+
+typedef struct C2DJVal {
+    C2DJType type;
+    long long ival;
+    double dval;
+    int bval;
+    char* sval;
+    struct C2DJVal* items;
+    int count;
+} C2DJVal;
+
+static const char* __c2d_j_src;
+static int __c2d_j_pos;
+
+static void __c2d_j_skip_ws(void) {
+    while (__c2d_j_src[__c2d_j_pos] != '\0' && isspace((unsigned char)__c2d_j_src[__c2d_j_pos])) __c2d_j_pos++;
+}
+
+static C2DJVal __c2d_j_parse_value(void);
+
+static C2DJVal __c2d_j_parse_array(void) {
+    C2DJVal v; v.type = C2D_J_ARR; v.items = NULL; v.count = 0; v.sval = NULL;
+    int cap = 0;
+    __c2d_j_pos++; /* skip [ */
+    __c2d_j_skip_ws();
+    if (__c2d_j_src[__c2d_j_pos] == ']') { __c2d_j_pos++; return v; }
+    while (1) {
+        __c2d_j_skip_ws();
+        if (v.count >= cap) {
+            cap = cap ? cap * 2 : 4;
+            v.items = (C2DJVal*)realloc(v.items, cap * sizeof(C2DJVal));
+        }
+        v.items[v.count++] = __c2d_j_parse_value();
+        __c2d_j_skip_ws();
+        if (__c2d_j_src[__c2d_j_pos] == ',') { __c2d_j_pos++; continue; }
+        break;
+    }
+    __c2d_j_skip_ws();
+    if (__c2d_j_src[__c2d_j_pos] == ']') __c2d_j_pos++;
+    return v;
+}
+
+static C2DJVal __c2d_j_parse_string(void) {
+    C2DJVal v; v.type = C2D_J_STR; v.items = NULL; v.count = 0;
+    __c2d_j_pos++; /* skip opening quote */
+    int cap = 32, len = 0;
+    char* buf = (char*)malloc(cap);
+    while (__c2d_j_src[__c2d_j_pos] != '\0' && __c2d_j_src[__c2d_j_pos] != '"') {
+        char c = __c2d_j_src[__c2d_j_pos];
+        if (c == '\\' && __c2d_j_src[__c2d_j_pos + 1] != '\0') { __c2d_j_pos++; c = __c2d_j_src[__c2d_j_pos]; }
+        if (len + 1 >= cap) { cap *= 2; buf = (char*)realloc(buf, cap); }
+        buf[len++] = c;
+        __c2d_j_pos++;
+    }
+    if (__c2d_j_src[__c2d_j_pos] == '"') __c2d_j_pos++;
+    buf[len] = '\0';
+    v.sval = buf;
+    return v;
+}
+
+static C2DJVal __c2d_j_parse_value(void) {
+    __c2d_j_skip_ws();
+    char c = __c2d_j_src[__c2d_j_pos];
+    if (c == '[') return __c2d_j_parse_array();
+    if (c == '"') return __c2d_j_parse_string();
+    if (c == 't') { __c2d_j_pos += 4; C2DJVal v; v.type = C2D_J_BOOL; v.bval = 1; v.items = NULL; v.count = 0; v.sval = NULL; return v; }
+    if (c == 'f') { __c2d_j_pos += 5; C2DJVal v; v.type = C2D_J_BOOL; v.bval = 0; v.items = NULL; v.count = 0; v.sval = NULL; return v; }
+    if (c == 'n') { __c2d_j_pos += 4; C2DJVal v; v.type = C2D_J_NUL; v.items = NULL; v.count = 0; v.sval = NULL; return v; }
+    {
+        int start = __c2d_j_pos;
+        int is_float = 0;
+        if (__c2d_j_src[__c2d_j_pos] == '-') __c2d_j_pos++;
+        while (isdigit((unsigned char)__c2d_j_src[__c2d_j_pos]) || __c2d_j_src[__c2d_j_pos] == '.' ||
+               __c2d_j_src[__c2d_j_pos] == 'e' || __c2d_j_src[__c2d_j_pos] == 'E' ||
+               __c2d_j_src[__c2d_j_pos] == '+' || __c2d_j_src[__c2d_j_pos] == '-') {
+            if (__c2d_j_src[__c2d_j_pos] == '.' || __c2d_j_src[__c2d_j_pos] == 'e' || __c2d_j_src[__c2d_j_pos] == 'E') is_float = 1;
+            __c2d_j_pos++;
+        }
+        {
+            int n = __c2d_j_pos - start;
+            char numbuf[64];
+            C2DJVal v; v.items = NULL; v.count = 0; v.sval = NULL;
+            if (n > 63) n = 63;
+            memcpy(numbuf, __c2d_j_src + start, n);
+            numbuf[n] = '\0';
+            if (is_float) { v.type = C2D_J_DOUBLE; v.dval = atof(numbuf); }
+            else { v.type = C2D_J_INT; v.ival = atoll(numbuf); }
+            return v;
+        }
+    }
+}
+
+static C2DJVal __c2d_j_parse(const char* s) {
+    __c2d_j_src = s;
+    __c2d_j_pos = 0;
+    return __c2d_j_parse_value();
+}
+
+static int __c2d_j_int(C2DJVal* v) { return (int)v->ival; }
+static double __c2d_j_double(C2DJVal* v) { return v->type == C2D_J_DOUBLE ? v->dval : (double)v->ival; }
+static int __c2d_j_bool(C2DJVal* v) { return v->bval; }
+static char* __c2d_j_str(C2DJVal* v) { return v->sval ? v->sval : ""; }
+
+static int* __c2d_j_int_array(C2DJVal* v, int* out_size) {
+    int n = v->count;
+    int* arr = (int*)malloc((n > 0 ? n : 1) * sizeof(int));
+    for (int i = 0; i < n; i++) arr[i] = __c2d_j_int(&v->items[i]);
+    *out_size = n;
+    return arr;
+}
+static double* __c2d_j_double_array(C2DJVal* v, int* out_size) {
+    int n = v->count;
+    double* arr = (double*)malloc((n > 0 ? n : 1) * sizeof(double));
+    for (int i = 0; i < n; i++) arr[i] = __c2d_j_double(&v->items[i]);
+    *out_size = n;
+    return arr;
+}
+static int* __c2d_j_bool_array(C2DJVal* v, int* out_size) {
+    int n = v->count;
+    int* arr = (int*)malloc((n > 0 ? n : 1) * sizeof(int));
+    for (int i = 0; i < n; i++) arr[i] = __c2d_j_bool(&v->items[i]);
+    *out_size = n;
+    return arr;
+}
+static char** __c2d_j_string_array(C2DJVal* v, int* out_size) {
+    int n = v->count;
+    char** arr = (char**)malloc((n > 0 ? n : 1) * sizeof(char*));
+    for (int i = 0; i < n; i++) arr[i] = __c2d_j_str(&v->items[i]);
+    *out_size = n;
+    return arr;
+}
+
+/* ---- Growable string builder for the results JSON array ---- */
+typedef struct { char* data; int len; int cap; } __c2d_sb;
+static void __c2d_sb_init(__c2d_sb* sb) { sb->cap = 256; sb->len = 0; sb->data = (char*)malloc(sb->cap); sb->data[0] = '\0'; }
+static void __c2d_sb_raw(__c2d_sb* sb, const char* s) {
+    int n = (int)strlen(s);
+    while (sb->len + n + 1 > sb->cap) { sb->cap *= 2; sb->data = (char*)realloc(sb->data, sb->cap); }
+    memcpy(sb->data + sb->len, s, n + 1);
+    sb->len += n;
+}
+static void __c2d_sb_append(__c2d_sb* sb, const char* s) {
+    if (sb->len > 0 && sb->data[sb->len - 1] != '[') __c2d_sb_raw(sb, ",");
+    __c2d_sb_raw(sb, s);
+}
+/* Writes one escaped, quoted string with NO comma logic — used both by
+   __c2d_sb_append_escaped (which adds the comma itself, for a top-level/
+   scalar string result) and inside __c2d_sb_append_string_array's loop
+   (which already adds its own "if (i) comma" between elements — calling
+   the comma-aware version there would double up on every element after
+   the first). */
+static void __c2d_sb_raw_escaped(__c2d_sb* sb, const char* s) {
+    __c2d_sb_raw(sb, "\"");
+    {
+        char one[2]; one[1] = '\0';
+        for (const char* p = s; *p; p++) {
+            if (*p == '"' || *p == '\\') { one[0] = '\\'; __c2d_sb_raw(sb, one); }
+            one[0] = *p;
+            __c2d_sb_raw(sb, one);
+        }
+    }
+    __c2d_sb_raw(sb, "\"");
+}
+static void __c2d_sb_append_escaped(__c2d_sb* sb, const char* s) {
+    if (sb->len > 0 && sb->data[sb->len - 1] != '[') __c2d_sb_raw(sb, ",");
+    __c2d_sb_raw_escaped(sb, s);
+}
+static void __c2d_sb_append_int_array(__c2d_sb* sb, int* arr, int size) {
+    if (sb->len > 0 && sb->data[sb->len - 1] != '[') __c2d_sb_raw(sb, ",");
+    __c2d_sb_raw(sb, "[");
+    for (int i = 0; i < size; i++) {
+        char buf[32];
+        if (i) __c2d_sb_raw(sb, ",");
+        snprintf(buf, sizeof(buf), "%d", arr[i]);
+        __c2d_sb_raw(sb, buf);
+    }
+    __c2d_sb_raw(sb, "]");
+}
+static void __c2d_sb_append_double_array(__c2d_sb* sb, double* arr, int size) {
+    if (sb->len > 0 && sb->data[sb->len - 1] != '[') __c2d_sb_raw(sb, ",");
+    __c2d_sb_raw(sb, "[");
+    for (int i = 0; i < size; i++) {
+        char buf[64];
+        if (i) __c2d_sb_raw(sb, ",");
+        snprintf(buf, sizeof(buf), "%g", arr[i]);
+        __c2d_sb_raw(sb, buf);
+    }
+    __c2d_sb_raw(sb, "]");
+}
+static void __c2d_sb_append_bool_array(__c2d_sb* sb, int* arr, int size) {
+    if (sb->len > 0 && sb->data[sb->len - 1] != '[') __c2d_sb_raw(sb, ",");
+    __c2d_sb_raw(sb, "[");
+    for (int i = 0; i < size; i++) {
+        if (i) __c2d_sb_raw(sb, ",");
+        __c2d_sb_raw(sb, arr[i] ? "true" : "false");
+    }
+    __c2d_sb_raw(sb, "]");
+}
+static void __c2d_sb_append_string_array(__c2d_sb* sb, char** arr, int size) {
+    if (sb->len > 0 && sb->data[sb->len - 1] != '[') __c2d_sb_raw(sb, ",");
+    __c2d_sb_raw(sb, "[");
+    for (int i = 0; i < size; i++) {
+        if (i) __c2d_sb_raw(sb, ",");
+        __c2d_sb_raw_escaped(sb, arr[i]);
+    }
+    __c2d_sb_raw(sb, "]");
+}
+'''
+
+_C_DESIGN_SCALAR_C_TYPE = {"int": "int", "float": "double", "double": "double", "boolean": "int", "string": "char*"}
+_C_DESIGN_ARRAY_PARSE_FN = {
+    "int": "__c2d_j_int_array", "float": "__c2d_j_double_array", "double": "__c2d_j_double_array",
+    "boolean": "__c2d_j_bool_array", "string": "__c2d_j_string_array",
+}
+_C_DESIGN_ARRAY_ELEM_TYPE = {"int": "int", "float": "double", "double": "double", "boolean": "int", "string": "char*"}
+_C_DESIGN_ARRAY_SB_FN = {
+    "int": "__c2d_sb_append_int_array", "double": "__c2d_sb_append_double_array",
+    "boolean": "__c2d_sb_append_bool_array", "string": "__c2d_sb_append_string_array",
+}
+
+
+def _c_design_param_binding(ptype: str, idx: int, argsfor_expr: str) -> tuple[list[str], list[str]]:
+    """Returns (decl_lines, call_arg_names) for one schema param, reading
+    from argsfor_expr[idx] (a C2DJVal). Scalars produce one call arg; 1D
+    arrays produce two — (ptr, size) — matching the same convention
+    _build_c_wrapper_typed already uses for ordinary function-style C
+    problems (LeetCode's own C stubs take an array size as a companion int
+    parameter the same way). Raises KeyError for a 2D array (not supported
+    — no existing C 2D-array support anywhere on this platform to extend;
+    caller catches this and falls back to the usual #error)."""
+    base = param_types.base_scalar_type(ptype)
+    dims = param_types.array_dimensions(ptype)
+    src = f"(&{argsfor_expr}[{idx}])"
+    var = f"_c2d_a{idx}"
+    if dims == 0:
+        if base == "string":
+            return [f"    char* {var} = __c2d_j_str({src});"], [var]
+        if base == "boolean":
+            return [f"    int {var} = __c2d_j_bool({src});"], [var]
+        if base in ("float", "double"):
+            return [f"    double {var} = __c2d_j_double({src});"], [var]
+        return [f"    int {var} = __c2d_j_int({src});"], [var]
+    if dims == 1:
+        parse_fn = _C_DESIGN_ARRAY_PARSE_FN[base]
+        elem_type = _C_DESIGN_ARRAY_ELEM_TYPE[base]
+        size_var = f"{var}_size"
+        decl = [f"    int {size_var} = 0;", f"    {elem_type}* {var} = {parse_fn}({src}, &{size_var});"]
+        return decl, [var, size_var]
+    raise KeyError(f"2D array param ({ptype!r}) not supported for C design problems")
+
+
+def _c_design_prefix(class_name: str) -> str:
+    """LeetCode's real C convention for design problems: a lowerCamelCase
+    prefix derived from the class name, e.g. "Vector2D" -> "vector2D",
+    "MyHashSet" -> "myHashSet" — every function is {prefix}Create(...) /
+    {prefix}<Method>(obj, ...)."""
+    if not class_name:
+        return "obj"
+    return class_name[0].lower() + class_name[1:]
+
+
+def _c_design_method_fn(prefix: str, method_name: str) -> str:
+    if not method_name:
+        return prefix
+    return prefix + method_name[0].upper() + method_name[1:]
+
+
+def _build_c_design_wrapper(source_code: str, schema: dict) -> str:
+    """Design/OOP driver for C — the trickiest of the four languages, since
+    C has no classes at all. Follows LeetCode's own real convention for C
+    design-problem stubs: {prefix}Create(...) returns a `{ClassName}*`
+    handle, {prefix}<Method>(obj, ...) operates on it — e.g. Vector2D ->
+    vector2DCreate/vector2DNext/vector2DHasNext. {prefix}Free is never
+    called here (a short-lived judge process doesn't need cleanup, and
+    requiring students to have implemented it would reject an otherwise-
+    correct submission for no execution-correctness reason).
+
+    Only scalar and 1D-array types are supported (raises KeyError for
+    anything else, e.g. a 2D array) — caught by the caller
+    (_prepare_design_execution_payload) and turned into the same #error
+    fallback every other unbuildable design driver gets, rather than
+    emitting broken C. This mirrors C's pre-existing, accepted "no 2D
+    arrays" limit in _build_c_wrapper_typed — not a new gap introduced
+    here."""
+    class_name = schema.get("class_name")
+    methods = schema.get("methods", {})
+    prefix = _c_design_prefix(class_name)
+
+    dispatch = []
+    for name, spec in methods.items():
+        params = spec.get("params", [])
+        return_type = spec.get("return_type", "void")
+
+        decls = []
+        call_args = []
+        for i, ptype in enumerate(params):
+            d, names = _c_design_param_binding(ptype, i, "argsFor")
+            decls.extend(d)
+            call_args.extend(names)
+        decl_code = "\n".join(decls)
+
+        if name == class_name:
+            call_expr = f"{prefix}Create({', '.join(call_args)})"
+            body = f"{decl_code}\n        obj = {call_expr};\n        __c2d_sb_append(&__c2d_results, \"null\");"
+        else:
+            fn = _c_design_method_fn(prefix, name)
+            base = param_types.base_scalar_type(return_type) if return_type != "void" else "void"
+            dims = param_types.array_dimensions(return_type) if return_type != "void" else 0
+
+            if return_type == "void":
+                call_expr = f"{fn}({', '.join(['obj'] + call_args)})"
+                body = f"{decl_code}\n        {call_expr};\n        __c2d_sb_append(&__c2d_results, \"null\");"
+            elif dims == 1:
+                sb_fn = _C_DESIGN_ARRAY_SB_FN[base]  # KeyError -> unsupported, caught by caller
+                call_expr = f"{fn}({', '.join(['obj'] + call_args + ['&_c2d_rsize'])})"
+                elem_type = _C_DESIGN_ARRAY_ELEM_TYPE[base]
+                body = (
+                    f"{decl_code}\n"
+                    f"        int _c2d_rsize = 0;\n"
+                    f"        {elem_type}* _c2d_r = {call_expr};\n"
+                    f"        {sb_fn}(&__c2d_results, _c2d_r, _c2d_rsize);"
+                )
+            elif base == "boolean":
+                call_expr = f"{fn}({', '.join(['obj'] + call_args)})"
+                body = f"{decl_code}\n        __c2d_sb_append(&__c2d_results, ({call_expr}) ? \"true\" : \"false\");"
+            elif base == "string":
+                call_expr = f"{fn}({', '.join(['obj'] + call_args)})"
+                body = f"{decl_code}\n        __c2d_sb_append_escaped(&__c2d_results, {call_expr});"
+            elif base in ("float", "double"):
+                call_expr = f"{fn}({', '.join(['obj'] + call_args)})"
+                body = (
+                    f"{decl_code}\n"
+                    f"        {{ char _c2d_buf[64]; snprintf(_c2d_buf, sizeof(_c2d_buf), \"%g\", (double)({call_expr})); "
+                    f"__c2d_sb_append(&__c2d_results, _c2d_buf); }}"
+                )
+            else:
+                call_expr = f"{fn}({', '.join(['obj'] + call_args)})"
+                body = (
+                    f"{decl_code}\n"
+                    f"        {{ char _c2d_buf[32]; snprintf(_c2d_buf, sizeof(_c2d_buf), \"%d\", (int)({call_expr})); "
+                    f"__c2d_sb_append(&__c2d_results, _c2d_buf); }}"
+                )
+
+        keyword = "if" if not dispatch else "else if"
+        dispatch.append(f'        {keyword} (strcmp(op, {json.dumps(name)}) == 0) {{\n{body}\n        }}')
+    dispatch_code = "\n".join(dispatch)
+
+    return (
+        "#include <stdio.h>\n"
+        "#include <stdlib.h>\n"
+        "#include <string.h>\n"
+        "#include <ctype.h>\n\n"
+        f"{_C_DESIGN_RUNTIME}\n"
+        "/* ---- Solution code ---- */\n"
+        f"{source_code}\n\n"
+        "/* ---- Driver ---- */\n"
+        "int main(void) {\n"
+        "    char* __c2d_input = (char*)malloc(1 << 20);\n"
+        "    size_t __c2d_len = fread(__c2d_input, 1, (1 << 20) - 1, stdin);\n"
+        "    __c2d_input[__c2d_len] = '\\0';\n"
+        "    C2DJVal __c2d_top = __c2d_j_parse(__c2d_input); /* stdin is [operations, arguments] */\n"
+        "    C2DJVal* operations = &__c2d_top.items[0];\n"
+        "    C2DJVal* arguments = &__c2d_top.items[1];\n\n"
+        f"    {class_name}* obj = NULL;\n"
+        "    __c2d_sb __c2d_results;\n"
+        "    __c2d_sb_init(&__c2d_results);\n"
+        "    __c2d_sb_raw(&__c2d_results, \"[\");\n\n"
+        "    for (int __i = 0; __i < operations->count; __i++) {\n"
+        "        char* op = __c2d_j_str(&operations->items[__i]);\n"
+        "        C2DJVal* argsFor = arguments->items[__i].items;\n"
+        f"{dispatch_code}\n"
+        "        else {\n"
+        "            fprintf(stderr, \"Unknown operation: %s\\n\", op);\n"
+        "            return 1;\n"
+        "        }\n"
+        "    }\n\n"
+        "    __c2d_sb_raw(&__c2d_results, \"]\");\n"
+        "    printf(\"%s\\n\", __c2d_results.data);\n"
+        "    return 0;\n"
+        "}\n"
+    )
+
+
 _DESIGN_ADAPTERS = {
     "Python": _build_python_design_wrapper,
     "Java": _build_java_design_wrapper,
     "C++": _build_cpp_design_wrapper,
     "CPP": _build_cpp_design_wrapper,
+    "C": _build_c_design_wrapper,
 }
 
 
