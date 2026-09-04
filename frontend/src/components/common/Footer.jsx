@@ -20,7 +20,7 @@ const Footer = ({ onNavigate }) => {
         gap: '12px'
       }}>
         <p style={{ margin: 0, fontSize: '14px', color: '#64748b', textAlign: 'center' }}>
-          © {new Date().getFullYear()} RAMCO INSTITUTE OF TECHNOLOGY. All rights reserved.
+          © {new Date().getFullYear()} Code2Day. All rights reserved.
         </p>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', fontSize: '13px', color: '#94a3b8' }}>
           <span>Developed by</span>
