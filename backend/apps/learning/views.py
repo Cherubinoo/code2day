@@ -7995,6 +7995,7 @@ class StudentContestProblemView(APIView):
             "difficulty": problem.difficulty,
             "tags": problem.tags,
             "examples": problem.examples,
+            "explanation": problem.explanation,
             "hints": problem.hints,
             "submissions": submissions_data,
         })
@@ -11200,16 +11201,16 @@ class AdminProblemGenerateTestCasesView(APIView):
 
 def _fill_missing_problem_metadata(problem):
     """Fills in whatever "necessary data" one Problem is missing — the
-    typed param_schema and/or the explanation — via the LLM fallback
-    chain. Both pieces are skip-if-exists: never overwrites a
-    hand-authored schema or an already-generated explanation, only fills
-    in what's actually missing. Shared by the single-problem admin action
-    (AdminProblemGenerateSchemaAndDescriptionView) and the per-topic bulk
-    generation background job below — one place, not two copies that can
-    drift."""
-    from .services.testcase_generator import generate_param_schema, generate_explanation, TestCaseGenError
+    typed param_schema, the explanation, and/or the hint ladder — via the
+    LLM fallback chain. All three pieces are skip-if-exists: never
+    overwrites a hand-authored schema, an already-generated explanation, or
+    existing hints, only fills in what's actually missing. Shared by the
+    single-problem admin action (AdminProblemGenerateSchemaAndDescriptionView)
+    and the per-topic bulk generation background job below — one place, not
+    multiple copies that can drift."""
+    from .services.testcase_generator import generate_param_schema, generate_explanation, generate_hints, TestCaseGenError
 
-    result = {"schema_generated": False, "explanation_generated": False, "errors": {}}
+    result = {"schema_generated": False, "explanation_generated": False, "hints_generated": False, "errors": {}}
 
     if not problem.param_schema:
         try:
@@ -11238,16 +11239,28 @@ def _fill_missing_problem_metadata(problem):
     else:
         result["explanation"] = problem.explanation
 
+    if not problem.hints:
+        try:
+            hints = generate_hints(title=problem.title, description=problem.description)
+            problem.hints = hints
+            problem.save(update_fields=["hints"])
+            result["hints_generated"] = True
+            result["hints"] = hints
+        except TestCaseGenError as exc:
+            result["errors"]["hints"] = str(exc)
+    else:
+        result["hints"] = problem.hints
+
     return result
 
 
 class AdminProblemGenerateSchemaAndDescriptionView(APIView):
     """System Admin: single button that fills in whatever "necessary data"
-    a problem is missing — the typed param_schema and/or the explanation —
-    via the LLM fallback chain, WITHOUT touching test cases (that stays a
-    separate, explicit action). Both pieces are skip-if-exists: this never
-    overwrites a hand-authored schema or an already-generated explanation,
-    it only fills in what's actually missing."""
+    a problem is missing — the typed param_schema, the explanation, and/or
+    the hint ladder — via the LLM fallback chain, WITHOUT touching test
+    cases (that stays a separate, explicit action). Every piece is
+    skip-if-exists: this never overwrites hand-authored content, it only
+    fills in what's actually missing."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, problem_id):
@@ -11358,14 +11371,14 @@ class AdminProblemBankFillMissingView(APIView):
 
         import time
         from .services.testcase_generator import (
-            generate_test_cases, generate_param_schema, generate_explanation,
+            generate_test_cases, generate_param_schema, generate_explanation, generate_hints,
             derive_examples, TestCaseGenError,
         )
 
         problems = (
             Problem.objects
             .annotate(tc_count=Count("test_cases", distinct=True))
-            .filter(Q(tc_count=0) | Q(param_schema__isnull=True) | Q(explanation=""))
+            .filter(Q(tc_count=0) | _missing_metadata_q())
             .order_by("title")
         )
 
@@ -11431,13 +11444,24 @@ class AdminProblemBankFillMissingView(APIView):
                 except TestCaseGenError as exc:
                     entry["explanation_error"] = str(exc)
 
+            if not problem.hints and budget_left():
+                actions_done += 1
+                did_anything = True
+                try:
+                    hints = generate_hints(title=problem.title, description=problem.description)
+                    problem.hints = hints
+                    problem.save(update_fields=["hints"])
+                    entry["hints_generated"] = True
+                except TestCaseGenError as exc:
+                    entry["hints_error"] = str(exc)
+
             if did_anything:
                 processed.append(entry)
 
         remaining = (
             Problem.objects
             .annotate(tc_count=Count("test_cases", distinct=True))
-            .filter(Q(tc_count=0) | Q(param_schema__isnull=True) | Q(explanation=""))
+            .filter(Q(tc_count=0) | _missing_metadata_q())
             .count()
         )
 
@@ -11458,6 +11482,13 @@ def _problems_in_topic(topic):
     if topic == UNTAGGED_PROBLEM_TOPIC:
         return Problem.objects.filter(tags=[])
     return Problem.objects.filter(tags__contains=[topic])
+
+
+def _missing_metadata_q():
+    """Same skip-if-exists condition _fill_missing_problem_metadata checks
+    per-field, as one filter — a problem needs a run if it's missing its
+    schema, explanation, or hint ladder."""
+    return Q(param_schema__isnull=True) | Q(explanation="") | Q(hints=[])
 
 
 class AdminProblemTopicsView(APIView):
@@ -11481,7 +11512,7 @@ class AdminProblemTopicsView(APIView):
             for t in tags:
                 tag_counts[t] = tag_counts.get(t, 0) + 1
 
-        missing_qs = Problem.objects.filter(Q(param_schema__isnull=True) | Q(explanation=""))
+        missing_qs = Problem.objects.filter(_missing_metadata_q())
         missing_counts = {UNTAGGED_PROBLEM_TOPIC: 0}
         for tags in missing_qs.values_list("tags", flat=True):
             if not tags:
@@ -11531,11 +11562,13 @@ def _topic_metadata_worker(run_id, work_queue):
 
             schema_generated = False
             explanation_generated = False
+            hints_generated = False
             error_text = ''
             try:
                 result = _fill_missing_problem_metadata(problem)
                 schema_generated = bool(result.get("schema_generated"))
                 explanation_generated = bool(result.get("explanation_generated"))
+                hints_generated = bool(result.get("hints_generated"))
                 if result.get("errors"):
                     error_text = "; ".join(f"{k}: {v}" for k, v in result["errors"].items())[:2000]
             except Exception as exc:  # noqa: BLE001 — one bad problem must not kill the whole run
@@ -11551,6 +11584,8 @@ def _topic_metadata_worker(run_id, work_queue):
                 update_fields['schema_generated_count'] = F('schema_generated_count') + 1
             if explanation_generated:
                 update_fields['explanation_generated_count'] = F('explanation_generated_count') + 1
+            if hints_generated:
+                update_fields['hints_generated_count'] = F('hints_generated_count') + 1
             if error_text:
                 update_fields['failed_count'] = F('failed_count') + 1
                 update_fields['last_error'] = error_text
@@ -11585,7 +11620,7 @@ def _run_topic_metadata_generation(run_id, topic):
 
     problem_ids = list(
         _problems_in_topic(topic)
-        .filter(Q(param_schema__isnull=True) | Q(explanation=""))
+        .filter(_missing_metadata_q())
         .filter(id__gt=run.last_problem_id)
         .order_by('id')
         .values_list('id', flat=True)
@@ -11638,10 +11673,11 @@ class AdminProblemTopicMetadataRunView(APIView):
             "topic": topic,
             "status": run.status,
             "total": _problems_in_topic(topic).count(),
-            "missing_metadata": _problems_in_topic(topic).filter(Q(param_schema__isnull=True) | Q(explanation="")).count(),
+            "missing_metadata": _problems_in_topic(topic).filter(_missing_metadata_q()).count(),
             "processed": run.processed_count,
             "schema_generated": run.schema_generated_count,
             "explanation_generated": run.explanation_generated_count,
+            "hints_generated": run.hints_generated_count,
             "failed": run.failed_count,
             "last_error": run.last_error,
             "started_at": run.started_at,
@@ -11691,6 +11727,7 @@ class AdminProblemTopicMetadataRunView(APIView):
             run.processed_count = 0
             run.schema_generated_count = 0
             run.explanation_generated_count = 0
+            run.hints_generated_count = 0
             run.failed_count = 0
             run.started_at = None
             run.last_error = ''

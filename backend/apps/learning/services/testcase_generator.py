@@ -173,6 +173,29 @@ def _extract_json(text):
             raise TestCaseGenServiceError(f"Unparseable JSON from LLM response: {exc}") from exc
 
 
+def _extract_json_array(text):
+    """Same idea as _extract_json but for a top-level JSON array reply
+    (e.g. a list of hint strings) instead of an object — LLMs wrap these in
+    fences/prose the same way."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+    match = re.search(r"\[.*\]", text, re.DOTALL)
+    if not match:
+        if "[" in text and "]" not in text:
+            raise TestCaseGenTruncatedError(f"LLM reply was truncated mid-JSON: {text[:200]!r}")
+        raise TestCaseGenServiceError(f"No JSON array found in LLM response: {text[:200]!r}")
+    raw = match.group(0)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            return json.loads(_repair_invalid_json_escapes(raw))
+        except json.JSONDecodeError as exc:
+            raise TestCaseGenServiceError(f"Unparseable JSON from LLM response: {exc}") from exc
+
+
 def _call_provider_once(provider, prompt, max_tokens=None):
     """POST to one provider and return the raw text content of its reply.
     `max_tokens` overrides the provider's configured value — used to retry
@@ -553,6 +576,45 @@ def generate_hint(*, title, description):
     if not hint:
         raise TestCaseGenServiceError("LLM returned an empty hint.")
     return hint
+
+
+HINTS_LIST_PROMPT_TEMPLATE = """You are writing a progressive hint ladder for a student attempting the
+following problem — the same kind of hint list LeetCode shows: 2 to 4 hints, each one
+giving away a little more than the last, without ever stating the full solution or
+final code.
+
+Title: {title}
+
+Description:
+{description}
+
+Hint 1 should be a gentle nudge toward the right way to think about the problem.
+Each following hint should narrow in further — toward the data structure or
+technique to use, then toward the key algorithmic step — but the last hint must
+still stop short of the answer.
+
+Respond with ONLY a JSON array of strings, one string per hint, ordered from
+vaguest to most specific — e.g. ["...", "...", "..."]. No markdown fences, no
+commentary, no keys other than the array itself.
+"""
+
+
+def generate_hints(*, title, description):
+    """Returns a short progressive hint ladder (2-4 strings, vaguest first) for
+    Problem.hints — distinct from generate_hint()'s single lab nudge. Raises a
+    TestCaseGenError subclass if every active provider fails or every
+    provider's reply fails to parse as a non-empty JSON array of strings."""
+    prompt = HINTS_LIST_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
+    providers = _providers_in_rotation_order()
+    hints = _try_providers_in_order(providers, prompt, transform=_parse_hints_list, log_label=f"{title} (hints)")
+    return hints
+
+
+def _parse_hints_list(content):
+    parsed = _extract_json_array(content)
+    if not isinstance(parsed, list) or not parsed or not all(isinstance(h, str) and h.strip() for h in parsed):
+        raise TestCaseGenServiceError(f"LLM did not return a non-empty JSON array of hint strings: {content[:300]!r}")
+    return [h.strip() for h in parsed]
 
 
 def derive_examples(cases):

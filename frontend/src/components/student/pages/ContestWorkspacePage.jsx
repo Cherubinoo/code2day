@@ -7,7 +7,7 @@ import { runCodeExecution, getLanguageIdForChoice } from "../../../lib/codeExecu
 import { starterCodeByLanguage, editorLanguageByChoice } from "../../../lib/appData";
 import { formatDuration, buildJsonPostOptions, configureEditorProtection } from "../../../lib/appUtils";
 import { validateLanguageMatch, getLanguageMismatchError, detectLanguageFromCode } from "../../../lib/languageDetector";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import DoubleConfirmModal from "../../common/DoubleConfirmModal";
 
 loader.config({ monaco });
@@ -174,6 +174,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
   });
   const [selectedProblemDetails, setSelectedProblemDetails] = useState(null);
   const [problemDetailTab, setProblemDetailTab] = useState('current');
+  const [sidebarHidden, setSidebarHidden] = useState(false);
   const selectedProblem = problems[selectedProblemIndex] || null;
 
   // Editor state — restore language from cache
@@ -994,11 +995,26 @@ function ContestWorkspacePage({ contestId, onBack }) {
       </section>
 
       {/* ──3-Column Layout ── */}
-      <section className="problem-layout code2day-layout">
+      <section
+        className="problem-layout code2day-layout"
+        style={{ gridTemplateColumns: sidebarHidden ? "1fr 380px" : "280px 1fr 380px" }}
+      >
         {/* LEFT: problem list sidebar */}
+        {!sidebarHidden && (
         <aside className="surface-card problem-sidebar judge-sidebar">
           <div className="section-head">
-            <h3>Contest Problems</h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <h3>Contest Problems</h3>
+              <button
+                type="button"
+                className="ghost-button dense-action"
+                title="Hide the problem list to give the code editor more room"
+                onClick={() => setSidebarHidden(true)}
+                style={{ padding: '4px 8px' }}
+              >
+                <PanelLeftClose size={16} />
+              </button>
+            </div>
             <span>{problems.length} problems</span>
           </div>
 
@@ -1036,9 +1052,21 @@ function ContestWorkspacePage({ contestId, onBack }) {
                 </div>
               </div>
         </aside>
+        )}
 
         {/* CENTER: editor */}
         <section className="center-column judge-center">
+          {sidebarHidden && (
+            <button
+              type="button"
+              className="ghost-button dense-action"
+              title="Show the problem list"
+              onClick={() => setSidebarHidden(false)}
+              style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <PanelLeftOpen size={16} /> Contest Problems
+            </button>
+          )}
           {selectedProblem ? (
             <article className="surface-card editor-main-card judge-editor">
               <div className="editor-topbar">
@@ -1253,10 +1281,24 @@ function ContestWorkspacePage({ contestId, onBack }) {
                       {selectedProblemDetails.explanation ? (
                         <div className="info-box">
                           <h4>Explanation</h4>
-                          <p className="body-copy formatted-explanation">{selectedProblemDetails.explanation}</p>
+                          <div className="problem-description">
+                            {selectedProblemDetails.explanation.split('\\n').map((line, i) => (
+                              <p key={i} className="desc-paragraph">{line}</p>
+                            ))}
+                          </div>
                         </div>
                       ) : (
                         <p className="body-copy">No explanation available for this problem yet.</p>
+                      )}
+                      {selectedProblemDetails.hints && selectedProblemDetails.hints.length > 0 && (
+                        <div className="info-box" style={{ marginTop: 16 }}>
+                          <h4>Hints</h4>
+                          <ol className="desc-numbered">
+                            {selectedProblemDetails.hints.map((hint, idx) => (
+                              <li key={idx}>{hint}</li>
+                            ))}
+                          </ol>
+                        </div>
                       )}
                     </>
                   )}

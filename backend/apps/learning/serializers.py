@@ -110,6 +110,7 @@ class ProblemDetailSerializer(ProblemSerializer):
             "examples",
             "explanation",
             "editorial",
+            "hints",
             "last_solutions",
             "starter_code",
         )

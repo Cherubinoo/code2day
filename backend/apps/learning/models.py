@@ -647,6 +647,7 @@ class ProblemMetadataGenerationRun(models.Model):
     processed_count = models.IntegerField(default=0)
     schema_generated_count = models.IntegerField(default=0)
     explanation_generated_count = models.IntegerField(default=0)
+    hints_generated_count = models.IntegerField(default=0)
     failed_count = models.IntegerField(default=0)
     stop_requested = models.BooleanField(default=False)
     last_error = models.TextField(blank=True, default="")

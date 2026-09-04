@@ -113,16 +113,16 @@ function TopicMetadataPanel({ topic, onProgress }) {
     <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--bg-1)' }}>
       <div style={{ fontSize: 12, color: 'var(--text-soft)', marginBottom: 8 }}>
         {isRunning
-          ? `Generating ${status.processed}/${status.total} — ${status.schema_generated} schema(s), ${status.explanation_generated} explanation(s)${status.failed ? `, ${status.failed} failed` : ''}${status.worker_count > 1 ? ` (across ${status.worker_count} providers)` : ''}`
+          ? `Generating ${status.processed}/${status.total} — ${status.schema_generated} schema(s), ${status.explanation_generated} explanation(s), ${status.hints_generated} hint set(s)${status.failed ? `, ${status.failed} failed` : ''}${status.worker_count > 1 ? ` (across ${status.worker_count} providers)` : ''}`
           : isCompleted
           ? status.missing_metadata === 0
             ? 'Nothing missing in this topic.'
-            : `Done — ${status.schema_generated} schema(s), ${status.explanation_generated} explanation(s) generated${status.failed ? ` (${status.failed} failed)` : ''}`
+            : `Done — ${status.schema_generated} schema(s), ${status.explanation_generated} explanation(s), ${status.hints_generated} hint set(s) generated${status.failed ? ` (${status.failed} failed)` : ''}`
           : isStalled
           ? `Stalled at ${status.processed}/${status.total} — click Resume`
           : canResume
           ? `Paused at ${status.processed}/${status.total}`
-          : `${status.missing_metadata} problem(s) missing schema or explanation.`}
+          : `${status.missing_metadata} problem(s) missing schema, explanation, or hints.`}
       </div>
       {(isRunning || canResume) && (
         <div style={{ height: 6, background: 'var(--bg-2)', borderRadius: 6, overflow: 'hidden', marginBottom: 8 }}>
@@ -676,9 +676,10 @@ const ProblemBankView = ({ onBack }) => {
       const tcCount = data.processed.filter((p) => p.test_cases_generated).length;
       const schemaCount = data.processed.filter((p) => p.schema_generated).length;
       const expCount = data.processed.filter((p) => p.explanation_generated).length;
-      const errorCount = data.processed.filter((p) => p.test_cases_error || p.schema_error || p.explanation_error).length;
+      const hintsCount = data.processed.filter((p) => p.hints_generated).length;
+      const errorCount = data.processed.filter((p) => p.test_cases_error || p.schema_error || p.explanation_error || p.hints_error).length;
 
-      let msg = `Processed ${data.processed.length} problem(s): ${tcCount} test case set(s), ${schemaCount} schema(s), ${expCount} explanation(s) generated.`;
+      let msg = `Processed ${data.processed.length} problem(s): ${tcCount} test case set(s), ${schemaCount} schema(s), ${expCount} explanation(s), ${hintsCount} hint set(s) generated.`;
       if (errorCount) msg += ` ${errorCount} error(s) — see details.`;
       if (data.remaining_problems > 0) msg += ` ${data.remaining_problems} problem(s) still missing something — click again to continue.`;
       else msg += ' Nothing left missing across the whole bank!';

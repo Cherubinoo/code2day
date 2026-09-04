@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 
@@ -438,6 +439,7 @@ function WorkspaceView({
   activePage,
 }) {
   const [showAllBatches, setShowAllBatches] = useState(false);
+  const [sidebarHidden, setSidebarHidden] = useState(false);
   const editorLanguages = ALL_CODE_LANGUAGES;
 
   useEffect(() => {
@@ -539,13 +541,25 @@ function WorkspaceView({
       <section
         className="problem-layout code2day-layout"
         style={{
-          gridTemplateColumns: "280px 1fr",
+          gridTemplateColumns: sidebarHidden ? "1fr" : "280px 1fr",
         }}
       >
         {/* LEFT: problem list sidebar */}
+        {!sidebarHidden && (
         <aside className="surface-card problem-sidebar judge-sidebar">
           <div className="section-head">
-            <h3>Problemset</h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <h3>Problemset</h3>
+              <button
+                type="button"
+                className="ghost-button dense-action"
+                title="Hide the question bank to give the code editor more room"
+                onClick={() => setSidebarHidden(true)}
+                style={{ padding: '4px 8px' }}
+              >
+                <PanelLeftClose size={16} />
+              </button>
+            </div>
             <span>{selectedDifficulty} | {selectedTag}</span>
           </div>
 
@@ -665,9 +679,22 @@ function WorkspaceView({
                 ))}
               </div>
         </aside>
+        )}
 
       {/* RIGHT: vertical stack — question top, editor+console bottom */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+
+          {sidebarHidden && (
+            <button
+              type="button"
+              className="ghost-button dense-action"
+              title="Show the question bank"
+              onClick={() => setSidebarHidden(false)}
+              style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6 }}
+            >
+              <PanelLeftOpen size={16} /> Question Bank
+            </button>
+          )}
 
           {/* TOP: Problem Statement */}
           <section className="right-column judge-right" style={{ minHeight: 0 }}>
@@ -766,20 +793,20 @@ function WorkspaceView({
                         {selectedProblem.explanation && (
                           <div className="info-box" style={{ background: 'none', padding: 0, border: 'none' }}>
                             <h4 style={{ color: '#38bdf8', marginBottom: 10 }}>💡 Detailed Explanation &amp; Walkthrough</h4>
-                            <div style={{
-                              fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                              fontSize: "13px",
-                              lineHeight: "1.6",
-                              whiteSpace: "pre-wrap",
-                              wordBreak: "break-word",
-                              color: "#cbd5e1",
-                              background: "#0f172a",
-                              padding: "16px",
-                              borderRadius: "8px",
-                              border: "1px solid #1e293b"
-                            }}>
-                              {selectedProblem.explanation}
+                            <div className="problem-description">
+                              {renderDescription(selectedProblem.explanation)}
                             </div>
+                          </div>
+                        )}
+
+                        {selectedProblem.hints && selectedProblem.hints.length > 0 && (
+                          <div className="info-box" style={{ marginTop: 20 }}>
+                            <h4 style={{ color: '#facc15', marginBottom: 12 }}>🔑 Hints</h4>
+                            <ol className="desc-numbered">
+                              {selectedProblem.hints.map((hint, idx) => (
+                                <li key={idx} dangerouslySetInnerHTML={{ __html: renderInline(hint) }} />
+                              ))}
+                            </ol>
                           </div>
                         )}
 
