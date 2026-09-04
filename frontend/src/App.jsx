@@ -1126,8 +1126,11 @@ function App() {
     try {
       const result = await executeCurrentCode(false);
       if (result.status !== "Unsupported Language") {
-        // Skip global progress update for daily problems and contests
-        if (!selectedProblem?.is_daily && sessionMode !== "contest") {
+        // Daily problems are just regular Problems (is_daily is only a
+        // display flag), so they persist progress the normal way and count
+        // toward score/streak like anything else — only real contest
+        // submissions (tracked separately via ContestSubmission) skip this.
+        if (sessionMode !== "contest") {
           const isSaved = await persistProblemProgress("open");
           if (!isSaved && stillCurrent()) {
             setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
@@ -1160,19 +1163,20 @@ function App() {
       const result = await executeCurrentCode(true);
       if (result.status === "Accepted") {
         if (stillCurrent()) setShowSuccessAnimation(true);
-        // Skip global progress update for daily problems and contests
-        if (!selectedProblem?.is_daily && sessionMode !== "contest") {
+        // Daily problems are just regular Problems (is_daily is only a
+        // display flag), so they persist progress the normal way and count
+        // toward score/streak like anything else — only real contest
+        // submissions (tracked separately via ContestSubmission) skip this.
+        if (sessionMode !== "contest") {
           const isSaved = await persistProblemProgress("completed");
           if (!isSaved && stillCurrent()) {
             setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);
           }
         } else if (stillCurrent()) {
-          const context = selectedProblem?.is_daily ? "Daily Problem" : "Contest";
-          setOutputLog((current) => `${current}\n\n[${context}] Solution accepted! Progress for ${context.toLowerCase()}s is tracked separately.`);
+          setOutputLog((current) => `${current}\n\n[Contest] Solution accepted! Progress for contests is tracked separately.`);
         }
       } else if (result.status !== "Unsupported Language") {
-        // Skip global progress update for daily problems and contests
-        if (!selectedProblem?.is_daily && sessionMode !== "contest") {
+        if (sessionMode !== "contest") {
           const isSaved = await persistProblemProgress("open");
           if (!isSaved && stillCurrent()) {
             setOutputLog((current) => `${current}\n\nProgress save failed in the database.`);

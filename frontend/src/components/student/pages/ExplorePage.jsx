@@ -163,7 +163,7 @@ function ExplorePage({
                 onClick={() => {
                   setSelectedConcept("All Concepts");
                   setSelectedDifficulty(dashboard.dailyProblem.difficulty);
-                  setSelectedProblemSlug("");
+                  setSelectedProblemSlug(dashboard.dailyProblem.slug);
                   if (dashboard.dailyProblem.preferredLanguage) {
                     setSelectedLanguage(dashboard.dailyProblem.preferredLanguage);
                   }
