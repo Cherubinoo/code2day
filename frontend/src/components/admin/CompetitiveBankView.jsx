@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Swords, Plus, Trash2, Upload, ChevronDown, ChevronRight, Loader2, Link2, X, PlayCircle, BookOpen, Code2, Pencil, Check, FileText, File as FileIcon, Folder } from 'lucide-react';
 import { getYoutubeEmbedUrl, getMediaKind } from '../../lib/appUtils';
 import api from '../../lib/api';
+import MediaViewerModal from '../common/MediaViewerModal';
 
 function apiErrorMessage(err, fallback) {
   return err?.response?.data?.error || err?.message || fallback;
@@ -309,10 +310,15 @@ function mediaKindIcon(kind) {
 function FolderMediaManager({ folderId }) {
   const queryClient = useQueryClient();
   const mediaQueryKey = ['competitive-folder-media', folderId];
+  const [pendingFile, setPendingFile] = useState(null);
+  const [pendingName, setPendingName] = useState('');
+  const [pendingDescription, setPendingDescription] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+  const [viewerMedia, setViewerMedia] = useState(null);
 
   const { data: media } = useQuery({
     queryKey: mediaQueryKey,
@@ -323,17 +329,34 @@ function FolderMediaManager({ folderId }) {
     queryClient.setQueryData(mediaQueryKey, (prev) => updater(prev || []));
   }
 
-  const handleUpload = async (e) => {
+  const selectFile = (e) => {
     const file = e.target.files?.[0];
-    e.target.value = ''; // let the same file be picked again if the upload fails
+    e.target.value = '';
     if (!file) return;
+    setError('');
+    setPendingFile(file);
+    setPendingName(file.name.replace(/\.[^/.]+$/, ''));
+    setPendingDescription('');
+  };
+
+  const cancelPendingUpload = () => {
+    setPendingFile(null);
+    setPendingName('');
+    setPendingDescription('');
+  };
+
+  const confirmUpload = async () => {
+    if (!pendingFile) return;
     setUploading(true);
     setError('');
     try {
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', pendingFile);
+      formData.append('title', pendingName.trim());
+      formData.append('description', pendingDescription.trim());
       const res = await api.post(`/admin/v2/examinations/folders/${folderId}/media/`, formData);
       setMediaCache((prev) => [...prev, res.data]);
+      cancelPendingUpload();
     } catch (err) {
       setError(apiErrorMessage(err, 'Upload failed.'));
     } finally {
@@ -352,12 +375,15 @@ function FolderMediaManager({ folderId }) {
   const startEditMedia = (m) => {
     setEditingId(m.id);
     setEditTitle(m.title);
+    setEditDescription(m.description || '');
   };
 
-  const saveMediaTitle = async (id) => {
+  const saveMediaEdit = async (id) => {
     if (!editTitle.trim()) return;
     try {
-      const res = await api.patch(`/admin/v2/examinations/folders/media/${id}/`, { title: editTitle.trim() });
+      const res = await api.patch(`/admin/v2/examinations/folders/media/${id}/`, {
+        title: editTitle.trim(), description: editDescription.trim(),
+      });
       setMediaCache((prev) => prev.map((m) => (m.id === id ? res.data : m)));
       setEditingId(null);
     } catch (err) {
@@ -371,12 +397,27 @@ function FolderMediaManager({ folderId }) {
         <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase' }}>
           Media {media ? `(${media.length})` : ''}
         </label>
-        <label style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: uploading ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          {uploading ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
-          {uploading ? 'Uploading…' : 'Upload File'}
-          <input type="file" onChange={handleUpload} disabled={uploading} accept="image/*,video/*,application/pdf" style={{ display: 'none' }} />
+        <label style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <Upload size={13} />
+          Upload File
+          <input type="file" onChange={selectFile} accept="image/*,video/*,application/pdf" style={{ display: 'none' }} />
         </label>
       </div>
+
+      {pendingFile && (
+        <div style={{ background: 'var(--bg-2)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-soft)' }}>Selected: {pendingFile.name}</div>
+          <input placeholder="Name" value={pendingName} onChange={(e) => setPendingName(e.target.value)} style={{ padding: 7, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.82rem' }} />
+          <textarea placeholder="Description (optional)" value={pendingDescription} onChange={(e) => setPendingDescription(e.target.value)} rows={2} style={{ padding: 7, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.82rem', fontFamily: 'inherit', resize: 'vertical' }} />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={confirmUpload} disabled={uploading || !pendingName.trim()} className="primary-button" style={{ borderRadius: 8, padding: '7px 14px', fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {uploading ? <Loader2 size={13} className="spin" /> : <Upload size={13} />} {uploading ? 'Uploading…' : 'Upload'}
+            </button>
+            <button onClick={cancelPendingUpload} disabled={uploading} style={{ padding: '7px 14px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', cursor: 'pointer', fontSize: '0.78rem' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       {error && <div style={{ fontSize: '0.75rem', color: '#dc2626', marginBottom: 8 }}>{error}</div>}
       {media === undefined ? (
         <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)' }}>Loading…</div>
@@ -396,13 +437,13 @@ function FolderMediaManager({ folderId }) {
               {editingId !== m.id && (
                 <button
                   onClick={() => startEditMedia(m)}
-                  title="Rename"
+                  title="Rename / describe"
                   style={{ position: 'absolute', top: -6, left: -6, width: 20, height: 20, borderRadius: '50%', border: 'none', background: 'var(--olive-700)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}
                 >
                   <Pencil size={10} />
                 </button>
               )}
-              <a href={m.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', textDecoration: 'none' }}>
+              <div onClick={() => setViewerMedia(m)} style={{ display: 'block', cursor: 'pointer' }}>
                 {m.kind === 'image' ? (
                   <img src={m.url} alt={m.title} style={{ width: 84, height: 84, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border-soft)' }} />
                 ) : (
@@ -410,25 +451,33 @@ function FolderMediaManager({ folderId }) {
                     {mediaKindIcon(m.kind)}
                   </div>
                 )}
-              </a>
+              </div>
               {editingId === m.id ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginTop: 3 }} onClick={(e) => e.stopPropagation()}>
                   <input
                     autoFocus
                     value={editTitle}
                     onChange={(e) => setEditTitle(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') saveMediaTitle(m.id); if (e.key === 'Escape') setEditingId(null); }}
+                    onKeyDown={(e) => { if (e.key === 'Escape') setEditingId(null); }}
+                    placeholder="Name"
                     style={{ width: '100%', padding: '2px 4px', borderRadius: 4, border: '1px solid var(--border-soft)', fontSize: '0.65rem' }}
                   />
+                  <textarea
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                    placeholder="Description"
+                    rows={2}
+                    style={{ width: '100%', padding: '2px 4px', borderRadius: 4, border: '1px solid var(--border-soft)', fontSize: '0.65rem', fontFamily: 'inherit', resize: 'vertical' }}
+                  />
                   <div style={{ display: 'flex', gap: 3 }}>
-                    <button onClick={() => saveMediaTitle(m.id)} style={{ flex: 1, padding: '2px 0', borderRadius: 4, border: 'none', background: 'var(--olive-700)', color: 'white', fontSize: '0.6rem', cursor: 'pointer' }}>Save</button>
+                    <button onClick={() => saveMediaEdit(m.id)} style={{ flex: 1, padding: '2px 0', borderRadius: 4, border: 'none', background: 'var(--olive-700)', color: 'white', fontSize: '0.6rem', cursor: 'pointer' }}>Save</button>
                     <button onClick={() => setEditingId(null)} style={{ flex: 1, padding: '2px 0', borderRadius: 4, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.6rem', cursor: 'pointer' }}>×</button>
                   </div>
                 </div>
               ) : (
                 <div
                   onClick={() => startEditMedia(m)}
-                  title={`${m.title} (click to rename)`}
+                  title={`${m.title} (click to rename/describe)`}
                   style={{ fontSize: '0.68rem', color: 'var(--text-soft)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
                 >
                   {m.title}
@@ -438,6 +487,8 @@ function FolderMediaManager({ folderId }) {
           ))}
         </div>
       )}
+
+      {viewerMedia && <MediaViewerModal media={viewerMedia} onClose={() => setViewerMedia(null)} />}
     </div>
   );
 }

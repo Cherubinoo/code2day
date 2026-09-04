@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Mic, ChevronLeft, ChevronDown, ChevronRight, Loader2, Folder, FileText, Link2 } from "lucide-react";
+import MediaViewerModal from "../../common/MediaViewerModal";
 
 const QUESTION_TYPE_LABELS = {
   conceptual: "Conceptual", technical: "Technical", scenario: "Scenario-Based", tool: "Tool-Based",
@@ -16,11 +17,12 @@ function topicTotalQuestions(topic) {
 }
 
 function FolderMediaGrid({ media }) {
+  const [viewerMedia, setViewerMedia] = useState(null);
   if (!media || media.length === 0) return null;
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
       {media.map((m) => (
-        <a key={m.id} href={m.url} target="_blank" rel="noopener noreferrer" style={{ display: "block", textDecoration: "none" }}>
+        <div key={m.id} onClick={() => setViewerMedia(m)} style={{ display: "block", cursor: "pointer" }}>
           {m.kind === "image" ? (
             <img src={m.url} alt={m.title} style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 10, border: "1px solid var(--border-soft)" }} />
           ) : m.kind === "video" ? (
@@ -31,8 +33,9 @@ function FolderMediaGrid({ media }) {
               <span style={{ fontSize: "0.68rem", color: "var(--text-soft)", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 104 }}>{m.title}</span>
             </div>
           )}
-        </a>
+        </div>
       ))}
+      {viewerMedia && <MediaViewerModal media={viewerMedia} onClose={() => setViewerMedia(null)} />}
     </div>
   );
 }

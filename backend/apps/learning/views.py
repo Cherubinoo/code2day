@@ -2882,6 +2882,7 @@ def _serialize_folder_media(m):
     return {
         "id": m.id,
         "title": m.title or m.file.name.rsplit('/', 1)[-1],
+        "description": m.description,
         "url": f"/api/syllabus-media/{m.id}/",
         "content_type": m.content_type,
         "kind": _media_kind(m.content_type),
@@ -3760,6 +3761,7 @@ class AdminSyllabusFolderMediaView(APIView):
             folder=folder,
             file=uploaded,
             title=(request.data.get('title') or '').strip(),
+            description=(request.data.get('description') or '').strip(),
             content_type=uploaded.content_type,
             order=folder.media_items.count(),
         )
@@ -3775,12 +3777,18 @@ class AdminSyllabusFolderMediaDetailView(APIView):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         media = get_object_or_404(SyllabusFolderMedia, id=media_id)
+        update_fields = []
         if 'title' in request.data:
             title = (request.data.get('title') or '').strip()
             if not title:
                 return Response({"error": "title cannot be empty."}, status=400)
             media.title = title
-            media.save(update_fields=['title'])
+            update_fields.append('title')
+        if 'description' in request.data:
+            media.description = (request.data.get('description') or '').strip()
+            update_fields.append('description')
+        if update_fields:
+            media.save(update_fields=update_fields)
         return Response(_serialize_folder_media(media))
 
     def delete(self, request, media_id):
@@ -3827,6 +3835,7 @@ def _serialize_interview_folder_media(m):
     return {
         "id": m.id,
         "title": m.title or m.file.name.rsplit('/', 1)[-1],
+        "description": m.description,
         "url": f"/api/interview-media/{m.id}/",
         "content_type": m.content_type,
         "kind": _media_kind(m.content_type),
@@ -4074,6 +4083,7 @@ class AdminInterviewFolderMediaView(APIView):
             folder=folder,
             file=uploaded,
             title=(request.data.get('title') or '').strip(),
+            description=(request.data.get('description') or '').strip(),
             content_type=uploaded.content_type,
             order=folder.media_items.count(),
         )
@@ -4089,12 +4099,18 @@ class AdminInterviewFolderMediaDetailView(APIView):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         media = get_object_or_404(InterviewFolderMedia, id=media_id)
+        update_fields = []
         if 'title' in request.data:
             title = (request.data.get('title') or '').strip()
             if not title:
                 return Response({"error": "title cannot be empty."}, status=400)
             media.title = title
-            media.save(update_fields=['title'])
+            update_fields.append('title')
+        if 'description' in request.data:
+            media.description = (request.data.get('description') or '').strip()
+            update_fields.append('description')
+        if update_fields:
+            media.save(update_fields=update_fields)
         return Response(_serialize_interview_folder_media(media))
 
     def delete(self, request, media_id):
