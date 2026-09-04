@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Swords, Plus, Trash2, Upload, ChevronDown, ChevronRight, Loader2, Link2, X, PlayCircle, BookOpen, Code2, Pencil, Check } from 'lucide-react';
+import { ArrowLeft, Swords, Plus, Trash2, Upload, ChevronDown, ChevronRight, Loader2, Link2, X, PlayCircle, BookOpen, Code2, Pencil, Check, FileText, File as FileIcon, Folder } from 'lucide-react';
 import { getCsrfToken, getYoutubeEmbedUrl } from '../../lib/appUtils';
 
 function apiFetch(url, method, body) {
@@ -45,9 +45,10 @@ function resourceLabel(item) {
 
 const BLANK_QUESTION = { question_text: '', option_a: '', option_b: '', option_c: '', option_d: '', correct_option: 'A', explanation: '', question_image: '', video_url: '' };
 
-// ── MCQ question bank for one subtopic — authored directly here, or
-// imported (copied) from an existing Aptitude topic's questions. ──────────
-function QuestionsManager({ subtopicId }) {
+// ── MCQ question bank for one subtopic (or one folder within it, when
+// folderId is given) — authored directly here, or imported (copied) from
+// an existing Aptitude topic's questions. ──────────────────────────────────
+function QuestionsManager({ subtopicId, folderId }) {
   const [questions, setQuestions] = useState(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [newQ, setNewQ] = useState(BLANK_QUESTION);
@@ -60,10 +61,12 @@ function QuestionsManager({ subtopicId }) {
   const [selectedImportIds, setSelectedImportIds] = useState([]);
   const [importing, setImporting] = useState(false);
 
-  useEffect(() => { fetchQuestions(); }, [subtopicId]);
+  const questionsUrl = `/api/admin/v2/examinations/subtopics/${subtopicId}/questions/${folderId ? `?folder_id=${folderId}` : ''}`;
+
+  useEffect(() => { fetchQuestions(); }, [subtopicId, folderId]);
 
   const fetchQuestions = async () => {
-    const res = await fetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/questions/`, { credentials: 'include' });
+    const res = await fetch(questionsUrl, { credentials: 'include' });
     if (res.ok) setQuestions(await res.json());
   };
 
@@ -77,7 +80,7 @@ function QuestionsManager({ subtopicId }) {
     if (!newQ.question_text.trim() || !newQ.option_a.trim() || !newQ.option_b.trim() || !newQ.option_c.trim() || !newQ.option_d.trim()) return;
     setSaving(true);
     try {
-      const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/questions/`, 'POST', newQ);
+      const res = await apiFetch(questionsUrl, 'POST', folderId ? { ...newQ, folder_id: folderId } : newQ);
       if (res.ok) {
         const q = await res.json();
         setQuestions((prev) => [...(prev || []), q]);
@@ -135,6 +138,7 @@ function QuestionsManager({ subtopicId }) {
     try {
       const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/questions/import/`, 'POST', {
         aptitude_question_ids: selectedImportIds,
+        ...(folderId ? { folder_id: folderId } : {}),
       });
       if (res.ok) {
         const body = await res.json();
@@ -251,6 +255,259 @@ function QuestionsManager({ subtopicId }) {
               </div>
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function mediaKindIcon(kind) {
+  if (kind === 'image') return null; // rendered as an actual thumbnail instead
+  if (kind === 'video') return <PlayCircle size={16} style={{ color: '#dc2626' }} />;
+  if (kind === 'pdf') return <FileText size={16} style={{ color: '#0891b2' }} />;
+  return <FileIcon size={16} style={{ color: 'var(--text-soft)' }} />;
+}
+
+// ── Real uploaded media (images/PDFs/videos) for one folder — distinct
+// from the link/Aptitude-topic/Problem "paste a URL" resources every other
+// syllabus level carries. ───────────────────────────────────────────────────
+function FolderMediaManager({ folderId }) {
+  const [media, setMedia] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => { fetchMedia(); }, [folderId]);
+
+  const fetchMedia = async () => {
+    const res = await fetch(`/api/admin/v2/examinations/folders/${folderId}/media/`, { credentials: 'include' });
+    if (res.ok) setMedia(await res.json());
+  };
+
+  const handleUpload = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // let the same file be picked again if the upload fails
+    if (!file) return;
+    setUploading(true);
+    setError('');
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await apiFetchForm(`/api/admin/v2/examinations/folders/${folderId}/media/`, formData);
+      if (res.ok) {
+        const item = await res.json();
+        setMedia((prev) => [...(prev || []), item]);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error || 'Upload failed.');
+      }
+    } catch {
+      setError('Network error during upload.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeMedia = async (id) => {
+    if (!window.confirm('Delete this file?')) return;
+    const res = await apiFetch(`/api/admin/v2/examinations/folders/media/${id}/`, 'DELETE');
+    if (res.ok) setMedia((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase' }}>
+          Media {media ? `(${media.length})` : ''}
+        </label>
+        <label style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: uploading ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          {uploading ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
+          {uploading ? 'Uploading…' : 'Upload File'}
+          <input type="file" onChange={handleUpload} disabled={uploading} accept="image/*,video/*,application/pdf" style={{ display: 'none' }} />
+        </label>
+      </div>
+      {error && <div style={{ fontSize: '0.75rem', color: '#dc2626', marginBottom: 8 }}>{error}</div>}
+      {media === null ? (
+        <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)' }}>Loading…</div>
+      ) : media.length === 0 ? (
+        <div style={{ fontSize: '0.8rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No media uploaded yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {media.map((m) => (
+            <div key={m.id} style={{ position: 'relative', width: 84 }}>
+              <button
+                onClick={() => removeMedia(m.id)}
+                title="Delete"
+                style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%', border: 'none', background: '#ef4444', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}
+              >
+                <X size={12} />
+              </button>
+              <a href={m.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', textDecoration: 'none' }}>
+                {m.kind === 'image' ? (
+                  <img src={m.url} alt={m.title} style={{ width: 84, height: 84, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border-soft)' }} />
+                ) : (
+                  <div style={{ width: 84, height: 84, borderRadius: 8, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {mediaKindIcon(m.kind)}
+                  </div>
+                )}
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-soft)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.title}>
+                  {m.title}
+                </div>
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Named sub-folders inside one subtopic — each groups its own questions
+// (via QuestionsManager with folderId) and uploaded media (via
+// FolderMediaManager), e.g. splitting "Time and Work" into "Basic" /
+// "Advanced" / "Formula Sheet" instead of one flat question list. ─────────
+function FoldersManager({ subtopicId }) {
+  const [folders, setFolders] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newDescription, setNewDescription] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDescription, setEditDescription] = useState('');
+
+  useEffect(() => { fetchFolders(); }, [subtopicId]);
+
+  const fetchFolders = async () => {
+    const res = await fetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/folders/`, { credentials: 'include' });
+    if (res.ok) setFolders(await res.json());
+  };
+
+  const addFolder = async () => {
+    if (!newTitle.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      const res = await apiFetch(`/api/admin/v2/examinations/subtopics/${subtopicId}/folders/`, 'POST', {
+        title: newTitle.trim(), description: newDescription.trim(),
+      });
+      if (res.ok) {
+        const folder = await res.json();
+        setFolders((prev) => [...(prev || []), folder]);
+        setNewTitle('');
+        setNewDescription('');
+        setShowAddForm(false);
+      } else {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error || 'Failed to create folder.');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startEdit = (folder) => {
+    setEditingId(folder.id);
+    setEditTitle(folder.title);
+    setEditDescription(folder.description || '');
+  };
+
+  const saveEdit = async (folderId) => {
+    if (!editTitle.trim()) return;
+    const res = await apiFetch(`/api/admin/v2/examinations/folders/${folderId}/`, 'PATCH', {
+      title: editTitle.trim(), description: editDescription.trim(),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setFolders((prev) => prev.map((f) => (f.id === folderId ? { ...f, ...updated } : f)));
+      setEditingId(null);
+    } else {
+      const body = await res.json().catch(() => ({}));
+      alert(body.error || 'Failed to update folder.');
+    }
+  };
+
+  const removeFolder = async (folderId) => {
+    if (!window.confirm('Delete this folder? Its questions and media are deleted too — this cannot be undone.')) return;
+    const res = await apiFetch(`/api/admin/v2/examinations/folders/${folderId}/`, 'DELETE');
+    if (res.ok) {
+      setFolders((prev) => prev.filter((f) => f.id !== folderId));
+      if (expandedId === folderId) setExpandedId(null);
+    }
+  };
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border-soft)', paddingTop: 16, marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <label style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase' }}>
+          Folders {folders ? `(${folders.length})` : ''}
+        </label>
+        <button onClick={() => setShowAddForm((v) => !v)} style={{ padding: '5px 10px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>
+          + Add Folder
+        </button>
+      </div>
+
+      {showAddForm && (
+        <div style={{ background: 'var(--bg-2)', borderRadius: 12, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+          <input placeholder="Folder name (e.g. Basic, Advanced, Formula Sheet)" value={newTitle} onChange={(e) => setNewTitle(e.target.value)} style={{ padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.82rem' }} />
+          <textarea placeholder="Description (optional)" value={newDescription} onChange={(e) => setNewDescription(e.target.value)} rows={2} style={{ padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.82rem', fontFamily: 'inherit', resize: 'vertical' }} />
+          {error && <div style={{ fontSize: '0.75rem', color: '#dc2626' }}>{error}</div>}
+          <button onClick={addFolder} disabled={saving || !newTitle.trim()} className="primary-button" style={{ borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem', alignSelf: 'flex-start' }}>
+            {saving ? 'Creating…' : 'Create Folder'}
+          </button>
+        </div>
+      )}
+
+      {folders === null ? (
+        <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)' }}>Loading…</div>
+      ) : folders.length === 0 && !showAddForm ? (
+        <div style={{ fontSize: '0.85rem', color: 'var(--text-soft)', fontStyle: 'italic' }}>No folders yet — questions/media can still be added directly below.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {folders.map((folder) => (
+            <div key={folder.id} style={{ background: 'var(--bg-2)', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px' }}>
+                <button
+                  onClick={() => setExpandedId(expandedId === folder.id ? null : folder.id)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-soft)', display: 'flex', padding: 0 }}
+                >
+                  {expandedId === folder.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                </button>
+                {editingId === folder.id ? (
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }} onClick={(e) => e.stopPropagation()}>
+                    <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} style={{ padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: '0.82rem' }} />
+                    <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} rows={2} placeholder="Description" style={{ padding: 6, borderRadius: 6, border: '1px solid var(--border-soft)', fontSize: '0.8rem', fontFamily: 'inherit', resize: 'vertical' }} />
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={() => saveEdit(folder.id)} style={{ padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--olive-700)', color: 'white', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer' }}>Save</button>
+                      <button onClick={() => setEditingId(null)} style={{ padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.75rem', cursor: 'pointer' }}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ flex: 1, cursor: 'pointer' }} onClick={() => setExpandedId(expandedId === folder.id ? null : folder.id)}>
+                      <div style={{ fontSize: '0.85rem', fontWeight: 800, color: 'var(--olive-900)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Folder size={14} style={{ color: '#d97706' }} /> {folder.title}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-soft)' }}>
+                        {folder.question_count} question{folder.question_count !== 1 ? 's' : ''} · {folder.media.length} media file{folder.media.length !== 1 ? 's' : ''}
+                      </div>
+                    </div>
+                    <button onClick={() => startEdit(folder)} title="Rename / edit" style={{ background: 'none', border: 'none', color: 'var(--text-soft)', cursor: 'pointer', padding: 4 }}><Pencil size={14} /></button>
+                    <button onClick={() => removeFolder(folder.id)} title="Delete folder" style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: 4 }}><Trash2 size={14} /></button>
+                  </>
+                )}
+              </div>
+              {expandedId === folder.id && (
+                <div style={{ padding: '0 12px 14px', borderTop: '1px solid white' }}>
+                  <div style={{ paddingTop: 12 }}>
+                    <FolderMediaManager folderId={folder.id} />
+                    <QuestionsManager subtopicId={subtopicId} folderId={folder.id} />
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -415,6 +672,7 @@ function ResourceEditorModal({ entity, saveUrl, showDescription, onClose, onSave
           </div>
         </div>
 
+        {showDescription && <FoldersManager subtopicId={entity.id} />}
         {showDescription && <QuestionsManager subtopicId={entity.id} />}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>

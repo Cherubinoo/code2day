@@ -954,6 +954,52 @@ class SyllabusSubtopic(models.Model):
         return f"{self.topic} / {self.title}"
 
 
+class SyllabusFolder(models.Model):
+    """A named sub-group inside one Subtopic — e.g. a "Time and Work"
+    subtopic might split into folders like "Basic", "Advanced", "Formula
+    Sheet". Each folder has its own questions (CompetitiveQuestion.folder)
+    and its own uploaded media (SyllabusFolderMedia) plus the same
+    link/Aptitude-topic/Problem resource pointers every other syllabus
+    level already carries. Optional — questions/media can still be added
+    directly under a subtopic with no folder at all (folder=None), exactly
+    as before this model existed."""
+    subtopic = models.ForeignKey(SyllabusSubtopic, on_delete=models.CASCADE, related_name="folders")
+    title = models.CharField(max_length=255)
+    order = models.PositiveIntegerField(default=0)
+    description = models.TextField(blank=True, default="")
+    resource_links = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "syllabus_folders"
+        unique_together = ("subtopic", "title")
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.subtopic} / {self.title}"
+
+
+class SyllabusFolderMedia(models.Model):
+    """One uploaded media file (image/PDF/video/etc.) attached to a
+    SyllabusFolder — actual file storage, distinct from resource_links'
+    paste-a-URL pointers. Served through a /api/ proxy (see
+    syllabus_folder_media_proxy) rather than Django's raw MEDIA_URL, same
+    reason as Institution.logo_file: production has no /media/ passthrough."""
+    folder = models.ForeignKey(SyllabusFolder, on_delete=models.CASCADE, related_name="media_items")
+    file = models.FileField(upload_to="syllabus_folder_media/")
+    title = models.CharField(max_length=255, blank=True, default="")
+    content_type = models.CharField(max_length=100, blank=True, default="")
+    order = models.PositiveIntegerField(default=0)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "syllabus_folder_media"
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.folder} / {self.title or self.file.name}"
+
+
 class CompetitiveQuestion(models.Model):
     """An MCQ practice question authored directly for one Competitive
     Practice subtopic — distinct from SyllabusSubtopic.resource_links'
@@ -965,6 +1011,12 @@ class CompetitiveQuestion(models.Model):
     OPTION_CHOICES = (("A", "A"), ("B", "B"), ("C", "C"), ("D", "D"))
 
     subtopic = models.ForeignKey(SyllabusSubtopic, on_delete=models.CASCADE, related_name="questions")
+    # Optional — a question with no folder sits directly under the
+    # subtopic (the original, still-supported shape); one with a folder is
+    # grouped under that named sub-section instead. Always kept consistent
+    # with subtopic (folder.subtopic_id == subtopic_id) by the views that
+    # create/move questions, never left to drift.
+    folder = models.ForeignKey(SyllabusFolder, on_delete=models.CASCADE, null=True, blank=True, related_name="questions")
     question_text = models.TextField()
     question_image = models.URLField(blank=True, default="")
     video_url = models.URLField(blank=True, default="", help_text="Optional YouTube/video explainer for this question")

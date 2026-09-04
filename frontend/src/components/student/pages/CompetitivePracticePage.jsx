@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Swords, ChevronLeft, ChevronDown, ChevronRight, Link2, Loader2, BookOpen, Code2, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
+import { Swords, ChevronLeft, ChevronDown, ChevronRight, Link2, Loader2, BookOpen, Code2, ExternalLink, CheckCircle2, XCircle, FileText, Folder } from "lucide-react";
 import { getYoutubeEmbedUrl, getMediaKind, buildJsonPostOptions } from "../../../lib/appUtils";
 
 const OPTION_LETTERS = ["A", "B", "C", "D"];
@@ -83,15 +83,16 @@ function QuestionCard({ question, index }) {
   );
 }
 
-function QuestionsPractice({ subtopicId }) {
+function QuestionsPractice({ subtopicId, folderId }) {
   const [questions, setQuestions] = useState(null);
 
   useEffect(() => {
-    fetch(`/api/competitive/subtopics/${subtopicId}/questions/`, { credentials: "include" })
+    const url = `/api/competitive/subtopics/${subtopicId}/questions/${folderId ? `?folder_id=${folderId}` : ""}`;
+    fetch(url, { credentials: "include" })
       .then((res) => (res.ok ? res.json() : []))
       .then(setQuestions)
       .catch(() => setQuestions([]));
-  }, [subtopicId]);
+  }, [subtopicId, folderId]);
 
   if (questions === null) {
     return <div style={{ textAlign: "center", padding: 40, color: "var(--text-soft)" }}><Loader2 size={24} className="spin" /></div>;
@@ -192,6 +193,61 @@ function ResourceCard({ item }) {
   );
 }
 
+function FolderMediaGrid({ media }) {
+  if (!media || media.length === 0) return null;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+      {media.map((m) => (
+        <a key={m.id} href={m.url} target="_blank" rel="noopener noreferrer" style={{ display: "block", textDecoration: "none" }}>
+          {m.kind === "image" ? (
+            <img src={m.url} alt={m.title} style={{ width: 120, height: 120, objectFit: "cover", borderRadius: 10, border: "1px solid var(--border-soft)" }} />
+          ) : m.kind === "video" ? (
+            <video src={m.url} style={{ width: 160, height: 120, objectFit: "cover", borderRadius: 10, border: "1px solid var(--border-soft)" }} />
+          ) : (
+            <div style={{ width: 120, height: 80, borderRadius: 10, border: "1px solid var(--border-soft)", background: "var(--bg-2)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 4, padding: 8 }}>
+              {m.kind === "pdf" ? <FileText size={22} style={{ color: "#0891b2" }} /> : <Link2 size={22} style={{ color: "var(--text-soft)" }} />}
+              <span style={{ fontSize: "0.68rem", color: "var(--text-soft)", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 104 }}>{m.title}</span>
+            </div>
+          )}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+function FolderSection({ subtopicId, folder }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="surface-card" style={{ padding: 0, overflow: "hidden" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{ width: "100%", textAlign: "left", padding: "14px 18px", background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}
+      >
+        {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+        <div style={{ flex: 1 }}>
+          <div style={{ fontWeight: 800, color: "var(--text-hard)" }}>{folder.title}</div>
+          {folder.description && <div style={{ fontSize: "0.8rem", color: "var(--text-soft)", marginTop: 2 }}>{folder.description}</div>}
+        </div>
+        {folder.question_count > 0 && (
+          <span style={{ fontSize: "0.72rem", color: "#7c3aed", fontWeight: 700 }}>{folder.question_count} question{folder.question_count > 1 ? "s" : ""}</span>
+        )}
+      </button>
+      {open && (
+        <div style={{ padding: "0 18px 18px" }}>
+          <FolderMediaGrid media={folder.media} />
+          {(folder.resource_links || []).length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+              {folder.resource_links.map((item, i) => <ResourceCard key={i} item={item} />)}
+            </div>
+          )}
+          <QuestionsPractice subtopicId={subtopicId} folderId={folder.id} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TopicLearnView({ examName, section, topic, onOpenSubtopic, onBack }) {
   return (
     <div className="page-stack problem-page">
@@ -223,6 +279,9 @@ function TopicLearnView({ examName, section, topic, onOpenSubtopic, onBack }) {
               {st.title}
               {st.question_count > 0 && (
                 <div style={{ fontSize: "0.72rem", color: "#7c3aed", fontWeight: 700, marginTop: 4 }}>{st.question_count} question{st.question_count > 1 ? "s" : ""}</div>
+              )}
+              {(st.folders || []).length > 0 && (
+                <div style={{ fontSize: "0.72rem", color: "#d97706", fontWeight: 700, marginTop: 2 }}>{st.folders.length} folder{st.folders.length > 1 ? "s" : ""}</div>
               )}
               {(st.description || (st.resource_links || []).length > 0) && (
                 <div style={{ fontSize: "0.72rem", color: "var(--text-soft)", fontWeight: 600, marginTop: 4 }}>Learn more →</div>
@@ -257,6 +316,19 @@ function SubtopicLearnView({ examName, topicTitle, subtopic, onBack }) {
       </section>
 
       <QuestionsPractice subtopicId={subtopic.id} />
+
+      {(subtopic.folders || []).length > 0 && (
+        <div>
+          <h3 style={{ margin: "0 0 12px", fontSize: "1rem", display: "flex", alignItems: "center", gap: 8 }}>
+            <Folder size={16} style={{ color: "#d97706" }} /> Folders
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {subtopic.folders.map((folder) => (
+              <FolderSection key={folder.id} subtopicId={subtopic.id} folder={folder} />
+            ))}
+          </div>
+        </div>
+      )}
 
       <div>
         <h3 style={{ margin: "0 0 12px", fontSize: "1rem" }}>Resources</h3>

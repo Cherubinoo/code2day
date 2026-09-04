@@ -80,6 +80,8 @@ from .models import (
     SyllabusTopic,
     SyllabusSubtopic,
     CompetitiveQuestion,
+    SyllabusFolder,
+    SyllabusFolderMedia,
     QuestionUsageMark,
     PasswordResetOTP,
 )
@@ -2838,12 +2840,51 @@ def _resolve_resource_display(resource_links):
     return out
 
 
+def _media_kind(content_type):
+    """Coarse category the frontend uses to pick a renderer (image tag,
+    <video>, PDF viewer link, or a generic download link) — derived from
+    the stored content_type since a folder's media can be anything, not
+    just images like the older URL-pointer resources."""
+    content_type = content_type or ""
+    if content_type.startswith("image/"):
+        return "image"
+    if content_type.startswith("video/"):
+        return "video"
+    if content_type == "application/pdf":
+        return "pdf"
+    return "file"
+
+
+def _serialize_folder_media(m):
+    return {
+        "id": m.id,
+        "title": m.title or m.file.name.rsplit('/', 1)[-1],
+        "url": f"/api/syllabus-media/{m.id}/",
+        "content_type": m.content_type,
+        "kind": _media_kind(m.content_type),
+        "order": m.order,
+    }
+
+
+def _serialize_syllabus_folder(folder):
+    return {
+        "id": folder.id,
+        "title": folder.title,
+        "description": folder.description,
+        "resource_links": _resolve_resource_display(folder.resource_links),
+        "media": [_serialize_folder_media(m) for m in folder.media_items.all()],
+        "question_count": len(folder.questions.all()),
+    }
+
+
 def _serialize_examination_syllabus(examination):
     """Full Section > Topic > Subtopic tree for one examination — shared by
     the admin management view and the student-facing browse view."""
     sections = []
     for section in examination.sections.prefetch_related(
-        'topics__subtopics__questions'
+        'topics__subtopics__questions',
+        'topics__subtopics__folders__media_items',
+        'topics__subtopics__folders__questions',
     ):
         topics = []
         for topic in section.topics.all():
@@ -2857,7 +2898,10 @@ def _serialize_examination_syllabus(examination):
                         "title": st.title,
                         "description": st.description,
                         "resource_links": _resolve_resource_display(st.resource_links),
-                        "question_count": len(st.questions.all()),
+                        # Only the unfoldered questions — folder-scoped ones are
+                        # nested under their own folder entry below, not double-counted here.
+                        "question_count": len([q for q in st.questions.all() if q.folder_id is None]),
+                        "folders": [_serialize_syllabus_folder(f) for f in st.folders.all()],
                     }
                     for st in topic.subtopics.all()
                 ],
@@ -3177,20 +3221,37 @@ def _serialize_competitive_question(q, include_answer=True):
 class AdminSubtopicQuestionListCreateView(APIView):
     """System Admin: list/create MCQ questions authored directly for one
     Competitive Practice subtopic — separate from resource_links' pointers
-    at existing Aptitude/Problem content."""
+    at existing Aptitude/Problem content. Optional ?folder_id= scopes both
+    GET and POST to one of the subtopic's folders instead of its
+    top-level (unfoldered) question list."""
     permission_classes = [IsAuthenticated]
+
+    def _resolve_folder(self, subtopic, folder_id):
+        """Returns (folder_or_None, error_response_or_None)."""
+        if not folder_id:
+            return None, None
+        folder = SyllabusFolder.objects.filter(id=folder_id, subtopic=subtopic).first()
+        if not folder:
+            return None, Response({"error": "Folder not found in this subtopic."}, status=404)
+        return folder, None
 
     def get(self, request, subtopic_id):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
-        questions = subtopic.questions.all()
+        folder, error = self._resolve_folder(subtopic, request.query_params.get('folder_id'))
+        if error:
+            return error
+        questions = folder.questions.all() if folder else subtopic.questions.filter(folder__isnull=True)
         return Response([_serialize_competitive_question(q) for q in questions])
 
     def post(self, request, subtopic_id):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
+        folder, error = self._resolve_folder(subtopic, request.data.get('folder_id'))
+        if error:
+            return error
 
         question_text = (request.data.get('question_text') or '').strip()
         option_a = (request.data.get('option_a') or '').strip()
@@ -3204,15 +3265,17 @@ class AdminSubtopicQuestionListCreateView(APIView):
         if correct_option not in ('A', 'B', 'C', 'D'):
             return Response({"error": "correct_option must be one of A, B, C, D."}, status=400)
 
+        sibling_count = folder.questions.count() if folder else subtopic.questions.filter(folder__isnull=True).count()
         q = CompetitiveQuestion.objects.create(
             subtopic=subtopic,
+            folder=folder,
             question_text=question_text,
             question_image=(request.data.get('question_image') or '').strip(),
             video_url=(request.data.get('video_url') or '').strip(),
             option_a=option_a, option_b=option_b, option_c=option_c, option_d=option_d,
             correct_option=correct_option,
             explanation=(request.data.get('explanation') or '').strip(),
-            order=subtopic.questions.count(),
+            order=sibling_count,
         )
         return Response(_serialize_competitive_question(q), status=201)
 
@@ -3257,16 +3320,24 @@ class AdminSubtopicQuestionImportView(APIView):
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
         subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
 
+        folder = None
+        folder_id = request.data.get('folder_id')
+        if folder_id:
+            folder = SyllabusFolder.objects.filter(id=folder_id, subtopic=subtopic).first()
+            if not folder:
+                return Response({"error": "Folder not found in this subtopic."}, status=404)
+
         aptitude_question_ids = request.data.get('aptitude_question_ids')
         if not isinstance(aptitude_question_ids, list) or not aptitude_question_ids:
             return Response({"error": "aptitude_question_ids must be a non-empty list."}, status=400)
 
         source_questions = AptitudeQuestion.objects.filter(id__in=aptitude_question_ids)
-        next_order = subtopic.questions.count()
+        next_order = folder.questions.count() if folder else subtopic.questions.filter(folder__isnull=True).count()
         created = []
         for i, aq in enumerate(source_questions):
             q = CompetitiveQuestion.objects.create(
                 subtopic=subtopic,
+                folder=folder,
                 question_text=aq.question_text,
                 question_image=aq.question_image or "",
                 option_a=aq.option_a, option_b=aq.option_b, option_c=aq.option_c, option_d=aq.option_d,
@@ -3282,14 +3353,159 @@ class AdminSubtopicQuestionImportView(APIView):
         }, status=201)
 
 
+class AdminSyllabusFolderListCreateView(APIView):
+    """System Admin: list/create named sub-folders inside one Competitive
+    Practice subtopic — each folder groups its own questions and media,
+    e.g. a "Time and Work" subtopic split into "Basic"/"Advanced"/"Formula
+    Sheet" folders instead of one flat question list."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, subtopic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
+        folders = subtopic.folders.prefetch_related('media_items', 'questions')
+        return Response([_serialize_syllabus_folder(f) for f in folders])
+
+    def post(self, request, subtopic_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
+        title = (request.data.get('title') or '').strip()
+        if not title:
+            return Response({"error": "title is required."}, status=400)
+        if subtopic.folders.filter(title__iexact=title).exists():
+            return Response({"error": "A folder with this name already exists in this subtopic."}, status=400)
+        folder = SyllabusFolder.objects.create(
+            subtopic=subtopic, title=title,
+            description=(request.data.get('description') or '').strip(),
+            order=subtopic.folders.count(),
+        )
+        return Response(_serialize_syllabus_folder(folder), status=201)
+
+
+class AdminSyllabusFolderDetailView(APIView):
+    """System Admin: rename/edit or delete one syllabus folder. Deleting a
+    folder cascades to its questions and uploaded media (CASCADE FKs) —
+    it does not fall back to becoming "unfoldered" content."""
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, folder_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        folder = get_object_or_404(SyllabusFolder, id=folder_id)
+
+        if 'title' in request.data:
+            title = (request.data.get('title') or '').strip()
+            if not title:
+                return Response({"error": "title cannot be empty."}, status=400)
+            if folder.subtopic.folders.exclude(id=folder.id).filter(title__iexact=title).exists():
+                return Response({"error": "A folder with this name already exists in this subtopic."}, status=400)
+            folder.title = title
+        if 'description' in request.data:
+            folder.description = (request.data.get('description') or '').strip()
+        if 'resource_links' in request.data:
+            raw_items = request.data.get('resource_links')
+            if not isinstance(raw_items, list):
+                return Response({"error": "resource_links must be a list."}, status=400)
+            folder.resource_links = _clean_resource_items(raw_items)
+        folder.save()
+        return Response(_serialize_syllabus_folder(folder))
+
+    def delete(self, request, folder_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        folder = get_object_or_404(SyllabusFolder, id=folder_id)
+        folder.delete()
+        return Response({"message": "Folder deleted"})
+
+
+class AdminSyllabusFolderMediaView(APIView):
+    """System Admin: list/upload real media files (images, PDFs, videos)
+    attached to one syllabus folder — distinct from resource_links'
+    paste-a-URL pointers, this is actual file storage served back through
+    syllabus_folder_media_proxy."""
+    permission_classes = [IsAuthenticated]
+
+    ALLOWED_CONTENT_TYPES = {
+        'image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+        'video/mp4', 'video/webm', 'video/quicktime',
+        'application/pdf',
+    }
+    MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25MB — comfortably covers a short video clip or a scanned PDF
+
+    def get(self, request, folder_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        folder = get_object_or_404(SyllabusFolder, id=folder_id)
+        return Response([_serialize_folder_media(m) for m in folder.media_items.all()])
+
+    def post(self, request, folder_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        folder = get_object_or_404(SyllabusFolder, id=folder_id)
+
+        uploaded = request.FILES.get('file')
+        if not uploaded:
+            return Response({"error": "No file provided."}, status=400)
+        if uploaded.content_type not in self.ALLOWED_CONTENT_TYPES:
+            return Response({"error": f"Unsupported file type: {uploaded.content_type}."}, status=400)
+        if uploaded.size > self.MAX_UPLOAD_BYTES:
+            return Response({"error": "File too large. Maximum size is 25MB."}, status=400)
+
+        media = SyllabusFolderMedia.objects.create(
+            folder=folder,
+            file=uploaded,
+            title=(request.data.get('title') or '').strip(),
+            content_type=uploaded.content_type,
+            order=folder.media_items.count(),
+        )
+        return Response(_serialize_folder_media(media), status=201)
+
+
+class AdminSyllabusFolderMediaDetailView(APIView):
+    """System Admin: delete one uploaded media file — also removes it from
+    disk, not just the database row."""
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, media_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+        media = get_object_or_404(SyllabusFolderMedia, id=media_id)
+        media.file.delete(save=False)
+        media.delete()
+        return Response({"message": "Media deleted"})
+
+
+def syllabus_folder_media_proxy(request, media_id):
+    """Serve one folder-media file's bytes through the /api/ proxy path —
+    same reasoning as institution_logo_proxy: production has no /media/
+    passthrough, so ImageField/FileField.url 404s there. Public/no-auth
+    like the logo proxy — this content is student-visible course material,
+    not sensitive, and the frontend renders it as a plain <img>/<video>
+    src, which can't attach auth headers anyway."""
+    media = get_object_or_404(SyllabusFolderMedia, id=media_id)
+    content_type = media.content_type or mimetypes.guess_type(media.file.name)[0] or "application/octet-stream"
+    response = FileResponse(media.file.open("rb"), content_type=content_type)
+    response["Cache-Control"] = "public, max-age=86400"
+    return response
+
+
 class CompetitiveSubtopicQuestionsView(APIView):
     """Student: practice questions for one subtopic — correct_option and
-    explanation are withheld until answered via the submit endpoint."""
+    explanation are withheld until answered via the submit endpoint.
+    Optional ?folder_id= scopes to one of the subtopic's folders instead
+    of its top-level (unfoldered) question set."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, subtopic_id):
         subtopic = get_object_or_404(SyllabusSubtopic, id=subtopic_id)
-        questions = subtopic.questions.all()
+        folder_id = request.query_params.get('folder_id')
+        if folder_id:
+            folder = get_object_or_404(SyllabusFolder, id=folder_id, subtopic=subtopic)
+            questions = folder.questions.all()
+        else:
+            questions = subtopic.questions.filter(folder__isnull=True)
         return Response([_serialize_competitive_question(q, include_answer=False) for q in questions])
 
 
