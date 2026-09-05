@@ -55,7 +55,7 @@ def _values_equal(node, a, b, *, unordered=False):
                 return False
         return a == b
 
-    if kind in ("sequence", "linked_list"):
+    if kind in ("sequence", "linked_list", "doubly_linked_list_node"):
         if a is None or b is None:
             return a == b
         if len(a) != len(b):
@@ -77,13 +77,30 @@ def _values_equal(node, a, b, *, unordered=False):
         # tree, so this is exactly the equality that matters — but trailing
         # nulls beyond the last real node are cosmetic (an implementation
         # might stop one level order earlier), so trim them before comparing.
-        ta = _trim_trailing_nulls(a or [])
-        tb = _trim_trailing_nulls(b or [])
-        if len(ta) != len(tb):
+        return _binary_tree_equal(node.element, a, b)
+
+    if kind == "bst":
+        # Same level-order shape as binary_tree, but a BST's *value* may
+        # legitimately be satisfied by any structurally-valid BST holding
+        # the same node values, not one exact shape — e.g. "Convert Sorted
+        # Array to BST" has multiple correct answers. `unordered=True` opts
+        # into that looser check; the default stays exact-shape (right for
+        # problems like "Recover BST" that mutate one specific tree).
+        if unordered:
+            return _is_valid_bst(a) and _bst_values_multiset(a) == _bst_values_multiset(b)
+        return _binary_tree_equal(node.element, a, b)
+
+    if kind == "optional":
+        if a is None or b is None:
+            return a is None and b is None
+        return _values_equal(node.element, a, b, unordered=unordered)
+
+    if kind == "random_list_node":
+        if len(a) != len(b):
             return False
         return all(
-            (x is None and y is None) or (x is not None and y is not None and _values_equal(node.element, x, y))
-            for x, y in zip(ta, tb)
+            _values_equal(node.element, va, vb) and ra == rb
+            for (va, ra), (vb, rb) in zip(a, b)
         )
 
     if kind == "graph":
@@ -94,8 +111,7 @@ def _values_equal(node, a, b, *, unordered=False):
         return edges_a == edges_b
 
     if kind == "pair":
-        na, nb = node.elements
-        return _values_equal(na, a[0], b[0]) and _values_equal(nb, a[1], b[1])
+        return all(_values_equal(elem_node, a[i], b[i]) for i, elem_node in enumerate(node.elements))
 
     if kind == "map":
         if set(a.keys()) != set(b.keys()):
@@ -106,6 +122,62 @@ def _values_equal(node, a, b, *, unordered=False):
         return all(_values_equal(ftype, a[fname], b[fname]) for fname, ftype in node.fields.items())
 
     raise ValueError(f"No comparator for type kind {kind!r} ({node.raw!r})")
+
+
+def _binary_tree_equal(element_node, a, b):
+    ta = _trim_trailing_nulls(a or [])
+    tb = _trim_trailing_nulls(b or [])
+    if len(ta) != len(tb):
+        return False
+    return all(
+        (x is None and y is None) or (x is not None and y is not None and _values_equal(element_node, x, y))
+        for x, y in zip(ta, tb)
+    )
+
+
+def _build_tree_from_level_order(level_order):
+    """level-order array (with None gaps) -> {"val","left","right"} dict
+    tree, via the same queue-based reconstruction the generated language
+    wrappers use — needed here to actually walk the tree and check the
+    BST invariant, not just compare arrays."""
+    values = list(level_order or [])
+    if not values or values[0] is None:
+        return None
+    root = {"val": values[0], "left": None, "right": None}
+    queue = [root]
+    i, qi, n = 1, 0, len(values)
+    while qi < len(queue) and i < n:
+        cur = queue[qi]
+        qi += 1
+        if i < n:
+            if values[i] is not None:
+                cur["left"] = {"val": values[i], "left": None, "right": None}
+                queue.append(cur["left"])
+            i += 1
+        if i < n:
+            if values[i] is not None:
+                cur["right"] = {"val": values[i], "left": None, "right": None}
+                queue.append(cur["right"])
+            i += 1
+    return root
+
+
+def _is_valid_bst(level_order):
+    root = _build_tree_from_level_order(level_order)
+
+    def check(tree_node, lo, hi):
+        if tree_node is None:
+            return True
+        val = tree_node["val"]
+        if not (lo < val < hi):
+            return False
+        return check(tree_node["left"], lo, val) and check(tree_node["right"], val, hi)
+
+    return check(root, float("-inf"), float("inf"))
+
+
+def _bst_values_multiset(level_order):
+    return sorted(v for v in (level_order or []) if v is not None)
 
 
 def _trim_trailing_nulls(seq):

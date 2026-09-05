@@ -29,7 +29,7 @@ _SEQUENCE_KEYWORDS = {
     "stack": "stack", "queue": "queue", "deque": "deque",
 }
 
-_TOKEN_RE = re.compile(r"\s*(<|>|,|\[\]|[A-Za-z_][A-Za-z0-9_]*)\s*")
+_TOKEN_RE = re.compile(r"\s*(<|>|,|\[\]|\[|\]|[A-Za-z_][A-Za-z0-9_]*)\s*")
 
 
 class TypeError_(Exception):
@@ -86,7 +86,18 @@ def _tokenize(type_str):
         m = _TOKEN_RE.match(type_str, pos)
         if not m or m.end() == pos:
             raise TypeError_(f"Could not tokenize type string at position {pos}: {type_str!r}")
-        tokens.append(m.group(1))
+        tok = m.group(1)
+        # "Optional[TreeNode]", "List[int]" (Python-style brackets) are
+        # accepted as pure syntax sugar for "Optional<TreeNode>"/"vector<int>"
+        # (C++-style angles) — normalized to angle tokens immediately so
+        # the rest of the parser only ever has to handle one bracket style.
+        # The combined "[]" array-suffix token is matched first by the
+        # regex above and is untouched by this normalization.
+        if tok == "[":
+            tok = "<"
+        elif tok == "]":
+            tok = ">"
+        tokens.append(tok)
         pos = m.end()
     return tokens
 
@@ -151,24 +162,80 @@ class _Parser:
             self.expect(">")
             return TypeNode("linked_list", element=inner, raw=self.raw)
 
-        if lname in ("binary_tree", "bst", "binarytree"):
+        # Bare "TreeNode"/"ListNode"/"GraphNode" — LeetCode's own naming,
+        # implicitly int-valued unless a generic argument says otherwise
+        # (so "Optional[TreeNode]" and "TreeNode<string>" both work).
+        if lname == "treenode":
+            inner = self._parse_optional_generic_arg()
+            return TypeNode("binary_tree", element=inner, name=lname, raw=self.raw)
+
+        if lname == "listnode":
+            inner = self._parse_optional_generic_arg()
+            return TypeNode("linked_list", element=inner, name=lname, raw=self.raw)
+
+        if lname == "graphnode":
+            return TypeNode("graph", raw=self.raw)
+
+        if lname in ("binary_tree", "binarytree"):
             self.expect("<")
             inner = self._parse_full()
             self.expect(">")
             return TypeNode("binary_tree", element=inner, name=lname, raw=self.raw)
 
+        if lname == "bst":
+            # A distinct kind (not just an alias for binary_tree) — same
+            # canonical level-order wire format and codegen (both are the
+            # same TreeNode shape), but comparator.py can tell them apart:
+            # a BST's expected value may legitimately be satisfied by any
+            # structurally-valid BST holding the same values, not only one
+            # exact shape, which a plain binary_tree never allows.
+            self.expect("<")
+            inner = self._parse_full()
+            self.expect(">")
+            return TypeNode("bst", element=inner, name=lname, raw=self.raw)
+
+        if lname in ("optional", "nullable"):
+            self.expect("<")
+            inner = self._parse_full()
+            self.expect(">")
+            return TypeNode("optional", element=inner, raw=self.raw)
+
+        if lname in ("randomlistnode", "random_list_node"):
+            self.expect("<")
+            inner = self._parse_full()
+            self.expect(">")
+            return TypeNode("random_list_node", element=inner, raw=self.raw)
+
+        if lname in ("doublylinkedlistnode", "doubly_linked_list_node", "doublelistnode"):
+            self.expect("<")
+            inner = self._parse_full()
+            self.expect(">")
+            return TypeNode("doubly_linked_list_node", element=inner, raw=self.raw)
+
+        if lname in ("circularlistnode", "circular_linked_list_node", "circularlinkedlistnode"):
+            self.expect("<")
+            inner = self._parse_full()
+            self.expect(">")
+            return TypeNode("circular_list_node", element=inner, raw=self.raw)
+
         if lname == "graph":
             return TypeNode("graph", raw=self.raw)
 
-        if lname == "pair":
+        if lname in ("pair", "tuple"):
+            # N-ary (N>=2) — "pair" is just the common 2-element case;
+            # "Tuple[int,int,int]" needs 3, so the adapter genuinely loops
+            # over however many `elements` are declared instead of assuming 2.
             self.expect("<")
-            first = self._parse_full()
-            self.expect(",")
-            second = self._parse_full()
+            elements = [self._parse_full()]
+            while self.peek() == ",":
+                self.advance()
+                elements.append(self._parse_full())
             self.expect(">")
-            return TypeNode("pair", elements=[first, second], raw=self.raw)
+            if len(elements) < 2:
+                raise TypeError_(f"pair/tuple needs at least 2 type arguments in {self.raw!r}")
+            return TypeNode("pair", elements=elements, raw=self.raw)
 
-        if lname == "map":
+        if lname in ("map", "dict", "dictionary", "unordered_map", "hashmap"):
             self.expect("<")
             key = self._parse_full()
             self.expect(",")
@@ -191,6 +258,16 @@ class _Parser:
 
         raise TypeError_(f"Unknown type {name!r} in {self.raw!r}")
 
+    def _parse_optional_generic_arg(self):
+        """For bare "TreeNode"/"ListNode": an optional `<T>`/`[T]` generic
+        argument, defaulting to int (LeetCode's own convention) when absent."""
+        if self.peek() == "<":
+            self.advance()
+            inner = self._parse_full()
+            self.expect(">")
+            return inner
+        return TypeNode("primitive", name="int", raw=self.raw)
+
     def _parse_full(self):
         """Like parse() but doesn't require consuming every token — used for
         recursive sub-parses inside <...> where a trailing ',' or '>' follows."""
@@ -211,6 +288,7 @@ def parse_type(type_str, custom_structs=None):
 
 
 def is_null_aware(type_node):
-    """Binary trees serialize with explicit `null` gaps (LeetCode's own
-    level-order convention); every other sequence-shaped type doesn't."""
-    return type_node.kind == "binary_tree"
+    """Binary trees (and BSTs, same level-order shape) serialize with
+    explicit `null` gaps (LeetCode's own level-order convention); every
+    other sequence-shaped type doesn't."""
+    return type_node.kind in ("binary_tree", "bst")

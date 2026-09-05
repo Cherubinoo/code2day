@@ -18,10 +18,21 @@ Wire format (recursive, one token/line group per node):
                          or a recursive T block
   graph               -> line: n, line: m, then m lines "u v" (unweighted;
                          see README for extending to weighted)
-  pair<A,B>           -> recursive A block immediately followed by B block
+  pair<A,B,...>       -> each element's recursive block, back to back, in
+                         declared order (N>=2 — "pair" is just N=2)
   map<K,V>            -> line: count N, then N (K block, V block) pairs
   set<T>              -> identical to sequence<T> (order not meaningful)
   custom_struct       -> each declared field's recursive block, in order
+  optional<T>         -> one line: `null`, OR (if present) T's own
+                         recursive block unchanged — the exact same
+                         null-vs-block convention binary_tree already uses
+                         per element slot, just applied to a whole value
+  bst<T>              -> identical wire format to binary_tree<T> (same
+                         canonical level-order TreeNode shape); the two
+                         are only ever distinguished by comparator.py,
+                         which allows a BST's *value* to be satisfied by
+                         any structurally-valid BST holding the same
+                         values, not one exact shape
 """
 
 import json
@@ -55,7 +66,7 @@ def _write(node, value, lines):
             _write(element, item, lines)
         return
 
-    if kind == "linked_list":
+    if kind in ("linked_list", "doubly_linked_list_node"):
         element = node.element
         seq = list(value or [])
         lines.append(str(len(seq)))
@@ -63,7 +74,7 @@ def _write(node, value, lines):
             _write(element, item, lines)
         return
 
-    if kind == "binary_tree":
+    if kind in ("binary_tree", "bst"):
         element = node.element
         seq = list(value or [])
         lines.append(str(len(seq)))
@@ -72,6 +83,25 @@ def _write(node, value, lines):
                 lines.append("null")
             else:
                 _write(element, item, lines)
+        return
+
+    if kind == "optional":
+        if value is None:
+            lines.append("null")
+        else:
+            _write(node.element, value, lines)
+        return
+
+    if kind == "random_list_node":
+        # Structured value: [(val, random_index_or_None), ...] — matching
+        # LeetCode's own [[val,random_index],...] convention, just as
+        # Python tuples with None instead of -1/null.
+        seq = list(value or [])
+        lines.append(str(len(seq)))
+        for val, _ridx in seq:
+            _write(node.element, val, lines)
+        for _val, ridx in seq:
+            lines.append(str(-1 if ridx is None else ridx))
         return
 
     if kind == "graph":
@@ -84,10 +114,8 @@ def _write(node, value, lines):
         return
 
     if kind == "pair":
-        a, b = node.elements
-        va, vb = value
-        _write(a, va, lines)
-        _write(b, vb, lines)
+        for elem_node, elem_value in zip(node.elements, value):
+            _write(elem_node, elem_value, lines)
         return
 
     if kind == "map":
@@ -130,6 +158,14 @@ class _LineReader:
         self.pos += 1
         return line
 
+    def peek(self):
+        """Look at the next line without consuming it — used wherever a
+        `null` token vs. a real recursive block must be told apart before
+        committing to either read path (binary_tree elements, optional<T>)."""
+        if self.pos >= len(self.lines):
+            raise SerializationError("Unexpected end of input while deserializing")
+        return self.lines[self.pos]
+
 
 def deserialize_value(type_node, text):
     """Canonical stdin text -> structured Python value. Exact inverse of
@@ -150,25 +186,32 @@ def _read(node, reader):
         n = int(reader.next())
         return [_read(node.element, reader) for _ in range(n)]
 
-    if kind == "linked_list":
+    if kind in ("linked_list", "doubly_linked_list_node"):
         n = int(reader.next())
         return [_read(node.element, reader) for _ in range(n)]
 
-    if kind == "binary_tree":
+    if kind in ("binary_tree", "bst"):
         n = int(reader.next())
         result = []
         for _ in range(n):
-            # Peek isn't needed: a null token is a whole line on its own,
-            # exactly like serialize_value emits, so just read one line and
-            # check it before falling back to a recursive primitive read.
-            saved_pos = reader.pos
-            token = reader.next()
-            if token == "null":
+            if reader.peek() == "null":
+                reader.next()
                 result.append(None)
             else:
-                reader.pos = saved_pos
                 result.append(_read(node.element, reader))
         return result
+
+    if kind == "optional":
+        if reader.peek() == "null":
+            reader.next()
+            return None
+        return _read(node.element, reader)
+
+    if kind == "random_list_node":
+        n = int(reader.next())
+        vals = [_read(node.element, reader) for _ in range(n)]
+        ridxs = [int(reader.next()) for _ in range(n)]
+        return [(v, (r if r >= 0 else None)) for v, r in zip(vals, ridxs)]
 
     if kind == "graph":
         n = int(reader.next())
@@ -180,8 +223,7 @@ def _read(node, reader):
         return {"n": n, "edges": edges}
 
     if kind == "pair":
-        a, b = node.elements
-        return (_read(a, reader), _read(b, reader))
+        return tuple(_read(elem_node, reader) for elem_node in node.elements)
 
     if kind == "map":
         n = int(reader.next())
@@ -217,12 +259,18 @@ def _parse_primitive(name, token):
 # shape is plain JSON, with pair/map represented as JSON arrays (not JSON
 # objects) so map keys aren't limited to strings. ──────────────────────────
 
+def _is_bare_string(node):
+    return node.kind == "primitive" and node.name == "string"
+
+
 def serialize_output(type_node, value):
     """Structured Python value -> the output text a generated wrapper
     should print for this type. Top-level bare strings are unquoted;
     everything else is JSON (numbers/bools/null/nested arrays)."""
-    if type_node.kind == "primitive" and type_node.name == "string":
+    if _is_bare_string(type_node):
         return str(value)
+    if type_node.kind == "optional" and _is_bare_string(type_node.element):
+        return "null" if value is None else str(value)
     return json.dumps(_to_jsonable(type_node, value))
 
 
@@ -230,16 +278,18 @@ def _to_jsonable(node, value):
     kind = node.kind
     if kind == "primitive":
         return value
-    if kind in ("sequence", "set", "linked_list"):
+    if kind in ("sequence", "set", "linked_list", "doubly_linked_list_node"):
         return [_to_jsonable(node.element, v) for v in (value or [])]
-    if kind == "binary_tree":
+    if kind in ("binary_tree", "bst"):
         return [None if v is None else _to_jsonable(node.element, v) for v in (value or [])]
+    if kind == "optional":
+        return None if value is None else _to_jsonable(node.element, value)
+    if kind == "random_list_node":
+        return [[_to_jsonable(node.element, v), r] for v, r in (value or [])]
     if kind == "graph":
         return {"n": value.get("n", 0), "edges": [list(e) for e in value.get("edges", [])]}
     if kind == "pair":
-        a, b = node.elements
-        va, vb = value
-        return [_to_jsonable(a, va), _to_jsonable(b, vb)]
+        return [_to_jsonable(elem_node, elem_value) for elem_node, elem_value in zip(node.elements, value)]
     if kind == "map":
         return [[_to_jsonable(node.key, k), _to_jsonable(node.value, v)] for k, v in (value or {}).items()]
     if kind == "custom_struct":
@@ -251,8 +301,10 @@ def parse_output(type_node, text):
     """The inverse of serialize_output — used by the comparator to turn
     Judge0's actual stdout back into structured data before comparing."""
     text = text.strip()
-    if type_node.kind == "primitive" and type_node.name == "string":
+    if _is_bare_string(type_node):
         return text
+    if type_node.kind == "optional" and _is_bare_string(type_node.element):
+        return None if text == "null" else text
     if text == "":
         raise SerializationError("Empty output where a value was expected")
     parsed = json.loads(text)
@@ -265,16 +317,18 @@ def _from_jsonable(node, value):
         if node.name in ("int", "long") and isinstance(value, float) and value.is_integer():
             return int(value)
         return value
-    if kind in ("sequence", "set", "linked_list"):
+    if kind in ("sequence", "set", "linked_list", "doubly_linked_list_node"):
         return [_from_jsonable(node.element, v) for v in value]
-    if kind == "binary_tree":
+    if kind in ("binary_tree", "bst"):
         return [None if v is None else _from_jsonable(node.element, v) for v in value]
+    if kind == "optional":
+        return None if value is None else _from_jsonable(node.element, value)
+    if kind == "random_list_node":
+        return [(_from_jsonable(node.element, v), (r if r != -1 else None)) for v, r in value]
     if kind == "graph":
         return {"n": value.get("n", 0), "edges": [list(e) for e in value.get("edges", [])]}
     if kind == "pair":
-        a, b = node.elements
-        va, vb = value
-        return (_from_jsonable(a, va), _from_jsonable(b, vb))
+        return tuple(_from_jsonable(elem_node, elem_value) for elem_node, elem_value in zip(node.elements, value))
     if kind == "map":
         return {_from_jsonable(node.key, k): _from_jsonable(node.value, v) for k, v in value}
     if kind == "custom_struct":

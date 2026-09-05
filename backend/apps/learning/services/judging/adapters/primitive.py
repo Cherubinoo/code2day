@@ -1,8 +1,6 @@
-"""int/long/float/double/bool/char/string — always a single line, so both
-directions are pure expressions (no statements/loops needed), regardless
-of language."""
+"""int/long/float/double/bool/char/string — always a single line."""
 
-from .base import Adapter
+from .base import Adapter, declare_var
 
 
 class PrimitiveAdapter(Adapter):
@@ -15,7 +13,24 @@ class PrimitiveAdapter(Adapter):
         pname = self.node.name
         line_expr = lang.read_line_expr(ctx)
         converter = getattr(lang, self._CONVERTERS[pname])
-        return converter(line_expr)
+        expr = converter(line_expr)
+
+        # Always captured into a freshly declared variable immediately —
+        # never returned as a bare, still-unevaluated expression. A raw
+        # `int(_reader.next())` handed back to the caller would only
+        # actually READ from stdin whenever that expression text finally
+        # gets used (e.g. at a later function-call site), which silently
+        # reorders stdin consumption relative to sibling params that DO
+        # emit real statements right away (sequences, trees, ...) — a
+        # primitive param followed by a compound one would have the
+        # compound one's parsing steal the primitive's line first.
+        var = ctx.fresh("prim")
+        declare_var(
+            cb, lang, var, expr,
+            java_type=self.generate_language_type(lang) if lang.name == "java" else None,
+            cpp_type=self.generate_language_type(lang) if lang.name == "cpp" else None,
+        )
+        return var
 
     def generate_serializer(self, cb, lang, ctx, value_expr):
         pname = self.node.name

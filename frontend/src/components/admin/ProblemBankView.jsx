@@ -150,6 +150,69 @@ function TopicMetadataPanel({ topic, onProgress }) {
   );
 }
 
+// Per-topic migration onto the new type-driven judging framework
+// (services/judging/) — schema (generated if missing) + fresh AI test
+// cases + structural validation, enabling Problem.uses_generic_judge only
+// once both check out. Unlike TopicMetadataPanel above, the backend here
+// is a plain time-budgeted sweep (like the bulk buttons at the top of
+// this page), not a background-thread run — one click processes a chunk
+// and reports what's left, no polling needed.
+function TopicGenericJudgePanel({ topic }) {
+  const [state, setState] = useState({ busy: false, msg: '' });
+  const encTopic = encodeURIComponent(topic);
+
+  async function run(force) {
+    setState({ busy: true, msg: '' });
+    try {
+      const data = (await api.post(
+        `/admin/v2/problem-bank/topics/${encTopic}/generate-generic-judge/`,
+        force ? { force: true } : {},
+      )).data;
+      const enabledCount = data.processed.filter((p) => p.enabled).length;
+      const errorCount = data.processed.filter((p) => p.error || p.schema_errors).length;
+      let msg = `Processed ${data.processed.length}: ${enabledCount} enabled for the new judge.`;
+      if (errorCount) msg += ` ${errorCount} failed — see server logs for details.`;
+      msg += data.remaining_problems > 0
+        ? ` ${data.remaining_problems} left in this topic — click again to continue.`
+        : ' Topic fully migrated.';
+      setState({ busy: false, msg });
+    } catch (err) {
+      setState({ busy: false, msg: apiErrorMessage(err, 'Network error.') });
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--bg-1)' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--olive-900)', marginBottom: 6 }}>
+        New Type-Driven Judge
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={() => run(false)}
+          disabled={state.busy}
+          title="Generate a schema (if missing) + fresh AI test cases for every problem in this topic not yet on the new judge, enabling it once both pass validation"
+          style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--olive-700)', color: 'white', fontWeight: 700, fontSize: 12, cursor: state.busy ? 'not-allowed' : 'pointer' }}
+        >
+          {state.busy ? 'Migrating…' : 'Migrate This Topic'}
+        </button>
+        <button
+          onClick={() => run(true)}
+          disabled={state.busy}
+          title="Also re-migrate problems already enabled in this topic — regenerates their test cases"
+          style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-soft)', fontWeight: 700, fontSize: 12, cursor: state.busy ? 'not-allowed' : 'pointer' }}
+        >
+          Force Re-migrate
+        </button>
+      </div>
+      {state.msg && (
+        <div style={{ marginTop: 6, fontSize: 11, color: /fail|error|network/i.test(state.msg) ? '#dc2626' : 'var(--text-soft)' }}>
+          {state.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Splits the bank into per-tag tiles (Array, Dynamic Programming, …) plus an
 // "Untagged" tile, each expandable into its own TopicMetadataPanel — lets an
 // admin work through metadata generation in topic-sized chunks instead of
@@ -197,14 +260,17 @@ function ProblemTopicTiles({ onViewTopic }) {
               </button>
             </div>
             {isOpen && (
-              <TopicMetadataPanel
-                topic={t.topic}
-                onProgress={(data) => {
-                  queryClient.setQueryData(PROBLEM_TOPIC_TILES_QUERY_KEY, (prev) =>
-                    (prev || []).map((x) => (x.topic === t.topic ? { ...x, missing_metadata: data.missing_metadata } : x)),
-                  );
-                }}
-              />
+              <>
+                <TopicMetadataPanel
+                  topic={t.topic}
+                  onProgress={(data) => {
+                    queryClient.setQueryData(PROBLEM_TOPIC_TILES_QUERY_KEY, (prev) =>
+                      (prev || []).map((x) => (x.topic === t.topic ? { ...x, missing_metadata: data.missing_metadata } : x)),
+                    );
+                  }}
+                />
+                <TopicGenericJudgePanel topic={t.topic} />
+              </>
             )}
           </div>
         );

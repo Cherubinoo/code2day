@@ -16,11 +16,14 @@ own output-format text, so it stays language-and-generator agnostic.
 
 import json
 import logging
+import time
+import uuid
 
 from .type_system import parse_type
 from .wrapper_generator import generate_source
 from .comparator import compare_output
 from .judge0_service import Judge0Service
+from .versions import WRAPPER_VERSION, TYPE_SYSTEM_VERSION, SERIALIZER_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -34,18 +37,41 @@ def normalize_language_name(language):
 
 def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind):
     """Same result shape as views.execute_problem_test_case_batch()."""
+    execution_id = uuid.uuid4().hex
+    started_at = time.monotonic()
     schema = problem.generic_schema or {}
     lang_name = normalize_language_name(language)
+
+    # Structured, per-execution observability — deliberately never includes
+    # source_code (user's submitted code) or anything from the environment;
+    # just enough to correlate a Judge0 run with a problem/language/outcome
+    # after the fact without exposing what was executed.
+    log_context = {
+        "execution_id": execution_id,
+        "problem_id": problem.id,
+        "problem_slug": problem.slug,
+        "language": lang_name,
+        "batch_kind": batch_kind,
+        "test_case_count": len(test_cases),
+        "wrapper_version": WRAPPER_VERSION,
+    }
+    logger.info("Generic judge execution starting: %s", log_context)
 
     try:
         return_node = parse_type(schema["return_type"], schema.get("custom_structs"))
     except Exception as exc:  # noqa: BLE001 - surfaced as a normal failed run, not a 500
-        return _error_result(f"Invalid generic_schema on problem {problem.slug!r}: {exc}", batch_kind)
+        return _error_result(
+            f"Invalid generic_schema on problem {problem.slug!r}: {exc}", batch_kind,
+            execution_id=execution_id, error_type="invalid_schema",
+        )
 
     try:
         full_source = generate_source(schema, lang_name, source_code)
     except Exception as exc:  # noqa: BLE001
-        return _error_result(f"Could not generate {lang_name} wrapper: {exc}", batch_kind)
+        return _error_result(
+            f"Could not generate {lang_name} wrapper: {exc}", batch_kind,
+            execution_id=execution_id, error_type="wrapper_generation_failed",
+        )
 
     service = Judge0Service()
     submissions = [
@@ -108,6 +134,13 @@ def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind)
     else:
         output = f"{passed_cases}/{total_cases} test cases passed."
 
+    elapsed_seconds = round(time.monotonic() - started_at, 3)
+    logger.info(
+        "Generic judge execution finished: %s",
+        {**log_context, "status": status_label, "passed_cases": passed_cases,
+         "total_cases": total_cases, "elapsed_seconds": elapsed_seconds},
+    )
+
     return {
         "stdout": output,
         "stderr": first_failure["stderr"] if first_failure else "",
@@ -120,13 +153,22 @@ def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind)
         "passed_cases": passed_cases,
         "total_cases": total_cases,
         "test_case_mode": batch_kind,
+        "execution_id": execution_id,
+        "wrapper_version": WRAPPER_VERSION,
+        "type_system_version": TYPE_SYSTEM_VERSION,
+        "serializer_version": SERIALIZER_VERSION,
     }
 
 
-def _error_result(message, batch_kind):
-    logger.error("Generic judge error: %s", message)
+def _error_result(message, batch_kind, *, execution_id=None, error_type="internal_error"):
+    logger.error("Generic judge error [%s] (%s): %s", execution_id, error_type, message)
     return {
         "stdout": "", "stderr": message, "compile_output": "", "status": "Internal Error",
         "time": "", "memory": "", "output": message,
         "test_results": [], "passed_cases": 0, "total_cases": 0, "test_case_mode": batch_kind,
+        "execution_id": execution_id,
+        "wrapper_version": WRAPPER_VERSION,
+        "type_system_version": TYPE_SYSTEM_VERSION,
+        "serializer_version": SERIALIZER_VERSION,
+        "error_type": error_type,
     }

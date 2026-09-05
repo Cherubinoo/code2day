@@ -12642,6 +12642,56 @@ class AdminProblemGenerateGenericSchemaView(APIView):
         })
 
 
+class AdminProblemGenerateGenericTestCasesView(APIView):
+    """System Admin: single-problem "one hit run" — generates fresh test
+    cases for the new judging framework via the LLM, using
+    Problem.generic_schema's own types (services/judging/
+    generic_testcase_generator.py: the LLM proposes plain structured
+    values, this module deterministically converts them to wire format
+    and structurally validates every one before saving). REPLACES this
+    problem's existing TestCase rows entirely — new-format and legacy-
+    format test cases can never coexist for one problem, since
+    execute_problem_test_case_batch() picks exactly one wire format based
+    on uses_generic_judge. Requires generic_schema to already exist."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        if not problem.generic_schema:
+            return Response({"error": "This problem has no generic_schema yet — generate one first."}, status=400)
+
+        from .services.judging.generic_testcase_generator import generate_generic_test_cases
+        from .services.testcase_generator import TestCaseGenError
+        try:
+            cases = generate_generic_test_cases(
+                title=problem.title, description=problem.description, schema=problem.generic_schema,
+            )
+        except TestCaseGenError as exc:
+            return Response({"error": f"Generation failed: {exc}"}, status=502)
+
+        if not cases:
+            return Response(
+                {"error": "The LLM's proposed test cases all failed structural validation — nothing saved."},
+                status=502,
+            )
+
+        with transaction.atomic():
+            problem.test_cases.all().delete()
+            TestCase.objects.bulk_create([
+                TestCase(problem=problem, stdin=c["stdin"], expected_output=c["expected_output"],
+                         is_sample=(i == 0), order=i + 1)
+                for i, c in enumerate(cases)
+            ])
+
+        return Response({"generated_count": len(cases), "test_case_count": problem.test_cases.count()})
+
+
 class AdminProblemDetailView(APIView):
     """System Admin: delete a single Problem (and its test cases, via
     on_delete cascade) from the Problem Bank."""
@@ -12956,6 +13006,115 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
             "processed": processed,
             "elapsed_seconds": round(time.monotonic() - start, 1),
             "remaining_problems": remaining,
+        })
+
+
+def _migrate_problem_to_generic_judge(problem):
+    """One problem's full pipeline onto the new type-driven judging
+    framework: ensure a generic_schema exists (generate via LLM if
+    missing — never regenerated if already present, that stays a
+    separate, deliberate action), structurally validate it, generate
+    fresh test cases in the new wire format via the LLM (always
+    regenerated — a stale/legacy-format test case is worse than a fresh
+    one), and only flip Problem.uses_generic_judge on once both the
+    schema and at least one test case actually check out. Never raises —
+    every failure mode is reported in the returned dict instead, so a
+    per-topic sweep can keep going through the rest of the topic after
+    one problem fails."""
+    from .services.judging.schema_generator import generate_generic_schema, validate_generic_schema
+    from .services.judging.generic_testcase_generator import generate_generic_test_cases
+    from .services.testcase_generator import TestCaseGenError
+
+    entry = {"id": problem.id, "title": problem.title}
+
+    schema = problem.generic_schema
+    if not schema:
+        try:
+            schema = generate_generic_schema(title=problem.title, description=problem.description, examples=problem.examples)
+        except TestCaseGenError as exc:
+            entry["error"] = f"Schema generation failed: {exc}"
+            return entry
+        problem.generic_schema = schema
+        entry["schema_generated"] = True
+
+    errors = validate_generic_schema(schema)
+    if errors:
+        entry["schema_errors"] = errors
+        problem.uses_generic_judge = False
+        problem.save(update_fields=["generic_schema", "uses_generic_judge"])
+        return entry
+
+    try:
+        cases = generate_generic_test_cases(title=problem.title, description=problem.description, schema=schema)
+    except TestCaseGenError as exc:
+        entry["error"] = f"Test case generation failed: {exc}"
+        problem.uses_generic_judge = False
+        problem.save(update_fields=["generic_schema", "uses_generic_judge"])
+        return entry
+
+    if not cases:
+        entry["error"] = "All generated test cases failed structural validation."
+        problem.uses_generic_judge = False
+        problem.save(update_fields=["generic_schema", "uses_generic_judge"])
+        return entry
+
+    with transaction.atomic():
+        problem.test_cases.all().delete()
+        TestCase.objects.bulk_create([
+            TestCase(problem=problem, stdin=c["stdin"], expected_output=c["expected_output"],
+                     is_sample=(i == 0), order=i + 1)
+            for i, c in enumerate(cases)
+        ])
+        problem.uses_generic_judge = True
+        problem.save(update_fields=["generic_schema", "uses_generic_judge"])
+
+    entry["test_cases_generated"] = len(cases)
+    entry["enabled"] = True
+    return entry
+
+
+class AdminProblemTopicGenerateGenericJudgeView(APIView):
+    """System Admin: the per-topic entry point for migrating a chunk of
+    the Problem Bank onto the new type-driven judging framework in one
+    action — schema (generate if missing) + fresh AI test cases (always
+    regenerated, replacing whatever was there) + structural validation,
+    only enabling uses_generic_judge for a problem once both check out.
+    Same time-budgeted-per-click pattern as the other bulk sweeps here —
+    call again to keep sweeping the rest of this topic. Only touches
+    problems in the given topic; only ones not already enabled unless
+    force=true (which also re-migrates already-enabled problems in this
+    topic — mainly useful to refresh their test cases)."""
+    permission_classes = [IsAuthenticated]
+
+    TIME_BUDGET_SECONDS = 90
+    MAX_ACTIONS = 50  # each action here is 1-2 LLM calls (schema + test cases), costlier than a schema-only sweep
+
+    def post(self, request, topic):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        import time
+        force = bool(request.data.get("force"))
+
+        def scoped_qs():
+            qs = _problems_in_topic(topic)
+            if not force:
+                qs = qs.filter(uses_generic_judge=False)
+            return qs
+
+        problems = scoped_qs().order_by("title")
+        processed = []
+        start = time.monotonic()
+
+        for problem in problems:
+            if len(processed) >= self.MAX_ACTIONS or (time.monotonic() - start) >= self.TIME_BUDGET_SECONDS:
+                break
+            processed.append(_migrate_problem_to_generic_judge(problem))
+
+        return Response({
+            "processed": processed,
+            "elapsed_seconds": round(time.monotonic() - start, 1),
+            "remaining_problems": scoped_qs().count(),
         })
 
 
