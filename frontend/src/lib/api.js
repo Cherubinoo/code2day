@@ -3,6 +3,16 @@ import { getCsrfToken } from './appUtils';
 const BASE_URL = '/api';
 const DEFAULT_TIMEOUT = 60000; // 60 seconds for code execution
 
+// A handful of admin bulk-action endpoints (Problem Bank's generate/
+// validate-generic-schemas, per-topic migration, fill-missing) are
+// deliberately time-budgeted server-side for up to 90s per click
+// (matching gunicorn's ~120s worker timeout) — pass this as
+// `api.post(url, data, { timeout: LONG_RUNNING_TIMEOUT })` for any call
+// into one of those, or the client aborts (and shows a scary "network
+// error") well before the server was ever going to finish, even though
+// the server keeps working and may still save progress regardless.
+export const LONG_RUNNING_TIMEOUT = 100000; // 100 seconds
+
 /**
  * Fetch with timeout support
  */
@@ -54,7 +64,7 @@ const api = {
         }
     },
 
-    async post(url, data) {
+    async post(url, data, { timeout = DEFAULT_TIMEOUT } = {}) {
         const isFormData = data instanceof FormData;
         try {
             const headers = {
@@ -69,7 +79,7 @@ const api = {
                 credentials: 'include',
                 headers,
                 body: isFormData ? data : JSON.stringify(data),
-            }, DEFAULT_TIMEOUT);
+            }, timeout);
             
             if (!response.ok) {
                 const error = await response.json().catch(() => ({}));

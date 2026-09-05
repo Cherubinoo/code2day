@@ -4,7 +4,7 @@
 import { Fragment, useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles } from 'lucide-react';
-import api from '../../lib/api';
+import api, { LONG_RUNNING_TIMEOUT } from '../../lib/api';
 
 function apiErrorMessage(err, fallback) {
   return err?.response?.data?.error || err?.message || fallback;
@@ -167,6 +167,7 @@ function TopicGenericJudgePanel({ topic }) {
       const data = (await api.post(
         `/admin/v2/problem-bank/topics/${encTopic}/generate-generic-judge/`,
         force ? { force: true } : {},
+        { timeout: LONG_RUNNING_TIMEOUT },
       )).data;
       const enabledCount = data.processed.filter((p) => p.enabled).length;
       const errorCount = data.processed.filter((p) => p.error || p.schema_errors).length;
@@ -697,7 +698,7 @@ const ProblemBankView = ({ onBack }) => {
   async function fillMissingData() {
     setFillMissing({ busy: true, msg: '' });
     try {
-      const data = (await api.post('/admin/v2/problem-bank/fill-missing/')).data;
+      const data = (await api.post('/admin/v2/problem-bank/fill-missing/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
       const tcCount = data.processed.filter((p) => p.test_cases_generated).length;
       const schemaCount = data.processed.filter((p) => p.schema_generated).length;
       const expCount = data.processed.filter((p) => p.explanation_generated).length;
@@ -722,7 +723,7 @@ const ProblemBankView = ({ onBack }) => {
   async function generateGenericSchemasBulk() {
     setGenericGenBulk({ busy: true, msg: '' });
     try {
-      const data = (await api.post('/admin/v2/problem-bank/generate-generic-schemas/')).data;
+      const data = (await api.post('/admin/v2/problem-bank/generate-generic-schemas/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
       const okCount = data.processed.filter((p) => p.generated).length;
       const errCount = data.processed.filter((p) => p.error).length;
       let msg = `Generated ${okCount} schema(s).`;
@@ -744,7 +745,7 @@ const ProblemBankView = ({ onBack }) => {
   async function validateGenericSchemasBulk() {
     setGenericValidateBulk({ busy: true, msg: '' });
     try {
-      const data = (await api.post('/admin/v2/problem-bank/validate-generic-schemas/')).data;
+      const data = (await api.post('/admin/v2/problem-bank/validate-generic-schemas/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
       const enabledCount = data.processed.filter((p) => p.enabled).length;
       const stillBadCount = data.processed.filter((p) => p.errors && !p.enabled).length;
       let msg = `Validated ${data.processed.length} problem(s): ${enabledCount} enabled for the new judge.`;
