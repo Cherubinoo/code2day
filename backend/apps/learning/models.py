@@ -1195,6 +1195,27 @@ class InterviewQuestion(models.Model):
         return f"{self.topic} — {self.question_text[:50]}"
 
 
+class SqlFrogProgress(models.Model):
+    """One student's progress through "SQL Frog: Journey to the SQL
+    Kingdom" — the gamified SQL-learning game. Levels themselves are
+    hand-authored content in sql_frog_levels.py, not DB rows; this model
+    only tracks per-student state against that fixed content."""
+    student = models.OneToOneField(StudentProfile, on_delete=models.CASCADE, related_name="sql_frog_progress")
+    xp = models.PositiveIntegerField(default=0)
+    coins = models.PositiveIntegerField(default=0)
+    # e.g. ["w1_l01", "w1_l02", ...] — level ids from sql_frog_levels.py.
+    completed_level_ids = models.JSONField(default=list, blank=True)
+    # Stats only ({"w1_l04": 2, ...}) — hints never reduce XP/coin rewards.
+    hints_used = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "sql_frog_progress"
+
+    def __str__(self):
+        return f"{self.student} — {self.xp} XP"
+
+
 class AptitudeAttempt(models.Model):
     """Logs every free-practice aptitude answer — correct or wrong.
     SolvedAptitude only records correct answers, so it can show "questions

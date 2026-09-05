@@ -91,6 +91,7 @@ from .models import (
     InterviewFolder,
     InterviewFolderMedia,
     InterviewQuestion,
+    SqlFrogProgress,
 )
 from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
@@ -111,6 +112,7 @@ from .services.judge0 import (
     Judge0TimeoutError as ExecutorTimeoutError,
     execute_judge0_submission,
 )
+from .sql_frog_levels import WORLD_1_LEVELS, WORLD_1_LEVELS_BY_ID, FUTURE_WORLDS
 from .services.reading_qa_import import create_passages_in_db, parse_workbook_to_passages
 from .services.execution_adapter import (
     normalize_comparable_output,
@@ -1362,6 +1364,7 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
             problems_solved=Count('solved_problems', distinct=True),
             aptitude_solved=Count('solved_aptitude', distinct=True),
             contest_score=Coalesce(Sum('contest_participations__total_score'), 0),
+            sql_frog_xp=Coalesce('sql_frog_progress__xp', 0),
         )
 
         ranked = []
@@ -1371,6 +1374,7 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
                 + s.aptitude_solved * self.POINTS_PER_APTITUDE
                 + s.contest_score
                 + s.current_streak * self.POINTS_PER_STREAK_DAY
+                + s.sql_frog_xp
             )
             ranked.append((points, s))
         ranked.sort(key=lambda t: (-t[0], t[1].name or ""))
@@ -1904,6 +1908,231 @@ class PlaygroundRunView(StudentAuthMixin, APIView):
             logger.error("Error creating playground ExecutionRecord: %s", exc, exc_info=True)
 
         return Response(result, status=status.HTTP_200_OK)
+
+
+SQL_FROG_LANGUAGE_ID = 82  # Judge0 "SQL (SQLite 3.27.2)" — same id Playground's SQL mode already uses.
+
+SQL_FROG_RANKS = [
+    (0, "Egg"), (300, "Baby Frog"), (700, "Frog Explorer"), (1200, "Query Master"),
+    (1800, "SQL Knight"), (2500, "Database Wizard"), (3200, "SQL Grandmaster"), (99999999, "SQL Master Frog"),
+]
+
+
+def _sql_frog_rank(xp):
+    rank = SQL_FROG_RANKS[0][1]
+    for threshold, name in SQL_FROG_RANKS:
+        if xp >= threshold:
+            rank = name
+    return rank
+
+
+def _sql_frog_normalize_cell(cell):
+    """Numbers compare by value (so "20" vs "20.0" from however Judge0's
+    SQLite runner formats a REAL column never fails a correct answer);
+    text compares case-insensitively — same "don't punish harmless
+    differences" spirit as every other validator in this file."""
+    s = str(cell).strip()
+    try:
+        return ("num", float(s))
+    except (TypeError, ValueError):
+        return ("str", s.lower())
+
+
+def _sql_frog_normalize_row(row):
+    return tuple(_sql_frog_normalize_cell(c) for c in row)
+
+
+def _parse_sql_frog_stdout(stdout):
+    """Judge0's SQLite runner's exact output format can't be verified from
+    this dev environment (Judge0 isn't reachable here) — this parses
+    defensively: try '|'-splitting every non-empty line (SQLite CLI's
+    classic default list mode) and use it only if every row comes out the
+    same width; otherwise fall back to whitespace-splitting."""
+    lines = [ln for ln in stdout.splitlines() if ln.strip() != ""]
+    if not lines:
+        return []
+    pipe_rows = [[c.strip() for c in ln.split('|')] for ln in lines]
+    if len({len(r) for r in pipe_rows}) == 1:
+        return pipe_rows
+    return [ln.split() for ln in lines]
+
+
+def _sql_frog_grade(query, level):
+    """Runs the player's query against the level's schema+seed via the
+    existing Judge0 pipeline and grades it against the level's precomputed
+    expected_result. Returns (success, error_category, message, rows)."""
+    script = f"{level['schema_sql']}\n{level['seed_sql']}\n{query}"
+    try:
+        result = execute_judge0_submission(source_code=script, language_id=SQL_FROG_LANGUAGE_ID, stdin="")
+    except (ExecutorTimeoutError, ExecutorServiceError) as exc:
+        return False, "execution_error", f"The pond's magic sputtered: {exc}", []
+
+    if result["status_id"] != 3 or (result["stderr"] or "").strip():
+        detail = (result["stderr"] or result["compile_output"] or result["message"] or result["status"]).strip()
+        return False, "syntax_error", f"Something is wrong with the SQL structure: {detail}", []
+
+    actual_rows = _parse_sql_frog_stdout(result["stdout"])
+    expected_rows = level["expected_result"]
+
+    actual_norm = [_sql_frog_normalize_row(r) for r in actual_rows]
+    expected_norm = [_sql_frog_normalize_row(r) for r in expected_rows]
+
+    if level.get("order_matters"):
+        matched = actual_norm == expected_norm
+    else:
+        matched = sorted(actual_norm) == sorted(expected_norm)
+
+    if not matched:
+        return False, "wrong_result", "Your query runs, but it doesn't return what this mission needs yet.", actual_rows
+
+    return True, None, "", actual_rows
+
+
+class SqlFrogProgressView(StudentAuthMixin, APIView):
+    """SQL Frog: the player's overall progress — XP/coins/rank, World 1's
+    level list with locked/unlocked/completed state, and a stub list of
+    Worlds 2-7 for the map/skill-tree view (content not built yet)."""
+
+    def get(self, request):
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=profile)
+        completed = set(progress.completed_level_ids)
+
+        levels = []
+        unlocked_so_far = True  # level 1 always unlocked
+        for lvl in WORLD_1_LEVELS:
+            levels.append({
+                "id": lvl["id"], "order": lvl["order"], "title": lvl["title"],
+                "skill_unlocked": lvl["skill_unlocked"],
+                "completed": lvl["id"] in completed,
+                "unlocked": unlocked_so_far,
+            })
+            unlocked_so_far = lvl["id"] in completed
+
+        return Response({
+            "xp": progress.xp, "coins": progress.coins, "rank": _sql_frog_rank(progress.xp),
+            "completed_level_ids": list(completed),
+            "levels": levels,
+            "future_worlds": FUTURE_WORLDS,
+        })
+
+
+class SqlFrogLevelDetailView(StudentAuthMixin, APIView):
+    """One level's teaching content — story/concept/example/mission/schema.
+    Never includes expected_result or the reference solution."""
+
+    def get(self, request, level_id):
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        level = WORLD_1_LEVELS_BY_ID.get(level_id)
+        if not level:
+            return Response({"detail": "Level not found."}, status=404)
+
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=profile)
+        completed = set(progress.completed_level_ids)
+        idx = level["order"] - 1
+        unlocked = idx == 0 or WORLD_1_LEVELS[idx - 1]["id"] in completed
+        if not unlocked:
+            return Response({"detail": "This level isn't unlocked yet."}, status=403)
+
+        return Response({
+            "id": level["id"], "order": level["order"], "title": level["title"],
+            "story": level["story"], "concept_title": level["concept_title"],
+            "concept_explanation": level["concept_explanation"], "example": level["example"],
+            "mission": level["mission"], "completed": level["id"] in completed,
+            "xp_reward": level["xp_reward"], "coin_reward": level["coin_reward"],
+            "skill_unlocked": level["skill_unlocked"],
+            "schema": {
+                "table": "frogs",
+                "columns": ["id", "name", "color", "weight_kg", "score", "team"],
+                "sample_rows": [[1, "Kermit", "green", 8.5, 92, "Leap"], [2, "Pepe", "green", 6.0, 75, "Splash"]],
+            },
+        })
+
+
+class SqlFrogRunView(StudentAuthMixin, APIView):
+    """Executes the player's query for one level via the existing Judge0
+    pipeline and grades it. Awards XP/coins only the first time a level is
+    completed — replaying an already-completed level for practice doesn't
+    double-award."""
+
+    def post(self, request, level_id):
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        level = WORLD_1_LEVELS_BY_ID.get(level_id)
+        if not level:
+            return Response({"detail": "Level not found."}, status=404)
+
+        query = (request.data.get("query") or "").strip()
+        if not query:
+            return Response({"error": "Write a query first."}, status=400)
+
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=profile)
+        completed = set(progress.completed_level_ids)
+        idx = level["order"] - 1
+        unlocked = idx == 0 or WORLD_1_LEVELS[idx - 1]["id"] in completed
+        if not unlocked:
+            return Response({"detail": "This level isn't unlocked yet."}, status=403)
+
+        success, error_category, message, rows = _sql_frog_grade(query, level)
+
+        already_completed = level["id"] in completed
+        xp_awarded = coins_awarded = 0
+        if success and not already_completed:
+            xp_awarded, coins_awarded = level["xp_reward"], level["coin_reward"]
+            progress.xp += xp_awarded
+            progress.coins += coins_awarded
+            progress.completed_level_ids = list(completed | {level["id"]})
+            progress.save(update_fields=["xp", "coins", "completed_level_ids", "updated_at"])
+
+        return Response({
+            "success": success,
+            "error_category": error_category,
+            "message": message,
+            "rows": rows,
+            "xp_awarded": xp_awarded,
+            "coins_awarded": coins_awarded,
+            "already_completed": already_completed,
+            "skill_unlocked": level["skill_unlocked"] if success else None,
+            "total_xp": progress.xp, "total_coins": progress.coins, "rank": _sql_frog_rank(progress.xp),
+        })
+
+
+class SqlFrogHintView(StudentAuthMixin, APIView):
+    """Returns one of a level's 3 hints — progressively more specific, per
+    the game's 3-level hint system. Tracked for stats only; never reduces
+    XP/coin rewards (hints should teach, not punish)."""
+
+    def post(self, request, level_id):
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        level = WORLD_1_LEVELS_BY_ID.get(level_id)
+        if not level:
+            return Response({"detail": "Level not found."}, status=404)
+
+        try:
+            hint_level = int(request.data.get("hint_level"))
+        except (TypeError, ValueError):
+            return Response({"error": "hint_level must be 1, 2, or 3."}, status=400)
+        if hint_level not in (1, 2, 3):
+            return Response({"error": "hint_level must be 1, 2, or 3."}, status=400)
+
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=profile)
+        hints_used = dict(progress.hints_used)
+        hints_used[level["id"]] = max(hints_used.get(level["id"], 0), hint_level)
+        progress.hints_used = hints_used
+        progress.save(update_fields=["hints_used", "updated_at"])
+
+        return Response({"hint_level": hint_level, "hint": level["hints"][hint_level - 1]})
 
 
 @method_decorator(ensure_csrf_cookie, name="dispatch")

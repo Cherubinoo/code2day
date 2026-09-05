@@ -104,6 +104,10 @@ from .views import (
     ProblemsByTopicView,
     CodeRunView,
     PlaygroundRunView,
+    SqlFrogProgressView,
+    SqlFrogLevelDetailView,
+    SqlFrogRunView,
+    SqlFrogHintView,
     RegisterNumberListView,
     StudentContestDetailView,
     StudentContestListView,
@@ -304,6 +308,10 @@ urlpatterns = [
     # Code execution
     path("run/", CodeRunView.as_view(), name="code-run"),
     path("playground/run/", PlaygroundRunView.as_view(), name="playground-run"),
+    path("sql-frog/progress/", SqlFrogProgressView.as_view(), name="sql-frog-progress"),
+    path("sql-frog/levels/<str:level_id>/", SqlFrogLevelDetailView.as_view(), name="sql-frog-level-detail"),
+    path("sql-frog/levels/<str:level_id>/run/", SqlFrogRunView.as_view(), name="sql-frog-run"),
+    path("sql-frog/levels/<str:level_id>/hint/", SqlFrogHintView.as_view(), name="sql-frog-hint"),
 
     # Editor bootstrap
     path("editor/bootstrap/", EditorBootstrapView.as_view(), name="editor-bootstrap"),
