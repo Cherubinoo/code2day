@@ -368,6 +368,12 @@ class Problem(models.Model):
     examples = models.JSONField(default=list, blank=True)  # [{input, output, explanation}]
     hints = models.JSONField(default=list, blank=True)  # ["hint1", "hint2"] — legacy, unused by generation
     explanation = models.TextField(blank=True, default="")  # brief LLM-generated approach summary
+    explanation_is_story = models.BooleanField(
+        default=False,
+        help_text="Whether `explanation` was generated with the story-hook prompt (vs. the older plain pedagogical style). "
+                   "Lets the 'Regenerate All Explanations' admin sweep track real DB-persisted progress and skip already-migrated "
+                   "problems on a later run, instead of relying on a browser-held cursor that resets on refresh.",
+    )
     editorial = models.TextField(blank=True, default="")
     companies = models.TextField(blank=True, default="")
     source_dataset_id = models.CharField(max_length=50, blank=True, default="")

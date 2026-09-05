@@ -13188,21 +13188,18 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
 
 
 class AdminProblemBankRegenerateAllExplanationsView(APIView):
-    """System Admin: force-regenerates Problem.explanation for EVERY
-    problem (never skip-if-exists) using the story-driven prompt in
-    EXPLANATION_PROMPT_TEMPLATE — a one-time bank-wide style migration
-    (old explanations were plain pedagogical text, not story-hooked),
-    not an ordinary "fill what's missing" sweep.
-
-    Because this overwrites already-generated explanations instead of
-    skipping them, "what's left" can't be read off a DB flag the way the
-    other bulk sweeps do (every row already has an explanation, so an
-    emptiness filter would see nothing left after round one). Instead the
-    client passes back `after_id` — the last problem id this view
-    processed — each round, and this view resumes strictly after it,
-    ordered by id. Same time-budgeted-per-click pattern as the other bulk
-    actions here; a problem that fails generation still advances the
-    cursor past it so one bad problem can't stall the whole sweep.
+    """System Admin: force-regenerates Problem.explanation for every
+    problem that hasn't been migrated to the story-driven prompt in
+    EXPLANATION_PROMPT_TEMPLATE yet (old explanations were plain
+    pedagogical text, not story-hooked) — a one-time bank-wide style
+    migration, not an ordinary "fill what's missing" sweep, but still
+    tracked with a real DB flag (Problem.explanation_is_story) rather than
+    a client-held cursor: a problem is only ever regenerated once, and a
+    later click (even after a page refresh, even from a different admin
+    session) picks up exactly the problems still on the old style — never
+    redoing ones already migrated. Set only after a successful generation,
+    so a failed one is retried on the next click rather than silently
+    left on the old style forever.
 
     Runs the batch through run_across_providers_in_parallel() — see
     AdminProblemBankGenerateGenericSchemasView's docstring for why."""
@@ -13222,10 +13219,8 @@ class AdminProblemBankRegenerateAllExplanationsView(APIView):
             run_across_providers_in_parallel, _providers_in_rotation_order,
         )
 
-        try:
-            after_id = int(request.data.get("after_id") or 0)
-        except (TypeError, ValueError):
-            after_id = 0
+        def needs_story_q():
+            return Q(explanation_is_story=False)
 
         try:
             provider_count = len(_providers_in_rotation_order())
@@ -13234,8 +13229,7 @@ class AdminProblemBankRegenerateAllExplanationsView(APIView):
 
         start = time.monotonic()
         batch_size = min(self.MAX_ACTIONS, provider_count * self.ROUND_SIZE_PER_PROVIDER)
-        problems = list(Problem.objects.filter(id__gt=after_id).order_by("id")[:batch_size])
-        last_id = problems[-1].id if problems else after_id
+        problems = list(Problem.objects.filter(needs_story_q()).order_by("id")[:batch_size])
 
         def call_one(problem, provider):
             return generate_explanation(
@@ -13253,15 +13247,15 @@ class AdminProblemBankRegenerateAllExplanationsView(APIView):
                 entry["error"] = str(error)
             else:
                 problem.explanation = explanation
-                problem.save(update_fields=["explanation"])
+                problem.explanation_is_story = True
+                problem.save(update_fields=["explanation", "explanation_is_story"])
                 entry["generated"] = True
             processed.append(entry)
 
-        remaining = Problem.objects.filter(id__gt=last_id).count()
+        remaining = Problem.objects.filter(needs_story_q()).count()
         return Response({
             "processed": processed,
             "elapsed_seconds": round(time.monotonic() - start, 1),
-            "last_id": last_id,
             "remaining_problems": remaining,
         })
 

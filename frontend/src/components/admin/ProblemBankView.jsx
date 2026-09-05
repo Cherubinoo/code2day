@@ -316,7 +316,7 @@ const ProblemBankView = ({ onBack }) => {
   const [fillMissing, setFillMissing] = useState({ busy: false, msg: '' });
   const [genericGenBulk, setGenericGenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [genericValidateBulk, setGenericValidateBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
-  const [explanationRegenBulk, setExplanationRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0, afterId: 0 });
+  const [explanationRegenBulk, setExplanationRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [mutationError, setMutationError] = useState('');
   const PAGE_SIZE = 50;
 
@@ -744,8 +744,12 @@ const ProblemBankView = ({ onBack }) => {
   // Each server round-trip is time-budgeted (~90s) and reports how much of
   // the bank is left, so we keep firing rounds automatically — updating the
   // progress message after every round — until nothing remains, rather than
-  // making the admin click repeatedly. MAX_ROUNDS is just a runaway guard.
-  const MAX_ROUNDS = 40;
+  // making the admin click repeatedly. MAX_ROUNDS is just a runaway guard,
+  // not a target — with few providers configured each round only covers a
+  // handful of problems (provider_count * 6, backend-side), so a large bank
+  // genuinely needs hundreds of rounds; a low cap here just means "click
+  // again to continue" fires long before the sweep is actually done.
+  const MAX_ROUNDS = 2000;
   async function generateGenericSchemasBulk() {
     setGenericGenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
     let totalProcessed = 0, totalOk = 0, totalErr = 0;
@@ -804,48 +808,46 @@ const ProblemBankView = ({ onBack }) => {
   }
 
   // One-time bank-wide style migration: FORCE-regenerates every problem's
-  // explanation with the story-driven prompt, overwriting whatever's
-  // there already (unlike the skip-if-exists sweeps above). Since every
-  // row already has an explanation after round one, "what's left" can't
-  // be read off an emptiness filter — the backend instead hands back
-  // `last_id` each round and we resume strictly after it by id, carrying
-  // that cursor in state so a stopped sweep (round cap, or a fresh click
-  // later) picks up where it left off instead of restarting from zero.
+  // explanation with the story-driven prompt, overwriting whatever's there
+  // already (unlike the skip-if-exists sweeps above) — but only once per
+  // problem. The backend tracks progress via Problem.explanation_is_story
+  // (a real DB flag, set only after a successful generation), so "what's
+  // left" is a normal DB query, same as the other two sweeps — no
+  // client-held cursor, so a page refresh or a different admin session
+  // resuming this later still only touches problems not yet migrated.
   async function regenerateAllExplanationsBulk() {
     if (!window.confirm(
-      'This overwrites the explanation for EVERY problem in the bank with a new story-based version, ' +
-      'including ones that already have a perfectly good explanation. This cannot be undone. Continue?'
+      'This overwrites the explanation for every problem still on the old style with a new story-based version. ' +
+      'This cannot be undone. Continue?'
     )) {
       return;
     }
-    setExplanationRegenBulk((s) => ({ ...s, busy: true, msg: 'Starting…', done: 0 }));
+    setExplanationRegenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
     let totalProcessed = 0, totalOk = 0, totalErr = 0;
-    let afterId = explanationRegenBulk.afterId || 0;
     try {
       for (let round = 1; round <= MAX_ROUNDS; round++) {
         const data = (await api.post(
           '/admin/v2/problem-bank/regenerate-all-explanations/',
-          { after_id: afterId },
+          undefined,
           { timeout: LONG_RUNNING_TIMEOUT },
         )).data;
         totalProcessed += data.processed.length;
         totalOk += data.processed.filter((p) => p.generated).length;
         totalErr += data.processed.filter((p) => p.error).length;
-        afterId = data.last_id;
-        const total = totalProcessed + data.remaining_problems; // stable: everything from this sweep's start
+        const total = totalProcessed + data.remaining_problems; // stable: everything still on the old style
         await load(); // refresh explanation previews as each round lands
 
         const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalOk} story explanation(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
         if (data.processed.length === 0 || data.remaining_problems === 0) {
           const doneMsg = totalProcessed === 0 ? 'Nothing left to regenerate.' : `${progress} Done — every problem now has a story explanation.`;
-          setExplanationRegenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total, afterId });
+          setExplanationRegenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
           return;
         }
-        setExplanationRegenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total, afterId });
+        setExplanationRegenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
       }
-      setExplanationRegenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.`, afterId }));
+      setExplanationRegenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
     } catch (err) {
-      setExplanationRegenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.`, afterId }));
+      setExplanationRegenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
     }
   }
 
