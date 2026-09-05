@@ -159,9 +159,12 @@ function InterviewQuestionsManager({ topicId, folderId, questions, onAdd, onRemo
           Practice Questions ({questions.length})
         </label>
         <div style={{ display: 'flex', gap: 6 }}>
-          <label style={{ padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.7rem', fontWeight: 700, cursor: bulkUploading ? 'default' : 'pointer', opacity: bulkUploading ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+          <label
+            title={folderId ? "Uploads straight into this folder — unlike the track-level Bulk Upload button, this ignores the sheet's Field/Topic/Subtopic columns entirely." : "Uploads straight into this topic (unfoldered) — unlike the track-level Bulk Upload button, this ignores the sheet's Field/Topic/Subtopic columns entirely."}
+            style={{ padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.7rem', fontWeight: 700, cursor: bulkUploading ? 'default' : 'pointer', opacity: bulkUploading ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: 4 }}
+          >
             {bulkUploading ? <Loader2 size={12} className="spin" /> : <Upload size={12} />}
-            {bulkUploading ? 'Uploading…' : 'Bulk Upload'}
+            {bulkUploading ? 'Uploading…' : (folderId ? 'Bulk Upload (This Folder)' : 'Bulk Upload (This Topic)')}
             <input type="file" accept=".xlsx,.xls,.csv" hidden disabled={bulkUploading} onChange={handleBulkUpload} />
           </label>
           <button onClick={() => { setShowAddForm((v) => !v); setEditingId(null); }} style={{ padding: '4px 8px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}>
@@ -811,9 +814,12 @@ export default function InterviewBankView({ onBack }) {
           <button onClick={() => setAddTopicOpen((v) => !v)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px', borderRadius: 14, background: 'white', border: '1px solid var(--border-soft)', color: 'var(--olive-900)', fontWeight: 800, fontSize: '0.9rem', cursor: 'pointer' }}>
             <Plus size={16} /> Add Topic
           </button>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px', borderRadius: 14, background: 'var(--olive-700)', color: 'white', fontWeight: 800, fontSize: '0.9rem', cursor: uploading ? 'default' : 'pointer', opacity: uploading ? 0.7 : 1 }}>
+          <label
+            title="Matches rows to a Topic/Folder by the sheet's own Field/Topic/Subtopic columns — NOT by whichever topic or folder you currently have open. To upload straight into one specific folder or topic you're looking at, use the Bulk Upload button inside that folder/topic instead."
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 20px', borderRadius: 14, background: 'var(--olive-700)', color: 'white', fontWeight: 800, fontSize: '0.9rem', cursor: uploading ? 'default' : 'pointer', opacity: uploading ? 0.7 : 1 }}
+          >
             {uploading ? <Loader2 size={16} className="spin" /> : <Upload size={16} />}
-            {uploading ? 'Uploading…' : 'Bulk Upload'}
+            {uploading ? 'Uploading…' : 'Bulk Upload (Whole Track)'}
             <input type="file" accept=".xlsx,.xls,.csv" hidden disabled={uploading} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) handleUpload(f); }} />
           </label>
         </div>
@@ -849,7 +855,7 @@ export default function InterviewBankView({ onBack }) {
           </div>
         )}
         <p style={{ color: 'var(--text-soft)', fontSize: '0.85rem', marginTop: -8, marginBottom: 24 }}>
-          Bulk upload matches on the sheet's "Field" column, not this tile — a mismatched Field value lands the content in whichever track it names (creating it if needed), not necessarily this one. Or build the tree by hand with Add Topic, then click a topic to add folders and questions.
+          "Bulk Upload (Whole Track)" matches rows by the sheet's own Field/Topic/Subtopic columns, not by anything open on screen — a mismatched Field value lands the content in whichever track it names (creating it if needed), and a missing/mismatched Subtopic leaves questions unfoldered at the topic level instead of inside a specific folder. To upload straight into one folder or topic you're looking at, open it and use its own "Bulk Upload" button instead — that one ignores the sheet's Field/Topic/Subtopic columns entirely and always targets exactly where you clicked. Or build the tree by hand with Add Topic, then click a topic to add folders and questions.
         </p>
 
         {treeLoading ? (

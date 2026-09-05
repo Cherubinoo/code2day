@@ -44,6 +44,8 @@ export const PAGE_PATHS = {
   aptitude:      "/aptitude",
   interview:     "/interview",
   competitive:   "/competitive",
+  lms:           "/lms",
+  sql:           "/sql",
   admin:         "/admin",
   hod:           "/hod",
   staff:         "/staff",
