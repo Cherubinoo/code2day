@@ -405,6 +405,36 @@ class Problem(models.Model):
         ),
     )
 
+    uses_generic_judge = models.BooleanField(
+        default=False,
+        help_text=(
+            "Opt-in flag for the new type-driven judging framework "
+            "(services/judging/). False (the default) keeps every existing "
+            "problem on the unchanged legacy execution path — this field "
+            "is never set by any migration, only by an author choosing it."
+        ),
+    )
+    generic_schema = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "Schema for the generic judge, e.g. "
+            '{"function_name":"twoSum","params":[["nums","vector<int>"],'
+            '["target","int"]],"return_type":"vector<int>","custom_structs":{}}. '
+            "Only read when uses_generic_judge=True. See "
+            "services/judging/README.md for the full type vocabulary."
+        ),
+    )
+    time_limit_seconds = models.FloatField(
+        null=True, blank=True, default=None,
+        help_text="Per-submission Judge0 cpu_time_limit override. Null keeps Judge0's own default.",
+    )
+    memory_limit_kb = models.IntegerField(
+        null=True, blank=True, default=None,
+        help_text="Per-submission Judge0 memory_limit override (KB). Null keeps Judge0's own default.",
+    )
+
     def __str__(self):
         return self.title
 

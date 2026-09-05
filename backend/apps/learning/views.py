@@ -755,6 +755,13 @@ def execute_problem_test_case_batch(
     test_cases,
     batch_kind,
 ):
+    if problem is not None and getattr(problem, "uses_generic_judge", False):
+        from .services.judging.integration import run_generic_batch
+        return run_generic_batch(
+            problem=problem, source_code=source_code, language=language,
+            test_cases=test_cases, batch_kind=batch_kind,
+        )
+
     test_results = []
     latest_time = ""
     latest_memory = ""
