@@ -786,6 +786,26 @@ class TestCase(models.Model):
             "param_schema; otherwise stdin (unchanged) is used."
         ),
     )
+    INPUT_FORMAT_WIRE = "wire"
+    INPUT_FORMAT_RAW_TEXT = "raw_text"
+    INPUT_FORMAT_CHOICES = (
+        (INPUT_FORMAT_WIRE, "Wire format (ready to execute)"),
+        (INPUT_FORMAT_RAW_TEXT, "Raw example text (needs adapting before execution)"),
+    )
+    input_format = models.CharField(
+        max_length=16, choices=INPUT_FORMAT_CHOICES, default=INPUT_FORMAT_WIRE,
+        help_text=(
+            "Explicit, authoritative declaration of what `stdin` actually contains — "
+            "'wire' (services/judging/serializer.py's one-value-per-line format, or the "
+            "legacy driver's own JSON-array format; either way, ready to execute as-is) or "
+            "'raw_text' (human-authored LeetCode-style text like 's = \"a\", t = \"b\"', "
+            "which every execution path must adapt first — see "
+            "services/judging/integration.py's _effective_stdin()). Exists because 'stored in "
+            "the DB' used to silently imply 'already wire format', which was false for rows "
+            "created by services/problem_testcases.py's sync_problem_test_cases() — this field "
+            "replaces that guess with a real declaration set at creation time."
+        ),
+    )
 
     class Meta:
         ordering = ("order",)

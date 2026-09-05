@@ -3,7 +3,7 @@
 // them, or regenerate for any problem.
 import { Fragment, useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles, BookOpen, RotateCcw } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles, BookOpen, RotateCcw, AlertTriangle } from 'lucide-react';
 import api, { LONG_RUNNING_TIMEOUT } from '../../lib/api';
 
 function apiErrorMessage(err, fallback) {
@@ -317,6 +317,7 @@ const ProblemBankView = ({ onBack }) => {
   const [genericGenBulk, setGenericGenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [genericValidateBulk, setGenericValidateBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [retryFlaggedBulk, setRetryFlaggedBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
+  const [rawTextRegenBulk, setRawTextRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [explanationRegenBulk, setExplanationRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [mutationError, setMutationError] = useState('');
   const PAGE_SIZE = 50;
@@ -852,6 +853,39 @@ const ProblemBankView = ({ onBack }) => {
     }
   }
 
+  // Bulk fix for problems whose generic judge is enabled but still has a
+  // raw_text-tagged test case (see backend TestCase.input_format /
+  // needs_test_case_regeneration) — regenerates that problem's test
+  // cases from scratch via the LLM, same as the per-problem "Generate
+  // Test Cases" action, just across every flagged problem at once.
+  async function regenerateRawTextTestCasesBulk() {
+    setRawTextRegenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
+    let totalProcessed = 0, totalOk = 0, totalErr = 0;
+    try {
+      for (let round = 1; round <= MAX_ROUNDS; round++) {
+        const data = (await api.post(
+          '/admin/v2/problem-bank/regenerate-raw-text-testcases/', undefined, { timeout: LONG_RUNNING_TIMEOUT },
+        )).data;
+        totalProcessed += data.processed.length;
+        totalOk += data.processed.filter((p) => p.regenerated).length;
+        totalErr += data.processed.filter((p) => p.error).length;
+        const total = totalProcessed + data.remaining_problems;
+        await load(); // refresh the needs_test_case_regeneration badges as each round lands
+
+        const progress = `Fixed ${totalProcessed}/${total} problem(s): ${totalOk} regenerated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
+        if (data.processed.length === 0 || data.remaining_problems === 0) {
+          const doneMsg = totalProcessed === 0 ? 'No problems need their test cases regenerated.' : `${progress} Done.`;
+          setRawTextRegenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
+          return;
+        }
+        setRawTextRegenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
+      }
+      setRawTextRegenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
+    } catch (err) {
+      setRawTextRegenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
+    }
+  }
+
   // One-time bank-wide style migration: FORCE-regenerates every problem's
   // explanation with the story-driven prompt, overwriting whatever's there
   // already (unlike the skip-if-exists sweeps above) — but only once per
@@ -897,6 +931,7 @@ const ProblemBankView = ({ onBack }) => {
   }
 
   const missingCount = problems.filter((p) => p.test_case_count === 0).length;
+  const needsRegenCount = problems.filter((p) => p.needs_test_case_regeneration).length;
 
   return (
     <div className="animate-fade-in">
@@ -982,6 +1017,21 @@ const ProblemBankView = ({ onBack }) => {
           {retryFlaggedBulk.busy ? 'Retrying…' : 'Retry Flagged Schemas'}
         </button>
         <button
+          onClick={regenerateRawTextTestCasesBulk}
+          disabled={rawTextRegenBulk.busy}
+          title="Fix problems whose generic judge is enabled but still has a raw, un-adapted example test case — regenerates that problem's test cases via the LLM into proper wire format"
+          style={{
+            background: needsRegenCount > 0 ? '#fef3c7' : 'white',
+            border: needsRegenCount > 0 ? '1px solid #fcd34d' : '1px solid var(--border-soft)',
+            borderRadius: 12, padding: '10px 16px', cursor: rawTextRegenBulk.busy ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', gap: 8,
+            color: needsRegenCount > 0 ? '#92400e' : 'var(--olive-900)', fontWeight: 700,
+          }}
+        >
+          {rawTextRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <AlertTriangle size={16} />}
+          {rawTextRegenBulk.busy ? 'Fixing…' : `Fix Raw-Text Test Cases${needsRegenCount > 0 ? ` (${needsRegenCount})` : ''}`}
+        </button>
+        <button
           onClick={regenerateAllExplanationsBulk}
           disabled={explanationRegenBulk.busy}
           title="Force-regenerate EVERY problem's explanation with the new story-based prompt, overwriting whatever's there already"
@@ -1011,6 +1061,7 @@ const ProblemBankView = ({ onBack }) => {
       <BulkProgressPanel state={genericGenBulk} />
       <BulkProgressPanel state={genericValidateBulk} />
       <BulkProgressPanel state={retryFlaggedBulk} />
+      <BulkProgressPanel state={rawTextRegenBulk} />
       <BulkProgressPanel state={explanationRegenBulk} />
 
       {mode === 'topics' ? (
@@ -1154,6 +1205,17 @@ const ProblemBankView = ({ onBack }) => {
                             Judge: Unvalidated
                           </div>
                         ) : null}
+                        {p.needs_test_case_regeneration && (
+                          <div
+                            title="This problem's generic judge is enabled, but at least one stored test case is still raw, un-adapted example text instead of proper wire format — use the 'Fix Raw-Text Test Cases' button above to regenerate it"
+                            style={{
+                              marginTop: 4, padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                              background: '#fef3c7', color: '#92400e', display: 'inline-flex', alignItems: 'center', gap: 3,
+                            }}
+                          >
+                            <AlertTriangle size={10} /> Needs test case fix
+                          </div>
+                        )}
                       </td>
                       <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                         <button

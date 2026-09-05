@@ -13,7 +13,7 @@ from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.models import User
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Q, Sum, Avg, Max, Max
+from django.db.models import Count, Q, Sum, Avg, Max, Max, Exists, OuterRef
 from django.http import HttpResponse, FileResponse, Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -12486,8 +12486,19 @@ class AdminProblemBankView(APIView):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
+        # Flags a problem whose stored test cases include at least one
+        # raw_text row (see models.py's TestCase.input_format and
+        # services/judging/integration.py's _effective_stdin()) — only
+        # actually broken when the problem also uses the generic judge
+        # (the legacy path already adapts raw text on its own), but
+        # surfaced regardless so staff can see it before flipping
+        # uses_generic_judge on.
+        raw_text_exists = TestCase.objects.filter(
+            problem=OuterRef("pk"), input_format=TestCase.INPUT_FORMAT_RAW_TEXT,
+        )
         problems = Problem.objects.annotate(
-            test_case_count=Count("test_cases", distinct=True)
+            test_case_count=Count("test_cases", distinct=True),
+            has_raw_text_test_cases=Exists(raw_text_exists),
         ).order_by("title")
 
         data = [{
@@ -12502,9 +12513,13 @@ class AdminProblemBankView(APIView):
             "has_param_schema": bool(p.param_schema),
             "has_generic_schema": bool(p.generic_schema),
             "uses_generic_judge": p.uses_generic_judge,
+            "has_raw_text_test_cases": p.has_raw_text_test_cases,
+            "needs_test_case_regeneration": p.has_raw_text_test_cases and p.uses_generic_judge,
         } for p in problems]
 
-        return Response({"problems": data, "total": len(data)})
+        needs_regen_count = sum(1 for p in data if p["needs_test_case_regeneration"])
+
+        return Response({"problems": data, "total": len(data), "needs_test_case_regeneration_count": needs_regen_count})
 
 
 class AdminProblemTestCasesView(APIView):
@@ -12668,6 +12683,15 @@ class AdminProblemGenerateTestCasesView(APIView):
                     expected_output=case["expected_output"],
                     is_sample=case["is_sample"],
                     order=order,
+                    # generate_test_cases() (the legacy AI generator) produces
+                    # human/LLM-style raw stdin text (e.g. plain judge-style
+                    # rows), not services/judging/serializer.py's wire format
+                    # — the legacy execution path already adapts this via
+                    # prepare_execution_payload()'s parse_argument_list(),
+                    # same as raw example text; tagging it honestly here so
+                    # the generic judge (if this problem later opts in) also
+                    # knows to adapt it via integration.py's _effective_stdin().
+                    input_format=TestCase.INPUT_FORMAT_RAW_TEXT,
                 )
                 for order, case in enumerate(generated, start=1)
             ])
@@ -12883,12 +12907,95 @@ class AdminProblemGenerateGenericTestCasesView(APIView):
         with transaction.atomic():
             problem.test_cases.all().delete()
             TestCase.objects.bulk_create([
+                # generate_generic_test_cases() already serializes via
+                # services/judging/serializer.py — real wire format, not
+                # raw text, hence the explicit (if redundant with the
+                # model default) input_format=wire here.
                 TestCase(problem=problem, stdin=c["stdin"], expected_output=c["expected_output"],
-                         is_sample=(i == 0), order=i + 1)
+                         is_sample=(i == 0), order=i + 1, input_format=TestCase.INPUT_FORMAT_WIRE)
                 for i, c in enumerate(cases)
             ])
 
         return Response({"generated_count": len(cases), "test_case_count": problem.test_cases.count()})
+
+
+class AdminProblemBankRegenerateRawTextTestCasesView(APIView):
+    """System Admin: bulk fix for the "raw example text persisted where
+    the generic judge expected wire format" class of bug (see
+    models.py's TestCase.input_format and services/judging/integration.py's
+    _effective_stdin() for the full story) — targets exactly the
+    problems AdminProblemBankView's `needs_test_case_regeneration` flag
+    surfaces: uses_generic_judge=True AND at least one stored TestCase
+    still tagged input_format=raw_text. Same one-hit-per-problem
+    regeneration as AdminProblemGenerateGenericTestCasesView (replaces
+    ALL of that problem's test cases with fresh AI-generated, properly
+    wire-formatted ones), just run across the whole backlog instead of
+    one problem at a time — same run_across_providers_in_parallel /
+    time-budgeted-per-click pattern as the schema bulk sweeps above."""
+    permission_classes = [IsAuthenticated]
+
+    TIME_BUDGET_SECONDS = 90
+    MAX_ACTIONS = 200
+    ROUND_SIZE_PER_PROVIDER = 6
+
+    @staticmethod
+    def _needs_regen_q():
+        return Q(uses_generic_judge=True) & Exists(
+            TestCase.objects.filter(problem=OuterRef("pk"), input_format=TestCase.INPUT_FORMAT_RAW_TEXT)
+        )
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        import time
+        from .services.judging.generic_testcase_generator import generate_generic_test_cases
+        from .services.testcase_generator import (
+            NoProvidersAvailableError, run_across_providers_in_parallel, _providers_in_rotation_order,
+        )
+
+        try:
+            provider_count = len(_providers_in_rotation_order())
+        except NoProvidersAvailableError as exc:
+            return Response({"error": str(exc)}, status=502)
+
+        start = time.monotonic()
+        batch_size = min(self.MAX_ACTIONS, provider_count * self.ROUND_SIZE_PER_PROVIDER)
+        problems = list(Problem.objects.filter(self._needs_regen_q()).order_by("title")[:batch_size])
+
+        def call_one(problem, provider):
+            return generate_generic_test_cases(
+                title=problem.title, description=problem.description, schema=problem.generic_schema,
+                providers=[provider],
+            )
+
+        results = run_across_providers_in_parallel(problems, call_one, timeout_seconds=self.TIME_BUDGET_SECONDS)
+
+        processed = []
+        for problem, cases, error in results:
+            entry = {"id": problem.id, "title": problem.title}
+            if error is not None:
+                entry["error"] = str(error)
+            elif not cases:
+                entry["error"] = "The LLM's proposed test cases all failed structural validation — nothing saved."
+            else:
+                with transaction.atomic():
+                    problem.test_cases.all().delete()
+                    TestCase.objects.bulk_create([
+                        TestCase(problem=problem, stdin=c["stdin"], expected_output=c["expected_output"],
+                                 is_sample=(i == 0), order=i + 1, input_format=TestCase.INPUT_FORMAT_WIRE)
+                        for i, c in enumerate(cases)
+                    ])
+                entry["regenerated"] = True
+                entry["test_case_count"] = len(cases)
+            processed.append(entry)
+
+        remaining = Problem.objects.filter(self._needs_regen_q()).count()
+        return Response({
+            "processed": processed,
+            "elapsed_seconds": round(time.monotonic() - start, 1),
+            "remaining_problems": remaining,
+        })
 
 
 class AdminProblemDetailView(APIView):
@@ -12990,6 +13097,9 @@ class AdminProblemBankFillMissingView(APIView):
                             TestCase(
                                 problem=problem, stdin=case["stdin"], expected_output=case["expected_output"],
                                 is_sample=case["is_sample"], order=order,
+                                # Same legacy AI generator as AdminProblemGenerateTestCasesView —
+                                # raw judge-style stdin text, not wire format.
+                                input_format=TestCase.INPUT_FORMAT_RAW_TEXT,
                             )
                             for order, case in enumerate(generated, start=1)
                         ])
@@ -13430,7 +13540,7 @@ def _migrate_problem_to_generic_judge(problem):
         problem.test_cases.all().delete()
         TestCase.objects.bulk_create([
             TestCase(problem=problem, stdin=c["stdin"], expected_output=c["expected_output"],
-                     is_sample=(i == 0), order=i + 1)
+                     is_sample=(i == 0), order=i + 1, input_format=TestCase.INPUT_FORMAT_WIRE)
             for i, c in enumerate(cases)
         ])
         problem.uses_generic_judge = True

@@ -20,6 +20,7 @@ import time
 import uuid
 
 from .type_system import parse_type
+from .serializer import serialize_value
 from .wrapper_generator import generate_source, generate_design_source
 from .comparator import compare_output
 from .judge0_service import Judge0Service
@@ -28,8 +29,9 @@ from .versions import WRAPPER_VERSION, TYPE_SYSTEM_VERSION, SERIALIZER_VERSION
 # Reused as-is from the legacy design-problem path — same comparison rules
 # (per-operation return type, float tolerance), just handed a schema in
 # this package's own shape (which already has the same schema["methods"]
-# dict the legacy function reads return_type from).
-from ..execution_adapter import compare_design_output
+# dict the legacy function reads return_type from). parse_argument_list is
+# reused too, for a completely different reason — see _adapt_example_stdin.
+from ..execution_adapter import compare_design_output, parse_argument_list
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +90,10 @@ def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind)
 
     service = Judge0Service()
     submissions = [
-        {"source_code": full_source, "language_name": lang_name, "stdin": case.stdin}
+        {
+            "source_code": full_source, "language_name": lang_name,
+            "stdin": _effective_stdin(case, schema, is_design),
+        }
         for case in test_cases
     ]
     run_results = service.batch_execute(
@@ -175,6 +180,42 @@ def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind)
         "type_system_version": TYPE_SYSTEM_VERSION,
         "serializer_version": SERIALIZER_VERSION,
     }
+
+
+def _effective_stdin(case, schema, is_design):
+    """Dispatches on TestCase.input_format (mirrored onto RuntimeTestCase
+    — see problem_testcases.py) rather than inferring anything from
+    `source`: "stored" does NOT reliably mean "already wire format" —
+    services/problem_testcases.py's sync_problem_test_cases() persists raw,
+    human-authored example text (e.g. `s = "rabbbit", t = "rabbit"`) into
+    real TestCase rows too, so a stale-but-persisted row needs exactly the
+    same adaptation as the ephemeral no-stored-rows-yet fallback.
+
+    The legacy execution path (execution_adapter.prepare_execution_payload)
+    already handles raw text via parse_argument_list(); this reapplies the
+    same parse, then re-serializes the values into THIS package's wire
+    format instead of the legacy driver's JSON-array one.
+
+    Design-schema problems aren't handled here — schema has no top-level
+    "params" to line values up against, and a raw example string for a
+    design problem isn't in the [operations, arguments]-derivable shape
+    this fallback was ever meant to produce. Left unchanged; a design
+    problem with a raw_text-tagged case has no correct way to run yet
+    regardless of this function."""
+    if getattr(case, "input_format", "wire") != "raw_text" or is_design:
+        return case.stdin
+
+    params = schema.get("params") or []
+    try:
+        values = parse_argument_list(case.stdin)
+        if not isinstance(values, list) or len(values) != len(params):
+            raise ValueError(f"Expected {len(params)} argument(s), parsed {len(values) if isinstance(values, list) else 1}.")
+        custom_structs = schema.get("custom_structs")
+        parts = [serialize_value(parse_type(ptype, custom_structs), value) for (_pname, ptype), value in zip(params, values)]
+        return "".join(parts)
+    except Exception as exc:  # noqa: BLE001 — fall back to the raw text; the run will fail downstream with a clear parse error instead of silently misassigning values
+        logger.warning("Could not adapt example-derived stdin for wire format: %s", exc)
+        return case.stdin
 
 
 def _error_result(message, batch_kind, *, execution_id=None, error_type="internal_error"):

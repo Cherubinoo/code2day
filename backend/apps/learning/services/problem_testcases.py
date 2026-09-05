@@ -14,6 +14,15 @@ class RuntimeTestCase:
     order: int
     source: str
     input_data: dict | None = None
+    # Explicit declaration of what `stdin` actually contains — mirrors
+    # TestCase.input_format (see models.py for the full rationale): "wire"
+    # (ready to execute as-is) or "raw_text" (human-authored example text,
+    # e.g. 's = "a", t = "b"', that every execution path must adapt first
+    # — see services/judging/integration.py's _effective_stdin()). Kept as
+    # its own field rather than inferred from `source`, since "stored"
+    # does NOT reliably mean "wire" — sync_problem_test_cases() below
+    # persists raw_text rows too.
+    input_format: str = TestCase.INPUT_FORMAT_WIRE
 
 
 def _build_example_test_cases(problem) -> list[RuntimeTestCase]:
@@ -33,6 +42,7 @@ def _build_example_test_cases(problem) -> list[RuntimeTestCase]:
                 is_sample=True,
                 order=index,
                 source="examples",
+                input_format=TestCase.INPUT_FORMAT_RAW_TEXT,
             )
         )
 
@@ -55,6 +65,7 @@ def build_runtime_test_cases(problem, sample_only: bool = False) -> list[Runtime
                 order=case.order,
                 source="stored",
                 input_data=case.input_data,
+                input_format=case.input_format,
             )
             for case in selected_cases
         ]
@@ -112,6 +123,17 @@ def build_lab_runtime_test_cases(exercise, sample_only: bool = False) -> list[Ru
 
 
 def sync_problem_test_cases(problem) -> int:
+    """One-time promotion of Problem.examples into real TestCase rows for a
+    problem that has none yet (see management commands seed_code2day.py /
+    sync_problem_testcases.py). This does NOT adapt the text into wire
+    format — it persists exactly what _build_example_test_cases() derived
+    (raw, human-authored example text) — so every created row is honestly
+    tagged input_format=raw_text, same as the ephemeral fallback. Fixing
+    these up into proper wire-format test cases is the admin Problem
+    Bank's job (its AI-generated test cases already save as "wire" via
+    generic_testcase_generator.py) — this function's role is only to make
+    sure a problem has *some* TestCase rows to iterate, not to guess a
+    schema-driven wire encoding for them itself."""
     if TestCase.objects.filter(problem=problem).exists():
         return 0
 
@@ -123,6 +145,7 @@ def sync_problem_test_cases(problem) -> int:
             expected_output=case.expected_output,
             is_sample=case.is_sample,
             order=case.order,
+            input_format=TestCase.INPUT_FORMAT_RAW_TEXT,
         )
         created += 1
 

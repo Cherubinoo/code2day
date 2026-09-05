@@ -181,3 +181,94 @@ class AdminTopicGenerateGenericJudgeViewTests(TestCase):
             reverse("admin-problem-bank-topic-generate-generic-judge", args=["Array"])
         )
         self.assertEqual(response.json()["processed"], [])
+
+
+class AdminProblemBankRawTextFlagAndRegenerationTests(TestCase):
+    """AdminProblemBankView's needs_test_case_regeneration flag (surfaced
+    in the admin Problem Bank table) and the bulk fix for it,
+    AdminProblemBankRegenerateRawTextTestCasesView — see models.py's
+    TestCase.input_format and services/judging/integration.py's
+    _effective_stdin() for why this class of problem needs regenerating
+    at all."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(username="admin0002", password="secret123", email="b@b.com")
+        self.client.login(username="admin0002", password="secret123")
+
+    def test_list_flags_generic_judge_problem_with_raw_text_case(self):
+        from ....models import TestCase
+
+        broken = Problem.objects.create(
+            title="Distinct Subsequences", slug="distinct-subsequences-flag", description="d",
+            difficulty="Hard", tags=["DP"], uses_generic_judge=True, generic_schema=TWO_SUM_SCHEMA,
+        )
+        TestCase.objects.create(
+            problem=broken, stdin='s = "a", t = "b"', expected_output="1", order=1,
+            input_format=TestCase.INPUT_FORMAT_RAW_TEXT,
+        )
+        fine = Problem.objects.create(
+            title="Two Sum", slug="two-sum-flag", description="d", difficulty="Easy", tags=["Array"],
+            uses_generic_judge=True, generic_schema=TWO_SUM_SCHEMA,
+        )
+        TestCase.objects.create(
+            problem=fine, stdin="4\n2\n7\n11\n15\n9\n", expected_output="[0, 1]", order=1,
+            input_format=TestCase.INPUT_FORMAT_WIRE,
+        )
+        # A legacy-only problem with a raw_text row is fine as-is (the
+        # legacy path adapts it on its own) — must NOT be flagged as
+        # needing regeneration.
+        legacy_only = Problem.objects.create(
+            title="Legacy Problem", slug="legacy-flag", description="d", difficulty="Easy", tags=[],
+        )
+        TestCase.objects.create(
+            problem=legacy_only, stdin="s = 1", expected_output="1", order=1,
+            input_format=TestCase.INPUT_FORMAT_RAW_TEXT,
+        )
+
+        response = self.client.get(reverse("admin-problem-bank"))
+        data = response.json()
+        by_slug = {p["slug"]: p for p in data["problems"]}
+
+        self.assertTrue(by_slug["distinct-subsequences-flag"]["needs_test_case_regeneration"])
+        self.assertFalse(by_slug["two-sum-flag"]["needs_test_case_regeneration"])
+        self.assertFalse(by_slug["legacy-flag"]["needs_test_case_regeneration"])
+        self.assertEqual(data["needs_test_case_regeneration_count"], 1)
+
+    @patch("apps.learning.services.judging.generic_testcase_generator.generate_generic_test_cases")
+    def test_bulk_regenerate_only_touches_flagged_problems(self, mocked_generate):
+        from ....models import TestCase
+
+        broken = Problem.objects.create(
+            title="Distinct Subsequences", slug="distinct-subsequences-bulk", description="d",
+            difficulty="Hard", tags=["DP"], uses_generic_judge=True, generic_schema=TWO_SUM_SCHEMA,
+        )
+        TestCase.objects.create(
+            problem=broken, stdin='s = "a", t = "b"', expected_output="1", order=1,
+            input_format=TestCase.INPUT_FORMAT_RAW_TEXT,
+        )
+        fine = Problem.objects.create(
+            title="Two Sum", slug="two-sum-bulk", description="d", difficulty="Easy", tags=["Array"],
+            uses_generic_judge=True, generic_schema=TWO_SUM_SCHEMA,
+        )
+        TestCase.objects.create(
+            problem=fine, stdin="4\n2\n7\n11\n15\n9\n", expected_output="[0, 1]", order=1,
+            input_format=TestCase.INPUT_FORMAT_WIRE,
+        )
+
+        mocked_generate.return_value = TWO_SUM_CASES
+        response = self.client.post(reverse("admin-problem-bank-regenerate-raw-text-testcases"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data["processed"]), 1)
+        self.assertEqual(data["processed"][0]["id"], broken.id)
+        self.assertTrue(data["processed"][0]["regenerated"])
+        mocked_generate.assert_called_once()
+
+        broken.refresh_from_db()
+        stored = list(broken.test_cases.order_by("order"))
+        self.assertEqual(len(stored), 2)
+        self.assertEqual(stored[0].input_format, TestCase.INPUT_FORMAT_WIRE)
+
+        # Untouched — was never flagged.
+        self.assertEqual(fine.test_cases.count(), 1)
+        self.assertEqual(fine.test_cases.first().stdin, "4\n2\n7\n11\n15\n9\n")

@@ -78,13 +78,20 @@ Respond with ONLY a JSON array of {num_cases} test cases, each of this exact sha
 """
 
 
-def generate_generic_test_cases(*, title, description, schema, num_cases=4):
+def generate_generic_test_cases(*, title, description, schema, num_cases=4, providers=None):
     """Returns a list of {"stdin": str, "expected_output": str} dicts ready
     to save as TestCase rows — already converted to this framework's wire
     format, already structurally validated. Raises a TestCaseGenError
     subclass if every provider fails; returns however many of the LLM's
     proposed cases actually pass structural validation (possibly fewer
-    than num_cases, possibly zero if every one was malformed)."""
+    than num_cases, possibly zero if every one was malformed).
+
+    `providers`, if given, overrides the normal rotation-order lookup —
+    pass e.g. `providers=[some_provider]` to pin this call to one specific
+    provider (no fallback), same convention as schema_generator.py's
+    generate_generic_schema — used by bulk sweeps to run many of these
+    concurrently instead of funneling every problem through the rotation
+    one at a time."""
     custom_structs = schema.get("custom_structs")
     param_specs = schema["params"]  # [[name, type_str], ...]
     param_nodes = [(pname, parse_type(ptype, custom_structs)) for pname, ptype in param_specs]
@@ -119,7 +126,7 @@ def generate_generic_test_cases(*, title, description, schema, num_cases=4):
         num_cases=num_cases, output_type_desc=output_type_desc,
     )
 
-    providers = _providers_in_rotation_order()
+    providers = providers if providers is not None else _providers_in_rotation_order()
     raw_cases = _try_providers_in_order(
         providers, prompt,
         transform=lambda content: _parse_raw_cases(content, param_nodes),
