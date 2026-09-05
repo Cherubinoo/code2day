@@ -226,6 +226,8 @@ const ProblemBankView = ({ onBack }) => {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [fillMissing, setFillMissing] = useState({ busy: false, msg: '' });
+  const [genericGenBulk, setGenericGenBulk] = useState({ busy: false, msg: '' });
+  const [genericValidateBulk, setGenericValidateBulk] = useState({ busy: false, msg: '' });
   const [mutationError, setMutationError] = useState('');
   const PAGE_SIZE = 50;
 
@@ -333,6 +335,26 @@ const ProblemBankView = ({ onBack }) => {
       setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], schemaBusy: false, schemaMsg: messages.join(' ') } }));
     } catch (err) {
       setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], schemaBusy: false, schemaMsg: apiErrorMessage(err, 'Failed.') } }));
+    }
+  }
+
+  // "One hit run" for the new generic (type-driven) judging framework —
+  // generates Problem.generic_schema via the LLM and saves it immediately,
+  // with no deep type-parsing validation (that's the separate bulk
+  // "Validate & Enable Judge" pass below). Never touches
+  // uses_generic_judge — only the validate pass turns that on.
+  async function generateGenericSchema(problem, force) {
+    setGenStates((s) => ({ ...s, [problem.id]: { ...(s[problem.id] || {}), genericBusy: true, genericMsg: '' } }));
+    try {
+      const body = force ? { force: true } : {};
+      const data = (await api.post(`/admin/v2/problem-bank/${problem.id}/generate-generic-schema/`, body)).data;
+      const msg = data.validation_errors?.length
+        ? `Generated — ${data.validation_errors.length} validation issue(s), run "Validate & Enable Judge" to fix.`
+        : 'Generated — looks structurally valid, run "Validate & Enable Judge" to turn it on.';
+      setProblems((prev) => prev.map((p) => (p.id === problem.id ? { ...p, has_generic_schema: true } : p)));
+      setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], genericBusy: false, genericMsg: msg } }));
+    } catch (err) {
+      setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], genericBusy: false, genericMsg: apiErrorMessage(err, 'Failed.') } }));
     }
   }
 
@@ -628,6 +650,49 @@ const ProblemBankView = ({ onBack }) => {
     }
   }
 
+  // Bulk "one hit run" for the new judging framework: generates
+  // generic_schema for every problem still missing one, no validation.
+  // Capped server-side per click — call again to keep sweeping the rest.
+  async function generateGenericSchemasBulk() {
+    setGenericGenBulk({ busy: true, msg: '' });
+    try {
+      const data = (await api.post('/admin/v2/problem-bank/generate-generic-schemas/')).data;
+      const okCount = data.processed.filter((p) => p.generated).length;
+      const errCount = data.processed.filter((p) => p.error).length;
+      let msg = `Generated ${okCount} schema(s).`;
+      if (errCount) msg += ` ${errCount} error(s).`;
+      msg += data.remaining_problems > 0
+        ? ` ${data.remaining_problems} problem(s) still missing a schema — click again to continue.`
+        : ' Every problem has a schema now.';
+      setGenericGenBulk({ busy: false, msg });
+      await load();
+    } catch (err) {
+      setGenericGenBulk({ busy: false, msg: apiErrorMessage(err, 'Network error.') });
+    }
+  }
+
+  // The "if missed or wrong" follow-up: generates a schema for anything
+  // still missing one, structurally validates every existing schema
+  // (regenerating once if invalid), and only flips uses_generic_judge on
+  // for the ones that end up valid.
+  async function validateGenericSchemasBulk() {
+    setGenericValidateBulk({ busy: true, msg: '' });
+    try {
+      const data = (await api.post('/admin/v2/problem-bank/validate-generic-schemas/')).data;
+      const enabledCount = data.processed.filter((p) => p.enabled).length;
+      const stillBadCount = data.processed.filter((p) => p.errors && !p.enabled).length;
+      let msg = `Validated ${data.processed.length} problem(s): ${enabledCount} enabled for the new judge.`;
+      if (stillBadCount) msg += ` ${stillBadCount} still invalid after a retry — see details.`;
+      msg += data.remaining_problems > 0
+        ? ` ${data.remaining_problems} problem(s) still need a look — click again to continue.`
+        : ' Nothing left to validate.';
+      setGenericValidateBulk({ busy: false, msg });
+      await load();
+    } catch (err) {
+      setGenericValidateBulk({ busy: false, msg: apiErrorMessage(err, 'Network error.') });
+    }
+  }
+
   const missingCount = problems.filter((p) => p.test_case_count === 0).length;
 
   return (
@@ -675,6 +740,32 @@ const ProblemBankView = ({ onBack }) => {
           {fillMissing.busy ? 'Filling in…' : 'Fill Missing Data'}
         </button>
         <button
+          onClick={generateGenericSchemasBulk}
+          disabled={genericGenBulk.busy}
+          title="One-hit run: generate the new type-driven judge schema (generic_schema) via the LLM for every problem that doesn't have one yet — no validation, just generation"
+          style={{
+            background: 'white', border: '1px solid var(--border-soft)',
+            borderRadius: 12, padding: '10px 16px', cursor: genericGenBulk.busy ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+          }}
+        >
+          {genericGenBulk.busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
+          {genericGenBulk.busy ? 'Generating…' : 'Generate Judge Schemas'}
+        </button>
+        <button
+          onClick={validateGenericSchemasBulk}
+          disabled={genericValidateBulk.busy}
+          title="Validate every generic_schema (every type must actually parse), regenerate anything wrong or still missing once, and enable the new judge for whatever passes"
+          style={{
+            background: 'white', border: '1px solid var(--border-soft)',
+            borderRadius: 12, padding: '10px 16px', cursor: genericValidateBulk.busy ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+          }}
+        >
+          {genericValidateBulk.busy ? <Loader2 size={16} className="spin" /> : <FlaskConical size={16} />}
+          {genericValidateBulk.busy ? 'Validating…' : 'Validate & Enable Judge'}
+        </button>
+        <button
           onClick={load}
           disabled={loading}
           style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}
@@ -686,6 +777,16 @@ const ProblemBankView = ({ onBack }) => {
       {fillMissing.msg && (
         <div style={{ padding: 14, background: /error|failed/i.test(fillMissing.msg) ? '#fef2f2' : '#f0fdf4', color: /error|failed/i.test(fillMissing.msg) ? '#dc2626' : '#166534', borderRadius: 12, marginBottom: 16, fontSize: 13 }}>
           {fillMissing.msg}
+        </div>
+      )}
+      {genericGenBulk.msg && (
+        <div style={{ padding: 14, background: /error|failed/i.test(genericGenBulk.msg) ? '#fef2f2' : '#f0fdf4', color: /error|failed/i.test(genericGenBulk.msg) ? '#dc2626' : '#166534', borderRadius: 12, marginBottom: 16, fontSize: 13 }}>
+          {genericGenBulk.msg}
+        </div>
+      )}
+      {genericValidateBulk.msg && (
+        <div style={{ padding: 14, background: /error|failed/i.test(genericValidateBulk.msg) ? '#fef2f2' : '#f0fdf4', color: /error|failed/i.test(genericValidateBulk.msg) ? '#dc2626' : '#166534', borderRadius: 12, marginBottom: 16, fontSize: 13 }}>
+          {genericValidateBulk.msg}
         </div>
       )}
 
@@ -809,6 +910,27 @@ const ProblemBankView = ({ onBack }) => {
                             Typed
                           </div>
                         )}
+                        {p.uses_generic_judge ? (
+                          <div
+                            title="Generic judge schema generated and validated — this problem runs through the new type-driven judging framework"
+                            style={{
+                              marginTop: 4, padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                              background: '#dcfce7', color: '#166534', display: 'inline-block',
+                            }}
+                          >
+                            Judge: Enabled
+                          </div>
+                        ) : p.has_generic_schema ? (
+                          <div
+                            title="Generic judge schema generated but not yet validated — run Validate & Enable Judge to turn it on"
+                            style={{
+                              marginTop: 4, padding: '2px 8px', borderRadius: 999, fontSize: 10, fontWeight: 700,
+                              background: '#fef9c3', color: '#854d0e', display: 'inline-block',
+                            }}
+                          >
+                            Judge: Unvalidated
+                          </div>
+                        ) : null}
                       </td>
                       <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                         <button
@@ -837,6 +959,19 @@ const ProblemBankView = ({ onBack }) => {
                           {gen.schemaBusy ? 'Generating…' : 'Generate Schema'}
                         </button>
                         <button
+                          onClick={() => generateGenericSchema(p, p.has_generic_schema)}
+                          disabled={gen.genericBusy}
+                          title="One-hit run: generate the new type-driven judge schema via the LLM (no validation) — use Validate & Enable Judge afterward to turn it on"
+                          style={{
+                            marginLeft: 8, padding: '8px 14px', borderRadius: 10, border: '1px solid var(--border-soft)',
+                            background: 'white', color: 'var(--olive-900)', fontWeight: 700, fontSize: 12,
+                            cursor: gen.genericBusy ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                          }}
+                        >
+                          {gen.genericBusy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+                          {gen.genericBusy ? 'Generating…' : p.has_generic_schema ? 'Regenerate Judge Schema' : 'Generate Judge Schema'}
+                        </button>
+                        <button
                           onClick={() => deleteProblem(p)}
                           disabled={deletingId === p.id}
                           title="Delete problem"
@@ -856,6 +991,11 @@ const ProblemBankView = ({ onBack }) => {
                         {gen.schemaMsg && (
                           <div style={{ fontSize: 11, marginTop: 4, color: /failed|error/i.test(gen.schemaMsg) ? '#dc2626' : '#166534' }}>
                             {gen.schemaMsg}
+                          </div>
+                        )}
+                        {gen.genericMsg && (
+                          <div style={{ fontSize: 11, marginTop: 4, color: /failed|error/i.test(gen.genericMsg) ? '#dc2626' : '#166534' }}>
+                            {gen.genericMsg}
                           </div>
                         )}
                       </td>

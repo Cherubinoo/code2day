@@ -12301,6 +12301,8 @@ class AdminProblemBankView(APIView):
             "test_case_count": p.test_case_count,
             "explanation": p.explanation,
             "has_param_schema": bool(p.param_schema),
+            "has_generic_schema": bool(p.generic_schema),
+            "uses_generic_judge": p.uses_generic_judge,
         } for p in problems]
 
         return Response({"problems": data, "total": len(data)})
@@ -12596,6 +12598,50 @@ class AdminProblemGenerateExplanationView(APIView):
         return Response({"explanation": problem.explanation})
 
 
+class AdminProblemGenerateGenericSchemaView(APIView):
+    """System Admin: single-problem "one hit run" for the new type-driven
+    judging framework (services/judging/) — generates
+    Problem.generic_schema via the LLM fallback chain and saves it
+    immediately, with only a shallow shape check, not full type-parsing
+    validation. That's a deliberately separate step
+    (AdminProblemBankValidateGenericSchemasView below), matching how this
+    bank already treats "generate" and "validate" as distinct actions
+    elsewhere (e.g. the aptitude bank's validate endpoint). Never touches
+    Problem.uses_generic_judge — that flag only flips on once a schema has
+    actually passed validation."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        force = bool(request.data.get("force"))
+        if problem.generic_schema and not force:
+            return Response(
+                {"error": "This problem already has a generic_schema. Pass force=true to replace it."},
+                status=400,
+            )
+
+        from .services.judging.schema_generator import generate_generic_schema, validate_generic_schema
+        from .services.testcase_generator import TestCaseGenError
+        try:
+            schema = generate_generic_schema(title=problem.title, description=problem.description, examples=problem.examples)
+        except TestCaseGenError as exc:
+            return Response({"error": f"Generation failed: {exc}"}, status=502)
+
+        problem.generic_schema = schema
+        problem.save(update_fields=["generic_schema"])
+        return Response({
+            "generic_schema": schema,
+            # Informational only — this endpoint never blocks on validation.
+            "validation_errors": validate_generic_schema(schema),
+        })
+
+
 class AdminProblemDetailView(APIView):
     """System Admin: delete a single Problem (and its test cases, via
     on_delete cascade) from the Problem Bank."""
@@ -12775,6 +12821,142 @@ def _missing_metadata_q():
     per-field, as one filter — a problem needs a run if it's missing its
     schema, explanation, or hint ladder."""
     return Q(param_schema__isnull=True) | Q(explanation="") | Q(hints=[])
+
+
+def _missing_generic_schema_q():
+    return Q(generic_schema__isnull=True)
+
+
+class AdminProblemBankGenerateGenericSchemasView(APIView):
+    """System Admin: bulk "one hit run" for the new type-driven judging
+    framework — sweeps every Problem missing a generic_schema and
+    generates one via the LLM, with no deep validation (fast; see
+    AdminProblemBankValidateGenericSchemasView for the follow-up pass that
+    checks correctness and enables the ones that pass). Same
+    time-budgeted-per-click pattern as AdminProblemBankFillMissingView —
+    call again to keep sweeping the rest of the bank."""
+    permission_classes = [IsAuthenticated]
+
+    TIME_BUDGET_SECONDS = 90
+    MAX_ACTIONS = 200
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        import time
+        from .services.judging.schema_generator import generate_generic_schema
+        from .services.testcase_generator import TestCaseGenError
+
+        problems = Problem.objects.filter(_missing_generic_schema_q()).order_by("title")
+        processed = []
+        start = time.monotonic()
+
+        for problem in problems:
+            if len(processed) >= self.MAX_ACTIONS or (time.monotonic() - start) >= self.TIME_BUDGET_SECONDS:
+                break
+            entry = {"id": problem.id, "title": problem.title}
+            try:
+                schema = generate_generic_schema(
+                    title=problem.title, description=problem.description, examples=problem.examples,
+                )
+                problem.generic_schema = schema
+                problem.save(update_fields=["generic_schema"])
+                entry["generated"] = True
+            except TestCaseGenError as exc:
+                entry["error"] = str(exc)
+            processed.append(entry)
+
+        remaining = Problem.objects.filter(_missing_generic_schema_q()).count()
+        return Response({
+            "processed": processed,
+            "elapsed_seconds": round(time.monotonic() - start, 1),
+            "remaining_problems": remaining,
+        })
+
+
+class AdminProblemBankValidateGenericSchemasView(APIView):
+    """System Admin: the "if missed or wrong" follow-up pass for the new
+    judging framework. Sweeps every Problem that either has no
+    generic_schema yet or hasn't been enabled yet: one still missing a
+    schema gets one generated (same as the bulk-generate action above);
+    one that already has a schema gets it structurally validated — every
+    declared type string must actually parse (services/judging/type_system.py).
+    A schema that fails validation is regenerated once and re-checked.
+
+    Only a schema that ends up valid flips Problem.uses_generic_judge on —
+    the one place that flag is ever set automatically, which is exactly the
+    gate the additive-judging design calls for: a problem only starts
+    running through the new pipeline once its schema is confirmed
+    parseable, never the moment it's merely generated. Same
+    time-budgeted-per-click pattern as the other bulk sweeps here."""
+    permission_classes = [IsAuthenticated]
+
+    TIME_BUDGET_SECONDS = 90
+    MAX_ACTIONS = 200
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        import time
+        from .services.judging.schema_generator import generate_generic_schema, validate_generic_schema
+        from .services.testcase_generator import TestCaseGenError
+
+        def needs_pass_q():
+            return Q(generic_schema__isnull=True) | Q(uses_generic_judge=False)
+
+        problems = Problem.objects.filter(needs_pass_q()).order_by("title")
+        processed = []
+        start = time.monotonic()
+
+        for problem in problems:
+            if len(processed) >= self.MAX_ACTIONS or (time.monotonic() - start) >= self.TIME_BUDGET_SECONDS:
+                break
+
+            entry = {"id": problem.id, "title": problem.title}
+            schema = problem.generic_schema
+
+            if not schema:
+                try:
+                    schema = generate_generic_schema(
+                        title=problem.title, description=problem.description, examples=problem.examples,
+                    )
+                    entry["generated"] = True
+                except TestCaseGenError as exc:
+                    entry["error"] = f"Generation failed: {exc}"
+                    processed.append(entry)
+                    continue
+
+            errors = validate_generic_schema(schema)
+            if errors:
+                entry["initial_errors"] = errors
+                try:
+                    schema = generate_generic_schema(
+                        title=problem.title, description=problem.description, examples=problem.examples,
+                    )
+                    errors = validate_generic_schema(schema)
+                    entry["regenerated"] = True
+                except TestCaseGenError as exc:
+                    entry["error"] = f"Regeneration failed: {exc}"
+
+            problem.generic_schema = schema
+            if errors:
+                entry["errors"] = errors
+                problem.uses_generic_judge = False
+            else:
+                problem.uses_generic_judge = True
+                entry["enabled"] = True
+
+            problem.save(update_fields=["generic_schema", "uses_generic_judge"])
+            processed.append(entry)
+
+        remaining = Problem.objects.filter(needs_pass_q()).count()
+        return Response({
+            "processed": processed,
+            "elapsed_seconds": round(time.monotonic() - start, 1),
+            "remaining_problems": remaining,
+        })
 
 
 class AdminProblemTopicsView(APIView):

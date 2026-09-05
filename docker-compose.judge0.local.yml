@@ -1,0 +1,82 @@
+# Local-only Judge0 stack for testing the generic judging framework
+# (backend/apps/learning/services/judging/) against a real Judge0 instance
+# on this dev machine — Python(71)/JavaScript(63)/Java(62)/C++(54), the 4
+# languages that package generates wrappers for. Uses the stock
+# judge0/judge0 image unmodified: all 4 are pre-configured language IDs in
+# Judge0 out of the box, so no custom image/Dockerfile is needed here
+# (unlike docker-compose.judge0.yml at the repo root, which is the
+# PRODUCTION reference config for a custom SQL-fixed image — untouched by
+# this file). Separate container/volume names throughout so this can run
+# side-by-side with anything else without colliding.
+#
+# Usage:
+#   docker compose -f docker-compose.judge0.local.yml up -d
+#   curl http://localhost:2358/system_info      # health check
+#   docker compose -f docker-compose.judge0.local.yml down          # stop, keep data
+#   docker compose -f docker-compose.judge0.local.yml down -v       # stop, wipe data
+#
+# backend/.env already points JUDGE0_BASE_URL at http://localhost:2358,
+# which is exactly what this exposes — no other config changes needed to
+# run the Django dev server against this.
+
+services:
+  judge0-local-db:
+    image: postgres:13
+    container_name: judge0-local-db
+    environment:
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0LocalTest
+    volumes:
+      - judge0-local-db-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  judge0-local-redis:
+    image: redis:6
+    container_name: judge0-local-redis
+    command: ["redis-server", "--requirepass", "judge0LocalRedis"]
+    restart: unless-stopped
+
+  judge0-local-server:
+    image: judge0/judge0:latest
+    container_name: judge0-local-server
+    depends_on:
+      - judge0-local-db
+      - judge0-local-redis
+    environment:
+      POSTGRES_HOST: judge0-local-db
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0LocalTest
+      REDIS_HOST: judge0-local-redis
+      REDIS_PASSWORD: judge0LocalRedis
+    ports:
+      - "2358:2358"
+    privileged: true
+    cgroup: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    restart: unless-stopped
+
+  judge0-local-workers:
+    image: judge0/judge0:latest
+    container_name: judge0-local-workers
+    command: ["./scripts/workers"]
+    depends_on:
+      - judge0-local-db
+      - judge0-local-redis
+    environment:
+      POSTGRES_HOST: judge0-local-db
+      POSTGRES_DB: judge0
+      POSTGRES_USER: judge0
+      POSTGRES_PASSWORD: judge0LocalTest
+      REDIS_HOST: judge0-local-redis
+      REDIS_PASSWORD: judge0LocalRedis
+    privileged: true
+    cgroup: host
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+    restart: unless-stopped
+
+volumes:
+  judge0-local-db-data:
