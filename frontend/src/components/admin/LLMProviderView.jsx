@@ -3,8 +3,9 @@
 // first); if one errors or times out the next active one is tried.
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus, Trash2, Pencil, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Pencil, Loader2, RefreshCw, Sparkles, DollarSign } from 'lucide-react';
 import api from '../../lib/api';
+import LLMUsageDashboard from './LLMUsageDashboard';
 
 const PROVIDERS_QUERY_KEY = ['llm-providers'];
 
@@ -15,7 +16,7 @@ function apiErrorMessage(err, fallback) {
 const BLANK_FORM = {
   name: '', base_url: '', api_key: '', model_name: '', priority: 0, is_active: true,
   use_streaming: false, temperature: 0.4, top_p: 0.95, max_tokens: 6000, timeout_seconds: 30,
-  extra_body: {},
+  extra_body: {}, input_cost_per_million: 0, output_cost_per_million: 0,
 };
 
 const LLMProviderView = ({ onBack }) => {
@@ -36,6 +37,7 @@ const LLMProviderView = ({ onBack }) => {
   });
   const error = loadError ? apiErrorMessage(loadError, 'Failed to load providers') : '';
 
+  const [tab, setTab] = useState('providers'); // 'providers' | 'usage'
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(BLANK_FORM);
@@ -95,6 +97,7 @@ const LLMProviderView = ({ onBack }) => {
       priority: p.priority, is_active: p.is_active, use_streaming: p.use_streaming,
       temperature: p.temperature, top_p: p.top_p, max_tokens: p.max_tokens,
       timeout_seconds: p.timeout_seconds, extra_body: p.extra_body || {},
+      input_cost_per_million: p.input_cost_per_million ?? 0, output_cost_per_million: p.output_cost_per_million ?? 0,
     });
     setSnippet('');
     setParseErr('');
@@ -142,13 +145,45 @@ const LLMProviderView = ({ onBack }) => {
             Fallback chain for automatic generation — tried in priority order, lowest first.
           </p>
         </div>
-        <button onClick={() => refetch()} disabled={loading || isRefetching} style={{ marginLeft: 'auto', background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
-          <RefreshCw size={16} className={(loading || isRefetching) ? 'spin' : ''} /> Refresh
-        </button>
-        <button onClick={openCreateForm} className="primary-button" style={{ borderRadius: 12, padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Plus size={16} /> Add Provider
-        </button>
+        <div style={{ marginLeft: 'auto', display: 'flex', background: 'var(--bg-2)', borderRadius: 12, padding: 4, gap: 4 }}>
+          <button
+            onClick={() => setTab('providers')}
+            style={{
+              padding: '8px 16px', borderRadius: 9, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+              background: tab === 'providers' ? 'white' : 'transparent', color: 'var(--olive-900)',
+              boxShadow: tab === 'providers' ? 'var(--shadow-soft)' : 'none',
+            }}
+          >
+            Providers
+          </button>
+          <button
+            onClick={() => setTab('usage')}
+            style={{
+              padding: '8px 16px', borderRadius: 9, border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
+              background: tab === 'usage' ? 'white' : 'transparent', color: 'var(--olive-900)',
+              boxShadow: tab === 'usage' ? 'var(--shadow-soft)' : 'none',
+            }}
+          >
+            <DollarSign size={14} /> Usage & Cost
+          </button>
+        </div>
+        {tab === 'providers' && (
+          <>
+            <button onClick={() => refetch()} disabled={loading || isRefetching} style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}>
+              <RefreshCw size={16} className={(loading || isRefetching) ? 'spin' : ''} /> Refresh
+            </button>
+            <button onClick={openCreateForm} className="primary-button" style={{ borderRadius: 12, padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Plus size={16} /> Add Provider
+            </button>
+          </>
+        )}
       </div>
+
+      {tab === 'usage' ? (
+        <LLMUsageDashboard />
+      ) : (
+      <>
 
       {error && <div style={{ padding: 16, background: '#fef2f2', color: '#dc2626', borderRadius: 12, marginBottom: 16 }}>{error}</div>}
 
@@ -228,6 +263,16 @@ const LLMProviderView = ({ onBack }) => {
               <input type="number" value={form.timeout_seconds} onChange={(e) => setForm((f) => ({ ...f, timeout_seconds: Number(e.target.value) }))}
                 style={{ width: '100%', marginTop: 4, padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)' }} />
             </label>
+            <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-soft)' }}>
+              Input cost ($ / 1M tokens)
+              <input type="number" step="0.01" min="0" value={form.input_cost_per_million} onChange={(e) => setForm((f) => ({ ...f, input_cost_per_million: Number(e.target.value) }))}
+                style={{ width: '100%', marginTop: 4, padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)' }} />
+            </label>
+            <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-soft)' }}>
+              Output cost ($ / 1M tokens)
+              <input type="number" step="0.01" min="0" value={form.output_cost_per_million} onChange={(e) => setForm((f) => ({ ...f, output_cost_per_million: Number(e.target.value) }))}
+                style={{ width: '100%', marginTop: 4, padding: 8, borderRadius: 8, border: '1px solid var(--border-soft)' }} />
+            </label>
             <label style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-soft)', display: 'flex', alignItems: 'center', gap: 6, marginTop: 20 }}>
               <input type="checkbox" checked={form.use_streaming} onChange={(e) => setForm((f) => ({ ...f, use_streaming: e.target.checked }))} />
               Requires streaming (stream=True / SSE)
@@ -277,6 +322,7 @@ const LLMProviderView = ({ onBack }) => {
                 <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 700 }}>Name</th>
                 <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 700 }}>Model</th>
                 <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 700 }}>Key</th>
+                <th style={{ textAlign: 'left', padding: '12px 16px', fontWeight: 700 }}>Cost / 1M (in / out)</th>
                 <th style={{ textAlign: 'center', padding: '12px 16px', fontWeight: 700 }}>Streaming</th>
                 <th style={{ textAlign: 'center', padding: '12px 16px', fontWeight: 700 }}>Active</th>
                 <th style={{ textAlign: 'right', padding: '12px 16px', fontWeight: 700 }}>Actions</th>
@@ -289,6 +335,9 @@ const LLMProviderView = ({ onBack }) => {
                   <td style={{ padding: '12px 16px', fontWeight: 600 }}>{p.name}</td>
                   <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: 12 }}>{p.model_name}</td>
                   <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: 12, color: 'var(--text-soft)' }}>{p.api_key_masked}</td>
+                  <td style={{ padding: '12px 16px', fontFamily: 'monospace', fontSize: 12, color: 'var(--text-soft)' }}>
+                    ${Number(p.input_cost_per_million || 0).toFixed(2)} / ${Number(p.output_cost_per_million || 0).toFixed(2)}
+                  </td>
                   <td style={{ padding: '12px 16px', textAlign: 'center' }}>{p.use_streaming ? '✓' : ''}</td>
                   <td style={{ padding: '12px 16px', textAlign: 'center' }}>
                     <button
@@ -314,6 +363,8 @@ const LLMProviderView = ({ onBack }) => {
             </tbody>
           </table>
         </div>
+      )}
+      </>
       )}
     </div>
   );

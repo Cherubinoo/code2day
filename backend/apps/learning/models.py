@@ -2394,6 +2394,14 @@ class LLMProvider(models.Model):
         null=True, blank=True,
         help_text="Set automatically each time this provider is picked for a request — drives round-robin selection.",
     )
+    input_cost_per_million = models.DecimalField(
+        max_digits=10, decimal_places=4, default=0,
+        help_text="USD per 1,000,000 prompt/input tokens — used to estimate cost on the LLM usage dashboard. Leave 0 if unknown/free.",
+    )
+    output_cost_per_million = models.DecimalField(
+        max_digits=10, decimal_places=4, default=0,
+        help_text="USD per 1,000,000 completion/output tokens — used to estimate cost on the LLM usage dashboard. Leave 0 if unknown/free.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -2403,6 +2411,46 @@ class LLMProvider(models.Model):
 
     def __str__(self):
         return f"{self.name} ({'active' if self.is_active else 'disabled'}, priority={self.priority})"
+
+
+class LLMUsageLog(models.Model):
+    """One row per actual HTTP call to an LLM provider — powers the admin
+    cost/usage dashboard. Logged at the lowest level (testcase_generator's
+    _call_provider_once, via _try_providers_in_order) so every code path
+    that generates content (test cases, param_schema, generic_schema,
+    explanation, hints, aptitude validation, ...) is covered from one
+    place rather than being instrumented per-feature.
+
+    provider is nullable + provider_name/model_name are denormalized
+    snapshots so historical usage/cost stays intact even if the
+    LLMProvider row is later renamed, re-priced, or deleted.
+    estimated_cost is computed and stored at log time using whatever
+    cost-per-million rates were configured on the provider *then* — so
+    editing a provider's pricing later doesn't rewrite history."""
+
+    provider = models.ForeignKey(LLMProvider, on_delete=models.SET_NULL, null=True, blank=True, related_name="usage_logs")
+    provider_name = models.CharField(max_length=80)
+    model_name = models.CharField(max_length=120, blank=True, default="")
+    feature = models.CharField(max_length=80, blank=True, default="", help_text="Short tag parsed from the call's log label, e.g. 'generic schema', 'explanation', 'test cases'")
+    label = models.CharField(max_length=255, blank=True, default="", help_text="Full log label passed by the caller, e.g. the problem title")
+    success = models.BooleanField(default=True)
+    prompt_tokens = models.PositiveIntegerField(default=0)
+    completion_tokens = models.PositiveIntegerField(default=0)
+    total_tokens = models.PositiveIntegerField(default=0)
+    estimated_cost = models.DecimalField(max_digits=10, decimal_places=6, default=0)
+    error_message = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "llm_usage_logs"
+        indexes = [
+            models.Index(fields=["provider_name", "created_at"]),
+            models.Index(fields=["feature", "created_at"]),
+        ]
+        ordering = ("-created_at",)
+
+    def __str__(self):
+        return f"{self.provider_name} — {self.feature or 'generation'} ({'ok' if self.success else 'failed'})"
 
 
 class LabExerciseReport(models.Model):

@@ -197,7 +197,10 @@ def _extract_json_array(text):
 
 
 def _call_provider_once(provider, prompt, max_tokens=None):
-    """POST to one provider and return the raw text content of its reply.
+    """POST to one provider and return (content, usage) — usage is
+    whatever token-count dict the provider handed back (possibly empty,
+    e.g. a provider that doesn't report usage on streaming responses),
+    used only for the cost/usage dashboard, never for control flow.
     `max_tokens` overrides the provider's configured value — used to retry
     with a larger budget when a first attempt came back truncated.
     Raises TestCaseGenTimeoutError / TestCaseGenServiceError on failure."""
@@ -210,6 +213,8 @@ def _call_provider_once(provider, prompt, max_tokens=None):
         "stream": provider.use_streaming,
         **(provider.extra_body or {}),
     }
+    if provider.use_streaming:
+        payload["stream_options"] = {"include_usage": True}
     headers = {
         "Authorization": f"Bearer {provider.api_key}",
         "Content-Type": "application/json",
@@ -224,7 +229,7 @@ def _call_provider_once(provider, prompt, max_tokens=None):
         if response.status_code != 200:
             raise TestCaseGenServiceError(f"HTTP {response.status_code}: {response.text[:500]}")
         body = response.json()
-        return body["choices"][0]["message"]["content"]
+        return body["choices"][0]["message"]["content"], (body.get("usage") or {})
 
     except requests.exceptions.Timeout as exc:
         raise TestCaseGenTimeoutError(f"Request timed out after {provider.timeout_seconds}s") from exc
@@ -236,9 +241,13 @@ def _call_provider_once(provider, prompt, max_tokens=None):
 
 def _consume_stream(url, payload, headers, timeout_seconds):
     """Read an OpenAI-style SSE stream and concatenate delta.content chunks
-    (reasoning_content, if any, is logged but not included in the result)."""
+    (reasoning_content, if any, is logged but not included in the result).
+    Returns (content, usage) — usage comes from the final chunk when the
+    provider honors `stream_options.include_usage` (most OpenAI-compatible
+    providers do), otherwise an empty dict."""
     content_parts = []
     reasoning_seen = False
+    usage = {}
     try:
         with requests.post(url, json=payload, headers=headers, timeout=timeout_seconds, stream=True) as response:
             if response.status_code != 200:
@@ -253,6 +262,8 @@ def _consume_stream(url, payload, headers, timeout_seconds):
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
                     continue
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
                 choices = chunk.get("choices") or []
                 if not choices:
                     continue
@@ -268,7 +279,40 @@ def _consume_stream(url, payload, headers, timeout_seconds):
 
     if reasoning_seen:
         logger.debug("Provider emitted reasoning_content (discarded, not part of the JSON answer)")
-    return "".join(content_parts)
+    return "".join(content_parts), usage
+
+
+_FEATURE_RE = re.compile(r"\(([^)]+)\)\s*$")
+
+
+def _log_llm_usage(provider, label, *, success, usage=None, error=None):
+    """Records one LLMUsageLog row for a single actual HTTP call. Never
+    raises — a logging failure must never take down a generation call.
+    `label` is whatever log_label the caller passed (e.g. "Two Sum
+    (generic schema)"); the parenthesized suffix becomes `feature` so the
+    cost dashboard can group by generation type without every call site
+    needing to pass a separate tag."""
+    try:
+        from apps.learning.models import LLMUsageLog
+
+        usage = usage or {}
+        prompt_tokens = int(usage.get("prompt_tokens") or 0)
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
+        feature_match = _FEATURE_RE.search(label or "")
+        feature = feature_match.group(1) if feature_match else ""
+        cost = (
+            (prompt_tokens / 1_000_000) * float(provider.input_cost_per_million)
+            + (completion_tokens / 1_000_000) * float(provider.output_cost_per_million)
+        )
+        LLMUsageLog.objects.create(
+            provider=provider, provider_name=provider.name, model_name=provider.model_name,
+            feature=feature, label=(label or "")[:255], success=success,
+            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, total_tokens=total_tokens,
+            estimated_cost=cost, error_message=str(error or "")[:2000],
+        )
+    except Exception:  # noqa: BLE001 — usage logging must never break generation
+        logger.exception("Failed to record LLMUsageLog (non-fatal)")
 
 
 def _providers_in_rotation_order():
@@ -318,29 +362,33 @@ def _try_providers_in_order(providers, prompt, *, transform=lambda content: cont
         _mark_provider_used(provider)
         logger.info("Trying provider %r for %s", provider.name, label)
         try:
-            content = _call_provider_once(provider, prompt)
+            content, usage = _call_provider_once(provider, prompt)
             result = transform(content)
-        except TestCaseGenTruncatedError:
+        except TestCaseGenTruncatedError as exc:
             # Likely a reasoning model that burned its budget on hidden
             # reasoning before reaching the answer — same provider, more
             # room, once, before giving up on it and moving on.
+            _log_llm_usage(provider, label, success=False, error=exc)
             bigger_budget = min(provider.max_tokens * 2, 16000)
             logger.warning(
                 "Provider %r truncated for %s — retrying with max_tokens=%d",
                 provider.name, label, bigger_budget,
             )
             try:
-                content = _call_provider_once(provider, prompt, max_tokens=bigger_budget)
+                content, usage = _call_provider_once(provider, prompt, max_tokens=bigger_budget)
                 result = transform(content)
-            except Exception as exc:  # noqa: BLE001 — any failure just means "try the next one"
-                logger.warning("Provider %r failed for %s after retry: %s — trying next", provider.name, label, exc)
-                errors[provider.name] = exc
+            except Exception as exc2:  # noqa: BLE001 — any failure just means "try the next one"
+                logger.warning("Provider %r failed for %s after retry: %s — trying next", provider.name, label, exc2)
+                _log_llm_usage(provider, label, success=False, error=exc2)
+                errors[provider.name] = exc2
                 continue
         except Exception as exc:  # noqa: BLE001 — any failure just means "try the next one"
             logger.warning("Provider %r failed for %s: %s — trying next", provider.name, label, exc)
+            _log_llm_usage(provider, label, success=False, error=exc)
             errors[provider.name] = exc
             continue
         logger.info("Provider %r succeeded for %s", provider.name, label)
+        _log_llm_usage(provider, label, success=True, usage=usage)
         return result
 
     if errors:
@@ -349,7 +397,7 @@ def _try_providers_in_order(providers, prompt, *, transform=lambda content: cont
     raise NoProvidersAvailableError("All configured providers failed.")
 
 
-def generate_text_with_fallback(prompt, *, log_label=""):
+def generate_text_with_fallback(prompt, *, log_label="", providers=None):
     """
     Send `prompt` to active configured LLMProviders one at a time, in
     round-robin order, and return the raw text content of whichever
@@ -359,10 +407,17 @@ def generate_text_with_fallback(prompt, *, log_label=""):
     result) and any other caller that just wants free-text back (e.g. an
     algorithm write-up for a lab report).
 
+    `providers`, if given, overrides the normal rotation-order lookup —
+    used by bulk sweeps to pin one specific provider per parallel worker
+    (pass e.g. `providers=[some_provider]`) so several providers can be
+    hit concurrently instead of the usual one-at-a-time-with-fallback
+    behavior. With a single-provider list there's no fallback target if it
+    fails, same as any other exhausted rotation.
+
     Raises a TestCaseGenError subclass if every active provider fails (or
     none are configured).
     """
-    providers = _providers_in_rotation_order()
+    providers = providers if providers is not None else _providers_in_rotation_order()
     return _try_providers_in_order(providers, prompt, log_label=log_label)
 
 
@@ -419,23 +474,24 @@ def extract_difficulty(description):
     return match.group(1).title() if match else None
 
 
-def generate_test_cases(*, title, description, examples=None, num_cases=None, difficulty=None):
+def generate_test_cases(*, title, description, examples=None, num_cases=None, difficulty=None, providers=None):
     """
     Returns a list of {"stdin": str, "expected_output": str, "is_sample": bool}
     dicts generated by one active LLM provider, trying the next one in the
     round-robin rotation if the first fails.
 
     `num_cases` defaults to a difficulty-scaled cap (see
-    num_cases_for_difficulty) when not given explicitly.
+    num_cases_for_difficulty) when not given explicitly. `providers`
+    overrides the normal rotation lookup (see generate_text_with_fallback).
 
     Raises a TestCaseGenError subclass if every active provider fails (or
     none are configured).
     """
     if num_cases is None:
         num_cases = num_cases_for_difficulty(difficulty)
-    providers = _providers_in_rotation_order()
+    providers = providers if providers is not None else _providers_in_rotation_order()
     prompt = _build_prompt(title, description, examples, num_cases)
-    cases = _try_providers_in_order(providers, prompt, transform=_parse_and_validate_cases, log_label=title)
+    cases = _try_providers_in_order(providers, prompt, transform=_parse_and_validate_cases, log_label=f"{title} (test cases)")
     logger.info("Generated %d test cases for %r", len(cases), title)
     return cases
 
@@ -472,16 +528,19 @@ Respond with ONLY the hint text — no "Hint:" prefix, no commentary, one senten
 """
 
 
-def generate_explanation(*, title, description, examples=None, difficulty=None):
+def generate_explanation(*, title, description, examples=None, difficulty=None, providers=None):
     """Returns a real, multi-paragraph plain-text explanation of the
     problem's concept/approach — shown to students instead of the old hints
     list. Raises a TestCaseGenError subclass if every active provider fails.
 
     `examples`/`difficulty` aren't used in the prompt (the explanation is
     concept-level, not example-specific) but are accepted so callers can
-    pass the same kwargs used for generate_test_cases() without filtering."""
+    pass the same kwargs used for generate_test_cases() without filtering.
+    `providers` overrides the normal rotation lookup (see
+    generate_text_with_fallback) — used to pin one provider per parallel
+    worker in the bulk sweeps."""
     prompt = EXPLANATION_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
-    text = generate_text_with_fallback(prompt, log_label=f"{title} (explanation)")
+    text = generate_text_with_fallback(prompt, log_label=f"{title} (explanation)", providers=providers)
     explanation = text.strip()
     if not explanation:
         raise TestCaseGenServiceError("LLM returned an empty explanation.")
@@ -532,7 +591,7 @@ Rules:
 """
 
 
-def generate_param_schema(*, title, description, examples=None):
+def generate_param_schema(*, title, description, examples=None, providers=None):
     """Returns a validated schema inferred by an LLM from the problem
     statement — either the FUNCTION shape ({"kind":"function","params":[...],
     "return_type":...}) or, for a class/design-style problem, the DESIGN
@@ -549,7 +608,7 @@ def generate_param_schema(*, title, description, examples=None):
         examples_block = ""
 
     prompt = PARAM_SCHEMA_PROMPT_TEMPLATE.format(title=title or "", description=description or "", examples_block=examples_block)
-    providers = _providers_in_rotation_order()
+    providers = providers if providers is not None else _providers_in_rotation_order()
     schema = _try_providers_in_order(providers, prompt, transform=_parse_and_validate_schema, log_label=f"{title} (param schema)")
     logger.info("Generated param schema for %r: %s", title, schema)
     return schema
@@ -565,14 +624,14 @@ def _parse_and_validate_schema(content):
     return parsed
 
 
-def generate_hint(*, title, description):
+def generate_hint(*, title, description, providers=None):
     """Returns a single short (one-sentence) nudge-hint — distinct from
     generate_explanation()'s full write-up. Used for lab exercises, whose
     description blob has an optional "Hint: ..." line staff can otherwise
     author by hand. Raises a TestCaseGenError subclass if every active
     provider fails."""
     prompt = HINT_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
-    text = generate_text_with_fallback(prompt, log_label=f"{title} (hint)")
+    text = generate_text_with_fallback(prompt, log_label=f"{title} (hint)", providers=providers)
     hint = text.strip()
     if not hint:
         raise TestCaseGenServiceError("LLM returned an empty hint.")
@@ -600,13 +659,13 @@ commentary, no keys other than the array itself.
 """
 
 
-def generate_hints(*, title, description):
+def generate_hints(*, title, description, providers=None):
     """Returns a short progressive hint ladder (2-4 strings, vaguest first) for
     Problem.hints — distinct from generate_hint()'s single lab nudge. Raises a
     TestCaseGenError subclass if every active provider fails or every
     provider's reply fails to parse as a non-empty JSON array of strings."""
     prompt = HINTS_LIST_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
-    providers = _providers_in_rotation_order()
+    providers = providers if providers is not None else _providers_in_rotation_order()
     hints = _try_providers_in_order(providers, prompt, transform=_parse_hints_list, log_label=f"{title} (hints)")
     return hints
 
@@ -638,3 +697,65 @@ def derive_examples(cases):
         }
         for c in samples
     ]
+
+
+def run_across_providers_in_parallel(items, call_fn, timeout_seconds=None):
+    """Runs call_fn(item, provider) for every item in `items`, assigning
+    active LLMProviders round-robin (item 0 -> provider 0, item 1 ->
+    provider 1, ..., wrapping around) so N providers genuinely work at the
+    same time instead of the normal one-at-a-time-with-fallback rotation.
+    This is what makes the admin bulk sweeps (Generate Judge Schemas,
+    Validate & Enable Judge, Regenerate All Explanations) fast — an
+    individual "generate for this one problem" button already gets one
+    provider to itself and feels fast; a bulk sweep over hundreds of
+    problems felt slow purely because it was pinning everything onto
+    whichever single provider was "next up" in a strict for-loop.
+
+    call_fn must do ONLY the LLM call + parsing — no Django ORM writes —
+    because it runs in a worker thread and Django DB connections aren't
+    safely handed between threads; do all model .save() calls in the
+    caller, in the main thread, from the returned results.
+
+    `timeout_seconds`, if given, bounds how long this waits overall (e.g.
+    the caller's own time budget) — any item still in flight past that
+    gets an error result ("timed out") instead of blocking the request;
+    the underlying thread is abandoned (not force-killed — Python threads
+    can't be), finishes on its own with nowhere to write its result, and
+    doesn't hold up the response.
+
+    Returns a list of (item, result, error) triples in the same order as
+    `items` — result is None if error is set, and vice versa. Raises
+    NoProvidersAvailableError up front if there are no active providers at
+    all (nothing to assign)."""
+    from concurrent.futures import ThreadPoolExecutor, wait
+    from django.db import connections
+
+    providers = _providers_in_rotation_order()  # raises NoProvidersAvailableError if none active
+    results = [None] * len(items)
+    errors = [None] * len(items)
+
+    def task(idx, item, provider):
+        try:
+            results[idx] = call_fn(item, provider)
+        except Exception as exc:  # noqa: BLE001 — surfaced per-item, never crashes the batch
+            errors[idx] = exc
+        finally:
+            connections.close_all()  # this thread's own connection, opened lazily by the ORM calls above
+
+    executor = ThreadPoolExecutor(max_workers=len(providers))
+    try:
+        future_to_idx = {
+            executor.submit(task, idx, item, providers[idx % len(providers)]): idx
+            for idx, item in enumerate(items)
+        }
+        _done, not_done = wait(future_to_idx.keys(), timeout=timeout_seconds)
+        for future in not_done:
+            errors[future_to_idx[future]] = TestCaseGenTimeoutError(
+                "Timed out waiting for this round to finish — try again."
+            )
+    finally:
+        # wait=False: don't block the response on threads still mid-request;
+        # cancel_futures=True: drop any not-yet-started tasks outright.
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    return list(zip(items, results, errors))

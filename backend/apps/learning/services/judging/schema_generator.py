@@ -72,11 +72,17 @@ Rules:
 """
 
 
-def generate_generic_schema(*, title, description, examples=None):
+def generate_generic_schema(*, title, description, examples=None, providers=None):
     """Returns a schema dict shaped {"function_name", "params": [[name,type],...],
     "return_type", "custom_structs"} inferred by an LLM — NOT deep-validated
     (see validate_generic_schema for that). Raises a TestCaseGenError
-    subclass if every active provider fails or replies with unparseable JSON."""
+    subclass if every active provider fails or replies with unparseable JSON.
+
+    `providers`, if given, overrides the normal rotation-order lookup —
+    pass e.g. `providers=[some_provider]` to pin this call to one specific
+    provider (no fallback), used by the bulk sweeps to run many of these
+    concurrently, one per active provider, instead of funneling every
+    problem through the rotation one at a time."""
     if examples:
         blocks = [f"Example input:\n{ex.get('input', '')}\nExample output:\n{ex.get('output', '')}" for ex in examples]
         examples_block = "\nExamples:\n\n" + "\n\n".join(blocks)
@@ -84,7 +90,7 @@ def generate_generic_schema(*, title, description, examples=None):
         examples_block = ""
 
     prompt = GENERIC_SCHEMA_PROMPT_TEMPLATE.format(title=title or "", description=description or "", examples_block=examples_block)
-    providers = _providers_in_rotation_order()
+    providers = providers if providers is not None else _providers_in_rotation_order()
     schema = _try_providers_in_order(
         providers, prompt, transform=_parse_and_normalize_schema, log_label=f"{title} (generic schema)",
     )

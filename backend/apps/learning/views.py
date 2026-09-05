@@ -74,6 +74,7 @@ from .models import (
     LabExerciseReport,
     LabStudentSession,
     LLMProvider,
+    LLMUsageLog,
     Company,
     LAB_LANGUAGE_CHOICES,
     Examination,
@@ -12069,6 +12070,8 @@ class AdminLLMProvidersView(APIView):
             "max_tokens": p.max_tokens,
             "timeout_seconds": p.timeout_seconds,
             "extra_body": p.extra_body,
+            "input_cost_per_million": float(p.input_cost_per_million),
+            "output_cost_per_million": float(p.output_cost_per_million),
             "updated_at": p.updated_at.isoformat(),
         } for p in providers]
         return Response({"providers": data})
@@ -12098,6 +12101,8 @@ class AdminLLMProvidersView(APIView):
                 max_tokens=int(data.get("max_tokens", 6000)),
                 timeout_seconds=int(data.get("timeout_seconds", 30)),
                 extra_body=data.get("extra_body") or {},
+                input_cost_per_million=float(data.get("input_cost_per_million", 0) or 0),
+                output_cost_per_million=float(data.get("output_cost_per_million", 0) or 0),
             )
         except (TypeError, ValueError) as exc:
             return Response({"error": f"Invalid field value: {exc}"}, status=400)
@@ -12144,6 +12149,10 @@ class AdminLLMProviderDetailView(APIView):
             provider.timeout_seconds = int(data["timeout_seconds"])
         if "extra_body" in data:
             provider.extra_body = data["extra_body"] or {}
+        if "input_cost_per_million" in data:
+            provider.input_cost_per_million = float(data["input_cost_per_million"] or 0)
+        if "output_cost_per_million" in data:
+            provider.output_cost_per_million = float(data["output_cost_per_million"] or 0)
 
         try:
             provider.save()
@@ -12161,6 +12170,115 @@ class AdminLLMProviderDetailView(APIView):
             return Response({"error": "Not found"}, status=404)
         provider.delete()
         return Response(status=204)
+
+
+class AdminLLMUsageSummaryView(APIView):
+    """System Admin: the LLM API cost/usage dashboard — aggregates
+    LLMUsageLog (written by every generation call, see
+    services/testcase_generator.py's _log_llm_usage) into totals, a
+    per-provider breakdown, a per-feature breakdown (schema generation,
+    explanation, test cases, hints, ...), a daily trend, and a recent-
+    activity table. `estimated_cost` on each row was computed at log time
+    from whatever cost-per-million rates the provider had THEN, so this
+    reflects real historical cost even after a provider's pricing is
+    edited later.
+
+    ?days=N (default 30, 0/"all" for no cutoff) bounds every aggregate
+    below by created_at."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        from django.db.models import Sum, Count, Q as _Q
+        from django.db.models.functions import TruncDate
+
+        days_param = (request.query_params.get("days") or "30").strip().lower()
+        qs = LLMUsageLog.objects.all()
+        since = None
+        if days_param not in ("0", "all"):
+            try:
+                days = int(days_param)
+            except ValueError:
+                days = 30
+            since = timezone.now() - timezone.timedelta(days=days)
+            qs = qs.filter(created_at__gte=since)
+
+        totals = qs.aggregate(
+            requests=Count("id"),
+            successes=Count("id", filter=_Q(success=True)),
+            failures=Count("id", filter=_Q(success=False)),
+            prompt_tokens=Sum("prompt_tokens"),
+            completion_tokens=Sum("completion_tokens"),
+            total_tokens=Sum("total_tokens"),
+            cost=Sum("estimated_cost"),
+        )
+
+        by_provider = list(
+            qs.values("provider_name")
+            .annotate(
+                requests=Count("id"), successes=Count("id", filter=_Q(success=True)),
+                failures=Count("id", filter=_Q(success=False)),
+                total_tokens=Sum("total_tokens"), cost=Sum("estimated_cost"),
+            )
+            .order_by("-cost")
+        )
+        by_feature = list(
+            qs.values("feature")
+            .annotate(requests=Count("id"), total_tokens=Sum("total_tokens"), cost=Sum("estimated_cost"))
+            .order_by("-requests")
+        )
+        by_day = list(
+            qs.annotate(day=TruncDate("created_at"))
+            .values("day")
+            .annotate(requests=Count("id"), cost=Sum("estimated_cost"))
+            .order_by("day")
+        )
+        recent = list(
+            qs.order_by("-created_at")[:100]
+            .values("id", "provider_name", "model_name", "feature", "label", "success",
+                    "prompt_tokens", "completion_tokens", "total_tokens", "estimated_cost",
+                    "error_message", "created_at")
+        )
+
+        def _num(x):
+            return float(x) if x is not None else 0
+
+        return Response({
+            "since": since.isoformat() if since else None,
+            "totals": {
+                "requests": totals["requests"] or 0,
+                "successes": totals["successes"] or 0,
+                "failures": totals["failures"] or 0,
+                "prompt_tokens": totals["prompt_tokens"] or 0,
+                "completion_tokens": totals["completion_tokens"] or 0,
+                "total_tokens": totals["total_tokens"] or 0,
+                "cost": _num(totals["cost"]),
+            },
+            "by_provider": [
+                {**row, "cost": _num(row["cost"]), "total_tokens": row["total_tokens"] or 0}
+                for row in by_provider
+            ],
+            "by_feature": [
+                {**row, "feature": row["feature"] or "(uncategorized)", "cost": _num(row["cost"]), "total_tokens": row["total_tokens"] or 0}
+                for row in by_feature
+            ],
+            "by_day": [
+                {"day": row["day"].isoformat(), "requests": row["requests"], "cost": _num(row["cost"])}
+                for row in by_day
+            ],
+            "recent": [
+                {
+                    "id": row["id"], "provider_name": row["provider_name"], "model_name": row["model_name"],
+                    "feature": row["feature"] or "(uncategorized)", "label": row["label"], "success": row["success"],
+                    "prompt_tokens": row["prompt_tokens"], "completion_tokens": row["completion_tokens"],
+                    "total_tokens": row["total_tokens"], "cost": _num(row["estimated_cost"]),
+                    "error_message": row["error_message"][:300], "created_at": row["created_at"].isoformat(),
+                }
+                for row in recent
+            ],
+        })
 
 
 def _extract_balanced_braces(text, open_brace_idx):
@@ -12884,11 +13002,20 @@ class AdminProblemBankGenerateGenericSchemasView(APIView):
     AdminProblemBankValidateGenericSchemasView for the follow-up pass that
     checks correctness and enables the ones that pass). Same
     time-budgeted-per-click pattern as AdminProblemBankFillMissingView —
-    call again to keep sweeping the rest of the bank."""
+    call again to keep sweeping the rest of the bank.
+
+    Runs the batch through run_across_providers_in_parallel(): every
+    active LLMProvider handles its own slice concurrently instead of the
+    whole batch funneling through one provider at a time — this is the
+    difference between the single-problem "Generate Judge Schema" button
+    feeling instant (it always had one provider to itself) and this bulk
+    sweep feeling slow (it used to serialize everything onto whichever
+    provider was next in rotation)."""
     permission_classes = [IsAuthenticated]
 
     TIME_BUDGET_SECONDS = 90
     MAX_ACTIONS = 200
+    ROUND_SIZE_PER_PROVIDER = 6  # keeps one round's wall-clock bounded regardless of provider count
 
     def post(self, request):
         if not request.user.is_superuser:
@@ -12896,25 +13023,36 @@ class AdminProblemBankGenerateGenericSchemasView(APIView):
 
         import time
         from .services.judging.schema_generator import generate_generic_schema
-        from .services.testcase_generator import TestCaseGenError
+        from .services.testcase_generator import (
+            NoProvidersAvailableError, run_across_providers_in_parallel, _providers_in_rotation_order,
+        )
 
-        problems = Problem.objects.filter(_missing_generic_schema_q()).order_by("title")
-        processed = []
+        try:
+            provider_count = len(_providers_in_rotation_order())
+        except NoProvidersAvailableError as exc:
+            return Response({"error": str(exc)}, status=502)
+
         start = time.monotonic()
+        batch_size = min(self.MAX_ACTIONS, provider_count * self.ROUND_SIZE_PER_PROVIDER)
+        problems = list(Problem.objects.filter(_missing_generic_schema_q()).order_by("title")[:batch_size])
 
-        for problem in problems:
-            if len(processed) >= self.MAX_ACTIONS or (time.monotonic() - start) >= self.TIME_BUDGET_SECONDS:
-                break
+        def call_one(problem, provider):
+            return generate_generic_schema(
+                title=problem.title, description=problem.description, examples=problem.examples,
+                providers=[provider],
+            )
+
+        results = run_across_providers_in_parallel(problems, call_one, timeout_seconds=self.TIME_BUDGET_SECONDS)
+
+        processed = []
+        for problem, schema, error in results:
             entry = {"id": problem.id, "title": problem.title}
-            try:
-                schema = generate_generic_schema(
-                    title=problem.title, description=problem.description, examples=problem.examples,
-                )
+            if error is not None:
+                entry["error"] = str(error)
+            else:
                 problem.generic_schema = schema
                 problem.save(update_fields=["generic_schema"])
                 entry["generated"] = True
-            except TestCaseGenError as exc:
-                entry["error"] = str(exc)
             processed.append(entry)
 
         remaining = Problem.objects.filter(_missing_generic_schema_q()).count()
@@ -12939,11 +13077,19 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
     gate the additive-judging design calls for: a problem only starts
     running through the new pipeline once its schema is confirmed
     parseable, never the moment it's merely generated. Same
-    time-budgeted-per-click pattern as the other bulk sweeps here."""
+    time-budgeted-per-click pattern as the other bulk sweeps here.
+
+    Each problem's LLM work (generate-if-missing, then validate, then
+    regenerate-once-if-invalid) runs as one self-contained unit handed to
+    run_across_providers_in_parallel(), so every active provider handles
+    its own slice of the batch concurrently — see
+    AdminProblemBankGenerateGenericSchemasView's docstring for why this
+    replaces the old one-problem-at-a-time loop."""
     permission_classes = [IsAuthenticated]
 
     TIME_BUDGET_SECONDS = 90
     MAX_ACTIONS = 200
+    ROUND_SIZE_PER_PROVIDER = 6
 
     def post(self, request):
         if not request.user.is_superuser:
@@ -12951,46 +13097,78 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
 
         import time
         from .services.judging.schema_generator import generate_generic_schema, validate_generic_schema
-        from .services.testcase_generator import TestCaseGenError
+        from .services.testcase_generator import (
+            TestCaseGenError, NoProvidersAvailableError,
+            run_across_providers_in_parallel, _providers_in_rotation_order,
+        )
 
         def needs_pass_q():
             return Q(generic_schema__isnull=True) | Q(uses_generic_judge=False)
 
-        problems = Problem.objects.filter(needs_pass_q()).order_by("title")
-        processed = []
+        try:
+            provider_count = len(_providers_in_rotation_order())
+        except NoProvidersAvailableError as exc:
+            return Response({"error": str(exc)}, status=502)
+
         start = time.monotonic()
+        batch_size = min(self.MAX_ACTIONS, provider_count * self.ROUND_SIZE_PER_PROVIDER)
+        problems = list(Problem.objects.filter(needs_pass_q()).order_by("title")[:batch_size])
 
-        for problem in problems:
-            if len(processed) >= self.MAX_ACTIONS or (time.monotonic() - start) >= self.TIME_BUDGET_SECONDS:
-                break
-
-            entry = {"id": problem.id, "title": problem.title}
+        def call_one(problem, provider):
+            """Pure LLM work for one problem — no DB writes (this runs in a
+            worker thread). Only raises when the schema was missing AND
+            generation fails, matching the original loop's `continue`
+            (nothing to save yet). A regeneration failure after an invalid
+            existing schema is captured in the return value instead, since
+            the original loop still saved the (still-invalid) schema and
+            disabled the judge in that case."""
             schema = problem.generic_schema
-
+            out = {"schema": schema, "generated": False, "initial_errors": None, "regenerated": False, "regen_error": None}
             if not schema:
-                try:
-                    schema = generate_generic_schema(
-                        title=problem.title, description=problem.description, examples=problem.examples,
-                    )
-                    entry["generated"] = True
-                except TestCaseGenError as exc:
-                    entry["error"] = f"Generation failed: {exc}"
-                    processed.append(entry)
-                    continue
+                schema = generate_generic_schema(
+                    title=problem.title, description=problem.description, examples=problem.examples,
+                    providers=[provider],
+                )
+                out["generated"] = True
+                out["schema"] = schema
 
             errors = validate_generic_schema(schema)
             if errors:
-                entry["initial_errors"] = errors
+                out["initial_errors"] = errors
                 try:
                     schema = generate_generic_schema(
                         title=problem.title, description=problem.description, examples=problem.examples,
+                        providers=[provider],
                     )
                     errors = validate_generic_schema(schema)
-                    entry["regenerated"] = True
+                    out["regenerated"] = True
+                    out["schema"] = schema
                 except TestCaseGenError as exc:
-                    entry["error"] = f"Regeneration failed: {exc}"
+                    out["regen_error"] = str(exc)
+            out["errors"] = errors
+            return out
 
-            problem.generic_schema = schema
+        results = run_across_providers_in_parallel(problems, call_one, timeout_seconds=self.TIME_BUDGET_SECONDS)
+
+        processed = []
+        for problem, result, error in results:
+            entry = {"id": problem.id, "title": problem.title}
+            if error is not None:
+                entry["error"] = f"Generation failed: {error}"
+                processed.append(entry)
+                continue
+
+            if result["generated"]:
+                entry["generated"] = True
+            if result["initial_errors"] is not None:
+                entry["initial_errors"] = result["initial_errors"]
+            if result["regenerated"]:
+                entry["regenerated"] = True
+            if result["regen_error"]:
+                entry["error"] = f"Regeneration failed: {result['regen_error']}"
+
+            problem.generic_schema = result["schema"]
+            errors = result["errors"]
             if errors:
                 entry["errors"] = errors
                 problem.uses_generic_judge = False
@@ -13024,46 +13202,60 @@ class AdminProblemBankRegenerateAllExplanationsView(APIView):
     processed — each round, and this view resumes strictly after it,
     ordered by id. Same time-budgeted-per-click pattern as the other bulk
     actions here; a problem that fails generation still advances the
-    cursor past it so one bad problem can't stall the whole sweep."""
+    cursor past it so one bad problem can't stall the whole sweep.
+
+    Runs the batch through run_across_providers_in_parallel() — see
+    AdminProblemBankGenerateGenericSchemasView's docstring for why."""
     permission_classes = [IsAuthenticated]
 
     TIME_BUDGET_SECONDS = 90
     MAX_ACTIONS = 200
+    ROUND_SIZE_PER_PROVIDER = 6
 
     def post(self, request):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
         import time
-        from .services.testcase_generator import generate_explanation, TestCaseGenError
+        from .services.testcase_generator import (
+            generate_explanation, NoProvidersAvailableError,
+            run_across_providers_in_parallel, _providers_in_rotation_order,
+        )
 
         try:
             after_id = int(request.data.get("after_id") or 0)
         except (TypeError, ValueError):
             after_id = 0
 
-        problems = Problem.objects.filter(id__gt=after_id).order_by("id")
-        processed = []
-        last_id = after_id
+        try:
+            provider_count = len(_providers_in_rotation_order())
+        except NoProvidersAvailableError as exc:
+            return Response({"error": str(exc)}, status=502)
+
         start = time.monotonic()
+        batch_size = min(self.MAX_ACTIONS, provider_count * self.ROUND_SIZE_PER_PROVIDER)
+        problems = list(Problem.objects.filter(id__gt=after_id).order_by("id")[:batch_size])
+        last_id = problems[-1].id if problems else after_id
 
-        for problem in problems:
-            if len(processed) >= self.MAX_ACTIONS or (time.monotonic() - start) >= self.TIME_BUDGET_SECONDS:
-                break
+        def call_one(problem, provider):
+            return generate_explanation(
+                title=problem.title, description=problem.description,
+                examples=problem.examples, difficulty=problem.difficulty,
+                providers=[provider],
+            )
 
+        results = run_across_providers_in_parallel(problems, call_one, timeout_seconds=self.TIME_BUDGET_SECONDS)
+
+        processed = []
+        for problem, explanation, error in results:
             entry = {"id": problem.id, "title": problem.title}
-            try:
-                explanation = generate_explanation(
-                    title=problem.title, description=problem.description,
-                    examples=problem.examples, difficulty=problem.difficulty,
-                )
+            if error is not None:
+                entry["error"] = str(error)
+            else:
                 problem.explanation = explanation
                 problem.save(update_fields=["explanation"])
                 entry["generated"] = True
-            except TestCaseGenError as exc:
-                entry["error"] = str(exc)
             processed.append(entry)
-            last_id = problem.id
 
         remaining = Problem.objects.filter(id__gt=last_id).count()
         return Response({
