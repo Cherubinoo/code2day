@@ -32,6 +32,26 @@ class ValidateGenericSchemaTests(SimpleTestCase):
         self.assertTrue(any("nums" in e for e in errors))
         self.assertTrue(any("return_type" in e for e in errors))
 
+    def test_void_return_type_is_not_parsed_as_a_real_type(self):
+        # Regression: validate_generic_schema used to call parse_type("void")
+        # unconditionally and reject every mutated-input schema outright
+        # (e.g. recoverTree(root: Optional[TreeNode]) -> None) — "void" is
+        # wrapper_generator.py's own sentinel, never a real type string.
+        schema = {
+            "function_name": "recoverTree", "params": [["root", "Optional[TreeNode]"]],
+            "return_type": "void", "custom_structs": {},
+            "comparison": {"type": "mutated_input", "mutated_param": "root"},
+        }
+        self.assertEqual(validate_generic_schema(schema), [])
+
+    def test_mutated_param_must_match_a_declared_param_name(self):
+        schema = {
+            "function_name": "recoverTree", "params": [["root", "Optional[TreeNode]"]],
+            "return_type": "void", "comparison": {"type": "mutated_input", "mutated_param": "notAParam"},
+        }
+        errors = validate_generic_schema(schema)
+        self.assertTrue(any("mutated_param" in e for e in errors))
+
     def test_custom_struct_fields_are_validated(self):
         schema = {
             "function_name": "shift", "params": [["p", "Point"]], "return_type": "Point",

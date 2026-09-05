@@ -40,7 +40,18 @@ def new_builder():
 
 def reader_prelude():
     return (
-        "import sys, json\n\n"
+        "import sys, json\n"
+        # A student's submitted code is pasted verbatim and is never
+        # required to use type hints — but real solutions are very often
+        # copy-pasted straight from LeetCode's own starter code, which
+        # DOES include them (e.g. `def recoverTree(self, root:
+        # Optional[TreeNode]) -> None:`). Python evaluates annotations at
+        # class-definition time, so `Optional`/`List`/etc. must already be
+        # in scope or that line raises NameError before a single line of
+        # the student's actual logic ever runs — LeetCode itself runs
+        # `from typing import *` behind the scenes for exactly this
+        # reason, so this framework does too.
+        "from typing import Optional, List, Dict, Set, Tuple, Any\n\n"
         "class _Reader:\n"
         "    def __init__(self, text):\n"
         "        text = text.replace(\"\\r\\n\", \"\\n\").replace(\"\\r\", \"\\n\")\n"

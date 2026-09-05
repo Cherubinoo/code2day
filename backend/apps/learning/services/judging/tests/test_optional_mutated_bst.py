@@ -195,6 +195,56 @@ class MutatedInputWrapperTests(SimpleTestCase):
         if _HAS_PYTHON:
             self.assertEqual(results_2of2, [True, True], "expected 2/2 passed")
 
+    def test_recover_tree_with_realistic_type_hinted_student_code(self):
+        """Regression for a real production bug: every other test in this
+        file uses a solution written WITHOUT type hints, which is why this
+        went unnoticed. A student who copy-pastes LeetCode's own starter
+        code writes `def recoverTree(self, root: Optional[TreeNode]) ->
+        None:` — Python evaluates that annotation at class-definition
+        time, so `Optional`/`TreeNode` must already be in scope or the
+        whole submission fails with NameError before a single line of the
+        student's actual logic runs. LeetCode itself runs `from typing
+        import *` behind the scenes for exactly this reason; this
+        framework's Python wrapper prelude must too (see
+        languages/python_lang.py's reader_prelude)."""
+        schema = {
+            "function_name": "recoverTree",
+            "params": [("root", "Optional[TreeNode]")],
+            "return_type": "void",
+            "comparison": {"type": "mutated_input"},
+        }
+        py_sol = (
+            "class Solution:\n"
+            "    def recoverTree(self, root: Optional[TreeNode]) -> None:\n"
+            "        \"\"\"\n"
+            "        Do not return anything, modify root in-place instead.\n"
+            "        \"\"\"\n"
+            "        nodes = []\n"
+            "        def inorder(n):\n"
+            "            if not n: return\n"
+            "            inorder(n.left)\n"
+            "            nodes.append(n)\n"
+            "            inorder(n.right)\n"
+            "        inorder(root)\n"
+            "        first = second = None\n"
+            "        for i in range(len(nodes) - 1):\n"
+            "            if nodes[i].val > nodes[i+1].val:\n"
+            "                second = nodes[i+1]\n"
+            "                if first is None:\n"
+            "                    first = nodes[i]\n"
+            "        if first and second:\n"
+            "            first.val, second.val = second.val, first.val\n"
+        )
+        if not _HAS_PYTHON:
+            return
+        stdin_text = serialize_value(parse_type("Optional[TreeNode]"), [1, 3, None, None, 2])
+        src = generate_source(schema, "python", py_sol)
+        self.assertIn("from typing import", src)
+        r = _run_python(src, stdin_text)
+        self.assertEqual(r.returncode, 0, msg=f"stderr={r.stderr}")
+        cmp = compare_output(parse_type("Optional[TreeNode]"), r.stdout, [3, 1, None, None, 2])
+        self.assertTrue(cmp.passed, msg=f"{cmp.reason} stderr={r.stderr}")
+
     def test_mutated_input_defaults_to_first_param_without_explicit_comparison_block(self):
         # return_type "void" alone (no explicit "comparison" key at all)
         # must still trigger mutated-input mode.

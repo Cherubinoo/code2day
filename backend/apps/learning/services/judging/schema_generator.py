@@ -164,14 +164,32 @@ def validate_generic_schema(schema):
         except TypeError_ as exc:
             errors.append(f"Param {pname!r} type {ptype!r}: {exc}")
 
+    # "void"/"none"/"" is wrapper_generator.py's own convention for a
+    # mutated-input problem (see its _VOID_RETURN_TYPES) — never a real
+    # type to parse, so it's exempt from the parse_type check below.
     return_type = schema.get("return_type")
-    if not return_type or not isinstance(return_type, str):
-        errors.append("return_type is missing.")
-    else:
-        try:
-            parse_type(return_type, custom_structs)
-        except TypeError_ as exc:
-            errors.append(f"return_type {return_type!r}: {exc}")
+    is_void_return = isinstance(return_type, str) and return_type.strip().lower() in ("void", "none", "")
+    if not is_void_return:
+        if not return_type or not isinstance(return_type, str):
+            errors.append("return_type is missing.")
+        else:
+            try:
+                parse_type(return_type, custom_structs)
+            except TypeError_ as exc:
+                errors.append(f"return_type {return_type!r}: {exc}")
+
+    comparison = schema.get("comparison")
+    if comparison is not None:
+        if not isinstance(comparison, dict) or "type" not in comparison:
+            errors.append("comparison, if present, must be an object with at least a 'type' key.")
+        else:
+            mutated_param = comparison.get("mutated_param")
+            if mutated_param is not None:
+                param_names = {entry[0] for entry in params if isinstance(entry, (list, tuple)) and len(entry) == 2}
+                if mutated_param not in param_names:
+                    errors.append(f"comparison.mutated_param {mutated_param!r} does not match any declared param name.")
+            elif comparison.get("type") == "mutated_input" and not params:
+                errors.append("comparison.type is 'mutated_input' but there are no params to default the mutated one to.")
 
     return errors
 
