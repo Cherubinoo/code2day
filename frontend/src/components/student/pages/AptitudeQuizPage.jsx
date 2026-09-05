@@ -110,7 +110,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
           }
         }
         
-        setCurrentIndexState(targetIdx);
+        setCurrentIndexRaw(targetIdx);
         sessionStorage.setItem(`code2day-aptitude-question-index-${topicId}`, String(targetIdx));
         const url = new URL(window.location.href);
         url.searchParams.set("q", String(targetIdx + 1));
