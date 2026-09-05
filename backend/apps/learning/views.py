@@ -13017,25 +13017,37 @@ class AdminProblemTopicMetadataRunView(APIView):
 
 
 _DRIVE_FILE_ID_RE = re.compile(r'^[A-Za-z0-9_-]{20,}$')
+# Recognizes a Drive file ID embedded in any of the common share/preview
+# link shapes (a full "https://drive.google.com/file/d/<id>/view?..." link
+# pasted straight from Drive's own Share dialog is NOT a direct image URL —
+# it's an HTML viewer page — so without this, _resolve_drive_image would
+# pass it through unchanged and it would fail to load as an <img src>).
+_DRIVE_SHARE_LINK_ID_RE = re.compile(
+    r'drive\.google\.com/(?:file/d/|thumbnail\?id=|uc\?(?:export=\w+&)?id=|open\?id=)([A-Za-z0-9_-]{20,})'
+)
 
 
 def _resolve_drive_image(raw_value):
-    """The Aptitude Bank Excel Template's image columns can hold either a
-    ready-to-use image URL, or (for the "Question/Option Image ID" template
-    variant) a bare Google Drive file ID — e.g. a Figure Series export where
-    every option is an image referenced by its Drive file ID rather than a
-    URL. Bare IDs are pointed at our own caching proxy (see
-    AptitudeDriveImageProxyView) rather than Drive directly — Drive's
-    thumbnail endpoint is noticeably slow to serve cold, and with hundreds
-    of image-based questions on one page that adds up fast. The proxy
-    fetches from Drive once per file and serves every request after that
-    from local disk with a long-lived Cache-Control header. Already-a-URL
-    values (a plain image URL, not a Drive file ID) pass through unchanged
-    since there's nothing to cache-proxy for those."""
+    """The Aptitude Bank Excel Template's image columns can hold a
+    ready-to-use image URL, a bare Google Drive file ID (e.g. a Figure
+    Series export where every option is an image referenced by its Drive
+    file ID rather than a URL), or — commonly, when someone pastes straight
+    from Drive's Share dialog — a full Drive share/preview link with the
+    file ID embedded in it. All three route through our own caching proxy
+    (see aptitude_drive_image_proxy) once a file ID is found — Drive's
+    endpoints are noticeably slow to serve cold, and with hundreds of
+    image-based questions on one page that adds up fast; the proxy fetches
+    from Drive once per file and serves every request after that from
+    local disk with a long-lived Cache-Control header. Only a genuine
+    non-Drive image URL (e.g. any other image host) passes through
+    unchanged, since there's nothing Drive-specific to cache-proxy there."""
     val = (raw_value or "").strip().strip('*').strip()
     if not val:
         return ""
     if val.lower().startswith(("http://", "https://")):
+        m = _DRIVE_SHARE_LINK_ID_RE.search(val)
+        if m:
+            return f"/api/aptitude/drive-image/{m.group(1)}/"
         return val
     if _DRIVE_FILE_ID_RE.match(val):
         return f"/api/aptitude/drive-image/{val}/"

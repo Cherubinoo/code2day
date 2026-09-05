@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, CheckCircle, XCircle, Info, Brain, Clock, Award } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle, XCircle, Info, Brain, Clock, Award, ImageOff } from 'lucide-react';
 import { getCsrfToken, extractApiError } from '../../../lib/appUtils';
 import FormattedText from '../../common/FormattedText';
 import { useDrillDownParam } from '../../../lib/useDrillDownParam';
@@ -401,11 +401,17 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
             </h3>
 
             {currentQ.question_image && (
-              <img
-                src={currentQ.question_image}
-                alt="Question"
-                style={{ maxWidth: '100%', maxHeight: '360px', borderRadius: '12px', marginBottom: '32px', display: 'block' }}
-              />
+              <div style={{ marginBottom: '32px' }}>
+                <img
+                  src={currentQ.question_image}
+                  alt="Question"
+                  style={{ maxWidth: '100%', maxHeight: '360px', borderRadius: '12px', display: 'block' }}
+                  onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                />
+                <div style={{ display: 'none', alignItems: 'center', gap: 8, padding: '14px 16px', borderRadius: '12px', background: 'var(--bg-2)', color: 'var(--text-soft)', fontSize: '0.85rem' }}>
+                  <ImageOff size={16} /> Image couldn't be loaded.
+                </div>
+              </div>
             )}
 
             <div style={{ display: 'grid', gap: '12px' }}>
@@ -462,7 +468,17 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       <FormattedText text={opt.value} />
                       {opt.image && (
-                        <img src={opt.image} alt={`Option ${opt.key}`} style={{ maxWidth: '100%', maxHeight: '160px', borderRadius: '8px', display: 'block' }} />
+                        <div>
+                          <img
+                            src={opt.image}
+                            alt={`Option ${opt.key}`}
+                            style={{ maxWidth: '100%', maxHeight: '160px', borderRadius: '8px', display: 'block' }}
+                            onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+                          />
+                          <div style={{ display: 'none', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: '8px', background: 'var(--bg-1)', color: 'var(--text-soft)', fontSize: '0.75rem' }}>
+                            <ImageOff size={13} /> Image couldn't be loaded.
+                          </div>
+                        </div>
                       )}
                     </div>
                     <div style={{ marginLeft: 'auto' }}>
