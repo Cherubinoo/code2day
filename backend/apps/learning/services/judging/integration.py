@@ -20,10 +20,16 @@ import time
 import uuid
 
 from .type_system import parse_type
-from .wrapper_generator import generate_source
+from .wrapper_generator import generate_source, generate_design_source
 from .comparator import compare_output
 from .judge0_service import Judge0Service
 from .versions import WRAPPER_VERSION, TYPE_SYSTEM_VERSION, SERIALIZER_VERSION
+
+# Reused as-is from the legacy design-problem path — same comparison rules
+# (per-operation return type, float tolerance), just handed a schema in
+# this package's own shape (which already has the same schema["methods"]
+# dict the legacy function reads return_type from).
+from ..execution_adapter import compare_design_output
 
 logger = logging.getLogger(__name__)
 
@@ -57,16 +63,23 @@ def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind)
     }
     logger.info("Generic judge execution starting: %s", log_context)
 
-    try:
-        return_node = parse_type(schema["return_type"], schema.get("custom_structs"))
-    except Exception as exc:  # noqa: BLE001 - surfaced as a normal failed run, not a 500
-        return _error_result(
-            f"Invalid generic_schema on problem {problem.slug!r}: {exc}", batch_kind,
-            execution_id=execution_id, error_type="invalid_schema",
-        )
+    is_design = schema.get("kind") == "design"
+
+    return_node = None
+    if not is_design:
+        # Design schemas have no single top-level return_type — each
+        # operation has its own (schema["methods"][op]["return_type"]),
+        # compared per-index by compare_design_output() below instead.
+        try:
+            return_node = parse_type(schema["return_type"], schema.get("custom_structs"))
+        except Exception as exc:  # noqa: BLE001 - surfaced as a normal failed run, not a 500
+            return _error_result(
+                f"Invalid generic_schema on problem {problem.slug!r}: {exc}", batch_kind,
+                execution_id=execution_id, error_type="invalid_schema",
+            )
 
     try:
-        full_source = generate_source(schema, lang_name, source_code)
+        full_source = (generate_design_source if is_design else generate_source)(schema, lang_name, source_code)
     except Exception as exc:  # noqa: BLE001
         return _error_result(
             f"Could not generate {lang_name} wrapper: {exc}", batch_kind,
@@ -91,14 +104,18 @@ def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind)
         actual_raw = (tc_result["stdout"] or "").strip()
         passed = False
         if tc_result["status"] == "Accepted":
-            try:
-                expected_value = json.loads(case.expected_output)
-            except (TypeError, ValueError) as exc:
-                tc_result = {**tc_result, "status": "Wrong Answer",
-                             "stderr": f"Could not parse stored expected_output as JSON: {exc}"}
+            if is_design:
+                operations = (getattr(case, "input_data", None) or {}).get("operations", [])
+                passed = compare_design_output(actual_raw, case.expected_output, schema, operations)
             else:
-                cmp = compare_output(return_node, actual_raw, expected_value)
-                passed = cmp.passed
+                try:
+                    expected_value = json.loads(case.expected_output)
+                except (TypeError, ValueError) as exc:
+                    tc_result = {**tc_result, "status": "Wrong Answer",
+                                 "stderr": f"Could not parse stored expected_output as JSON: {exc}"}
+                else:
+                    cmp = compare_output(return_node, actual_raw, expected_value)
+                    passed = cmp.passed
 
         latest_time = tc_result["time"] or latest_time
         latest_memory = tc_result["memory"] or latest_memory

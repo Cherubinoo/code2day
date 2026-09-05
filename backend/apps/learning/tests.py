@@ -412,8 +412,8 @@ class Judge0RunApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("source_code", response.json())
 
-    @patch("apps.learning.views.execute_judge0_submission")
-    def test_submit_uses_problem_testcases_and_saves_solution(self, mocked_execute):
+    @patch("apps.learning.services.judging.judge0_service.Judge0Service")
+    def test_submit_uses_problem_testcases_and_saves_solution(self, mock_service_cls):
         ProblemTestCase.objects.create(
             problem=self.problem,
             stdin="nums = [2,7,11,15], target = 9",
@@ -428,7 +428,7 @@ class Judge0RunApiTests(TestCase):
             is_sample=False,
             order=2,
         )
-        mocked_execute.side_effect = [
+        mock_service_cls.return_value.batch_execute.return_value = [
             {
                 "stdout": "[0,1]\n",
                 "stderr": "",
@@ -477,14 +477,14 @@ class Judge0RunApiTests(TestCase):
             ).exists()
         )
 
-    @patch("apps.learning.views.execute_judge0_submission")
-    def test_run_without_stdin_uses_problem_examples_as_sample_cases(self, mocked_execute):
+    @patch("apps.learning.services.judging.judge0_service.Judge0Service")
+    def test_run_without_stdin_uses_problem_examples_as_sample_cases(self, mock_service_cls):
         self.problem.examples = [
             {"input": "abc", "output": "abc"},
             {"input": "xyz", "output": "xyz"},
         ]
         self.problem.save(update_fields=["examples"])
-        mocked_execute.side_effect = [
+        mock_service_cls.return_value.batch_execute.return_value = [
             {
                 "stdout": "abc\n",
                 "stderr": "",
@@ -542,8 +542,8 @@ class Judge0RunApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["detail"], "problem_slug is required for submission.")
 
-    @patch("apps.learning.views.execute_judge0_submission")
-    def test_python_function_solution_is_wrapped_for_problem_examples(self, mocked_execute):
+    @patch("apps.learning.services.judging.judge0_service.Judge0Service")
+    def test_python_function_solution_is_wrapped_for_problem_examples(self, mock_service_cls):
         self.problem.slug = "two-sum"
         self.problem.examples = [
             {
@@ -552,7 +552,7 @@ class Judge0RunApiTests(TestCase):
             }
         ]
         self.problem.save(update_fields=["slug", "examples"])
-        mocked_execute.return_value = {
+        mock_service_cls.return_value.batch_execute.return_value = [{
             "stdout": "[0,1]",
             "stderr": "",
             "compile_output": "",
@@ -560,7 +560,7 @@ class Judge0RunApiTests(TestCase):
             "time": "0.01",
             "memory": "1000",
             "output": "[0,1]",
-        }
+        }]
         self.client.force_login(self.user)
 
         response = self.client.post(
@@ -584,6 +584,6 @@ class Judge0RunApiTests(TestCase):
         self.assertEqual(payload["passed_cases"], 1)
         self.assertEqual(payload["total_cases"], 1)
 
-        execute_kwargs = mocked_execute.call_args.kwargs
-        self.assertEqual(execute_kwargs["stdin"], "[[2,7,11,15],9]")
-        self.assertIn("__code2day_find_solver", execute_kwargs["source_code"])
+        submissions = mock_service_cls.return_value.batch_execute.call_args.args[0]
+        self.assertEqual(submissions[0]["stdin"], "[[2,7,11,15],9]")
+        self.assertIn("__code2day_find_solver", submissions[0]["source_code"])

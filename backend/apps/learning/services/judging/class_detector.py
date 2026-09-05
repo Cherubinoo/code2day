@@ -67,6 +67,45 @@ def detect_class_name(lang_name, solution_code, func_name):
     return _FALLBACK_CLASS_NAME
 
 
+def detect_class_name_for_methods(lang_name, solution_code, method_names):
+    """Design-pattern counterpart to detect_class_name(): finds the single
+    class in `solution_code` whose body defines EVERY method in
+    `method_names` (e.g. a design schema's non-constructor methods —
+    ["next", "hasNext"] for an iterator, ["get", "put"] for a cache),
+    rather than just one. Same ambiguity fallback as detect_class_name —
+    "Solution" when zero or more than one class qualifies — so a
+    student's code doesn't need to name its class after the schema's own
+    `class_name` (e.g. "ZigzagIterator"); any class implementing the full
+    method set is accepted, matching this package's existing "we never
+    require a specific class name" stance for the function-style path."""
+    if not method_names:
+        return _FALLBACK_CLASS_NAME
+
+    if lang_name == "python":
+        candidates = [
+            name for name, body in _python_class_bodies(solution_code)
+            if all(re.search(rf"\bdef\s+{re.escape(m)}\s*\(", body) for m in method_names)
+        ]
+    else:
+        pattern = _BRACE_CLASS_RE.get(lang_name)
+        if pattern is None:
+            return _FALLBACK_CLASS_NAME
+        candidates = []
+        for m in pattern.finditer(solution_code):
+            class_name = m.group(1)
+            body_start = m.end() - 1
+            body_end = _match_brace(solution_code, body_start)
+            if body_end is None:
+                continue
+            body = solution_code[body_start:body_end]
+            if all(re.search(rf"(?<![.\w]){re.escape(method)}\s*\(", body) for method in method_names):
+                candidates.append(class_name)
+
+    if len(candidates) == 1:
+        return candidates[0]
+    return _FALLBACK_CLASS_NAME
+
+
 def _match_brace(text, open_pos):
     depth = 0
     for i in range(open_pos, len(text)):

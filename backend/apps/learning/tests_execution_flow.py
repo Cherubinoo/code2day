@@ -15,10 +15,10 @@ class RunCodeTaskExecutionTests(SimpleTestCase):
     @patch("apps.learning.tasks.StudentProfile.objects.get")
     @patch("apps.learning.tasks.Problem.objects.filter")
     @patch("apps.learning.tasks.prepare_execution_payload")
-    @patch("apps.learning.tasks.execute_judge0_submission")
+    @patch("apps.learning.tasks.Judge0Service")
     def test_submit_task_uses_prepared_input_for_problem_cases(
         self,
-        mock_execute,
+        mock_service_cls,
         mock_prepare,
         mock_problem_filter,
         mock_student_get,
@@ -29,7 +29,10 @@ class RunCodeTaskExecutionTests(SimpleTestCase):
         mock_calculate_complexity,
     ):
         profile = SimpleNamespace(id=1, update_streak_for_activity=Mock())
-        problem = SimpleNamespace(slug="two-sum", execution_type="function")
+        problem = SimpleNamespace(
+            slug="two-sum", execution_type="function",
+            time_limit_seconds=None, memory_limit_kb=None,
+        )
 
         problem_query = Mock()
         problem_query.first.return_value = problem
@@ -41,15 +44,16 @@ class RunCodeTaskExecutionTests(SimpleTestCase):
             "stdin": "[1,2]",
             "adapted": True,
         }
-        mock_execute.return_value = {
+        mock_service = mock_service_cls.return_value
+        mock_service.batch_execute.return_value = [{
             "status": "Accepted",
             "time": "0.01",
             "memory": "0",
-            "stdout": "",
+            "stdout": "3",
             "stderr": "",
             "compile_output": "",
             "output": "",
-        }
+        }]
 
         active_session = Mock()
         active_session.end_session.return_value = 0
@@ -67,8 +71,7 @@ class RunCodeTaskExecutionTests(SimpleTestCase):
                 )
             ],
         ):
-            run_code_task(
-                self=None,
+            run_code_task.run(
                 profile_id=1,
                 problem_slug="two-sum",
                 source_code="def solution(nums, target):\n    return 3",
@@ -78,4 +81,5 @@ class RunCodeTaskExecutionTests(SimpleTestCase):
                 stdin="",
             )
 
-        self.assertEqual(mock_execute.call_args.kwargs["stdin"], "[1,2]")
+        submissions = mock_service.batch_execute.call_args.args[0]
+        self.assertEqual(submissions[0]["stdin"], "[1,2]")

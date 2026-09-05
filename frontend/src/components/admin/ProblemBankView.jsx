@@ -3,7 +3,7 @@
 // them, or regenerate for any problem.
 import { Fragment, useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles, BookOpen } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles, BookOpen, RotateCcw } from 'lucide-react';
 import api, { LONG_RUNNING_TIMEOUT } from '../../lib/api';
 
 function apiErrorMessage(err, fallback) {
@@ -316,6 +316,7 @@ const ProblemBankView = ({ onBack }) => {
   const [fillMissing, setFillMissing] = useState({ busy: false, msg: '' });
   const [genericGenBulk, setGenericGenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [genericValidateBulk, setGenericValidateBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
+  const [retryFlaggedBulk, setRetryFlaggedBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [explanationRegenBulk, setExplanationRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [mutationError, setMutationError] = useState('');
   const PAGE_SIZE = 50;
@@ -781,21 +782,32 @@ const ProblemBankView = ({ onBack }) => {
   // (regenerating once if invalid), and only flips uses_generic_judge on
   // for the ones that end up valid. Same auto-continuing-rounds progress
   // pattern as generateGenericSchemasBulk above.
+  //
+  // A schema still invalid after its one regeneration attempt gets FLAGGED
+  // server-side (Problem.generic_schema_needs_review) and excluded from
+  // this sweep from then on — otherwise a handful of problems the LLM
+  // just can't produce a valid schema for would get retried every round
+  // forever, burning tokens while `remaining_problems` never reaches 0 and
+  // blocking the sweep from ever finishing for the rest of the bank.
+  // flagged_total (from the last round's response) surfaces how many are
+  // sitting there waiting for the separate "Retry Flagged Schemas" button.
   async function validateGenericSchemasBulk() {
     setGenericValidateBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
-    let totalProcessed = 0, totalEnabled = 0, totalStillBad = 0;
+    let totalProcessed = 0, totalEnabled = 0, totalNewlyFlagged = 0, flaggedTotal = 0;
     try {
       for (let round = 1; round <= MAX_ROUNDS; round++) {
         const data = (await api.post('/admin/v2/problem-bank/validate-generic-schemas/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
         totalProcessed += data.processed.length;
         totalEnabled += data.processed.filter((p) => p.enabled).length;
-        totalStillBad += data.processed.filter((p) => p.errors && !p.enabled).length;
+        totalNewlyFlagged += data.processed.filter((p) => p.needs_review).length;
+        flaggedTotal = data.flagged_total ?? flaggedTotal;
         const total = totalProcessed + data.remaining_problems; // stable: everything still needing a pass
         await load(); // refresh "Judge: Enabled"/"Unvalidated" badges as each round lands
 
-        const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalEnabled} passed and enabled for the new judge${totalStillBad ? `, ${totalStillBad} still invalid` : ''}.`;
+        const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalEnabled} passed and enabled for the new judge${totalNewlyFlagged ? `, ${totalNewlyFlagged} flagged for review` : ''}.`;
         if (data.processed.length === 0 || data.remaining_problems === 0) {
-          const doneMsg = totalProcessed === 0 ? 'Nothing left to validate.' : `${progress} Done.`;
+          let doneMsg = totalProcessed === 0 ? 'Nothing left to validate.' : `${progress} Done.`;
+          if (flaggedTotal > 0) doneMsg += ` ${flaggedTotal} problem(s) still invalid after a retry — use "Retry Flagged Schemas" to try those again.`;
           setGenericValidateBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
           return;
         }
@@ -804,6 +816,39 @@ const ProblemBankView = ({ onBack }) => {
       setGenericValidateBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
     } catch (err) {
       setGenericValidateBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
+    }
+  }
+
+  // Explicit, deliberate re-attempt for exactly the problems the sweep
+  // above gave up on (generic_schema_needs_review=True) — a staff member
+  // triggers this on purpose; it's never fired automatically. Same
+  // request/response shape as validateGenericSchemasBulk, just scoped to
+  // the flagged set via {retry_flagged: true}.
+  async function retryFlaggedSchemasBulk() {
+    setRetryFlaggedBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
+    let totalProcessed = 0, totalEnabled = 0, totalStillBad = 0;
+    try {
+      for (let round = 1; round <= MAX_ROUNDS; round++) {
+        const data = (await api.post(
+          '/admin/v2/problem-bank/validate-generic-schemas/', { retry_flagged: true }, { timeout: LONG_RUNNING_TIMEOUT },
+        )).data;
+        totalProcessed += data.processed.length;
+        totalEnabled += data.processed.filter((p) => p.enabled).length;
+        totalStillBad += data.processed.filter((p) => p.needs_review).length;
+        const total = totalProcessed + data.remaining_problems;
+        await load();
+
+        const progress = `Retried ${totalProcessed}/${total} flagged problem(s): ${totalEnabled} now pass${totalStillBad ? `, ${totalStillBad} still invalid` : ''}.`;
+        if (data.processed.length === 0 || data.remaining_problems === 0) {
+          const doneMsg = totalProcessed === 0 ? 'No flagged schemas to retry.' : `${progress} Done.`;
+          setRetryFlaggedBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
+          return;
+        }
+        setRetryFlaggedBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
+      }
+      setRetryFlaggedBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
+    } catch (err) {
+      setRetryFlaggedBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
     }
   }
 
@@ -924,6 +969,19 @@ const ProblemBankView = ({ onBack }) => {
           {genericValidateBulk.busy ? 'Validating…' : 'Validate & Enable Judge'}
         </button>
         <button
+          onClick={retryFlaggedSchemasBulk}
+          disabled={retryFlaggedBulk.busy}
+          title="Deliberately retry only the problems flagged as still-invalid after a regeneration attempt — the normal Validate pass skips these so a few stubborn problems can't block the whole sweep"
+          style={{
+            background: 'white', border: '1px solid var(--border-soft)',
+            borderRadius: 12, padding: '10px 16px', cursor: retryFlaggedBulk.busy ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+          }}
+        >
+          {retryFlaggedBulk.busy ? <Loader2 size={16} className="spin" /> : <RotateCcw size={16} />}
+          {retryFlaggedBulk.busy ? 'Retrying…' : 'Retry Flagged Schemas'}
+        </button>
+        <button
           onClick={regenerateAllExplanationsBulk}
           disabled={explanationRegenBulk.busy}
           title="Force-regenerate EVERY problem's explanation with the new story-based prompt, overwriting whatever's there already"
@@ -952,6 +1010,7 @@ const ProblemBankView = ({ onBack }) => {
       )}
       <BulkProgressPanel state={genericGenBulk} />
       <BulkProgressPanel state={genericValidateBulk} />
+      <BulkProgressPanel state={retryFlaggedBulk} />
       <BulkProgressPanel state={explanationRegenBulk} />
 
       {mode === 'topics' ? (

@@ -1644,19 +1644,21 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
         (now capped-at-4) test cases to build a real Input/Expected/
         Received/Status table, since per-test-case results aren't persisted
         anywhere at submission time — only the aggregate pass count is."""
-        from .services.executor import execute_submission, get_language_id, ExecutorError
+        from .services.judging.judge0_service import Judge0Service, LANGUAGE_IDS
+        from .services.judging.integration import normalize_language_name
+        from .services.judge0 import Judge0Error
         test_cases = list(problem.test_cases.all().order_by('order'))
         if not test_cases:
             return [], "No test cases are configured for this problem."
-        try:
-            language_id = get_language_id(submission.language)
-        except Exception:
+        language_name = normalize_language_name(submission.language)
+        if language_name not in LANGUAGE_IDS:
             return [], f"Re-verification isn't available for language '{submission.language}'."
+        service = Judge0Service(timeout=10)  # best-effort report generation — fail fast, don't hang the PDF on a slow Judge0
         rows = []
         for tc in test_cases:
             try:
-                result = execute_submission(submission.code, language_id, stdin=tc.stdin, timeout=10)
-            except ExecutorError as exc:
+                result = service.execute_single(submission.code, language_name, stdin=tc.stdin)
+            except Judge0Error as exc:
                 # Log the real (possibly infra-revealing) error server-side only —
                 # the note below ends up in a staff-facing PDF, so it stays generic.
                 logger.warning("Contest test-case re-execution failed: %s", exc)

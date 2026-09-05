@@ -12,7 +12,78 @@ from django.urls import reverse
 
 from ....models import Problem
 from ...testcase_generator import TestCaseGenServiceError
-from ..schema_generator import _parse_and_normalize_schema, validate_generic_schema
+from ..schema_generator import (
+    _parse_and_normalize_schema, _parse_and_normalize_design_schema,
+    validate_generic_schema, detect_schema_kind, generate_generic_schema,
+)
+
+
+class DetectSchemaKindTests(SimpleTestCase):
+    def test_plain_function_problem_is_function_kind(self):
+        self.assertEqual(
+            detect_schema_kind(title="Two Sum", description="Given an array of integers nums and an integer target..."),
+            "function",
+        )
+
+    def test_design_phrase_in_title_is_design_kind(self):
+        self.assertEqual(
+            detect_schema_kind(title="Design a HashMap", description="Design a HashMap without using any built-in hash table libraries."),
+            "design",
+        )
+
+    def test_implement_the_x_class_phrase_is_design_kind(self):
+        self.assertEqual(
+            detect_schema_kind(
+                title="Zigzag Iterator",
+                description="Implement the ZigzagIterator class: ZigzagIterator(List<int> v1, List<int> v2) initializes...",
+            ),
+            "design",
+        )
+
+    def test_design_wire_format_example_input_is_design_kind(self):
+        # No design phrasing in the text at all — only the example's own
+        # input shape (a 2-element array whose first element is a list of
+        # operation-name strings) signals this is design-shaped.
+        examples = [{"input": '[["MyClass","foo"],[[1],[]]]', "output": "[null,2]"}]
+        self.assertEqual(
+            detect_schema_kind(title="Untitled", description="Something something.", examples=examples),
+            "design",
+        )
+
+
+class GenerateGenericSchemaKnownKindTests(SimpleTestCase):
+    """known_kind must bypass detect_schema_kind's heuristic entirely —
+    used by the admin bulk sweeps for a problem whose legacy param_schema
+    already proves it's design-shaped, so a heuristic miss can't
+    regenerate the original single-method-function bug."""
+
+    @patch("apps.learning.services.judging.schema_generator._try_providers_in_order")
+    def test_known_kind_design_skips_heuristic_even_with_function_like_text(self, mocked_try):
+        mocked_try.return_value = {"class_name": "Foo", "methods": {"Foo": {"params": [], "return_type": "void"}, "bar": {"params": [], "return_type": "int"}}}
+        schema = generate_generic_schema(
+            title="Two Sum", description="Given an array of integers nums and an integer target, return indices.",
+            known_kind="design", providers=["dummy-provider"],
+        )
+        self.assertEqual(schema["kind"], "design")
+        prompt = mocked_try.call_args.args[1]
+        self.assertIn("DESIGN A CLASS", prompt)
+
+    @patch("apps.learning.services.judging.schema_generator._try_providers_in_order")
+    def test_known_kind_function_skips_heuristic_even_with_design_phrasing(self, mocked_try):
+        mocked_try.return_value = {"function_name": "foo", "params": [], "return_type": "int"}
+        schema = generate_generic_schema(
+            title="Design a HashMap", description="Design a HashMap without using any built-in hash table libraries.",
+            known_kind="function", providers=["dummy-provider"],
+        )
+        self.assertEqual(schema["kind"], "function")
+        prompt = mocked_try.call_args.args[1]
+        self.assertNotIn("DESIGN A CLASS", prompt)
+
+    @patch("apps.learning.services.judging.schema_generator._try_providers_in_order")
+    def test_no_known_kind_falls_back_to_heuristic(self, mocked_try):
+        mocked_try.return_value = {"function_name": "twoSum", "params": [], "return_type": "int"}
+        schema = generate_generic_schema(title="Two Sum", description="Given an array of integers...", providers=["dummy-provider"])
+        self.assertEqual(schema["kind"], "function")
 
 
 class ValidateGenericSchemaTests(SimpleTestCase):
@@ -74,6 +145,78 @@ class ValidateGenericSchemaTests(SimpleTestCase):
     def test_normalizer_rejects_missing_params_list(self):
         with self.assertRaises(TestCaseGenServiceError):
             _parse_and_normalize_schema('{"function_name": "x", "return_type": "int"}')
+
+
+class ValidateDesignSchemaTests(SimpleTestCase):
+    def test_valid_design_schema_has_no_errors(self):
+        schema = {
+            "kind": "design",
+            "class_name": "MinStack",
+            "methods": {
+                "MinStack": {"params": [], "return_type": "void"},
+                "push": {"params": [["val", "int"]], "return_type": "void"},
+                "pop": {"params": [], "return_type": "void"},
+                "top": {"params": [], "return_type": "int"},
+                "getMin": {"params": [], "return_type": "int"},
+            },
+            "custom_structs": {},
+        }
+        self.assertEqual(validate_generic_schema(schema), [])
+
+    def test_missing_constructor_entry_is_reported(self):
+        schema = {
+            "kind": "design", "class_name": "Foo",
+            "methods": {"bar": {"params": [], "return_type": "int"}},
+        }
+        errors = validate_generic_schema(schema)
+        self.assertTrue(any("constructor" in e for e in errors))
+
+    def test_constructor_only_with_no_other_methods_is_rejected(self):
+        # A "design" schema that's really just a function in disguise —
+        # the whole point of this schema kind is a shared instance with
+        # multiple operations.
+        schema = {
+            "kind": "design", "class_name": "Foo",
+            "methods": {"Foo": {"params": [], "return_type": "void"}},
+        }
+        errors = validate_generic_schema(schema)
+        self.assertTrue(any("at least one method besides the constructor" in e for e in errors))
+
+    def test_bad_param_type_in_a_method_is_reported(self):
+        schema = {
+            "kind": "design", "class_name": "Foo",
+            "methods": {
+                "Foo": {"params": [], "return_type": "void"},
+                "bar": {"params": [["x", "vectorOfInt"]], "return_type": "int"},
+            },
+        }
+        errors = validate_generic_schema(schema)
+        self.assertTrue(any("bar" in e and "x" in e for e in errors))
+
+    def test_missing_kind_key_defaults_to_function_validation(self):
+        # Backward compatibility: every schema saved before this feature
+        # existed has no "kind" key at all — must still validate as a
+        # function-style schema, not silently misbehave.
+        schema = {"function_name": "twoSum", "params": [["nums", "vector<int>"], ["target", "int"]], "return_type": "vector<int>"}
+        self.assertEqual(validate_generic_schema(schema), [])
+
+
+class ParseAndNormalizeDesignSchemaTests(SimpleTestCase):
+    def test_accepts_dict_shaped_methods_from_llm(self):
+        raw = (
+            '{"class_name": "MinStack", "methods": {'
+            '"MinStack": {"params": [], "return_type": "void"}, '
+            '"push": {"params": [{"name": "val", "type": "int"}], "return_type": "void"}, '
+            '"top": {"params": [], "return_type": "int"}}}'
+        )
+        normalized = _parse_and_normalize_design_schema(raw)
+        self.assertEqual(normalized["class_name"], "MinStack")
+        self.assertEqual(normalized["methods"]["push"]["params"], [["val", "int"]])
+        self.assertEqual(validate_generic_schema({**normalized, "kind": "design"}), [])
+
+    def test_rejects_missing_methods_object(self):
+        with self.assertRaises(TestCaseGenServiceError):
+            _parse_and_normalize_design_schema('{"class_name": "Foo"}')
 
 
 class AdminGenericSchemaViewTests(TestCase):

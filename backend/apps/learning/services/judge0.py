@@ -38,6 +38,48 @@ class Judge0RateLimitError(Judge0Error):
     pass
 
 
+# The canonical Judge0 status id -> description table (every id Judge0 CE
+# defines: https://ce.judge0.com/ — "Statuses"). Every execution call site
+# in this app used to compare `result["status"] == "Accepted"` against
+# whatever text Judge0 itself sent back for a given submission's `status`
+# object — usually fine, but left every OTHER status entirely at Judge0's
+# mercy for wording. This table makes status text authoritative and
+# consistent regardless of what a specific Judge0 deployment/version
+# happens to phrase it as; Judge0's own text is kept only as a fallback for
+# any future id this table doesn't yet know about.
+STATUS_DESCRIPTIONS = {
+    1: "In Queue",
+    2: "Processing",
+    3: "Accepted",
+    4: "Wrong Answer",
+    5: "Time Limit Exceeded",
+    6: "Compilation Error",
+    7: "Runtime Error (SIGSEGV)",
+    8: "Runtime Error (SIGXFSZ)",
+    9: "Runtime Error (SIGFPE)",
+    10: "Runtime Error (SIGABRT)",
+    11: "Runtime Error (NZEC)",
+    12: "Runtime Error (Other)",
+    13: "Internal Error",
+    14: "Exec Format Error",
+}
+
+
+def describe_status(status_id, fallback_description=None):
+    """Canonical text for a Judge0 status id, falling back to whatever
+    description Judge0 itself sent (or "Unknown") for an id this table
+    doesn't recognize yet."""
+    return STATUS_DESCRIPTIONS.get(status_id, fallback_description or "Unknown")
+
+
+def is_accepted(result):
+    """True if an execute_judge0_submission()/Judge0Service result is a
+    passing run — checked by status_id (3), not the display string, so it
+    stays correct even if a caller's own comparison text drifts from
+    Judge0's wording."""
+    return result.get("status_id") == 3
+
+
 def encode_base64(text: str) -> str:
     """Encode text to base64 for Judge0 API."""
     if not text:
@@ -82,7 +124,7 @@ def build_output_payload(payload: dict, base64_encoded: bool = True) -> dict:
     status_value = payload.get("status") or {}
     if isinstance(status_value, dict):
         status_id = status_value.get("id", 0)
-        status_description = status_value.get("description") or "Unknown"
+        status_description = describe_status(status_id, status_value.get("description"))
     else:
         status_id = 0
         status_description = str(status_value) if status_value else "Unknown"

@@ -10,11 +10,9 @@ from .models import (
     SolvedProblem, 
     ProblemSession
 )
-from .services.executor import (
-    execute_submission as execute_judge0_submission,
-    ExecutorTimeoutError as Judge0TimeoutError,
-    ExecutorServiceError as Judge0ServiceError,
-)
+from .services.judging.judge0_service import Judge0Service, LANGUAGE_NAME_BY_ID
+from .services.judge0 import Judge0TimeoutError, Judge0ServiceError
+from .services.code_validator import validate_submission
 from .services.execution_adapter import (
     prepare_execution_payload,
 )
@@ -31,68 +29,74 @@ def run_code_task(self, profile_id, problem_slug, source_code, language, languag
     try:
         profile = StudentProfile.objects.get(id=profile_id)
         problem = Problem.objects.filter(slug=problem_slug).first() if problem_slug else None
-        
+        language_name = LANGUAGE_NAME_BY_ID.get(language_id)
+        if not language_name:
+            return {"error": f"Unsupported language_id: {language_id}"}
+
+        is_valid, validation_error = validate_submission(language or "", source_code, stdin)
+        if not is_valid:
+            return {"error": f"Code validation failed: {validation_error}"}
+
+        service = Judge0Service()
+
         result = {}
         run_sample_cases = bool(problem and not is_submit and not stdin.strip())
-        
+
         if is_submit or run_sample_cases:
             test_cases = build_runtime_test_cases(
                 problem,
                 sample_only=not is_submit,
             )
-            
+
             if is_submit and not test_cases:
                 return {"error": "No test cases are configured for this problem yet."}
 
             if test_cases:
-                # Simple batch execution replacement
                 try:
-                    prepared = prepare_execution_payload(
-                        problem=problem,
-                        source_code=source_code,
-                        language=language,
-                        stdin="",  # Will be set per test case
-                    )
-                    
-                    # Execute first test case for now (simplified)
-                    first_test = test_cases[0] if test_cases else None
-                    if first_test:
-                        result = execute_judge0_submission(
-                            source_code=prepared["source_code"],
-                            language_id=language_id,
-                            stdin=first_test.get('stdin', ''),
+                    submissions = []
+                    for tc in test_cases:
+                        prepared = prepare_execution_payload(
+                            problem=problem, source_code=source_code, language=language, stdin=tc.stdin,
                         )
-                        # Add test case results format
-                        result['passed_cases'] = 1 if result.get('status_description') == 'Accepted' else 0
-                        result['total_cases'] = len(test_cases)
-                        result['all_tests_passed'] = result['passed_cases'] == result['total_cases']
-                    else:
-                        result = {"error": "No valid test cases found"}
+                        submissions.append({
+                            "source_code": prepared["source_code"], "language_name": language_name,
+                            "stdin": prepared["stdin"],
+                        })
+                    run_results = service.batch_execute(
+                        submissions,
+                        time_limit_seconds=getattr(problem, "time_limit_seconds", None),
+                        memory_limit_kb=getattr(problem, "memory_limit_kb", None),
+                    )
+
+                    passed_cases = 0
+                    for tc, tc_result in zip(test_cases, run_results):
+                        actual = (tc_result.get("stdout") or "").strip()
+                        expected = (tc.expected_output or "").strip()
+                        if tc_result.get("status") == "Accepted" and actual == expected:
+                            passed_cases += 1
+
+                    # Surface the last test case's raw output/status as the
+                    # headline result — same convention execute_problem_test_case_batch
+                    # uses for its "latest_time"/"latest_memory" fields.
+                    result = dict(run_results[-1]) if run_results else {}
+                    result["passed_cases"] = passed_cases
+                    result["total_cases"] = len(test_cases)
+                    result["all_tests_passed"] = passed_cases == len(test_cases)
                 except Exception as e:
                     result = {"error": f"Execution failed: {str(e)}"}
             else:
                 prepared = prepare_execution_payload(
-                    problem=problem,
-                    source_code=source_code,
-                    language=language,
-                    stdin=stdin,
+                    problem=problem, source_code=source_code, language=language, stdin=stdin,
                 )
-                result = execute_judge0_submission(
-                    source_code=prepared["source_code"],
-                    language_id=language_id,
-                    stdin=prepared["stdin"],
+                result = service.execute_single(
+                    source_code=prepared["source_code"], language_name=language_name, stdin=prepared["stdin"],
                 )
         else:
             prepared = prepare_execution_payload(
-                problem=problem,
-                source_code=source_code,
-                language=language,
-                stdin=stdin,
+                problem=problem, source_code=source_code, language=language, stdin=stdin,
             )
-            result = execute_judge0_submission(
-                source_code=prepared["source_code"],
-                language_id=language_id,
-                stdin=prepared["stdin"],
+            result = service.execute_single(
+                source_code=prepared["source_code"], language_name=language_name, stdin=prepared["stdin"],
             )
 
         # Create ExecutionRecord

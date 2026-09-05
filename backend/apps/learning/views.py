@@ -109,9 +109,8 @@ from .serializers import (
     StudentProfileSerializer,
 )
 from .services.judge0 import (
-    Judge0ServiceError as ExecutorServiceError,
-    Judge0TimeoutError as ExecutorTimeoutError,
-    execute_judge0_submission,
+    Judge0ServiceError,
+    Judge0TimeoutError,
 )
 from .sql_frog_levels import WORLD_1_LEVELS, WORLD_1_LEVELS_BY_ID, FUTURE_WORLDS
 from .services.reading_qa_import import create_passages_in_db, parse_workbook_to_passages
@@ -763,12 +762,25 @@ def execute_problem_test_case_batch(
             test_cases=test_cases, batch_kind=batch_kind,
         )
 
+    from .services.judging.judge0_service import Judge0Service, LANGUAGE_NAME_BY_ID
+
+    language_name = LANGUAGE_NAME_BY_ID.get(language_id)
+    if not language_name:
+        raise Judge0ServiceError(f"Unsupported language_id: {language_id}")
+
     test_results = []
     latest_time = ""
     latest_memory = ""
 
     schema = getattr(problem, "param_schema", None) if problem else None
 
+    # Each case still needs its own prepare_execution_payload() pass first
+    # (Problem-specific function/class driver injection, input_data
+    # adaptation) — the actual Judge0 calls are then one
+    # Judge0Service.batch_execute() (create + poll) instead of N sequential
+    # wait=true requests, same pattern services/judging/integration.py's
+    # run_generic_batch() already uses for the new judge.
+    prepared_cases = []
     for case in test_cases:
         case_input_data = getattr(case, "input_data", None)
         prepared = prepare_execution_payload(
@@ -782,11 +794,19 @@ def execute_problem_test_case_batch(
             "Test case %d: prepared stdin=%r, adapted=%s",
             case.order, prepared.get("stdin"), prepared.get("adapted")
         )
-        tc_result = execute_judge0_submission(
-            source_code=prepared["source_code"],
-            language_id=language_id,
-            stdin=prepared["stdin"],
-        )
+        prepared_cases.append((case, case_input_data, prepared))
+
+    submissions = [
+        {"source_code": prepared["source_code"], "language_name": language_name, "stdin": prepared["stdin"]}
+        for _case, _input_data, prepared in prepared_cases
+    ]
+    run_results = Judge0Service().batch_execute(
+        submissions,
+        time_limit_seconds=getattr(problem, "time_limit_seconds", None),
+        memory_limit_kb=getattr(problem, "memory_limit_kb", None),
+    )
+
+    for (case, case_input_data, _prepared), tc_result in zip(prepared_cases, run_results):
         logger.debug(
             "Test case %d result: status=%s, stdout=%r, stderr=%r",
             case.order, tc_result.get("status"), tc_result.get("stdout"), tc_result.get("stderr")
@@ -868,18 +888,30 @@ def execute_lab_test_case_batch(*, source_code, language, language_id, test_case
     always plain stdin-in/stdout-out programs (the traditional lab-record
     style, unlike Problems which may be function/class-signature based),
     so the code runs as submitted, with each test case's stdin fed in
-    directly."""
+    directly.
+
+    Runs every test case through one Judge0Service.batch_execute() call
+    (create + poll, Judge0's own recommended pattern) instead of a
+    blocking wait=true request per case — LabExercise has no
+    time_limit_seconds/memory_limit_kb fields of its own, so neither limit
+    is set here, matching this function's pre-batch behavior exactly."""
+    from .services.judging.judge0_service import Judge0Service, LANGUAGE_NAME_BY_ID
+    from .services.execution_adapter import normalize_comparable_output
+
+    language_name = LANGUAGE_NAME_BY_ID.get(language_id)
+    if not language_name:
+        raise Judge0ServiceError(f"Unsupported language_id: {language_id}")
+
+    submissions = [{"source_code": source_code, "language_name": language_name, "stdin": case.stdin} for case in test_cases]
+    run_results = Judge0Service().batch_execute(submissions)
+
     test_results = []
     latest_time = ""
     latest_memory = ""
 
-    for case in test_cases:
-        tc_result = execute_judge0_submission(
-            source_code=source_code, language_id=language_id, stdin=case.stdin,
-        )
+    for case, tc_result in zip(test_cases, run_results):
         actual_raw = (tc_result["stdout"] or "").strip()
         expected = case.expected_output.strip()
-        from .services.execution_adapter import normalize_comparable_output
 
         passed = (
             tc_result["status"] == "Accepted"
@@ -1558,14 +1590,14 @@ class HealthCheckView(APIView):
         if request.query_params.get("test_driver") == "c":
             import time
             from types import SimpleNamespace
-            from .services.judge0 import execute_judge0_submission as execute_submission
+            from .services.judging.judge0_service import Judge0Service
             from .services.execution_adapter import prepare_execution_payload
             fake_problem = SimpleNamespace(execution_type="auto", slug="add-two-numbers", function_name="addTwoNumbers")
             source = "int addTwoNumbers(int a, int b) {\n    return a + b;\n}"
             start = time.time()
             try:
                 prepared = prepare_execution_payload(problem=fake_problem, source_code=source, language="C", stdin="2\n3")
-                result = execute_submission(source_code=prepared["source_code"], language_id=50, stdin=prepared["stdin"])
+                result = Judge0Service().execute_single(source_code=prepared["source_code"], language_name="c", stdin=prepared["stdin"])
                 payload["test_driver"] = {
                     "elapsed_s": round(time.time() - start, 2),
                     "prepared_stdin": prepared["stdin"],
@@ -1581,14 +1613,14 @@ class HealthCheckView(APIView):
         if request.query_params.get("test_driver") == "java":
             import time
             from types import SimpleNamespace
-            from .services.judge0 import execute_judge0_submission as execute_submission
+            from .services.judging.judge0_service import Judge0Service
             from .services.execution_adapter import prepare_execution_payload
             fake_problem = SimpleNamespace(execution_type="auto", slug="add-two-numbers", function_name="addTwoNumbers")
             source = "class Solution {\n    public int addTwoNumbers(int a, int b) {\n        return a + b;\n    }\n}"
             start = time.time()
             try:
                 prepared = prepare_execution_payload(problem=fake_problem, source_code=source, language="Java", stdin="[2, 3]")
-                result = execute_submission(source_code=prepared["source_code"], language_id=62, stdin=prepared["stdin"])
+                result = Judge0Service().execute_single(source_code=prepared["source_code"], language_name="java", stdin=prepared["stdin"])
                 payload["test_driver"] = {
                     "elapsed_s": round(time.time() - start, 2),
                     "prepared_stdin": prepared["stdin"],
@@ -1709,6 +1741,14 @@ class CodeRunView(StudentAuthMixin, APIView):
         if problem_slug:
             problem = Problem.objects.filter(slug=problem_slug).first()
 
+        from .services.judging.judge0_service import Judge0Service, LANGUAGE_NAME_BY_ID
+        language_name = LANGUAGE_NAME_BY_ID.get(validated["language_id"])
+        if not language_name:
+            return Response(
+                {"detail": f"Unsupported language_id: {validated['language_id']}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
             if is_submit and not problem:
                 return Response(
@@ -1744,9 +1784,9 @@ class CodeRunView(StudentAuthMixin, APIView):
                         language=validated.get("language", ""),
                         stdin=stdin,
                     )
-                    result = execute_judge0_submission(
+                    result = Judge0Service().execute_single(
                         source_code=prepared["source_code"],
-                        language_id=validated["language_id"],
+                        language_name=language_name,
                         stdin=prepared["stdin"],
                     )
             else:
@@ -1756,16 +1796,16 @@ class CodeRunView(StudentAuthMixin, APIView):
                     language=validated.get("language", ""),
                     stdin=stdin,
                 )
-                result = execute_judge0_submission(
+                result = Judge0Service().execute_single(
                     source_code=prepared["source_code"],
-                    language_id=validated["language_id"],
+                    language_name=language_name,
                     stdin=prepared["stdin"],
                 )
-            
-        except ExecutorTimeoutError as exc:
+
+        except Judge0TimeoutError as exc:
             logger.error("Executor timeout: %s", exc)
             return Response({"detail": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
-        except ExecutorServiceError as exc:
+        except Judge0ServiceError as exc:
             logger.error("Executor service error: %s", exc)
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception as exc:
@@ -1881,16 +1921,24 @@ class PlaygroundRunView(StudentAuthMixin, APIView):
         validated = serializer.validated_data
         stdin = validated.get("stdin", "")
 
+        from .services.judging.judge0_service import Judge0Service, LANGUAGE_NAME_BY_ID
+        language_name = LANGUAGE_NAME_BY_ID.get(validated["language_id"])
+        if not language_name:
+            return Response(
+                {"detail": f"Unsupported language_id: {validated['language_id']}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         try:
-            result = execute_judge0_submission(
+            result = Judge0Service().execute_single(
                 source_code=validated["source_code"],
-                language_id=validated["language_id"],
+                language_name=language_name,
                 stdin=stdin,
             )
-        except ExecutorTimeoutError as exc:
+        except Judge0TimeoutError as exc:
             logger.error("Playground executor timeout: %s", exc)
             return Response({"detail": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
-        except ExecutorServiceError as exc:
+        except Judge0ServiceError as exc:
             logger.error("Playground executor service error: %s", exc)
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception as exc:
@@ -1971,8 +2019,9 @@ def _sql_frog_grade(query, level):
     expected_result. Returns (success, error_category, message, rows)."""
     script = f"{level['schema_sql']}\n{level['seed_sql']}\n{query}"
     try:
-        result = execute_judge0_submission(source_code=script, language_id=SQL_FROG_LANGUAGE_ID, stdin="")
-    except (ExecutorTimeoutError, ExecutorServiceError) as exc:
+        from .services.judging.judge0_service import Judge0Service
+        result = Judge0Service().execute_single(source_code=script, language_name="sqlite", stdin="")
+    except (Judge0TimeoutError, Judge0ServiceError) as exc:
         return False, "execution_error", f"The pond's magic sputtered: {exc}", []
 
     if result["status_id"] != 3 or (result["stderr"] or "").strip():
@@ -7031,26 +7080,22 @@ class ExecutorSystemInfoView(APIView):
 
 
 class ExecutorSubmitView(APIView):
-    """Submit code directly to the executor for execution."""
+    """Submit code directly for execution — via the real Judge0 client
+    (services/judging/judge0_service.py), same as every other execution
+    entry point in this app now. Used to call the Piston-backed
+    services/executor.py under a misleadingly-named alias
+    (`execute_judge0_submission`, which wasn't Judge0 at all); that module
+    is gone — everything runs on the self-hosted Judge0 instance."""
     permission_classes = [AllowAny]
 
     LANGUAGE_IDS = {
-        "c": 50,
-        "cpp": 54,
-        "c++": 54,
-        "java": 62,
-        "python": 71,
-        "javascript": 63,
-        "js": 63,
+        "c": 50, "cpp": 54, "c++": 54, "java": 62,
+        "python": 71, "javascript": 63, "js": 63,
     }
 
     def post(self, request):
-        """Execute code via the executor."""
-        from .services.executor import (
-            execute_submission,
-            ExecutorTimeoutError,
-            ExecutorServiceError,
-        )
+        """Execute code via Judge0."""
+        from .services.judging.judge0_service import Judge0Service, LANGUAGE_NAME_BY_ID
 
         language_id = request.data.get("language_id")
         source_code = request.data.get("source_code", "")
@@ -7073,6 +7118,25 @@ class ExecutorSubmitView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # This endpoint is AllowAny (no login required) — the same
+        # size/dangerous-pattern check CodeRunView applies to authenticated
+        # submissions, so an anonymous caller can't do anything a logged-in
+        # student couldn't already. CodeValidator's pattern tables are
+        # keyed by Capitalized display names, not this view's lowercase
+        # `language` values.
+        _VALIDATOR_LANGUAGE_NAMES = {
+            "c": "C", "cpp": "C++", "c++": "C++", "java": "Java",
+            "python": "Python", "javascript": "JavaScript", "js": "JavaScript",
+        }
+        is_valid, validation_error = validate_submission(
+            _VALIDATOR_LANGUAGE_NAMES.get(language, language), source_code, stdin,
+        )
+        if not is_valid:
+            return Response(
+                {"detail": f"Code validation failed: {validation_error}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Mock mode for testing when Judge0 is unavailable
         if use_mock:
             return Response({
@@ -7090,22 +7154,28 @@ class ExecutorSubmitView(APIView):
                 "note": "Running in mock mode. Judge0 server may be unavailable."
             })
 
+        language_name = LANGUAGE_NAME_BY_ID.get(int(language_id))
+        if not language_name:
+            return Response(
+                {"detail": f"Unsupported language_id: {language_id}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
-            result = execute_submission(
+            result = Judge0Service().execute_single(
                 source_code=source_code,
-                language_id=language_id,
+                language_name=language_name,
                 stdin=stdin,
             )
             return Response({
                 "status": "success",
                 "execution": result,
             })
-        except ExecutorTimeoutError as exc:
+        except Judge0TimeoutError as exc:
             return Response(
                 {"status": "timeout", "detail": str(exc)},
                 status=status.HTTP_504_GATEWAY_TIMEOUT,
             )
-        except ExecutorServiceError as exc:
+        except Judge0ServiceError as exc:
             return Response(
                 {"status": "error", "detail": str(exc)},
                 status=status.HTTP_502_BAD_GATEWAY,
@@ -9371,6 +9441,17 @@ class StudentContestSubmitView(APIView):
             return Response(
                 {"detail": f"Invalid language_id: {language_id!r}. Must be an integer."},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # CodeRunView (regular practice submissions) already runs every
+        # submission through this same check before execution — contest
+        # submissions used to skip it entirely, so a contest entry could
+        # contain code CodeRunView would have rejected outright.
+        is_valid, validation_error = validate_submission(language or "", source_code, "")
+        if not is_valid:
+            return Response(
+                {"detail": f"Code validation failed: {validation_error}"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Execute code using the execution engine
@@ -13037,9 +13118,14 @@ class AdminProblemBankGenerateGenericSchemasView(APIView):
         problems = list(Problem.objects.filter(_missing_generic_schema_q()).order_by("title")[:batch_size])
 
         def call_one(problem, provider):
+            # A problem whose legacy param_schema is already design-shaped
+            # is unambiguously a design problem — skip the heuristic
+            # entirely for those rather than risk it missing and
+            # regenerating the original single-method-function bug.
+            known_kind = "design" if param_types.is_design_schema(problem.param_schema) else None
             return generate_generic_schema(
                 title=problem.title, description=problem.description, examples=problem.examples,
-                providers=[provider],
+                providers=[provider], known_kind=known_kind,
             )
 
         results = run_across_providers_in_parallel(problems, call_one, timeout_seconds=self.TIME_BUDGET_SECONDS)
@@ -13079,6 +13165,19 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
     parseable, never the moment it's merely generated. Same
     time-budgeted-per-click pattern as the other bulk sweeps here.
 
+    A problem still invalid after its one regeneration attempt gets
+    Problem.generic_schema_needs_review flipped on and is EXCLUDED from
+    this sweep's normal query from then on — without that, a handful of
+    problems the LLM simply can't produce a valid schema for (a genuinely
+    ambiguous statement, an unsupported shape) would get reselected and
+    re-attempted every single round forever, burning tokens while never
+    letting `remaining_problems` reach 0 and blocking the sweep from ever
+    finishing for the rest of the bank. Pass {"retry_flagged": true} to
+    instead target exactly those flagged problems — a deliberate, explicit
+    "try the stubborn ones again" pass a staff member triggers separately,
+    not something the automatic sweep does on its own. Enabling clears the
+    flag either way.
+
     Each problem's LLM work (generate-if-missing, then validate, then
     regenerate-once-if-invalid) runs as one self-contained unit handed to
     run_across_providers_in_parallel(), so every active provider handles
@@ -13102,8 +13201,12 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
             run_across_providers_in_parallel, _providers_in_rotation_order,
         )
 
+        retry_flagged = bool(request.data.get("retry_flagged"))
+
         def needs_pass_q():
-            return Q(generic_schema__isnull=True) | Q(uses_generic_judge=False)
+            if retry_flagged:
+                return Q(generic_schema_needs_review=True)
+            return Q(generic_schema__isnull=True) | Q(uses_generic_judge=False, generic_schema_needs_review=False)
 
         try:
             provider_count = len(_providers_in_rotation_order())
@@ -13122,12 +13225,18 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
             existing schema is captured in the return value instead, since
             the original loop still saved the (still-invalid) schema and
             disabled the judge in that case."""
+            # A problem whose legacy param_schema is already design-shaped
+            # is unambiguously a design problem — skip generate_generic_schema's
+            # own title/description heuristic for those (see its known_kind
+            # docstring) rather than risk it missing.
+            known_kind = "design" if param_types.is_design_schema(problem.param_schema) else None
+
             schema = problem.generic_schema
             out = {"schema": schema, "generated": False, "initial_errors": None, "regenerated": False, "regen_error": None}
             if not schema:
                 schema = generate_generic_schema(
                     title=problem.title, description=problem.description, examples=problem.examples,
-                    providers=[provider],
+                    providers=[provider], known_kind=known_kind,
                 )
                 out["generated"] = True
                 out["schema"] = schema
@@ -13138,7 +13247,7 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
                 try:
                     schema = generate_generic_schema(
                         title=problem.title, description=problem.description, examples=problem.examples,
-                        providers=[provider],
+                        providers=[provider], known_kind=known_kind,
                     )
                     errors = validate_generic_schema(schema)
                     out["regenerated"] = True
@@ -13172,18 +13281,26 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
             if errors:
                 entry["errors"] = errors
                 problem.uses_generic_judge = False
+                # Only flag as needing manual review once it's failed BOTH
+                # the initial validation AND the one regeneration attempt —
+                # i.e. exactly the case this entry is already reporting.
+                problem.generic_schema_needs_review = True
+                entry["needs_review"] = True
             else:
                 problem.uses_generic_judge = True
+                problem.generic_schema_needs_review = False
                 entry["enabled"] = True
 
-            problem.save(update_fields=["generic_schema", "uses_generic_judge"])
+            problem.save(update_fields=["generic_schema", "uses_generic_judge", "generic_schema_needs_review"])
             processed.append(entry)
 
         remaining = Problem.objects.filter(needs_pass_q()).count()
+        flagged_total = Problem.objects.filter(generic_schema_needs_review=True).count()
         return Response({
             "processed": processed,
             "elapsed_seconds": round(time.monotonic() - start, 1),
             "remaining_problems": remaining,
+            "flagged_total": flagged_total,
         })
 
 
@@ -16811,7 +16928,8 @@ class LabSubmitView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, slug):
-        from .services.executor import ExecutorError, execute_submission
+        from .services.judge0 import Judge0Error
+        from .services.judging.judge0_service import Judge0Service, LANGUAGE_NAME_BY_ID
 
         try:
             problem = LabProblem.objects.prefetch_related("test_cases").get(slug=slug, is_active=True)
@@ -16832,6 +16950,14 @@ class LabSubmitView(APIView):
         except (TypeError, ValueError):
             return Response({"error": "Invalid language_id"}, status=status.HTTP_400_BAD_REQUEST)
 
+        language_name = LANGUAGE_NAME_BY_ID.get(language_id)
+        if not language_name:
+            return Response({"error": f"Unsupported language_id: {language_id}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        is_valid, validation_error = validate_submission(language or "", source_code, "")
+        if not is_valid:
+            return Response({"error": f"Code validation failed: {validation_error}"}, status=status.HTTP_400_BAD_REQUEST)
+
         # Get student
         try:
             student = request.user.student_profile
@@ -16844,6 +16970,7 @@ class LabSubmitView(APIView):
 
         results = []
         passed  = 0
+        service = Judge0Service()
 
         for tc in test_cases:
             try:
@@ -16853,9 +16980,9 @@ class LabSubmitView(APIView):
                     language=language,
                     stdin=tc.stdin,
                 )
-                exec_result = execute_submission(
+                exec_result = service.execute_single(
                     source_code=payload["source_code"],
-                    language_id=language_id,
+                    language_name=language_name,
                     stdin=payload.get("stdin", tc.stdin),
                 )
                 actual   = (exec_result.get("stdout") or "").strip()
@@ -16872,7 +16999,7 @@ class LabSubmitView(APIView):
                     "status":          exec_result.get("status", ""),
                     "is_sample":       tc.is_sample,
                 })
-            except ExecutorError as exc:
+            except Judge0Error as exc:
                 results.append({
                     "stdin":           tc.stdin,
                     "expected_output": tc.expected_output.strip(),
@@ -17241,7 +17368,15 @@ class LabAssignmentSubmitView(APIView):
         except (TypeError, ValueError):
             return Response({"error": "Invalid language_id"}, status=400)
 
-        from .services.executor import ExecutorError
+        from .services.judging.judge0_service import Judge0Service, LANGUAGE_NAME_BY_ID
+
+        language_name = LANGUAGE_NAME_BY_ID.get(language_id)
+        if not language_name:
+            return Response({"error": f"Unsupported language_id: {language_id}"}, status=400)
+
+        is_valid, validation_error = validate_submission(language or "", source_code, "")
+        if not is_valid:
+            return Response({"error": f"Code validation failed: {validation_error}"}, status=400)
 
         test_cases = list(problem.test_cases.all())
         if not test_cases:
@@ -17251,43 +17386,50 @@ class LabAssignmentSubmitView(APIView):
         passed    = 0
         final_out = ""
 
+        # LabProblem (unlike LabExercise) is function/class-signature based,
+        # so each test case still needs its own prepare_execution_payload()
+        # driver-injection pass before batching — the actual Judge0 calls
+        # are then one batch_execute() (create + poll) instead of N
+        # sequential wait=true requests.
+        submissions = []
         for tc in test_cases:
-            try:
-                payload = prepare_execution_payload(
-                    source_code=source_code,
-                    language_id=language_id,
-                    stdin=tc.stdin,
-                    problem_slug=problem.slug,
-                    execution_type=problem.execution_type,
-                    function_name=problem.function_name,
-                )
-                exec_result = execute_judge0_submission(
-                    source_code=payload["source_code"],
-                    language_id=language_id,
-                    stdin=payload.get("stdin", tc.stdin),
-                )
-                actual   = (exec_result.get("stdout") or "").strip()
-                expected = tc.expected_output.strip()
-                ok = actual == expected
-                if ok:
-                    passed += 1
-                if tc.is_sample:
-                    final_out = actual
-                results.append({
-                    "stdin":           tc.stdin,
-                    "expected_output": expected,
-                    "actual_output":   actual,
-                    "passed":          ok,
-                    "stderr":          exec_result.get("stderr", ""),
-                    "status":          exec_result.get("status", ""),
-                    "is_sample":       tc.is_sample,
-                })
-            except ExecutorError as exc:
-                results.append({
-                    "stdin": tc.stdin, "expected_output": tc.expected_output.strip(),
-                    "actual_output": "", "passed": False,
-                    "stderr": str(exc), "status": "Error", "is_sample": tc.is_sample,
-                })
+            payload = prepare_execution_payload(
+                source_code=source_code,
+                language_id=language_id,
+                stdin=tc.stdin,
+                problem_slug=problem.slug,
+                execution_type=problem.execution_type,
+                function_name=problem.function_name,
+            )
+            submissions.append({
+                "source_code": payload["source_code"], "language_name": language_name,
+                "stdin": payload.get("stdin", tc.stdin),
+            })
+
+        try:
+            run_results = Judge0Service().batch_execute(submissions)
+        except Judge0TimeoutError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
+        except Judge0ServiceError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        for tc, exec_result in zip(test_cases, run_results):
+            actual   = (exec_result.get("stdout") or "").strip()
+            expected = tc.expected_output.strip()
+            ok = actual == expected
+            if ok:
+                passed += 1
+            if tc.is_sample:
+                final_out = actual
+            results.append({
+                "stdin":           tc.stdin,
+                "expected_output": expected,
+                "actual_output":   actual,
+                "passed":          ok,
+                "stderr":          exec_result.get("stderr", ""),
+                "status":          exec_result.get("status", ""),
+                "is_sample":       tc.is_sample,
+            })
 
         all_passed  = passed == len(test_cases)
         sub_status  = "Accepted" if all_passed else "Wrong Answer"
@@ -18495,7 +18637,7 @@ class StudentExerciseRunView(APIView):
     """Student: run code for a LabExercise — against the exercise's own
     test cases when no custom stdin is given (same "Test Cases: X/Y
     passed" breakdown a Problem's Run button shows), or against custom
-    stdin verbatim when the student provides one. Piston-backed, same
+    stdin verbatim when the student provides one. Judge0-backed, same
     execution service Problems use — just without Problem's function/class
     driver-injection step, since lab exercises are always plain stdin
     programs."""
@@ -18535,18 +18677,28 @@ class StudentExerciseRunView(APIView):
         if not source_code:
             return Response({"detail": "Code is required."}, status=400)
 
-        from .services.executor import get_language_id
-        try:
-            language_id = get_language_id(language)
-        except Exception:
+        from .services.judging.integration import normalize_language_name
+        from .services.judging.judge0_service import Judge0Service, LANGUAGE_IDS
+        normalized_language = normalize_language_name(language)
+        if normalized_language not in LANGUAGE_IDS or normalized_language == "sqlite":
             return Response({"detail": f"Unsupported language: {language}"}, status=400)
+        language_id = LANGUAGE_IDS[normalized_language]
+
+        # CodeValidator's pattern tables are keyed by Capitalized display
+        # names, not judge0_service's lowercase canonical ones.
+        _VALIDATOR_LANGUAGE_NAMES = {"c": "C", "cpp": "C++", "java": "Java", "python": "Python", "javascript": "JavaScript"}
+        is_valid, validation_error = validate_submission(
+            _VALIDATOR_LANGUAGE_NAMES.get(normalized_language, normalized_language), source_code, stdin,
+        )
+        if not is_valid:
+            return Response({"detail": f"Code validation failed: {validation_error}"}, status=400)
 
         from .services.problem_testcases import build_lab_runtime_test_cases
 
         try:
             if stdin.strip():
-                result = execute_judge0_submission(
-                    source_code=source_code, language_id=language_id, stdin=stdin,
+                result = Judge0Service().execute_single(
+                    source_code=source_code, language_name=normalized_language, stdin=stdin,
                 )
             else:
                 # Run every configured test case, not just samples — a student
@@ -18559,12 +18711,12 @@ class StudentExerciseRunView(APIView):
                         test_cases=test_cases, batch_kind="run",
                     )
                 else:
-                    result = execute_judge0_submission(
-                        source_code=source_code, language_id=language_id, stdin="",
+                    result = Judge0Service().execute_single(
+                        source_code=source_code, language_name=normalized_language, stdin="",
                     )
-        except ExecutorTimeoutError as exc:
+        except Judge0TimeoutError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
-        except ExecutorServiceError as exc:
+        except Judge0ServiceError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         except Exception as exc:
             logger.error("Lab exercise run error for exercise %s: %s", exercise_id, exc, exc_info=True)
@@ -18621,13 +18773,21 @@ class StudentExerciseSubmitView(APIView):
         if not code.strip():
             return Response({"error": "Code is required."}, status=400)
 
-        from .services.executor import get_language_id
+        from .services.judging.integration import normalize_language_name
+        from .services.judging.judge0_service import LANGUAGE_IDS
         from .services.problem_testcases import build_lab_runtime_test_cases
 
-        try:
-            language_id = get_language_id(language)
-        except Exception:
+        normalized_language = normalize_language_name(language)
+        if normalized_language not in LANGUAGE_IDS or normalized_language == "sqlite":
             return Response({"error": f"Unsupported language: {language}"}, status=400)
+        language_id = LANGUAGE_IDS[normalized_language]
+
+        _VALIDATOR_LANGUAGE_NAMES = {"c": "C", "cpp": "C++", "java": "Java", "python": "Python", "javascript": "JavaScript"}
+        is_valid, validation_error = validate_submission(
+            _VALIDATOR_LANGUAGE_NAMES.get(normalized_language, normalized_language), code, "",
+        )
+        if not is_valid:
+            return Response({"error": f"Code validation failed: {validation_error}"}, status=400)
 
         test_cases = build_lab_runtime_test_cases(exercise, sample_only=False)
         result = None
@@ -18637,9 +18797,9 @@ class StudentExerciseSubmitView(APIView):
                     source_code=code, language=language, language_id=language_id,
                     test_cases=test_cases, batch_kind="submit",
                 )
-            except ExecutorTimeoutError as exc:
+            except Judge0TimeoutError as exc:
                 return Response({"error": str(exc)}, status=status.HTTP_504_GATEWAY_TIMEOUT)
-            except ExecutorServiceError as exc:
+            except Judge0ServiceError as exc:
                 return Response({"error": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
             except Exception as exc:
                 logger.error(

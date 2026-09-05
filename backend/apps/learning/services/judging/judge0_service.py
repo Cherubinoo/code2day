@@ -28,19 +28,29 @@ from ..judge0 import (
     Judge0TimeoutError,
 )
 
-# Matches the language IDs already used elsewhere in this app
-# (views.ExecutorSubmitView.LANGUAGE_IDS) — one source of truth kept in
-# sync rather than duplicated with different numbers.
+# The one source of truth for language name -> Judge0 language_id, used by
+# every execution call site in the app (views.ExecutorSubmitView used to
+# keep its own separate copy; tasks.py/pdf_reports.py used to go through
+# the Piston-backed services/executor.py instead of Judge0 entirely — see
+# that module's history for why. Everything now converges here.
 LANGUAGE_IDS = {
     "python": 71,
     "javascript": 63,
     "java": 62,
     "cpp": 54,
+    "c": 50,
+    "sqlite": 82,
 }
+
+# Reverse of LANGUAGE_IDS — resolves a caller-supplied numeric language_id
+# (the form most execution call sites in this app are handed) back to the
+# language_name key Judge0Service's own methods expect. Derived, not
+# hand-duplicated, so it can never drift out of sync with LANGUAGE_IDS.
+LANGUAGE_NAME_BY_ID = {v: k for k, v in LANGUAGE_IDS.items()}
 
 _QUEUED, _PROCESSING = 1, 2  # Judge0 status ids that mean "still running"
 
-__all__ = ["Judge0Service", "LANGUAGE_IDS"]
+__all__ = ["Judge0Service", "LANGUAGE_IDS", "LANGUAGE_NAME_BY_ID"]
 
 
 class Judge0Service:
@@ -55,6 +65,16 @@ class Judge0Service:
                 source_code=source_code, language_id=language_id, stdin=stdin, timeout=self.timeout,
             )
         return self._submit_single_with_limits(source_code, language_id, stdin, time_limit_seconds, memory_limit_kb)
+
+    def execute_single(self, source_code, language_name, stdin="", *, time_limit_seconds=None, memory_limit_kb=None):
+        """Same as execute() — just a name that reads correctly at a
+        single-run call site (Playground, health checks, a standalone
+        "run this snippet" endpoint) rather than implying a graded batch
+        outcome. No behavior difference."""
+        return self.execute(
+            source_code, language_name, stdin,
+            time_limit_seconds=time_limit_seconds, memory_limit_kb=memory_limit_kb,
+        )
 
     def _submit_single_with_limits(self, source_code, language_id, stdin, time_limit_seconds, memory_limit_kb):
         payload = {

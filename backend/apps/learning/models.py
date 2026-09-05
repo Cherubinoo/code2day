@@ -432,6 +432,17 @@ class Problem(models.Model):
             "services/judging/README.md for the full type vocabulary."
         ),
     )
+    generic_schema_needs_review = models.BooleanField(
+        default=False,
+        help_text=(
+            "Set by the 'Validate & Enable Judge' bulk sweep when a schema is still invalid "
+            "even after one LLM regeneration attempt. Excludes the problem from that sweep's "
+            "automatic retries (so a handful of permanently-stuck problems can't stall the "
+            "whole bank-wide pass) until a staff member explicitly retries it — either via the "
+            "'Retry Flagged Schemas' bulk action or by fixing/regenerating it individually. "
+            "Cleared automatically the moment the problem's schema validates successfully."
+        ),
+    )
     time_limit_seconds = models.FloatField(
         null=True, blank=True, default=None,
         help_text="Per-submission Judge0 cpu_time_limit override. Null keeps Judge0's own default.",
