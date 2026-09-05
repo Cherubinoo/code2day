@@ -719,44 +719,63 @@ const ProblemBankView = ({ onBack }) => {
 
   // Bulk "one hit run" for the new judging framework: generates
   // generic_schema for every problem still missing one, no validation.
-  // Capped server-side per click — call again to keep sweeping the rest.
+  // Each server round-trip is time-budgeted (~90s) and reports how much of
+  // the bank is left, so we keep firing rounds automatically — updating the
+  // progress message after every round — until nothing remains, rather than
+  // making the admin click repeatedly. MAX_ROUNDS is just a runaway guard.
+  const MAX_ROUNDS = 40;
   async function generateGenericSchemasBulk() {
-    setGenericGenBulk({ busy: true, msg: '' });
+    setGenericGenBulk({ busy: true, msg: 'Starting…' });
+    let totalProcessed = 0, totalOk = 0, totalErr = 0;
     try {
-      const data = (await api.post('/admin/v2/problem-bank/generate-generic-schemas/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
-      const okCount = data.processed.filter((p) => p.generated).length;
-      const errCount = data.processed.filter((p) => p.error).length;
-      let msg = `Generated ${okCount} schema(s).`;
-      if (errCount) msg += ` ${errCount} error(s).`;
-      msg += data.remaining_problems > 0
-        ? ` ${data.remaining_problems} problem(s) still missing a schema — click again to continue.`
-        : ' Every problem has a schema now.';
-      setGenericGenBulk({ busy: false, msg });
-      await load();
+      for (let round = 1; round <= MAX_ROUNDS; round++) {
+        const data = (await api.post('/admin/v2/problem-bank/generate-generic-schemas/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
+        totalProcessed += data.processed.length;
+        totalOk += data.processed.filter((p) => p.generated).length;
+        totalErr += data.processed.filter((p) => p.error).length;
+        await load(); // refresh has_generic_schema badges as each round lands
+
+        const progress = `Tested ${totalProcessed} problem(s) so far: ${totalOk} schema(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
+        if (data.processed.length === 0 || data.remaining_problems === 0) {
+          const doneMsg = totalProcessed === 0 ? 'Every problem already has a schema.' : `${progress} Done — every problem now has a schema.`;
+          setGenericGenBulk({ busy: false, msg: doneMsg });
+          return;
+        }
+        setGenericGenBulk({ busy: true, msg: `${progress} ${data.remaining_problems} remaining — continuing…` });
+      }
+      setGenericGenBulk({ busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` });
     } catch (err) {
-      setGenericGenBulk({ busy: false, msg: apiErrorMessage(err, 'Network error.') });
+      setGenericGenBulk({ busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` });
     }
   }
 
   // The "if missed or wrong" follow-up: generates a schema for anything
   // still missing one, structurally validates every existing schema
   // (regenerating once if invalid), and only flips uses_generic_judge on
-  // for the ones that end up valid.
+  // for the ones that end up valid. Same auto-continuing-rounds progress
+  // pattern as generateGenericSchemasBulk above.
   async function validateGenericSchemasBulk() {
-    setGenericValidateBulk({ busy: true, msg: '' });
+    setGenericValidateBulk({ busy: true, msg: 'Starting…' });
+    let totalProcessed = 0, totalEnabled = 0, totalStillBad = 0;
     try {
-      const data = (await api.post('/admin/v2/problem-bank/validate-generic-schemas/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
-      const enabledCount = data.processed.filter((p) => p.enabled).length;
-      const stillBadCount = data.processed.filter((p) => p.errors && !p.enabled).length;
-      let msg = `Validated ${data.processed.length} problem(s): ${enabledCount} enabled for the new judge.`;
-      if (stillBadCount) msg += ` ${stillBadCount} still invalid after a retry — see details.`;
-      msg += data.remaining_problems > 0
-        ? ` ${data.remaining_problems} problem(s) still need a look — click again to continue.`
-        : ' Nothing left to validate.';
-      setGenericValidateBulk({ busy: false, msg });
-      await load();
+      for (let round = 1; round <= MAX_ROUNDS; round++) {
+        const data = (await api.post('/admin/v2/problem-bank/validate-generic-schemas/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
+        totalProcessed += data.processed.length;
+        totalEnabled += data.processed.filter((p) => p.enabled).length;
+        totalStillBad += data.processed.filter((p) => p.errors && !p.enabled).length;
+        await load(); // refresh "Judge: Enabled"/"Unvalidated" badges as each round lands
+
+        const progress = `Tested ${totalProcessed} problem(s) so far: ${totalEnabled} passed and enabled for the new judge${totalStillBad ? `, ${totalStillBad} still invalid` : ''}.`;
+        if (data.processed.length === 0 || data.remaining_problems === 0) {
+          const doneMsg = totalProcessed === 0 ? 'Nothing left to validate.' : `${progress} Done.`;
+          setGenericValidateBulk({ busy: false, msg: doneMsg });
+          return;
+        }
+        setGenericValidateBulk({ busy: true, msg: `${progress} ${data.remaining_problems} remaining — continuing…` });
+      }
+      setGenericValidateBulk({ busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` });
     } catch (err) {
-      setGenericValidateBulk({ busy: false, msg: apiErrorMessage(err, 'Network error.') });
+      setGenericValidateBulk({ busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` });
     }
   }
 
