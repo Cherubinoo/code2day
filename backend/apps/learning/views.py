@@ -13009,6 +13009,71 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
         })
 
 
+class AdminProblemBankRegenerateAllExplanationsView(APIView):
+    """System Admin: force-regenerates Problem.explanation for EVERY
+    problem (never skip-if-exists) using the story-driven prompt in
+    EXPLANATION_PROMPT_TEMPLATE — a one-time bank-wide style migration
+    (old explanations were plain pedagogical text, not story-hooked),
+    not an ordinary "fill what's missing" sweep.
+
+    Because this overwrites already-generated explanations instead of
+    skipping them, "what's left" can't be read off a DB flag the way the
+    other bulk sweeps do (every row already has an explanation, so an
+    emptiness filter would see nothing left after round one). Instead the
+    client passes back `after_id` — the last problem id this view
+    processed — each round, and this view resumes strictly after it,
+    ordered by id. Same time-budgeted-per-click pattern as the other bulk
+    actions here; a problem that fails generation still advances the
+    cursor past it so one bad problem can't stall the whole sweep."""
+    permission_classes = [IsAuthenticated]
+
+    TIME_BUDGET_SECONDS = 90
+    MAX_ACTIONS = 200
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        import time
+        from .services.testcase_generator import generate_explanation, TestCaseGenError
+
+        try:
+            after_id = int(request.data.get("after_id") or 0)
+        except (TypeError, ValueError):
+            after_id = 0
+
+        problems = Problem.objects.filter(id__gt=after_id).order_by("id")
+        processed = []
+        last_id = after_id
+        start = time.monotonic()
+
+        for problem in problems:
+            if len(processed) >= self.MAX_ACTIONS or (time.monotonic() - start) >= self.TIME_BUDGET_SECONDS:
+                break
+
+            entry = {"id": problem.id, "title": problem.title}
+            try:
+                explanation = generate_explanation(
+                    title=problem.title, description=problem.description,
+                    examples=problem.examples, difficulty=problem.difficulty,
+                )
+                problem.explanation = explanation
+                problem.save(update_fields=["explanation"])
+                entry["generated"] = True
+            except TestCaseGenError as exc:
+                entry["error"] = str(exc)
+            processed.append(entry)
+            last_id = problem.id
+
+        remaining = Problem.objects.filter(id__gt=last_id).count()
+        return Response({
+            "processed": processed,
+            "elapsed_seconds": round(time.monotonic() - start, 1),
+            "last_id": last_id,
+            "remaining_problems": remaining,
+        })
+
+
 def _migrate_problem_to_generic_judge(problem):
     """One problem's full pipeline onto the new type-driven judging
     framework: ensure a generic_schema exists (generate via LLM if

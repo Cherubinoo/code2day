@@ -440,19 +440,20 @@ def generate_test_cases(*, title, description, examples=None, num_cases=None, di
     return cases
 
 
-EXPLANATION_PROMPT_TEMPLATE = """You are a computer science professor writing a comprehensive, crystal-clear explanation for a student attempting the following problem.
+EXPLANATION_PROMPT_TEMPLATE = """You are a gifted teacher who makes programming problems stick by wrapping them in a short, relatable story before teaching the theory — the way a great lecturer hooks a class with a scenario before writing on the board.
 
 Title: {title}
 
 Description:
 {description}
 
-Write a detailed, pedagogical explanation covering:
-1. Core Problem Concept: Explain what the problem is asking in plain language. If it involves a Binary Tree, Graph, Stack, or specific Data Structure, clearly explain the structure and properties (e.g. for Binary Trees: Root, Left Subtree, Right Subtree, and how Preorder/Inorder/Postorder traversals work).
-2. Step-by-Step Approach & Key Insights: Explain the algorithmic approach, key insights, and edge cases to handle.
-3. Visualization: For Tree or Graph problems, include an ASCII diagram of a sample tree and trace its step-by-step traversal so the student can visually understand the process.
+Write the explanation as a story-driven walkthrough, in this order:
+1. Story Hook: Open with a brief (2-4 sentence) relatable mini-story — a character doing some everyday task — whose structure naturally mirrors the problem's actual data structure/algorithm (e.g. a librarian shelving books for tree traversal, a delivery rider planning stops for graph search, a cashier's stack of trays for a Stack problem). It must map onto the real mechanics, not just be decoration.
+2. Core Problem Concept: Bridge from the story to explain what the problem is actually asking in plain language, tying the story's character/objects to the real terms. If it involves a Binary Tree, Graph, Stack, or specific Data Structure, clearly explain the structure and properties (e.g. for Binary Trees: Root, Left Subtree, Right Subtree, and how Preorder/Inorder/Postorder traversals work).
+3. Step-by-Step Approach & Key Insights: Explain the algorithmic approach, key insights, and edge cases to handle, keeping the story's character as the one carrying out each step.
+4. Visualization: For Tree or Graph problems, include an ASCII diagram of a sample tree and trace its step-by-step traversal so the student can visually understand the process.
 
-Write at least 3 short paragraphs. Do not return a one-line explanation.
+Write at least 4 short paragraphs. Do not return a one-line explanation. Keep the story brief and grounded — it's a memorable hook and a thread to follow through the explanation, not the main content.
 Respond with ONLY the explanation text, clear, educational, and structured.
 """
 HINT_PROMPT_TEMPLATE = """You are writing a single short hint for a student who is stuck on the

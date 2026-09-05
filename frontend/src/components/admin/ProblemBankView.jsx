@@ -3,11 +3,32 @@
 // them, or regenerate for any problem.
 import { Fragment, useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles, BookOpen } from 'lucide-react';
 import api, { LONG_RUNNING_TIMEOUT } from '../../lib/api';
 
 function apiErrorMessage(err, fallback) {
   return err?.response?.data?.error || err?.message || fallback;
+}
+
+// Shared progress display for the auto-continuing bulk sweeps (Generate
+// Judge Schemas / Validate & Enable Judge) — a fraction bar plus the
+// running status message, so overall progress is visible while rounds fire.
+function BulkProgressPanel({ state }) {
+  if (!state.msg) return null;
+  const isError = /error|failed/i.test(state.msg) && !state.busy;
+  const pct = state.total > 0 ? Math.min(100, Math.round((state.done / state.total) * 100)) : null;
+  return (
+    <div style={{ padding: 14, background: isError ? '#fef2f2' : '#f0fdf4', borderRadius: 12, marginBottom: 16 }}>
+      {pct !== null && (
+        <div style={{ height: 8, borderRadius: 999, background: '#e5e7eb', overflow: 'hidden', marginBottom: 8 }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: isError ? '#dc2626' : '#22c55e', transition: 'width 0.3s ease' }} />
+        </div>
+      )}
+      <div style={{ color: isError ? '#dc2626' : '#166534', fontSize: 13 }}>
+        {state.msg}
+      </div>
+    </div>
+  );
 }
 
 // Mirrors backend/apps/learning/services/param_types.py VALID_TYPES — primitives
@@ -293,8 +314,9 @@ const ProblemBankView = ({ onBack }) => {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [fillMissing, setFillMissing] = useState({ busy: false, msg: '' });
-  const [genericGenBulk, setGenericGenBulk] = useState({ busy: false, msg: '' });
-  const [genericValidateBulk, setGenericValidateBulk] = useState({ busy: false, msg: '' });
+  const [genericGenBulk, setGenericGenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
+  const [genericValidateBulk, setGenericValidateBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
+  const [explanationRegenBulk, setExplanationRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0, afterId: 0 });
   const [mutationError, setMutationError] = useState('');
   const PAGE_SIZE = 50;
 
@@ -725,7 +747,7 @@ const ProblemBankView = ({ onBack }) => {
   // making the admin click repeatedly. MAX_ROUNDS is just a runaway guard.
   const MAX_ROUNDS = 40;
   async function generateGenericSchemasBulk() {
-    setGenericGenBulk({ busy: true, msg: 'Starting…' });
+    setGenericGenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
     let totalProcessed = 0, totalOk = 0, totalErr = 0;
     try {
       for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -733,19 +755,20 @@ const ProblemBankView = ({ onBack }) => {
         totalProcessed += data.processed.length;
         totalOk += data.processed.filter((p) => p.generated).length;
         totalErr += data.processed.filter((p) => p.error).length;
+        const total = totalProcessed + data.remaining_problems; // stable: everything still needing a schema
         await load(); // refresh has_generic_schema badges as each round lands
 
-        const progress = `Tested ${totalProcessed} problem(s) so far: ${totalOk} schema(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
+        const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalOk} schema(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
         if (data.processed.length === 0 || data.remaining_problems === 0) {
           const doneMsg = totalProcessed === 0 ? 'Every problem already has a schema.' : `${progress} Done — every problem now has a schema.`;
-          setGenericGenBulk({ busy: false, msg: doneMsg });
+          setGenericGenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
           return;
         }
-        setGenericGenBulk({ busy: true, msg: `${progress} ${data.remaining_problems} remaining — continuing…` });
+        setGenericGenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
       }
-      setGenericGenBulk({ busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` });
+      setGenericGenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
     } catch (err) {
-      setGenericGenBulk({ busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` });
+      setGenericGenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
     }
   }
 
@@ -755,7 +778,7 @@ const ProblemBankView = ({ onBack }) => {
   // for the ones that end up valid. Same auto-continuing-rounds progress
   // pattern as generateGenericSchemasBulk above.
   async function validateGenericSchemasBulk() {
-    setGenericValidateBulk({ busy: true, msg: 'Starting…' });
+    setGenericValidateBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
     let totalProcessed = 0, totalEnabled = 0, totalStillBad = 0;
     try {
       for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -763,19 +786,66 @@ const ProblemBankView = ({ onBack }) => {
         totalProcessed += data.processed.length;
         totalEnabled += data.processed.filter((p) => p.enabled).length;
         totalStillBad += data.processed.filter((p) => p.errors && !p.enabled).length;
+        const total = totalProcessed + data.remaining_problems; // stable: everything still needing a pass
         await load(); // refresh "Judge: Enabled"/"Unvalidated" badges as each round lands
 
-        const progress = `Tested ${totalProcessed} problem(s) so far: ${totalEnabled} passed and enabled for the new judge${totalStillBad ? `, ${totalStillBad} still invalid` : ''}.`;
+        const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalEnabled} passed and enabled for the new judge${totalStillBad ? `, ${totalStillBad} still invalid` : ''}.`;
         if (data.processed.length === 0 || data.remaining_problems === 0) {
           const doneMsg = totalProcessed === 0 ? 'Nothing left to validate.' : `${progress} Done.`;
-          setGenericValidateBulk({ busy: false, msg: doneMsg });
+          setGenericValidateBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
           return;
         }
-        setGenericValidateBulk({ busy: true, msg: `${progress} ${data.remaining_problems} remaining — continuing…` });
+        setGenericValidateBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
       }
-      setGenericValidateBulk({ busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` });
+      setGenericValidateBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
     } catch (err) {
-      setGenericValidateBulk({ busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` });
+      setGenericValidateBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
+    }
+  }
+
+  // One-time bank-wide style migration: FORCE-regenerates every problem's
+  // explanation with the story-driven prompt, overwriting whatever's
+  // there already (unlike the skip-if-exists sweeps above). Since every
+  // row already has an explanation after round one, "what's left" can't
+  // be read off an emptiness filter — the backend instead hands back
+  // `last_id` each round and we resume strictly after it by id, carrying
+  // that cursor in state so a stopped sweep (round cap, or a fresh click
+  // later) picks up where it left off instead of restarting from zero.
+  async function regenerateAllExplanationsBulk() {
+    if (!window.confirm(
+      'This overwrites the explanation for EVERY problem in the bank with a new story-based version, ' +
+      'including ones that already have a perfectly good explanation. This cannot be undone. Continue?'
+    )) {
+      return;
+    }
+    setExplanationRegenBulk((s) => ({ ...s, busy: true, msg: 'Starting…', done: 0 }));
+    let totalProcessed = 0, totalOk = 0, totalErr = 0;
+    let afterId = explanationRegenBulk.afterId || 0;
+    try {
+      for (let round = 1; round <= MAX_ROUNDS; round++) {
+        const data = (await api.post(
+          '/admin/v2/problem-bank/regenerate-all-explanations/',
+          { after_id: afterId },
+          { timeout: LONG_RUNNING_TIMEOUT },
+        )).data;
+        totalProcessed += data.processed.length;
+        totalOk += data.processed.filter((p) => p.generated).length;
+        totalErr += data.processed.filter((p) => p.error).length;
+        afterId = data.last_id;
+        const total = totalProcessed + data.remaining_problems; // stable: everything from this sweep's start
+        await load(); // refresh explanation previews as each round lands
+
+        const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalOk} story explanation(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
+        if (data.processed.length === 0 || data.remaining_problems === 0) {
+          const doneMsg = totalProcessed === 0 ? 'Nothing left to regenerate.' : `${progress} Done — every problem now has a story explanation.`;
+          setExplanationRegenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total, afterId });
+          return;
+        }
+        setExplanationRegenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total, afterId });
+      }
+      setExplanationRegenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.`, afterId }));
+    } catch (err) {
+      setExplanationRegenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.`, afterId }));
     }
   }
 
@@ -852,6 +922,19 @@ const ProblemBankView = ({ onBack }) => {
           {genericValidateBulk.busy ? 'Validating…' : 'Validate & Enable Judge'}
         </button>
         <button
+          onClick={regenerateAllExplanationsBulk}
+          disabled={explanationRegenBulk.busy}
+          title="Force-regenerate EVERY problem's explanation with the new story-based prompt, overwriting whatever's there already"
+          style={{
+            background: 'white', border: '1px solid var(--border-soft)',
+            borderRadius: 12, padding: '10px 16px', cursor: explanationRegenBulk.busy ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+          }}
+        >
+          {explanationRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <BookOpen size={16} />}
+          {explanationRegenBulk.busy ? 'Regenerating…' : 'Regenerate All Explanations (Story)'}
+        </button>
+        <button
           onClick={load}
           disabled={loading}
           style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}
@@ -865,16 +948,9 @@ const ProblemBankView = ({ onBack }) => {
           {fillMissing.msg}
         </div>
       )}
-      {genericGenBulk.msg && (
-        <div style={{ padding: 14, background: /error|failed/i.test(genericGenBulk.msg) ? '#fef2f2' : '#f0fdf4', color: /error|failed/i.test(genericGenBulk.msg) ? '#dc2626' : '#166534', borderRadius: 12, marginBottom: 16, fontSize: 13 }}>
-          {genericGenBulk.msg}
-        </div>
-      )}
-      {genericValidateBulk.msg && (
-        <div style={{ padding: 14, background: /error|failed/i.test(genericValidateBulk.msg) ? '#fef2f2' : '#f0fdf4', color: /error|failed/i.test(genericValidateBulk.msg) ? '#dc2626' : '#166534', borderRadius: 12, marginBottom: 16, fontSize: 13 }}>
-          {genericValidateBulk.msg}
-        </div>
-      )}
+      <BulkProgressPanel state={genericGenBulk} />
+      <BulkProgressPanel state={genericValidateBulk} />
+      <BulkProgressPanel state={explanationRegenBulk} />
 
       {mode === 'topics' ? (
         <ProblemTopicTiles onViewTopic={(label) => { setSearch(label); setMissingOnly(false); setMode('list'); }} />
