@@ -249,7 +249,7 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
   const revealed = Boolean(isSubmitted && (result?.is_correct || showAnswer));
 
   return (
-    <div style={{ maxWidth: '800px', margin: '20px auto', padding: '0 20px' }}>
+    <div style={{ maxWidth: '1200px', margin: '20px auto', padding: '0 20px' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
         <button onClick={onBack} style={{ background: 'none', border: 'none', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-soft)', cursor: 'pointer', fontWeight: '600' }}>
