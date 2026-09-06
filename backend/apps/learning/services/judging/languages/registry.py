@@ -1,10 +1,11 @@
-from . import python_lang, javascript_lang, java_lang, cpp_lang
+from . import python_lang, javascript_lang, java_lang, cpp_lang, c_lang
 
 _LANGUAGES = {
     "python": python_lang,
     "javascript": javascript_lang,
     "java": java_lang,
     "cpp": cpp_lang,
+    "c": c_lang,
 }
 
 

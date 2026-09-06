@@ -40,6 +40,13 @@ def _is_void_return(return_type_str):
 
 
 def generate_source(schema, language_name, solution_code):
+    if language_name == "c":
+        # C gets its own dedicated code path, not another branch threaded
+        # through the logic below — see generate_c_source's own docstring
+        # for why (no classes, and a fundamentally different array-as-
+        # pointer+size calling convention LeetCode's own C track uses).
+        return generate_c_source(schema, solution_code)
+
     lang = get_language(language_name)
     custom_structs = schema.get("custom_structs")
     param_nodes = [(pname, parse_type(ptype, custom_structs)) for pname, ptype in schema["params"]]
@@ -201,6 +208,18 @@ def _emit_output(cb, lang, ctx, adapter, value_expr):
 # ─────────────────────────────────────────────────────────────────────────
 
 def generate_design_source(schema, language_name, solution_code):
+    if language_name == "c":
+        # C has no classes — design/class-style problems (a constructor
+        # plus multiple callable methods) have no equivalent here. Raise
+        # loudly rather than let get_language("c") proceed into logic that
+        # assumes a class exists (the legacy execution_adapter.py path
+        # already handles C design problems; this package doesn't need to
+        # duplicate that).
+        raise ValueError(
+            "C design/class-style problems are not supported by the generic judge yet — "
+            "see execution_adapter.py's legacy design path for C support."
+        )
+
     lang = get_language(language_name)
     custom_structs = schema.get("custom_structs")
     class_name_hint = schema["class_name"]
@@ -371,3 +390,179 @@ def _append_design_result(cb, lang, ctx, adapter, value_expr):
         cb.line(f"__results.add({serialized});")
     elif lang.name == "cpp":
         cb.line(f"__results.push_back({serialized});")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# C — a genuinely separate code path from everything above, not another
+# `lang.name` branch threaded through the shared logic. Two real
+# differences from Python/Java/C++/JS:
+#   1. No classes — the student writes one free function named
+#      schema["function_name"] directly at file scope. class_detector.py
+#      doesn't apply; there's nothing to detect.
+#   2. LeetCode's own real C calling convention decomposes any array-typed
+#      parameter or return value into a raw pointer PLUS a separate size
+#      argument (`int* nums, int numsSize`, `int* twoSum(..., int*
+#      returnSize)`) rather than passing/returning a single object — unlike
+#      every other language here, which builds one adapter expression per
+#      declared param and calls `Solution().func(arg1, arg2, ...)`.
+#
+# Scope, matching the boundary the legacy execution_adapter.py's C path
+# already draws (its own "2D arrays aren't supported by the C execution
+# path yet"): scalars, strings, a flat (1D) array of a scalar/string,
+# linked_list<T>, and binary_tree<T>/bst<T> for scalar T. Anything else
+# (2D arrays, graph, pair, map, set, custom_struct, optional, ...) raises a
+# clear ValueError naming the unsupported shape — never emits broken C.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _c_kind(type_node):
+    """Classify a TypeNode for C's own calling convention. One of "scalar",
+    "string", "array_scalar", "array_string", "linked_list", "tree"."""
+    kind = type_node.kind
+    if kind == "primitive":
+        return "string" if type_node.name == "string" else "scalar"
+    if kind in ("binary_tree", "bst"):
+        if type_node.element.kind != "primitive" or type_node.element.name == "string":
+            raise ValueError(f"C only supports binary_tree<T>/bst<T> for a scalar numeric T, not {type_node.raw!r}.")
+        return "tree"
+    if kind == "linked_list":
+        if type_node.element.kind != "primitive" or type_node.element.name == "string":
+            raise ValueError(f"C only supports linked_list<T> for a scalar numeric T, not {type_node.raw!r}.")
+        return "linked_list"
+    if kind in ("sequence", "set"):
+        elem = type_node.element
+        if elem.kind != "primitive":
+            raise ValueError(
+                f"C does not support nested/2D array types ({type_node.raw!r}) in the generic judge yet — "
+                "only a flat array of a scalar or string."
+            )
+        return "array_string" if elem.name == "string" else "array_scalar"
+    raise ValueError(f"C does not support the {kind!r} type shape ({type_node.raw!r}) in the generic judge yet.")
+
+
+def _c_call_args_for_param(kind, var_expr):
+    """Expand one parsed param's variable into the positional C call
+    arguments it contributes: 2 for an array (data pointer + size), 1 for
+    everything else (scalar/string passed directly; linked_list/tree
+    passed as the pointer itself)."""
+    if kind in ("array_scalar", "array_string"):
+        return [f"{var_expr}.data", f"{var_expr}.size"]
+    return [var_expr]
+
+
+def _emit_c_array_return_output(cb, lang, ctx, elem_node, ptr_expr, size_expr):
+    """Build the OUTPUT-format JSON text for a raw (pointer, size) pair —
+    LeetCode's own C return convention for an array (an `int* returnSize`
+    out-param), which has no struct to run the shared SequenceAdapter
+    machinery on (that machinery is for the struct-based internal
+    representation built while *parsing* input, not a function's raw
+    returned pointer)."""
+    elem_adapter = get_adapter(elem_node)
+    out_var = ctx.fresh("out")
+    cb.line(f"StringArray {out_var};")
+    cb.line(f"StringArray_init(&{out_var});")
+    header, idx = lang.for_header(ctx, size_expr)
+    with cb.block(header):
+        item_expr = f"{ptr_expr}[{idx}]"
+        item_out = elem_adapter.generate_serializer(cb, lang, ctx, item_expr)
+        cb.line(f"StringArray_push(&{out_var}, {item_out});")
+    return f"_c2d_join_arr({out_var}.data, {out_var}.size)"
+
+
+def generate_c_source(schema, solution_code):
+    lang = get_language("c")
+    custom_structs = schema.get("custom_structs")
+    param_nodes = [(pname, parse_type(ptype, custom_structs)) for pname, ptype in schema["params"]]
+    func_name = schema["function_name"]
+
+    param_kinds = [_c_kind(node) for _pname, node in param_nodes]
+    param_adapters = [(pname, get_adapter(node)) for pname, node in param_nodes]
+
+    return_type_str = schema.get("return_type")
+    is_void = _is_void_return(return_type_str)
+    comparison = schema.get("comparison") or {}
+    wants_mutated = is_void or comparison.get("type") == "mutated_input"
+
+    mutated_index = None
+    return_node = None
+    return_kind = None
+    if wants_mutated:
+        mutated_name = comparison.get("mutated_param")
+        if mutated_name:
+            mutated_index = next(i for i, (pname, _) in enumerate(param_nodes) if pname == mutated_name)
+        else:
+            mutated_index = 0  # default: the function mutates its first argument
+    else:
+        return_node = parse_type(return_type_str, custom_structs)
+        return_kind = _c_kind(return_node)
+
+    cb = lang.new_builder()
+    ctx = Ctx()
+
+    cb.line(lang.reader_prelude())
+    cb.line()
+
+    seen_snippets = set()
+    all_adapters = [a for _, a in param_adapters]
+    if return_node is not None:
+        all_adapters.append(get_adapter(return_node))
+    for adapter in all_adapters:
+        for snippet_name, source in adapter.runtime_snippets(lang):
+            if snippet_name not in seen_snippets:
+                seen_snippets.add(snippet_name)
+                cb.line(source)
+                cb.line()
+
+    cb.line(solution_code)
+    cb.line()
+
+    with cb.block("int main(void)"):
+        cb.line("_c2d_load();")
+
+        arg_exprs = [adapter.generate_parser(cb, lang, ctx) for _pname, adapter in param_adapters]
+        call_args = []
+        for kind, var_expr in zip(param_kinds, arg_exprs):
+            call_args.extend(_c_call_args_for_param(kind, var_expr))
+
+        if mutated_index is not None:
+            cb.line(f"{func_name}({', '.join(call_args)});")
+            mutated_kind = param_kinds[mutated_index]
+            mutated_var = arg_exprs[mutated_index]
+            mutated_node = param_nodes[mutated_index][1]
+            if mutated_kind in ("array_scalar", "array_string"):
+                json_expr = _emit_c_array_return_output(
+                    cb, lang, ctx, mutated_node.element, f"{mutated_var}.data", f"{mutated_var}.size",
+                )
+                lang.print_final(cb, json_expr)
+            else:
+                mutated_adapter = param_adapters[mutated_index][1]
+                _emit_output(cb, lang, ctx, mutated_adapter, mutated_var)
+        elif return_kind in ("array_scalar", "array_string"):
+            size_var = ctx.fresh("returnSize")
+            cb.line(f"int {size_var};")
+            if return_kind == "array_string":
+                ret_type = "char**"
+            else:
+                elem_c_type = get_adapter(return_node.element).generate_language_type(lang)
+                ret_type = f"{elem_c_type}*"
+            result_var = ctx.fresh("result")
+            call_args_with_out = call_args + [f"&{size_var}"]
+            cb.line(f"{ret_type} {result_var} = {func_name}({', '.join(call_args_with_out)});")
+            json_expr = _emit_c_array_return_output(cb, lang, ctx, return_node.element, result_var, size_var)
+            lang.print_final(cb, json_expr)
+        else:
+            return_adapter = get_adapter(return_node)
+            result_var = ctx.fresh("result")
+            if return_kind in ("scalar", "string"):
+                ret_type = return_adapter.generate_language_type(lang)
+            elif return_kind == "linked_list":
+                ret_type = "struct ListNode*"
+            elif return_kind == "tree":
+                ret_type = "struct TreeNode*"
+            else:
+                raise ValueError(f"Unexpected C return kind {return_kind!r}")
+            cb.line(f"{ret_type} {result_var} = {func_name}({', '.join(call_args)});")
+            _emit_output(cb, lang, ctx, return_adapter, result_var)
+
+        cb.line("return 0;")
+
+    return cb.render()

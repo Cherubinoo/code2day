@@ -68,7 +68,7 @@ class Adapter:
         return []
 
 
-def declare_var(cb, lang, var, expr, *, java_type=None, cpp_type=None):
+def declare_var(cb, lang, var, expr, *, java_type=None, cpp_type=None, c_type=None):
     """Emit `var = expr` in whichever form `lang` requires. Every adapter
     that needs to capture an expression exactly once (never re-evaluate it,
     e.g. a count read off the reader used as a loop bound) goes through
@@ -81,6 +81,8 @@ def declare_var(cb, lang, var, expr, *, java_type=None, cpp_type=None):
         cb.line(f"{java_type} {var} = {expr};")
     elif lang.name == "cpp":
         cb.line(f"{cpp_type} {var} = {expr};")
+    elif lang.name == "c":
+        cb.line(f"{c_type} {var} = {expr};")
     else:
         raise ValueError(f"Unknown language {lang.name!r}")
 
@@ -108,5 +110,5 @@ def read_count(cb, lang, ctx, var_base="n"):
     collection-shaped wire format starts with."""
     var = ctx.fresh(var_base)
     parsed = lang.to_int(lang.read_line_expr(ctx))
-    declare_var(cb, lang, var, parsed, java_type="int", cpp_type="int")
+    declare_var(cb, lang, var, parsed, java_type="int", cpp_type="int", c_type="int")
     return var

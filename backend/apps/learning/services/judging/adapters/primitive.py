@@ -29,6 +29,7 @@ class PrimitiveAdapter(Adapter):
             cb, lang, var, expr,
             java_type=self.generate_language_type(lang) if lang.name == "java" else None,
             cpp_type=self.generate_language_type(lang) if lang.name == "cpp" else None,
+            c_type=self.generate_language_type(lang) if lang.name == "c" else None,
         )
         return var
 
@@ -38,6 +39,22 @@ class PrimitiveAdapter(Adapter):
             # Native value already matches the JSON-compatible shape;
             # json.dumps/JSON.stringify at the top level handles the rest.
             return value_expr
+        if lang.name == "c":
+            # C has no to_string/String.valueOf — build the JSON token text
+            # via a small sprintf-based helper (see c_lang.reader_prelude).
+            if pname == "bool":
+                return f'({value_expr} ? "true" : "false")'
+            if pname == "int":
+                return f'_c2d_sprintf_dup("%d", {value_expr})'
+            if pname == "long":
+                return f'_c2d_sprintf_dup("%lld", {value_expr})'
+            if pname in ("float", "double"):
+                return f'_c2d_sprintf_dup("%.10g", {value_expr})'
+            if pname == "char":
+                return f"_c2d_json_quote_char({value_expr})"
+            if pname == "string":
+                return f"_c2d_json_quote({value_expr})"
+            raise ValueError(f"Unknown primitive {pname!r}")
         # Java / C++: build the exact JSON token text by hand.
         if pname == "bool":
             if lang.name == "java":
@@ -61,6 +78,6 @@ class PrimitiveAdapter(Adapter):
         pname = self.node.name
         if lang.name == "java":
             return lang.primitive_boxed(pname) if boxed else lang.primitive_unboxed(pname)
-        if lang.name == "cpp":
+        if lang.name in ("cpp", "c"):
             return lang.primitive_type(pname)
         return None

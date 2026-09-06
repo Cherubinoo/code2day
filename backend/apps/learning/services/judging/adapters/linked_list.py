@@ -12,6 +12,13 @@ from .base import Adapter, read_count, assign_stmt
 from ..languages.base import if_header, else_header, while_header, negate
 
 
+def _require_c_scalar_element(node):
+    """C's ListNode->val is a single scalar field (no generics) — same
+    boundary binary_tree.py draws for TreeNode->val."""
+    if node.element.kind != "primitive" or node.element.name == "string":
+        raise ValueError(f"C only supports linked_list<T> for a scalar numeric T, not {node.raw!r}.")
+
+
 class LinkedListAdapter(Adapter):
     def _element_adapter(self):
         from .registry import get_adapter
@@ -35,20 +42,29 @@ class LinkedListAdapter(Adapter):
         elif lang.name == "cpp":
             cb.line(f"ListNode* {head} = nullptr;")
             cb.line(f"ListNode* {tail} = nullptr;")
+        elif lang.name == "c":
+            _require_c_scalar_element(self.node)
+            cb.line(f"struct ListNode* {head} = NULL;")
+            cb.line(f"struct ListNode* {tail} = NULL;")
 
         header, _idx = lang.for_header(ctx, n)
         with cb.block(header):
             val_expr = elem_adapter.generate_parser(cb, lang, ctx)
             node_var = ctx.fresh("node")
-            new_expr = lang.new_object("ListNode", [val_expr])
-            if lang.name == "python":
-                cb.line(f"{node_var} = {new_expr}")
-            elif lang.name == "javascript":
-                cb.line(f"const {node_var} = {new_expr};")
-            elif lang.name == "java":
-                cb.line(f"ListNode {node_var} = {new_expr};")
-            elif lang.name == "cpp":
-                cb.line(f"ListNode* {node_var} = {new_expr};")
+            if lang.name == "c":
+                cb.line(f"struct ListNode* {node_var} = (struct ListNode*)malloc(sizeof(struct ListNode));")
+                cb.line(f"{node_var}->val = {val_expr};")
+                cb.line(f"{node_var}->next = NULL;")
+            else:
+                new_expr = lang.new_object("ListNode", [val_expr])
+                if lang.name == "python":
+                    cb.line(f"{node_var} = {new_expr}")
+                elif lang.name == "javascript":
+                    cb.line(f"const {node_var} = {new_expr};")
+                elif lang.name == "java":
+                    cb.line(f"ListNode {node_var} = {new_expr};")
+                elif lang.name == "cpp":
+                    cb.line(f"ListNode* {node_var} = {new_expr};")
 
             with cb.block(if_header(lang, lang.is_null(head))):
                 assign_stmt(cb, lang, head, node_var)
@@ -75,10 +91,18 @@ class LinkedListAdapter(Adapter):
         elif lang.name == "cpp":
             cb.line(f"vector<string> {out_var};")
             cb.line(f"ListNode* {cur} = {value_expr};")
+        elif lang.name == "c":
+            _require_c_scalar_element(self.node)
+            cb.line(f"StringArray {out_var};")
+            cb.line(f"StringArray_init(&{out_var});")
+            cb.line(f"struct ListNode* {cur} = {value_expr};")
 
         with cb.block(while_header(lang, negate(lang, lang.is_null(cur)))):
             item_out = elem_adapter.generate_serializer(cb, lang, ctx, f"{cur}{lang.FIELD_OP}val")
-            lang.append_stmt(cb, out_var, item_out)
+            if lang.name == "c":
+                cb.line(f"StringArray_push(&{out_var}, {item_out});")
+            else:
+                lang.append_stmt(cb, out_var, item_out)
             assign_stmt(cb, lang, cur, f"{cur}{lang.FIELD_OP}next")
 
         if lang.name in ("python", "javascript"):
@@ -87,6 +111,8 @@ class LinkedListAdapter(Adapter):
             return f'("[" + String.join(",", {out_var}) + "]")'
         if lang.name == "cpp":
             return f"_joinArr({out_var})"
+        if lang.name == "c":
+            return f"_c2d_join_arr({out_var}.data, {out_var}.size)"
         raise ValueError(f"Unsupported language {lang.name!r}")
 
     def generate_language_type(self, lang, boxed=False):
@@ -94,10 +120,21 @@ class LinkedListAdapter(Adapter):
             return "ListNode"
         if lang.name == "cpp":
             return "ListNode*"
+        if lang.name == "c":
+            return "struct ListNode*"
         return None
 
     def runtime_snippets(self, lang):
         elem_adapter = self._element_adapter()
+        if lang.name == "c":
+            val_type = elem_adapter.generate_language_type(lang) or "int"
+            src = (
+                "struct ListNode {\n"
+                f"    {val_type} val;\n"
+                "    struct ListNode* next;\n"
+                "};"
+            )
+            return [("ListNode", src)]
         if lang.name == "python":
             src = (
                 "class ListNode:\n"

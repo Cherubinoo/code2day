@@ -11,6 +11,11 @@ from .base import Adapter, read_count, assign_stmt, increment_stmt
 from ..languages.base import if_header, else_header, while_header, negate, logical_and
 
 
+def _require_c_scalar_element(node):
+    if node.element.kind != "primitive" or node.element.name == "string":
+        raise ValueError(f"C only supports binary_tree<T>/bst<T> for a scalar numeric T, not {node.raw!r}.")
+
+
 class BinaryTreeAdapter(Adapter):
     def _element_adapter(self):
         from .registry import get_adapter
@@ -29,6 +34,10 @@ class BinaryTreeAdapter(Adapter):
             cb.line(f"List<TreeNode> {nodes} = new ArrayList<>();")
         elif lang.name == "cpp":
             cb.line(f"vector<TreeNode*> {nodes};")
+        elif lang.name == "c":
+            _require_c_scalar_element(self.node)
+            cb.line(f"TreeNodePtrArray {nodes};")
+            cb.line(f"TreeNodePtrArray_init(&{nodes});")
 
         header, _idx = lang.for_header(ctx, n)
         with cb.block(header):
@@ -41,6 +50,8 @@ class BinaryTreeAdapter(Adapter):
                 cb.line(f"String {raw} = {lang.read_line_expr(ctx)};")
             elif lang.name == "cpp":
                 cb.line(f"string {raw} = {lang.read_line_expr(ctx)};")
+            elif lang.name == "c":
+                cb.line(f"char* {raw} = {lang.read_line_expr(ctx)};")
 
             tnode = ctx.fresh("tnode")
             if lang.name == "python":
@@ -51,6 +62,8 @@ class BinaryTreeAdapter(Adapter):
                 cb.line(f"TreeNode {tnode} = null;")
             elif lang.name == "cpp":
                 cb.line(f"TreeNode* {tnode} = nullptr;")
+            elif lang.name == "c":
+                cb.line(f"struct TreeNode* {tnode} = NULL;")
 
             with cb.block(if_header(lang, lang.string_eq(raw, "null"))):
                 if not lang.brace_style:
@@ -58,8 +71,17 @@ class BinaryTreeAdapter(Adapter):
             with cb.block(else_header(lang)):
                 lang.reader_rollback(cb)
                 val_expr = elem_adapter.generate_parser(cb, lang, ctx)
-                assign_stmt(cb, lang, tnode, lang.new_object("TreeNode", [val_expr]))
-            lang.append_stmt(cb, nodes, tnode)
+                if lang.name == "c":
+                    cb.line(f"{tnode} = (struct TreeNode*)malloc(sizeof(struct TreeNode));")
+                    cb.line(f"{tnode}->val = {val_expr};")
+                    cb.line(f"{tnode}->left = NULL;")
+                    cb.line(f"{tnode}->right = NULL;")
+                else:
+                    assign_stmt(cb, lang, tnode, lang.new_object("TreeNode", [val_expr]))
+            if lang.name == "c":
+                cb.line(f"TreeNodePtrArray_push(&{nodes}, {tnode});")
+            else:
+                lang.append_stmt(cb, nodes, tnode)
 
         root = ctx.fresh("root")
         if lang.name == "python":
@@ -70,6 +92,8 @@ class BinaryTreeAdapter(Adapter):
             cb.line(f"TreeNode {root} = null;")
         elif lang.name == "cpp":
             cb.line(f"TreeNode* {root} = nullptr;")
+        elif lang.name == "c":
+            cb.line(f"struct TreeNode* {root} = NULL;")
 
         with cb.block(if_header(lang, f"{n} > 0")):
             assign_stmt(cb, lang, root, lang.index_expr(nodes, "0"))
@@ -83,7 +107,13 @@ class BinaryTreeAdapter(Adapter):
                     cb.line(f"List<TreeNode> {queue} = new ArrayList<>();")
                 elif lang.name == "cpp":
                     cb.line(f"vector<TreeNode*> {queue};")
-                lang.append_stmt(cb, queue, root)
+                elif lang.name == "c":
+                    cb.line(f"TreeNodePtrArray {queue};")
+                    cb.line(f"TreeNodePtrArray_init(&{queue});")
+                if lang.name == "c":
+                    cb.line(f"TreeNodePtrArray_push(&{queue}, {root});")
+                else:
+                    lang.append_stmt(cb, queue, root)
 
                 idx = ctx.fresh("idx")
                 qi = ctx.fresh("qi")
@@ -105,6 +135,8 @@ class BinaryTreeAdapter(Adapter):
                         cb.line(f"TreeNode {cur} = {lang.index_expr(queue, qi)};")
                     elif lang.name == "cpp":
                         cb.line(f"TreeNode* {cur} = {lang.index_expr(queue, qi)};")
+                    elif lang.name == "c":
+                        cb.line(f"struct TreeNode* {cur} = {lang.index_expr(queue, qi)};")
                     increment_stmt(cb, lang, qi)
 
                     for side in ("left", "right"):
@@ -112,7 +144,10 @@ class BinaryTreeAdapter(Adapter):
                             child = lang.index_expr(nodes, idx)
                             with cb.block(if_header(lang, negate(lang, lang.is_null(child)))):
                                 assign_stmt(cb, lang, f"{cur}{lang.FIELD_OP}{side}", child)
-                                lang.append_stmt(cb, queue, child)
+                                if lang.name == "c":
+                                    cb.line(f"TreeNodePtrArray_push(&{queue}, {child});")
+                                else:
+                                    lang.append_stmt(cb, queue, child)
                             increment_stmt(cb, lang, idx)
 
         return root
@@ -128,6 +163,10 @@ class BinaryTreeAdapter(Adapter):
             cb.line(f"List<String> {out_var} = new ArrayList<>();")
         elif lang.name == "cpp":
             cb.line(f"vector<string> {out_var};")
+        elif lang.name == "c":
+            _require_c_scalar_element(self.node)
+            cb.line(f"StringArray {out_var};")
+            cb.line(f"StringArray_init(&{out_var});")
 
         null_token = "None" if lang.name == "python" else ("null" if lang.name == "javascript" else '"null"')
 
@@ -143,9 +182,16 @@ class BinaryTreeAdapter(Adapter):
             elif lang.name == "cpp":
                 cb.line(f"vector<TreeNode*> {queue};")
                 lang.append_stmt(cb, queue, value_expr)
+            elif lang.name == "c":
+                cb.line(f"TreeNodePtrArray {queue};")
+                cb.line(f"TreeNodePtrArray_init(&{queue});")
+                cb.line(f"TreeNodePtrArray_push(&{queue}, {value_expr});")
 
             root_out = elem_adapter.generate_serializer(cb, lang, ctx, f"{value_expr}{lang.FIELD_OP}val")
-            lang.append_stmt(cb, out_var, root_out)
+            if lang.name == "c":
+                cb.line(f"StringArray_push(&{out_var}, {root_out});")
+            else:
+                lang.append_stmt(cb, out_var, root_out)
 
             qi = ctx.fresh("qi")
             if lang.name == "python":
@@ -163,16 +209,25 @@ class BinaryTreeAdapter(Adapter):
                     cb.line(f"TreeNode {cur} = {lang.index_expr(queue, qi)};")
                 elif lang.name == "cpp":
                     cb.line(f"TreeNode* {cur} = {lang.index_expr(queue, qi)};")
+                elif lang.name == "c":
+                    cb.line(f"struct TreeNode* {cur} = {lang.index_expr(queue, qi)};")
                 increment_stmt(cb, lang, qi)
 
                 for side in ("left", "right"):
                     child_expr = f"{cur}{lang.FIELD_OP}{side}"
                     with cb.block(if_header(lang, negate(lang, lang.is_null(child_expr)))):
                         child_out = elem_adapter.generate_serializer(cb, lang, ctx, f"{child_expr}{lang.FIELD_OP}val")
-                        lang.append_stmt(cb, out_var, child_out)
-                        lang.append_stmt(cb, queue, child_expr)
+                        if lang.name == "c":
+                            cb.line(f"StringArray_push(&{out_var}, {child_out});")
+                            cb.line(f"TreeNodePtrArray_push(&{queue}, {child_expr});")
+                        else:
+                            lang.append_stmt(cb, out_var, child_out)
+                            lang.append_stmt(cb, queue, child_expr)
                     with cb.block(else_header(lang)):
-                        lang.append_stmt(cb, out_var, null_token)
+                        if lang.name == "c":
+                            cb.line(f"StringArray_push(&{out_var}, {null_token});")
+                        else:
+                            lang.append_stmt(cb, out_var, null_token)
 
         if lang.name in ("python", "javascript"):
             return out_var
@@ -180,6 +235,8 @@ class BinaryTreeAdapter(Adapter):
             return f'("[" + String.join(",", {out_var}) + "]")'
         if lang.name == "cpp":
             return f"_joinArr({out_var})"
+        if lang.name == "c":
+            return f"_c2d_join_arr({out_var}.data, {out_var}.size)"
         raise ValueError(f"Unsupported language {lang.name!r}")
 
     def generate_language_type(self, lang, boxed=False):
@@ -187,10 +244,30 @@ class BinaryTreeAdapter(Adapter):
             return "TreeNode"
         if lang.name == "cpp":
             return "TreeNode*"
+        if lang.name == "c":
+            return "struct TreeNode*"
         return None
 
     def runtime_snippets(self, lang):
         elem_adapter = self._element_adapter()
+        if lang.name == "c":
+            val_type = elem_adapter.generate_language_type(lang) or "int"
+            tree_src = (
+                "struct TreeNode {\n"
+                f"    {val_type} val;\n"
+                "    struct TreeNode* left;\n"
+                "    struct TreeNode* right;\n"
+                "};"
+            )
+            ptrarray_src = (
+                "typedef struct { struct TreeNode** data; int size; int cap; } TreeNodePtrArray;\n"
+                "static void TreeNodePtrArray_init(TreeNodePtrArray* a) { a->data = NULL; a->size = 0; a->cap = 0; }\n"
+                "static void TreeNodePtrArray_push(TreeNodePtrArray* a, struct TreeNode* v) {\n"
+                "    if (a->size == a->cap) { a->cap = a->cap ? a->cap * 2 : 4; a->data = (struct TreeNode**)realloc(a->data, a->cap * sizeof(struct TreeNode*)); }\n"
+                "    a->data[a->size++] = v;\n"
+                "}"
+            )
+            return [("TreeNode", tree_src), ("TreeNodePtrArray", ptrarray_src)]
         if lang.name == "python":
             src = (
                 "class TreeNode:\n"
