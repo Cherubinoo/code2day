@@ -276,6 +276,37 @@ def parse_argument_list(raw_input: str):
     return values
 
 
+def parse_single_argument(raw_input: str):
+    """Parse raw example/stdin text known to represent exactly ONE function
+    argument (e.g. `root = [4,1,6,0,2,5,7,null,null,null,3,null,null,null,8]`,
+    or a bare `[4,1,6]`) into its coerced Python value — WITHOUT
+    parse_argument_list()'s own "a lone list argument is returned bare,
+    not wrapped" convention.
+
+    That convention exists for the legacy driver's JSON-args wire format
+    (see prepare_execution_payload below), where a single list-typed
+    argument really is meant to be the top-level JSON value. But it makes
+    parse_argument_list's return value ambiguous for any caller that
+    already knows — from a declared schema, not from guessing at the
+    parsed shape — that there is exactly one argument: a single
+    binary_tree/array/matrix/... parameter's own flat value (e.g. a
+    15-element tree level-order list) is indistinguishable, once parsed,
+    from "15 separate scalar arguments" that happen to need re-wrapping.
+    services/judging/integration.py's _effective_stdin() hits exactly this
+    for any generic-judge problem whose one declared param is itself a
+    list-shaped type and whose test case is still raw, un-adapted example
+    text — silently falling back to sending Judge0 the unadapted text
+    (a reported bug: "NumberFormatException ... For input string: 'root =
+    [4,1,...]'" for a single-TreeNode-argument problem)."""
+    cleaned = str(raw_input or "").strip()
+    if not cleaned:
+        return None
+    eq_index = cleaned.find("=")
+    if eq_index != -1 and cleaned[:eq_index].strip().isidentifier():
+        cleaned = cleaned[eq_index + 1:].strip()
+    return _coerce_literal(cleaned)
+
+
 def _canonicalize_numbers(obj):
     """Recursively collapse whole-number floats to int (5.0 -> 5) so that
     numerically-equal answers compare equal regardless of which language's

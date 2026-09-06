@@ -26,12 +26,19 @@ from .comparator import compare_output
 from .judge0_service import Judge0Service
 from .versions import WRAPPER_VERSION, TYPE_SYSTEM_VERSION, SERIALIZER_VERSION
 
-# Reused as-is from the legacy design-problem path — same comparison rules
-# (per-operation return type, float tolerance), just handed a schema in
-# this package's own shape (which already has the same schema["methods"]
-# dict the legacy function reads return_type from). parse_argument_list is
-# reused too, for a completely different reason — see _adapt_example_stdin.
-from ..execution_adapter import compare_design_output, parse_argument_list
+# Reused as-is from the legacy execution path:
+# - compare_design_output: same per-operation-return-type comparison rules
+#   (float tolerance), just handed a schema in this package's own shape
+#   (which already has the same schema["methods"] dict the legacy
+#   function reads return_type from).
+# - parse_argument_list / parse_single_argument: for a completely
+#   different reason — see _effective_stdin.
+# - normalize_comparable_output: plain text/whitespace normalization for
+#   "stdin" kind's raw-stdout-vs-expected-text comparison — the exact same
+#   rule the legacy path's own EXEC_STDIN branch already uses, since a
+#   "stdin" schema means "this problem is really running the legacy way,
+#   just through the modern batch-execution client."
+from ..execution_adapter import compare_design_output, parse_argument_list, parse_single_argument, normalize_comparable_output
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +72,17 @@ def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind)
     }
     logger.info("Generic judge execution starting: %s", log_context)
 
-    is_design = schema.get("kind") == "design"
+    kind = schema.get("kind", "function")
+    is_design = kind == "design"
+    is_stdin = kind == "stdin"
 
     return_node = None
-    if not is_design:
+    if not is_design and not is_stdin:
         # Design schemas have no single top-level return_type — each
         # operation has its own (schema["methods"][op]["return_type"]),
         # compared per-index by compare_design_output() below instead.
+        # "stdin" schemas have no return_type at all — there's no function
+        # to speak of, just raw stdout compared as text below.
         try:
             return_node = parse_type(schema["return_type"], schema.get("custom_structs"))
         except Exception as exc:  # noqa: BLE001 - surfaced as a normal failed run, not a 500
@@ -80,19 +91,26 @@ def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind)
                 execution_id=execution_id, error_type="invalid_schema",
             )
 
-    try:
-        full_source = (generate_design_source if is_design else generate_source)(schema, lang_name, source_code)
-    except Exception as exc:  # noqa: BLE001
-        return _error_result(
-            f"Could not generate {lang_name} wrapper: {exc}", batch_kind,
-            execution_id=execution_id, error_type="wrapper_generation_failed",
-        )
+    if is_stdin:
+        # No wrapper at all — the student's source IS the complete
+        # program (their own entry point, their own stdin/stdout calls).
+        # This can't fail the way generate_source()/generate_design_source()
+        # can (there's no schema-driven codegen to go wrong).
+        full_source = source_code
+    else:
+        try:
+            full_source = (generate_design_source if is_design else generate_source)(schema, lang_name, source_code)
+        except Exception as exc:  # noqa: BLE001
+            return _error_result(
+                f"Could not generate {lang_name} wrapper: {exc}", batch_kind,
+                execution_id=execution_id, error_type="wrapper_generation_failed",
+            )
 
     service = Judge0Service()
     submissions = [
         {
             "source_code": full_source, "language_name": lang_name,
-            "stdin": _effective_stdin(case, schema, is_design),
+            "stdin": _effective_stdin(case, schema, skip_adaptation=is_design or is_stdin),
         }
         for case in test_cases
     ]
@@ -112,6 +130,11 @@ def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind)
             if is_design:
                 operations = (getattr(case, "input_data", None) or {}).get("operations", [])
                 passed = compare_design_output(actual_raw, case.expected_output, schema, operations)
+            elif is_stdin:
+                # No JSON, no types — just the student's raw printed text
+                # against the stored expected text, same normalization the
+                # legacy path's own EXEC_STDIN branch already applies.
+                passed = normalize_comparable_output(actual_raw) == normalize_comparable_output(case.expected_output)
             else:
                 try:
                     expected_value = json.loads(case.expected_output)
@@ -182,7 +205,7 @@ def run_generic_batch(*, problem, source_code, language, test_cases, batch_kind)
     }
 
 
-def _effective_stdin(case, schema, is_design):
+def _effective_stdin(case, schema, skip_adaptation=False):
     """Dispatches on TestCase.input_format (mirrored onto RuntimeTestCase
     — see problem_testcases.py) rather than inferring anything from
     `source`: "stored" does NOT reliably mean "already wire format" —
@@ -196,18 +219,29 @@ def _effective_stdin(case, schema, is_design):
     same parse, then re-serializes the values into THIS package's wire
     format instead of the legacy driver's JSON-array one.
 
-    Design-schema problems aren't handled here — schema has no top-level
-    "params" to line values up against, and a raw example string for a
-    design problem isn't in the [operations, arguments]-derivable shape
-    this fallback was ever meant to produce. Left unchanged; a design
-    problem with a raw_text-tagged case has no correct way to run yet
-    regardless of this function."""
-    if getattr(case, "input_format", "wire") != "raw_text" or is_design:
+    `skip_adaptation=True` for design and stdin schemas — neither has a
+    top-level "params" list to line raw values up against: a design
+    schema's raw example text isn't in the [operations, arguments]-derivable
+    shape this fallback was ever meant to produce, and a stdin schema's
+    stdin is supposed to be the exact raw text the student's own program
+    reads, never anything to serialize at all."""
+    if getattr(case, "input_format", "wire") != "raw_text" or skip_adaptation:
         return case.stdin
 
     params = schema.get("params") or []
     try:
-        values = parse_argument_list(case.stdin)
+        if len(params) == 1:
+            # parse_argument_list()'s "a lone list argument is returned
+            # bare" convention (built for the legacy driver's own wire
+            # format) would otherwise be indistinguishable here from N
+            # separate scalar arguments — e.g. a single binary_tree/array
+            # param's flat level-order list coming back as that many
+            # "arguments" and failing the count check below. With exactly
+            # one declared param there's nothing to split on regardless of
+            # its shape, so it's parsed directly instead.
+            values = [parse_single_argument(case.stdin)]
+        else:
+            values = parse_argument_list(case.stdin)
         if not isinstance(values, list) or len(values) != len(params):
             raise ValueError(f"Expected {len(params)} argument(s), parsed {len(values) if isinstance(values, list) else 1}.")
         custom_structs = schema.get("custom_structs")

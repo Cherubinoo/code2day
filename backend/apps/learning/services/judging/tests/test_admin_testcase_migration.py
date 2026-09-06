@@ -272,3 +272,56 @@ class AdminProblemBankRawTextFlagAndRegenerationTests(TestCase):
         # Untouched — was never flagged.
         self.assertEqual(fine.test_cases.count(), 1)
         self.assertEqual(fine.test_cases.first().stdin, "4\n2\n7\n11\n15\n9\n")
+
+
+class StdinExecutionTypeMigrationTests(TestCase):
+    """execution_type="stdin" problems (see services/judging/integration.py's
+    kind=="stdin" branch): _known_generic_schema_kind() must resolve to
+    "stdin" (no LLM call at all — generate_generic_schema short-circuits),
+    and the per-topic migration must enable the judge directly, never
+    calling generate_generic_test_cases (there's no function/class schema
+    to build wire-format test cases from — the problem's existing raw
+    stdin test cases are already exactly right)."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(username="admin0003", password="secret123", email="c@c.com")
+        self.client.login(username="admin0003", password="secret123")
+
+    @patch("apps.learning.services.judging.generic_testcase_generator.generate_generic_test_cases")
+    def test_topic_migration_enables_stdin_problem_without_generating_test_cases(self, mocked_cases):
+        from ....models import TestCase
+
+        problem = Problem.objects.create(
+            title="A+B Problem", slug="a-plus-b-topic", description="Read two integers, print their sum.",
+            difficulty="Easy", tags=["Basics"], execution_type="stdin",
+        )
+        TestCase.objects.create(problem=problem, stdin="2 3\n", expected_output="5", order=1)
+
+        response = self.client.post(
+            reverse("admin-problem-bank-topic-generate-generic-judge", args=["Basics"])
+        )
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(len(data["processed"]), 1)
+        self.assertTrue(data["processed"][0]["enabled"])
+        self.assertNotIn("test_cases_generated", data["processed"][0])
+        mocked_cases.assert_not_called()
+
+        problem.refresh_from_db()
+        self.assertTrue(problem.uses_generic_judge)
+        self.assertEqual(problem.generic_schema, {"kind": "stdin"})
+        # Its original test case is untouched, not replaced.
+        self.assertEqual(problem.test_cases.count(), 1)
+        self.assertEqual(problem.test_cases.first().stdin, "2 3\n")
+
+    def test_topic_migration_warns_when_stdin_problem_has_no_test_cases(self):
+        Problem.objects.create(
+            title="Empty Stdin Problem", slug="empty-stdin-topic", description="d",
+            difficulty="Easy", tags=["Basics2"], execution_type="stdin",
+        )
+        response = self.client.post(
+            reverse("admin-problem-bank-topic-generate-generic-judge", args=["Basics2"])
+        )
+        data = response.json()
+        self.assertTrue(data["processed"][0]["enabled"])
+        self.assertIn("warning", data["processed"][0])

@@ -164,22 +164,34 @@ def generate_generic_schema(*, title, description, examples=None, providers=None
     subclass if every active provider fails or replies with unparseable
     JSON.
 
-    `known_kind`, if given ("design" or "function"), skips the
+    `known_kind`, if given ("design", "function", or "stdin"), skips the
     title/description heuristic entirely and uses that kind directly —
-    for the one case where the caller already knows the answer for
-    certain: a problem whose LEGACY param_schema is already design-shaped
-    (services/param_types.py's is_design_schema()) is unambiguously a
-    design problem regardless of what its prose happens to say, so the
-    admin bulk sweeps pass "design" explicitly for those rather than
-    risking a heuristic miss regenerating the exact bug this schema kind
-    exists to fix (a design problem silently getting a single-method
-    function schema).
+    for the cases where the caller already knows the answer for certain:
+    - a problem whose LEGACY param_schema is already design-shaped
+      (services/param_types.py's is_design_schema()) is unambiguously a
+      design problem regardless of what its prose happens to say, so the
+      admin bulk sweeps pass "design" explicitly for those rather than
+      risking a heuristic miss regenerating the exact bug this schema kind
+      exists to fix (a design problem silently getting a single-method
+      function schema).
+    - a problem whose Problem.execution_type is explicitly "stdin" (the
+      student's whole program handles its own I/O — no function/class to
+      infer, no LLM call needed at all: known_kind="stdin" short-circuits
+      straight to {"kind": "stdin"} before ever touching providers, so
+      this never fails even with zero LLM providers configured.
+      execution_type is a staff decision, never something text-heuristics
+      should guess — detect_schema_kind() only ever distinguishes
+      function vs design, never stdin).
 
     `providers`, if given, overrides the normal rotation-order lookup —
     pass e.g. `providers=[some_provider]` to pin this call to one specific
     provider (no fallback), used by the bulk sweeps to run many of these
     concurrently, one per active provider, instead of funneling every
-    problem through the rotation one at a time."""
+    problem through the rotation one at a time. Never consulted for
+    known_kind="stdin", which makes no LLM call."""
+    if known_kind == "stdin":
+        return {"kind": "stdin"}
+
     if examples:
         blocks = [f"Example input:\n{ex.get('input', '')}\nExample output:\n{ex.get('output', '')}" for ex in examples]
         examples_block = "\nExamples:\n\n" + "\n\n".join(blocks)
@@ -279,13 +291,17 @@ def validate_generic_schema(schema):
     without a reference solution) check that the schema is semantically
     the *right* one for the problem. Returns a list of error strings;
     empty means valid. Dispatches on schema.get("kind") — "design" schemas
-    (class + multiple methods) go through _validate_design_schema, every
-    other/missing kind through the original function-style check below
-    (kept as _validate_function_schema)."""
+    (class + multiple methods) go through _validate_design_schema, "stdin"
+    schemas are trivially always valid (nothing to check — the student's
+    program handles its own I/O, there's no function/class/type shape to
+    get wrong), every other/missing kind through the original
+    function-style check below (kept as _validate_function_schema)."""
     if not isinstance(schema, dict):
         return ["Schema is not a JSON object."]
     if schema.get("kind") == "design":
         return _validate_design_schema(schema)
+    if schema.get("kind") == "stdin":
+        return []
     return _validate_function_schema(schema)
 
 

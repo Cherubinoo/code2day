@@ -12514,7 +12514,9 @@ class AdminProblemBankView(APIView):
             "has_generic_schema": bool(p.generic_schema),
             "uses_generic_judge": p.uses_generic_judge,
             "has_raw_text_test_cases": p.has_raw_text_test_cases,
-            "needs_test_case_regeneration": p.has_raw_text_test_cases and p.uses_generic_judge,
+            "needs_test_case_regeneration": (
+                p.has_raw_text_test_cases and p.uses_generic_judge and p.execution_type != "stdin"
+            ),
         } for p in problems]
 
         needs_regen_count = sum(1 for p in data if p["needs_test_case_regeneration"])
@@ -12889,6 +12891,13 @@ class AdminProblemGenerateGenericTestCasesView(APIView):
         if not problem.generic_schema:
             return Response({"error": "This problem has no generic_schema yet — generate one first."}, status=400)
 
+        if problem.generic_schema.get("kind") == "stdin":
+            return Response(
+                {"error": "This is a stdin-mode problem — the student's program handles its own I/O, "
+                          "so there's nothing to generate test cases for. Add/edit its test cases directly instead."},
+                status=400,
+            )
+
         from .services.judging.generic_testcase_generator import generate_generic_test_cases
         from .services.testcase_generator import TestCaseGenError
         try:
@@ -12940,8 +12949,25 @@ class AdminProblemBankRegenerateRawTextTestCasesView(APIView):
 
     @staticmethod
     def _needs_regen_q():
-        return Q(uses_generic_judge=True) & Exists(
-            TestCase.objects.filter(problem=OuterRef("pk"), input_format=TestCase.INPUT_FORMAT_RAW_TEXT)
+        # Excludes stdin-mode problems (generic_schema__kind="stdin") even
+        # if one of their test cases somehow got tagged raw_text — there's
+        # no wire format for this AI generator to regenerate them into
+        # (a stdin schema has no "params" to build one from), and none is
+        # needed: a stdin-mode problem's test cases are already exactly
+        # the raw plain-input text its own program reads.
+        #
+        # NOT expressed as ~Q(generic_schema__kind="stdin") — every schema
+        # saved before this session's "kind" field existed has no "kind"
+        # key at all, and SQL's three-valued logic makes NOT(NULL = 'x')
+        # evaluate to NULL (excluded), not TRUE, silently dropping every
+        # pre-existing schema from this query. The isnull=True clause
+        # ahead of the OR is what makes "kind is missing" count as "not
+        # stdin" the way plain Python `!=` would.
+        not_stdin_kind = Q(generic_schema__kind__isnull=True) | ~Q(generic_schema__kind="stdin")
+        return (
+            Q(uses_generic_judge=True)
+            & not_stdin_kind
+            & Exists(TestCase.objects.filter(problem=OuterRef("pk"), input_format=TestCase.INPUT_FORMAT_RAW_TEXT))
         )
 
     def post(self, request):
@@ -13186,6 +13212,22 @@ def _missing_generic_schema_q():
     return Q(generic_schema__isnull=True)
 
 
+def _known_generic_schema_kind(problem):
+    """The one shared source of truth for skipping generate_generic_schema()'s
+    text heuristic entirely when the answer is already certain — used by
+    every bulk sweep below rather than duplicating this logic. Checked in
+    priority order: an explicit Problem.execution_type="stdin" (a staff
+    decision, never something text-heuristics should guess — see
+    schema_generator.generate_generic_schema's known_kind docstring) beats
+    a design-shaped legacy param_schema, which beats "let the heuristic
+    decide" (returns None)."""
+    if getattr(problem, "execution_type", None) == "stdin":
+        return "stdin"
+    if param_types.is_design_schema(problem.param_schema):
+        return "design"
+    return None
+
+
 class AdminProblemBankGenerateGenericSchemasView(APIView):
     """System Admin: bulk "one hit run" for the new type-driven judging
     framework — sweeps every Problem missing a generic_schema and
@@ -13228,14 +13270,9 @@ class AdminProblemBankGenerateGenericSchemasView(APIView):
         problems = list(Problem.objects.filter(_missing_generic_schema_q()).order_by("title")[:batch_size])
 
         def call_one(problem, provider):
-            # A problem whose legacy param_schema is already design-shaped
-            # is unambiguously a design problem — skip the heuristic
-            # entirely for those rather than risk it missing and
-            # regenerating the original single-method-function bug.
-            known_kind = "design" if param_types.is_design_schema(problem.param_schema) else None
             return generate_generic_schema(
                 title=problem.title, description=problem.description, examples=problem.examples,
-                providers=[provider], known_kind=known_kind,
+                providers=[provider], known_kind=_known_generic_schema_kind(problem),
             )
 
         results = run_across_providers_in_parallel(problems, call_one, timeout_seconds=self.TIME_BUDGET_SECONDS)
@@ -13335,11 +13372,7 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
             existing schema is captured in the return value instead, since
             the original loop still saved the (still-invalid) schema and
             disabled the judge in that case."""
-            # A problem whose legacy param_schema is already design-shaped
-            # is unambiguously a design problem — skip generate_generic_schema's
-            # own title/description heuristic for those (see its known_kind
-            # docstring) rather than risk it missing.
-            known_kind = "design" if param_types.is_design_schema(problem.param_schema) else None
+            known_kind = _known_generic_schema_kind(problem)
 
             schema = problem.generic_schema
             out = {"schema": schema, "generated": False, "initial_errors": None, "regenerated": False, "regen_error": None}
@@ -13508,7 +13541,10 @@ def _migrate_problem_to_generic_judge(problem):
     schema = problem.generic_schema
     if not schema:
         try:
-            schema = generate_generic_schema(title=problem.title, description=problem.description, examples=problem.examples)
+            schema = generate_generic_schema(
+                title=problem.title, description=problem.description, examples=problem.examples,
+                known_kind=_known_generic_schema_kind(problem),
+            )
         except TestCaseGenError as exc:
             entry["error"] = f"Schema generation failed: {exc}"
             return entry
@@ -13520,6 +13556,19 @@ def _migrate_problem_to_generic_judge(problem):
         entry["schema_errors"] = errors
         problem.uses_generic_judge = False
         problem.save(update_fields=["generic_schema", "uses_generic_judge"])
+        return entry
+
+    if schema.get("kind") == "stdin":
+        # No function/class to speak of — the student's own program
+        # handles all its I/O, so there's nothing for an LLM to generate
+        # test cases FOR. Keep whatever TestCase rows this problem already
+        # has (raw plain-input text, matching the problem's own stated
+        # format) and just enable the judge directly.
+        if not problem.test_cases.exists():
+            entry["warning"] = "No test cases exist for this stdin-mode problem yet — add some before students can submit."
+        problem.uses_generic_judge = True
+        problem.save(update_fields=["generic_schema", "uses_generic_judge"])
+        entry["enabled"] = True
         return entry
 
     try:

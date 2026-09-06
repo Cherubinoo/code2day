@@ -85,6 +85,19 @@ class GenerateGenericSchemaKnownKindTests(SimpleTestCase):
         schema = generate_generic_schema(title="Two Sum", description="Given an array of integers...", providers=["dummy-provider"])
         self.assertEqual(schema["kind"], "function")
 
+    @patch("apps.learning.services.judging.schema_generator._try_providers_in_order")
+    @patch("apps.learning.services.judging.schema_generator._providers_in_rotation_order")
+    def test_known_kind_stdin_makes_no_llm_call_at_all(self, mocked_rotation, mocked_try):
+        # The whole point of stdin-mode: there's nothing to infer (no
+        # function/class, no types), so generation must be free — no
+        # provider lookup, no prompt, no API call, not even when zero
+        # providers are configured (which would otherwise raise
+        # NoProvidersAvailableError).
+        schema = generate_generic_schema(title="A+B Problem", description="Read two integers, print their sum.", known_kind="stdin")
+        self.assertEqual(schema, {"kind": "stdin"})
+        mocked_try.assert_not_called()
+        mocked_rotation.assert_not_called()
+
 
 class ValidateGenericSchemaTests(SimpleTestCase):
     def test_valid_schema_has_no_errors(self):
@@ -145,6 +158,16 @@ class ValidateGenericSchemaTests(SimpleTestCase):
     def test_normalizer_rejects_missing_params_list(self):
         with self.assertRaises(TestCaseGenServiceError):
             _parse_and_normalize_schema('{"function_name": "x", "return_type": "int"}')
+
+
+class ValidateStdinSchemaTests(SimpleTestCase):
+    def test_stdin_schema_is_always_valid(self):
+        self.assertEqual(validate_generic_schema({"kind": "stdin"}), [])
+
+    def test_stdin_schema_ignores_extra_junk_fields(self):
+        # Nothing to check beyond the kind marker — a stdin schema has no
+        # function/class/type shape to get wrong.
+        self.assertEqual(validate_generic_schema({"kind": "stdin", "whatever": 123}), [])
 
 
 class ValidateDesignSchemaTests(SimpleTestCase):
