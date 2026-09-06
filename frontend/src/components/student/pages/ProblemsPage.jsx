@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { PanelLeftClose, PanelLeftOpen, Search, X } from "lucide-react";
+import { Search, X } from "lucide-react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 
@@ -485,20 +485,7 @@ function WorkspaceView({
   sessionSecondsElapsed,
   activePage,
 }) {
-  const [showAllBatches, setShowAllBatches] = useState(false);
-  const [sidebarHidden, setSidebarHidden] = useState(false);
   const editorLanguages = ALL_CODE_LANGUAGES;
-
-  useEffect(() => {
-    if (selectedProblem?.slug) {
-      setTimeout(() => {
-        const selectedEl = document.querySelector('.problem-sidebar .problem-list-row.selected');
-        if (selectedEl) {
-          selectedEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        }
-      }, 100);
-    }
-  }, [selectedProblem?.slug]);
 
   return (
     <div className="page-stack problem-page">
@@ -588,162 +575,13 @@ function WorkspaceView({
       <section
         className="problem-layout code2day-layout"
         style={{
-          gridTemplateColumns: sidebarHidden ? "1fr" : "280px 1fr",
+          gridTemplateColumns: "minmax(340px, 1fr) minmax(420px, 1.2fr)",
         }}
       >
-        {/* LEFT: problem list sidebar */}
-        {!sidebarHidden && (
-        <aside className="surface-card problem-sidebar judge-sidebar">
-          <div className="section-head">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <h3>Problemset</h3>
-              <button
-                type="button"
-                className="ghost-button dense-action"
-                title="Hide the question bank to give the code editor more room"
-                onClick={() => setSidebarHidden(true)}
-                style={{ padding: '4px 8px' }}
-              >
-                <PanelLeftClose size={16} />
-              </button>
-            </div>
-            <span>{selectedDifficulty} | {selectedTag}</span>
-          </div>
-
-              <div className="problem-section-list scroll-column">
-                {groupedProblems.map((section) => (
-                  <div key={section.key} className="problem-section-card compact">
-                    <button
-                      type="button"
-                      className="problem-section-header"
-                      onClick={() => toggleProblemSection(section.key)}
-                    >
-                      <div>
-                        <strong>{section.label}</strong>
-                        <span>{section.items.length} problems</span>
-                      </div>
-                      <span>{expandedSections[section.key] !== false ? "−" : "+"}</span>
-                    </button>
-
-                    {expandedSections[section.key] !== false && (
-                      <div className="problem-list">
-                        {section.items.length > 0 ? (
-                          section.items.map((problem, idx) => (
-                            <button
-                              key={problem.slug}
-                              type="button"
-                              className={
-                                problem.slug === selectedProblem?.slug
-                                  ? "problem-list-row selected"
-                                  : "problem-list-row"
-                              }
-                              onClick={() => {
-                                setSelectedProblemSlug(problem.slug);
-                                setProblemDetailTab("current");
-                              }}
-                            >
-                              <div className="problem-index">{idx + 1}</div>
-                              <div className="problem-meta">
-                                <strong>{problem.title}</strong>
-                                <p>
-                                  {problem.companies && <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{problem.companies} | </span>}
-                                  {problem.tags?.join(" | ") || "Practice set"}
-                                </p>
-                              </div>
-                              <span className={`mini-pill ${(problem.difficulty || 'Easy').toLowerCase()}`}>
-                                {problem.difficulty || 'Easy'}
-                              </span>
-                            </button>
-                          ))
-                        ) : (
-                          <p className="empty-section">No problems in this section yet.</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-
-                {/* Show All Toggle for Batches */}
-                <div style={{ padding: '0.5rem', borderTop: '1px solid var(--border)', marginTop: '0.5rem' }}>
-                  <button 
-                    type="button"
-                    className="ghost-button"
-                    style={{ width: '100%', justifyContent: 'center' }}
-                    onClick={() => setShowAllBatches(!showAllBatches)}
-                  >
-                    {showAllBatches ? "Hide Other Batches" : "Show All Batches"}
-                  </button>
-                </div>
-
-                {/* Other batches shown only if toggled */}
-                {showAllBatches && groupedProblems.filter(s => s.key !== 'completed').map((section) => (
-                  <div key={section.key} className="problem-section-card compact">
-                    <button
-                      type="button"
-                      className="problem-section-header"
-                      onClick={() => toggleProblemSection(section.key)}
-                    >
-                      <div>
-                        <strong>{section.label}</strong>
-                        <span>{section.items.length} problems</span>
-                      </div>
-                      <span>{expandedSections[section.key] ? "−" : "+"}</span>
-                    </button>
-
-                    {expandedSections[section.key] && (
-                      <div className="problem-list">
-                        {section.items.length > 0 ? (
-                          section.items.map((problem, idx) => (
-                            <button
-                              key={problem.slug}
-                              type="button"
-                              className={
-                                problem.slug === selectedProblem?.slug
-                                  ? "problem-list-row selected"
-                                  : "problem-list-row"
-                              }
-                              onClick={() => {
-                                setSelectedProblemSlug(problem.slug);
-                                setProblemDetailTab("current");
-                              }}
-                            >
-                              <div className="problem-index">{idx + 1}</div>
-                              <div className="problem-meta">
-                                <strong>{problem.title}</strong>
-                                <p>{problem.tags?.join(" | ") || "Practice set"}</p>
-                              </div>
-                              <span className={`mini-pill ${(problem.difficulty || 'Easy').toLowerCase()}`}>
-                                {problem.difficulty || 'Easy'}
-                              </span>
-                            </button>
-                          ))
-                        ) : (
-                          <p className="empty-section">No problems in this section yet.</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-        </aside>
-        )}
-
-      {/* RIGHT: vertical stack — question top, editor+console bottom */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
-
-          {sidebarHidden && (
-            <button
-              type="button"
-              className="ghost-button dense-action"
-              title="Show the question bank"
-              onClick={() => setSidebarHidden(false)}
-              style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6 }}
-            >
-              <PanelLeftOpen size={16} /> Question Bank
-            </button>
-          )}
-
-          {/* TOP: Problem Statement */}
+          {/* LEFT: Problem Statement — the question bank list is intentionally not
+              shown here while coding (see ProblemsPage's list view for browsing/
+              picking a problem); Previous/Next below the title covers in-workspace
+              navigation without needing the full list on screen. */}
           <section className="right-column judge-right" style={{ minHeight: 0 }}>
             <article className="surface-card statement-panel judge-statement">
               <div className="section-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -884,7 +722,7 @@ function WorkspaceView({
             </article>
           </section>
 
-          {/* BOTTOM: Code Editor + Console */}
+          {/* RIGHT: Code Editor (top) + Console/Output (bottom) */}
           <section className="center-column judge-center" style={{ minHeight: 0 }}>
             {selectedProblem ? (
               <article className="surface-card editor-main-card judge-editor">
@@ -1026,8 +864,6 @@ function WorkspaceView({
                 </div>
             </article>
           </section>
-
-        </div>
       </section>
     </div>
   );

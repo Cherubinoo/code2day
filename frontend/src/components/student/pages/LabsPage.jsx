@@ -774,10 +774,11 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
         </div>
       </section>
 
-      <section className="problem-layout code2day-layout" style={{ gridTemplateColumns: "1fr" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-
-          {/* TOP: Problem Statement */}
+      <section
+        className="problem-layout code2day-layout"
+        style={{ gridTemplateColumns: "minmax(340px, 1fr) minmax(420px, 1.2fr)" }}
+      >
+          {/* LEFT: Problem Statement */}
           <section className="right-column judge-right" style={{ minHeight: 0 }}>
             <article className="surface-card statement-panel judge-statement">
               <div className="section-head">
@@ -791,7 +792,7 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
             </article>
           </section>
 
-          {/* BOTTOM: Code Editor + Console */}
+          {/* RIGHT: Code Editor (top) + Console/Output (bottom) */}
           <section className="center-column judge-center" style={{ minHeight: 0 }}>
             <article className="surface-card editor-main-card judge-editor">
               <div className="editor-topbar">
@@ -908,8 +909,6 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
               </div>
             </article>
           </section>
-
-        </div>
       </section>
     </div>
   );
