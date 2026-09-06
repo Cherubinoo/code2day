@@ -28,6 +28,31 @@ class TypeSystemTests(SimpleTestCase):
         self.assertEqual(node.kind, "custom_struct")
         self.assertEqual(set(node.fields), {"x", "y"})
 
+    def test_self_referential_custom_struct_raises_instead_of_recursing_forever(self):
+        # A graph/trie/N-ary-tree node whose own field refers back to the
+        # struct itself (e.g. Node.neighbors: vector<Node>) is a completely
+        # natural shape for an LLM-generated schema to produce, and used to
+        # blow the recursion stack instead of failing cleanly.
+        structs = {"Node": {"val": "int", "neighbors": "vector<Node>"}}
+        with self.assertRaises(TypeError_):
+            parse_type("Node", structs)
+
+    def test_indirect_custom_struct_cycle_raises(self):
+        # A -> B -> A, not a direct self-reference — same underlying bug,
+        # just one hop further away.
+        structs = {"A": {"b": "B"}, "B": {"a": "A"}}
+        with self.assertRaises(TypeError_):
+            parse_type("A", structs)
+
+    def test_non_cyclic_repeated_struct_reference_still_resolves(self):
+        # The same non-recursive struct referenced twice by different
+        # fields (a "diamond", not a cycle) must still parse fine — the
+        # cycle guard should only fire on a genuine self-reference.
+        structs = {"Point": {"x": "int", "y": "int"}, "Line": {"start": "Point", "end": "Point"}}
+        node = parse_type("Line", structs)
+        self.assertEqual(node.fields["start"].kind, "custom_struct")
+        self.assertEqual(node.fields["end"].kind, "custom_struct")
+
     def test_unknown_type_raises(self):
         with self.assertRaises(TypeError_):
             parse_type("not_a_real_type<int>")

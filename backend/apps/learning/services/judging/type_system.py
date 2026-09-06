@@ -103,11 +103,19 @@ def _tokenize(type_str):
 
 
 class _Parser:
-    def __init__(self, tokens, raw, custom_structs):
+    def __init__(self, tokens, raw, custom_structs, resolving=frozenset()):
         self.tokens = tokens
         self.pos = 0
         self.raw = raw
         self.custom_structs = custom_structs or {}
+        # Names of custom structs currently being expanded further up this
+        # same resolution chain (see the custom_struct branch in
+        # _parse_base) — lets that branch detect a struct whose fields
+        # refer back to itself, directly or via another struct, instead of
+        # recursing forever (an LLM-generated schema for something like a
+        # graph/trie/N-ary-tree node very naturally produces exactly this
+        # shape, e.g. Node.neighbors: vector<Node>).
+        self.resolving = resolving
 
     def peek(self):
         return self.tokens[self.pos] if self.pos < len(self.tokens) else None
@@ -250,8 +258,15 @@ class _Parser:
             return TypeNode("set", element=inner, raw=self.raw)
 
         if name in self.custom_structs:
+            if name in self.resolving:
+                raise TypeError_(
+                    f"Custom struct {name!r} is self-referential (directly, or via "
+                    f"another struct's field) in {self.raw!r} — recursive struct "
+                    f"definitions (e.g. a graph/trie/tree node whose field refers back "
+                    f"to the struct itself) aren't supported by the generic judge."
+                )
             fields = {
-                fname: parse_type(ftype, self.custom_structs)
+                fname: parse_type(ftype, self.custom_structs, self.resolving | {name})
                 for fname, ftype in self.custom_structs[name].items()
             }
             return TypeNode("custom_struct", name=name, fields=fields, raw=self.raw)
@@ -278,13 +293,17 @@ class _Parser:
         return node
 
 
-def parse_type(type_str, custom_structs=None):
+def parse_type(type_str, custom_structs=None, _resolving=frozenset()):
     """Parse a type string into a TypeNode tree. Raises TypeError_ if the
-    string doesn't match any recognized shape."""
+    string doesn't match any recognized shape (including a custom struct
+    that's self-referential — see the custom_struct branch in
+    _Parser._parse_base). `_resolving` is internal, threaded through by
+    that same branch when it recurses into a struct's own field types —
+    callers outside this module should never pass it."""
     if not isinstance(type_str, str) or not type_str.strip():
         raise TypeError_(f"Type string must be a non-empty string, got {type_str!r}")
     tokens = _tokenize(type_str.strip())
-    return _Parser(tokens, type_str.strip(), custom_structs).parse()
+    return _Parser(tokens, type_str.strip(), custom_structs, _resolving).parse()
 
 
 def is_null_aware(type_node):
