@@ -157,8 +157,20 @@ class ProblemDetailSerializer(ProblemSerializer):
         param_schema's scalars/1D-2D-arrays/GraphNode) whenever this
         problem is actually on that judge; falls back to the legacy
         param_schema-driven generator otherwise, completely unchanged for
-        every problem that hasn't migrated."""
+        every problem that hasn't migrated.
+
+        Within the generic-judge branch, Problem.generic_starter_code (a
+        persisted {language: code} snapshot the 'Generate Starter Code'
+        admin sweep writes) wins whenever it's non-empty, so what a
+        student sees is a stable, admin-reviewable value rather than
+        silently recomputed on every request — a hand-edit to fix one
+        problem's stub sticks until the sweep is deliberately re-run.
+        Falls back to generating fresh only for a problem the sweep
+        hasn't reached yet, so nothing regresses for problems not yet
+        swept."""
         if obj.uses_generic_judge and obj.generic_schema:
+            if obj.generic_starter_code:
+                return obj.generic_starter_code
             from .services.judging.starter_code import generate_generic_starter_code
             result = {}
             for language in DEFAULT_PRACTICE_LANGUAGES:

@@ -387,6 +387,19 @@ class Problem(models.Model):
                    "Same DB-persisted-progress convention as explanation_is_story — a problem is only ever rewritten "
                    "once, and a later sweep click only touches problems still on the original statement.",
     )
+    generic_starter_code = models.JSONField(
+        default=dict, blank=True,
+        help_text="{language: code} — persisted output of "
+                   "services/judging/starter_code.generate_generic_starter_code(), one entry per "
+                   "language it could actually generate for (a language whose type shape isn't "
+                   "supported yet, e.g. a 2D array in C, simply has no key here). Populated by the "
+                   "'Generate Starter Code' admin sweep rather than computed fresh on every API "
+                   "request, so what a student is shown is a stable, admin-reviewable snapshot — "
+                   "hand-editing this field (e.g. to add a missing import) sticks until the sweep "
+                   "is deliberately re-run with force=true. Empty ({}) means 'not generated yet' — "
+                   "ProblemDetailSerializer falls back to generating on the fly in that case, same "
+                   "result, just not cached.",
+    )
     editorial = models.TextField(blank=True, default="")
     companies = models.TextField(blank=True, default="")
     source_dataset_id = models.CharField(max_length=50, blank=True, default="")

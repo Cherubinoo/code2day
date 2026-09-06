@@ -97,6 +97,7 @@ from .models import (
 from .db_manager import create_institution_db, delete_institution_db
 from .serializers import (
     CodeRunSerializer,
+    DEFAULT_PRACTICE_LANGUAGES,
     DiscussionMessageCreateSerializer,
     DiscussionMessageSerializer,
     FirstLoginSerializer,
@@ -12513,6 +12514,7 @@ class AdminProblemBankView(APIView):
             "has_param_schema": bool(p.param_schema),
             "has_generic_schema": bool(p.generic_schema),
             "description_is_scenario": p.description_is_scenario,
+            "has_generic_starter_code": bool(p.generic_starter_code),
             "uses_generic_judge": p.uses_generic_judge,
             "has_raw_text_test_cases": p.has_raw_text_test_cases,
             "needs_test_case_regeneration": (
@@ -13696,6 +13698,86 @@ class AdminProblemTopicRegenerateScenarioDescriptionsView(APIView):
         if "error" in result:
             return Response(result, status=502)
         return Response(result)
+
+
+def _missing_generic_starter_code_q(force=False):
+    """Base scope for the "Generate Starter Code" sweep: only problems
+    actually on the new judge with a schema to derive a stub from — a
+    problem that hasn't migrated yet (or has no schema) has nothing this
+    sweep could compute anyway. `force=False` (the normal click) further
+    excludes problems that already have a snapshot, so a later click only
+    reaches ones the sweep hasn't touched yet; `force=True` re-touches
+    every eligible problem (e.g. after starter_code.py itself changes)."""
+    q = Q(uses_generic_judge=True, generic_schema__isnull=False)
+    if not force:
+        q &= Q(generic_starter_code={})
+    return q
+
+
+class AdminProblemBankGenerateStarterCodeView(APIView):
+    """System Admin: "Generate Starter Code" — pre-computes and persists
+    Problem.generic_starter_code for every generic-judge problem that
+    doesn't have a snapshot yet, so the student editor's `class
+    Solution: ...` boilerplate (services/judging/starter_code.py, read by
+    ProblemDetailSerializer.get_starter_code) is a stable, admin-reviewable
+    value instead of silently recomputed on every request.
+
+    Unlike every other bulk sweep in this file, this one calls no LLM at
+    all — starter_code.generate_generic_starter_code is pure deterministic
+    codegen off the already-stored generic_schema, so there's no
+    provider-rotation machinery and no per-round token cost. That's also
+    why the whole eligible set is swept in one request ("generate it at a
+    go") rather than a small per-click batch: MAX_ACTIONS is a safety cap
+    for an unexpectedly huge bank, not the normal stopping point.
+
+    Pass {"force": true} to regenerate every eligible problem's snapshot
+    even if one already exists (e.g. after a fix to starter_code.py) —
+    otherwise a problem is only ever computed once, same DB-persisted-
+    progress convention as every other sweep here."""
+    permission_classes = [IsAuthenticated]
+
+    MAX_ACTIONS = 5000
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        import time
+        from .services.judging.starter_code import generate_generic_starter_code
+
+        force = bool(request.data.get("force"))
+
+        def scoped_qs():
+            return Problem.objects.filter(_missing_generic_starter_code_q(force=force))
+
+        start = time.monotonic()
+        problems = list(scoped_qs().order_by("id")[: self.MAX_ACTIONS])
+
+        processed = []
+        for problem in problems:
+            entry = {"id": problem.id, "title": problem.title}
+            try:
+                result = {}
+                for language in DEFAULT_PRACTICE_LANGUAGES:
+                    code = generate_generic_starter_code(problem, language)
+                    if code:
+                        result[language] = code
+            except Exception as exc:
+                entry["error"] = str(exc)
+                processed.append(entry)
+                continue
+
+            problem.generic_starter_code = result
+            problem.save(update_fields=["generic_starter_code"])
+            entry["languages"] = list(result.keys())
+            processed.append(entry)
+
+        remaining = Problem.objects.filter(_missing_generic_starter_code_q(force=False)).count()
+        return Response({
+            "processed": processed,
+            "elapsed_seconds": round(time.monotonic() - start, 1),
+            "remaining_problems": remaining,
+        })
 
 
 def _migrate_problem_to_generic_judge(problem):

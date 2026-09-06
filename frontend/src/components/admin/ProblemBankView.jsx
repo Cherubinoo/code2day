@@ -3,7 +3,7 @@
 // them, or regenerate for any problem.
 import { Fragment, useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles, BookOpen, RotateCcw, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, FlaskConical, RefreshCw, Trash2, Settings2, X, LayoutGrid, List, Sparkles, BookOpen, RotateCcw, AlertTriangle, Code2 } from 'lucide-react';
 import api, { LONG_RUNNING_TIMEOUT } from '../../lib/api';
 
 function apiErrorMessage(err, fallback) {
@@ -383,6 +383,7 @@ const ProblemBankView = ({ onBack }) => {
   const [rawTextRegenBulk, setRawTextRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [explanationRegenBulk, setExplanationRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [scenarioDescRegenBulk, setScenarioDescRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
+  const [starterCodeGenBulk, setStarterCodeGenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [mutationError, setMutationError] = useState('');
   const PAGE_SIZE = 50;
 
@@ -1052,6 +1053,47 @@ const ProblemBankView = ({ onBack }) => {
     }
   }
 
+  // Pre-computes and persists Problem.generic_starter_code (the `class
+  // Solution: ...` stub shown in the student editor) for every generic-judge
+  // problem that doesn't have one yet — no LLM involved, pure codegen off
+  // the already-stored generic_schema, so a single click sweeps the whole
+  // eligible set in one request rather than needing many rounds.
+  async function generateStarterCodeBulk(force = false) {
+    if (force && !window.confirm(
+      'This regenerates the starter code snapshot for every generic-judge problem, even ones that already have one. ' +
+      'Use this only after a fix to how starter code is generated. Continue?'
+    )) {
+      return;
+    }
+    setStarterCodeGenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
+    let totalProcessed = 0, totalOk = 0, totalErr = 0;
+    try {
+      for (let round = 1; round <= MAX_ROUNDS; round++) {
+        const data = (await api.post(
+          '/admin/v2/problem-bank/generate-starter-code/',
+          force ? { force: true } : undefined,
+          { timeout: LONG_RUNNING_TIMEOUT },
+        )).data;
+        totalProcessed += data.processed.length;
+        totalOk += data.processed.filter((p) => !p.error).length;
+        totalErr += data.processed.filter((p) => p.error).length;
+        const total = totalProcessed + data.remaining_problems;
+        await load();
+
+        const progress = `Processed ${totalProcessed}/${total} problem(s): ${totalOk} starter code snapshot(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
+        if (data.processed.length === 0 || data.remaining_problems === 0) {
+          const doneMsg = totalProcessed === 0 ? 'Nothing left to generate.' : `${progress} Done — every generic-judge problem now has starter code.`;
+          setStarterCodeGenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
+          return;
+        }
+        setStarterCodeGenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
+      }
+      setStarterCodeGenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
+    } catch (err) {
+      setStarterCodeGenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
+    }
+  }
+
   const missingCount = problems.filter((p) => p.test_case_count === 0).length;
   const needsRegenCount = problems.filter((p) => p.needs_test_case_regeneration).length;
 
@@ -1205,6 +1247,38 @@ const ProblemBankView = ({ onBack }) => {
             {scenarioDescRegenBulk.busy ? 'Regenerating…' : 'Generate Scenario Descriptions (All Problems)'}
           </button>
         </div>
+
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8, marginTop: 18 }}>
+          Student Editor — starter code
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+          <button
+            onClick={() => generateStarterCodeBulk(false)}
+            disabled={starterCodeGenBulk.busy}
+            title="Generate and persist the 'class Solution: ...' starter code students see in the editor, at a go, for every generic-judge problem that doesn't have one yet. No LLM call — pure codegen off the stored judge schema."
+            style={{
+              background: 'white', border: '1px solid var(--border-soft)',
+              borderRadius: 12, padding: '10px 16px', cursor: starterCodeGenBulk.busy ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+            }}
+          >
+            {starterCodeGenBulk.busy ? <Loader2 size={16} className="spin" /> : <Code2 size={16} />}
+            {starterCodeGenBulk.busy ? 'Generating…' : 'Generate Starter Code (All Problems)'}
+          </button>
+          <button
+            onClick={() => generateStarterCodeBulk(true)}
+            disabled={starterCodeGenBulk.busy}
+            title="Regenerate the starter code snapshot for EVERY generic-judge problem, even ones that already have one — use only after a fix to how starter code is generated"
+            style={{
+              background: 'white', border: '1px solid var(--border-soft)',
+              borderRadius: 12, padding: '10px 16px', cursor: starterCodeGenBulk.busy ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+            }}
+          >
+            <RotateCcw size={16} />
+            Regenerate All (Force)
+          </button>
+        </div>
       </div>
 
       {fillMissing.msg && (
@@ -1218,6 +1292,7 @@ const ProblemBankView = ({ onBack }) => {
       <BulkProgressPanel state={rawTextRegenBulk} />
       <BulkProgressPanel state={explanationRegenBulk} />
       <BulkProgressPanel state={scenarioDescRegenBulk} />
+      <BulkProgressPanel state={starterCodeGenBulk} />
 
       {mode === 'topics' ? (
         <ProblemTopicTiles onViewTopic={(label) => { setSearch(label); setMissingOnly(false); setMode('list'); }} />
