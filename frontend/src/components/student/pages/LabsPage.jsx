@@ -9,7 +9,7 @@ import SuccessAnimation from "../../common/SuccessAnimation";
 import {
   FlaskConical, ChevronLeft, BookOpen, CheckCircle2,
   Circle, Clock, Calendar, UserCheck,
-  ChevronDown, ChevronUp, Download, Loader2, AlertCircle, AlertTriangle,
+  ChevronDown, ChevronUp, Download, Loader2, AlertCircle, AlertTriangle, TerminalSquare,
 } from "lucide-react";
 
 // Use the bundled ESM Monaco build instead of the AMD loader path.
@@ -247,6 +247,11 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
   const [customInput, setCustomInput] = useState("");
   const [outputLog, setOutputLog] = useState("Run your code to see output here.");
   const [elapsedTime, setElapsedTime] = useState(0);
+  // Console (custom input + run/submit output) starts collapsed so the
+  // coding space is just the editor, like LeetCode — Run/Submit auto-open
+  // it so results are never missed, and it can also be opened by hand to
+  // type custom input before ever running.
+  const [consoleOpen, setConsoleOpen] = useState(false);
   const [sessionLocked, setSessionLocked] = useState(false);
   const [sessionLockReason, setSessionLockReason] = useState("");
   const [violationModalOpen, setViolationModalOpen] = useState(false);
@@ -464,6 +469,7 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
 
   async function runCode() {
     if (!code.trim()) return;
+    setConsoleOpen(true);
     setRunning(true);
     startTimer();
     setOutputLog("Running…");
@@ -519,6 +525,7 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
 
   async function submit() {
     if (!code.trim()) { setSubmitErr("Write your solution before submitting"); return; }
+    setConsoleOpen(true);
     setBusy(true); setSubmitErr("");
     startTimer();
     try {
@@ -880,33 +887,45 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
               )}
             </article>
 
-            <article className="surface-card output-card judge-output">
-              <div className="section-head">
-                <h3>Console</h3>
-                <span>Run output and execution notes</span>
-              </div>
+            <article className={consoleOpen ? "surface-card output-card judge-output" : "surface-card output-card judge-output collapsed"}>
+              <button
+                type="button"
+                className="section-head console-toggle"
+                onClick={() => setConsoleOpen((v) => !v)}
+                title={consoleOpen ? "Hide the console" : "Show the console — custom input and run/submit output"}
+              >
+                <h3><TerminalSquare size={16} /> Console</h3>
+                <span className="console-toggle-hint">
+                  {consoleOpen ? "Custom input and run output" : "Run or Submit to see output here"}
+                  {consoleOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </span>
+              </button>
 
-              <label htmlFor="lab-execution-input" className="filter-label">Custom Input</label>
-              <textarea
-                id="lab-execution-input"
-                className="execution-input"
-                value={customInput}
-                onChange={(e) => setCustomInput(e.target.value)}
-                placeholder="Optional stdin for a custom run."
-              />
-              <div className="output-panel-shell">
-                {running || busy ? (
-                  <div className="output-panel compiling-overlay">
-                    <div className="compiling-spinner" />
-                    <div className="compiling-label">
-                      {busy ? "Submitting…" : "Running…"}
-                      <span className="compiling-elapsed">{elapsedTime}s</span>
-                    </div>
+              {consoleOpen && (
+                <>
+                  <label htmlFor="lab-execution-input" className="filter-label">Custom Input</label>
+                  <textarea
+                    id="lab-execution-input"
+                    className="execution-input"
+                    value={customInput}
+                    onChange={(e) => setCustomInput(e.target.value)}
+                    placeholder="Optional stdin for a custom run."
+                  />
+                  <div className="output-panel-shell">
+                    {running || busy ? (
+                      <div className="output-panel compiling-overlay">
+                        <div className="compiling-spinner" />
+                        <div className="compiling-label">
+                          {busy ? "Submitting…" : "Running…"}
+                          <span className="compiling-elapsed">{elapsedTime}s</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <pre className="output-panel compact-output">{outputLog}</pre>
+                    )}
                   </div>
-                ) : (
-                  <pre className="output-panel compact-output">{outputLog}</pre>
-                )}
-              </div>
+                </>
+              )}
             </article>
           </section>
       </section>

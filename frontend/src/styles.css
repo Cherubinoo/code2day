@@ -2214,6 +2214,40 @@ button.tab-pill {
   border-top: 2px solid var(--border-soft);
 }
 
+/* Collapsed console — just the toggle bar, so the coding space above is
+   mostly just the editor until Run/Submit (or a manual click) opens it. */
+.output-card.collapsed.judge-output {
+  min-height: 0;
+  gap: 0;
+}
+
+.console-toggle {
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.console-toggle h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.console-toggle-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
 .output-panel-shell {
   min-height: 320px;
   max-height: min(78vh, 920px);

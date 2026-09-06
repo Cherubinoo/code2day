@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Search, X } from "lucide-react";
+import { Search, X, ChevronDown, ChevronUp, TerminalSquare } from "lucide-react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 
@@ -528,6 +528,13 @@ function WorkspaceView({
   activePage,
 }) {
   const editorLanguages = ALL_CODE_LANGUAGES;
+  // Console (custom input + run/submit output) starts collapsed so the
+  // coding space is just the editor, like LeetCode — Run/Submit auto-open
+  // it so results are never missed, and it can also be opened by hand to
+  // type custom input before ever running.
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const runCode = () => { setConsoleOpen(true); handleRunCode(); };
+  const submitCode = () => { setConsoleOpen(true); handleSubmitCode(); };
 
   return (
     <div className="page-stack problem-page">
@@ -854,7 +861,7 @@ function WorkspaceView({
                     <button
                       type="button"
                       className="ghost-button dense-action"
-                      onClick={handleRunCode}
+                      onClick={runCode}
                       disabled={executionBusy}
                     >
                       {executionBusy ? `Running… ${executionElapsed}s` : "Run"}
@@ -862,7 +869,7 @@ function WorkspaceView({
                     <button
                       type="button"
                       className="primary-button dense-action"
-                      onClick={handleSubmitCode}
+                      onClick={submitCode}
                       disabled={executionBusy}
                     >
                       {executionBusy ? `Submitting… ${executionElapsed}s` : "Submit"}
@@ -877,33 +884,45 @@ function WorkspaceView({
               </article>
             )}
 
-            <article className="surface-card output-card judge-output">
-              <div className="section-head">
-                <h3>Console</h3>
-                <span>Run output and execution notes</span>
-              </div>
+            <article className={consoleOpen ? "surface-card output-card judge-output" : "surface-card output-card judge-output collapsed"}>
+              <button
+                type="button"
+                className="section-head console-toggle"
+                onClick={() => setConsoleOpen((v) => !v)}
+                title={consoleOpen ? "Hide the console" : "Show the console — custom input and run/submit output"}
+              >
+                <h3><TerminalSquare size={16} /> Console</h3>
+                <span className="console-toggle-hint">
+                  {consoleOpen ? "Custom input and run output" : "Run or Submit to see output here"}
+                  {consoleOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </span>
+              </button>
 
-              <label htmlFor="execution-input" className="filter-label">Custom Input</label>
-              <textarea
-                id="execution-input"
-                className="execution-input"
-                value={executionInput}
-                onChange={(e) => setExecutionInput(e.target.value)}
-                placeholder="Optional stdin for a custom run. Leave blank to run the problem's sample cases."
-              />
-                <div className="output-panel-shell">
-                  {executionBusy ? (
-                    <div className="output-panel compiling-overlay">
-                      <div className="compiling-spinner" />
-                      <div className="compiling-label">
-                        Running…
-                        <span className="compiling-elapsed">{executionElapsed}s</span>
+              {consoleOpen && (
+                <>
+                  <label htmlFor="execution-input" className="filter-label">Custom Input</label>
+                  <textarea
+                    id="execution-input"
+                    className="execution-input"
+                    value={executionInput}
+                    onChange={(e) => setExecutionInput(e.target.value)}
+                    placeholder="Optional stdin for a custom run. Leave blank to run the problem's sample cases."
+                  />
+                  <div className="output-panel-shell">
+                    {executionBusy ? (
+                      <div className="output-panel compiling-overlay">
+                        <div className="compiling-spinner" />
+                        <div className="compiling-label">
+                          Running…
+                          <span className="compiling-elapsed">{executionElapsed}s</span>
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <pre className="output-panel compact-output">{outputLog}</pre>
-                  )}
-                </div>
+                    ) : (
+                      <pre className="output-panel compact-output">{outputLog}</pre>
+                    )}
+                  </div>
+                </>
+              )}
             </article>
           </section>
       </section>
