@@ -645,7 +645,12 @@ function App() {
       setCode(lastSolution.source_code);
       codeResolvedForRef.current = key;
     } else {
-      const currentStarter = starterCodeByLanguage[selectedLanguage];
+      // Prefer this problem's own correctly-typed stub (the `class
+      // Solution: ...` signature matching its actual schema) over the
+      // generic per-language placeholder — without this, a student would
+      // never see the real signature to implement, even though the
+      // backend already generates it (ProblemDetailSerializer.get_starter_code).
+      const currentStarter = currentProblemData?.starter_code?.[selectedLanguage] || starterCodeByLanguage[selectedLanguage];
       const nextCode = currentStarter ?? starterCodeByLanguage.Python;
       lastProgrammaticCodeRef.current = nextCode;
       setCode(nextCode);

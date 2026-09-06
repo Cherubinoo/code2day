@@ -182,12 +182,13 @@ class DesignWrapperGenerationTests(SimpleTestCase):
         )
         self._assert_cpp_generates_plausibly(schema, cpp_sol)
 
-    def test_min_stack_arbitrary_class_name_is_detected(self):
-        # A student's class need not be named after the schema's class_name
-        # (mirrors detect_class_name's existing leniency for the
-        # function-style path) — this class is called "MyMinStack", not
-        # "MinStack", and detect_class_name_for_methods must still find it
-        # by its full method set (push/pop/top/getMin).
+    def test_min_stack_requires_the_exact_declared_class_name(self):
+        # Design-style problems always use the exact class_name declared
+        # in the schema — no detection/guessing (see wrapper_generator's
+        # module docstring). A submission using a different class name
+        # (here "MyMinStack" instead of the schema's "MinStack") must fail
+        # to run, the same way it would fail on LeetCode itself; using the
+        # exact declared name must work correctly.
         schema = {
             "kind": "design",
             "class_name": "MinStack",
@@ -206,8 +207,7 @@ class DesignWrapperGenerationTests(SimpleTestCase):
         stdin_text = _build_design_stdin(schema["methods"], schema["custom_structs"], operations, arguments)
         expected_raw = json.dumps(expected)
 
-        py_sol = (
-            "class MyMinStack:\n"
+        body = (
             "    def __init__(self):\n"
             "        self.stack = []\n"
             "    def push(self, val):\n"
@@ -221,5 +221,11 @@ class DesignWrapperGenerationTests(SimpleTestCase):
             "        return self.stack[-1][1]\n"
         )
         if _HAS_PYTHON:
-            r = _run_python(generate_design_source(schema, "python", py_sol), stdin_text)
+            wrong_name_sol = "class MyMinStack:\n" + body
+            r = _run_python(generate_design_source(schema, "python", wrong_name_sol), stdin_text)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("MinStack", r.stderr)  # NameError naming the undefined class
+
+            exact_name_sol = "class MinStack:\n" + body
+            r = _run_python(generate_design_source(schema, "python", exact_name_sol), stdin_text)
             self.assertTrue(compare_design_output(r.stdout, expected_raw, schema, operations), msg=r.stderr or r.stdout)

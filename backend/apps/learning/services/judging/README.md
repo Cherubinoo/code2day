@@ -149,20 +149,25 @@ A plain `binary_tree` never gets this treatment; only `bst` does.
   current per-type wire format cleanly; follow the `random_list_node`
   pattern (two-pass construction) when this is actually needed.
 
-## No fixed class name required
+## Class name convention
 
-A submission never has to name its class `Solution` — `class_detector.py`
-scans the submitted source once per generation for whichever class
-defines a method named `function_name`, and `wrapper_generator.py` splices
-that name into every call site instead of a hardcoded `"Solution"`. This
-is a best-effort **source-text** scan, not true reflection: Java and C++
-have no runtime introspection available inside the sandboxed generated
-program, and JavaScript's top-level `class Foo {}` declarations aren't
-reliably enumerable at runtime either, so the same text-scan strategy is
-used for all four languages rather than special-casing Python. Detection
-falls back to the conventional name `Solution` whenever it finds zero or
-more than one candidate (ambiguous — safer to fall back than guess wrong),
-so every existing submission using `class Solution` is unaffected.
+Function-style problems require the submission's class to be named
+exactly `Solution` — the same strict convention LeetCode itself uses.
+`wrapper_generator.py` always generates `Solution().function_name(*args)`;
+there is no detection or guessing involved, and a submission using any
+other class name (or none at all) fails to compile/run, the same way it
+would on LeetCode itself. (An earlier version of this package tried to
+detect and accept any class name — including no class at all, a bare
+top-level function — via a `class_detector.py` source-text scan. That
+flexibility was deliberately removed: the platform's own generated starter
+code (`generate_starter_code`) already always produces `class Solution`
+for every problem, so the detection complexity had no real benefit over
+just enforcing the one name every submission is already shown.)
+
+Design-style problems (constructor + multiple methods, e.g. `LRUCache`)
+likewise always use the exact `class_name` declared in the schema — there's
+no single universal name for those the way `Solution` is for function-style
+ones, so the schema's own declared name is authoritative.
 
 ## Versioning & observability
 

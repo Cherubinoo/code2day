@@ -1,10 +1,14 @@
 """Orchestrates: a problem's generic schema + a language + the student's
 submitted source -> one complete, compilable/runnable program.
 
-The platform never requires a specific class name — a submission can name
-its class anything, as long as *some* class in it defines a method named
-`function_name` (see class_detector.py, called once per generation and
-used everywhere this module used to hardcode "Solution"). This module
+Function-style problems require the student's class to be named exactly
+`Solution` — the same strict convention LeetCode itself uses — so the
+generated driver always calls `Solution().function_name(*args)` with no
+detection/guessing involved. Design-style problems (generate_design_source
+below) likewise always use the exact `class_name` declared in the schema
+(e.g. "LRUCache", "MinStack") — there's no single universal name for those
+the way "Solution" is for function-style ones, so the schema's own
+declared name is authoritative, never guessed either. This module
 otherwise never special-cases "Python has no classes" or similar — it
 always does:
   1. language reader prelude (shared line reader, embedded once)
@@ -28,9 +32,9 @@ from .adapters.registry import get_adapter
 from .adapters.base import read_count
 from .languages.registry import get_language
 from .languages.base import Ctx, if_header
-from .class_detector import detect_class_name, detect_class_name_for_methods
 
 _VOID_RETURN_TYPES = ("void", "none", "", None)
+_SOLUTION_CLASS_NAME = "Solution"
 
 
 def _is_void_return(return_type_str):
@@ -51,7 +55,7 @@ def generate_source(schema, language_name, solution_code):
     custom_structs = schema.get("custom_structs")
     param_nodes = [(pname, parse_type(ptype, custom_structs)) for pname, ptype in schema["params"]]
     func_name = schema["function_name"]
-    class_name = detect_class_name(lang.name, solution_code, func_name)
+    class_name = _SOLUTION_CLASS_NAME
     param_adapters = [(pname, get_adapter(node)) for pname, node in param_nodes]
 
     return_type_str = schema.get("return_type")
@@ -124,41 +128,35 @@ def _emit_body(cb, lang, ctx, class_name, func_name, param_adapters, return_adap
     arg_exprs = [adapter.generate_parser(cb, lang, ctx) for _pname, adapter in param_adapters]
     args_joined = ", ".join(arg_exprs)
 
+    if lang.name == "python":
+        cb.line(f"{indent_call} = {class_name}()")
+    elif lang.name == "javascript":
+        cb.line(f"const {indent_call} = new {class_name}();")
+    elif lang.name == "java":
+        cb.line(f"{class_name} {indent_call} = new {class_name}();")
+    elif lang.name == "cpp":
+        cb.line(f"{class_name} {indent_call};")
+    call_expr = f"{indent_call}.{func_name}({args_joined})"
+
     if mutated_index is not None:
         # void / mutated-input: call for the side effect only, ignore
         # whatever (if anything) the function returns, then serialize the
         # MUTATED PARAMETER's own post-call value — never a return value.
-        if lang.name == "python":
-            cb.line(f"{indent_call} = {class_name}()")
-            cb.line(f"{indent_call}.{func_name}({args_joined})")
-        elif lang.name == "javascript":
-            cb.line(f"const {indent_call} = new {class_name}();")
-            cb.line(f"{indent_call}.{func_name}({args_joined});")
-        elif lang.name == "java":
-            cb.line(f"{class_name} {indent_call} = new {class_name}();")
-            cb.line(f"{indent_call}.{func_name}({args_joined});")
-        elif lang.name == "cpp":
-            cb.line(f"{class_name} {indent_call};")
-            cb.line(f"{indent_call}.{func_name}({args_joined});")
-
+        cb.line(call_expr if lang.name == "python" else f"{call_expr};")
         mutated_pname, mutated_adapter = param_adapters[mutated_index]
         _emit_output(cb, lang, ctx, mutated_adapter, arg_exprs[mutated_index])
         return
 
     if lang.name == "python":
-        cb.line(f"{indent_call} = {class_name}()")
-        cb.line(f"__result = {indent_call}.{func_name}({args_joined})")
+        cb.line(f"__result = {call_expr}")
     elif lang.name == "javascript":
-        cb.line(f"const {indent_call} = new {class_name}();")
-        cb.line(f"const __result = {indent_call}.{func_name}({args_joined});")
+        cb.line(f"const __result = {call_expr};")
     elif lang.name == "java":
-        cb.line(f"{class_name} {indent_call} = new {class_name}();")
         ret_type = return_adapter.generate_language_type(lang) or "var"
-        cb.line(f"{ret_type} __result = {indent_call}.{func_name}({args_joined});")
+        cb.line(f"{ret_type} __result = {call_expr};")
     elif lang.name == "cpp":
-        cb.line(f"{class_name} {indent_call};")
         ret_type = return_adapter.generate_language_type(lang) or "auto"
-        cb.line(f"{ret_type} __result = {indent_call}.{func_name}({args_joined});")
+        cb.line(f"{ret_type} __result = {call_expr};")
 
     _emit_output(cb, lang, ctx, return_adapter, "__result")
 
@@ -224,8 +222,6 @@ def generate_design_source(schema, language_name, solution_code):
     custom_structs = schema.get("custom_structs")
     class_name_hint = schema["class_name"]
     methods = schema["methods"]
-    method_names = [name for name in methods if name != class_name_hint]
-    detected_class = detect_class_name_for_methods(lang.name, solution_code, method_names)
 
     # One (param_adapters, return_adapter_or_None) pair per declared
     # operation (constructor included), built once up front so both the
@@ -260,39 +256,39 @@ def generate_design_source(schema, language_name, solution_code):
     cb.line(solution_code)
     cb.line()
 
-    _generate_design_main(cb, lang, ctx, detected_class, class_name_hint, op_specs)
+    _generate_design_main(cb, lang, ctx, class_name_hint, op_specs)
 
     return cb.render()
 
 
-def _generate_design_main(cb, lang, ctx, detected_class, class_name_hint, op_specs):
+def _generate_design_main(cb, lang, ctx, class_name_hint, op_specs):
     if lang.name == "python":
         with cb.block("if __name__ == \"__main__\""):
-            _emit_design_body(cb, lang, ctx, detected_class, class_name_hint, op_specs)
+            _emit_design_body(cb, lang, ctx, class_name_hint, op_specs)
         return
 
     if lang.name == "javascript":
-        _emit_design_body(cb, lang, ctx, detected_class, class_name_hint, op_specs)
+        _emit_design_body(cb, lang, ctx, class_name_hint, op_specs)
         return
 
     if lang.name == "java":
         with cb.block("public class Main"):
             with cb.block("public static void main(String[] args) throws IOException"):
                 cb.line("_Reader.load();")
-                _emit_design_body(cb, lang, ctx, detected_class, class_name_hint, op_specs)
+                _emit_design_body(cb, lang, ctx, class_name_hint, op_specs)
         return
 
     if lang.name == "cpp":
         with cb.block("int main()"):
             cb.line("_reader.load();")
-            _emit_design_body(cb, lang, ctx, detected_class, class_name_hint, op_specs)
+            _emit_design_body(cb, lang, ctx, class_name_hint, op_specs)
             cb.line("return 0;")
         return
 
     raise ValueError(f"Unsupported language {lang.name!r}")
 
 
-def _emit_design_body(cb, lang, ctx, detected_class, class_name_hint, op_specs):
+def _emit_design_body(cb, lang, ctx, class_name_hint, op_specs):
     # `sol` starts unset — the constructor branch is just another entry in
     # the dispatch loop below (schema convention: methods[class_name_hint]
     # is the constructor), so it's assigned there, not declared+constructed
@@ -304,10 +300,10 @@ def _emit_design_body(cb, lang, ctx, detected_class, class_name_hint, op_specs):
         cb.line("let sol = null;")
         cb.line("const __results = [];")
     elif lang.name == "java":
-        cb.line(f"{detected_class} sol = null;")
+        cb.line(f"{class_name_hint} sol = null;")
         cb.line("List<String> __results = new ArrayList<>();")
     elif lang.name == "cpp":
-        cb.line(f"{detected_class}* sol = nullptr;")
+        cb.line(f"{class_name_hint}* sol = nullptr;")
         cb.line("vector<string> __results;")
 
     n_var = read_count(cb, lang, ctx, var_base="__n")
@@ -330,7 +326,7 @@ def _emit_design_body(cb, lang, ctx, detected_class, class_name_hint, op_specs):
                 is_constructor = op_name == class_name_hint
 
                 if is_constructor:
-                    ctor_expr = lang.new_object(detected_class, arg_exprs)
+                    ctor_expr = lang.new_object(class_name_hint, arg_exprs)
                     cb.line(f"sol = {ctor_expr}" + (";" if lang.brace_style else ""))
                     _append_design_result(cb, lang, ctx, None, None)
                     continue
@@ -397,8 +393,7 @@ def _append_design_result(cb, lang, ctx, adapter, value_expr):
 # `lang.name` branch threaded through the shared logic. Two real
 # differences from Python/Java/C++/JS:
 #   1. No classes — the student writes one free function named
-#      schema["function_name"] directly at file scope. class_detector.py
-#      doesn't apply; there's nothing to detect.
+#      schema["function_name"] directly at file scope.
 #   2. LeetCode's own real C calling convention decomposes any array-typed
 #      parameter or return value into a raw pointer PLUS a separate size
 #      argument (`int* nums, int numsSize`, `int* twoSum(..., int*

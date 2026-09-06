@@ -143,12 +143,31 @@ class ProblemDetailSerializer(ProblemSerializer):
         return self.context.get("last_solutions", {})
 
     def get_starter_code(self, obj):
-        """{language: code} for problems with a param_schema — a correctly
-        typed, empty stub for the declared function/class signature, so
-        students fill in a signature the backend can actually execute
-        instead of guessing one from the description. None per language
-        (or the whole dict empty) when there's no schema; the frontend
-        falls back to its existing generic per-language template."""
+        """{language: code} — a correctly typed, empty stub for the
+        declared function/class signature (`class Solution: ...`, or a
+        design-schema class, or C's bare function), so students fill in a
+        signature the backend can actually execute instead of guessing one
+        from the description. None per language (or the whole dict empty)
+        when there's no schema to derive one from; the frontend falls back
+        to its existing generic per-language template in that case.
+
+        Prefers the new generic judge's own generator
+        (judging.starter_code, reading Problem.generic_schema's richer
+        type vocabulary — trees, linked lists, pairs, maps, ... not just
+        param_schema's scalars/1D-2D-arrays/GraphNode) whenever this
+        problem is actually on that judge; falls back to the legacy
+        param_schema-driven generator otherwise, completely unchanged for
+        every problem that hasn't migrated."""
+        if obj.uses_generic_judge and obj.generic_schema:
+            from .services.judging.starter_code import generate_generic_starter_code
+            result = {}
+            for language in DEFAULT_PRACTICE_LANGUAGES:
+                code = generate_generic_starter_code(obj, language)
+                if code:
+                    result[language] = code
+            if result:
+                return result
+
         if not obj.param_schema:
             return {}
         result = {}
