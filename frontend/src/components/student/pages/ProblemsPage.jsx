@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, Search, X } from "lucide-react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 
@@ -147,6 +147,7 @@ function ProblemListView({
   const displayTotalSolved = totalEasy + totalMedium + totalHard;
 
   const [showCompletedOnly, setShowCompletedOnly] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
   // Pagination state preserved in sessionStorage and URL query param
   const [currentPage, setCurrentPage] = useState(() => {
     const params = new URLSearchParams(window.location.search);
@@ -157,12 +158,34 @@ function ProblemListView({
   });
 
   const problemsPerPage = 20;
-  const filteredProblems = showCompletedOnly 
+  const completedFilteredProblems = showCompletedOnly
     ? allProblems.filter(p => p.progress_state === 'completed')
     : allProblems;
 
+  const trimmedSearch = searchQuery.trim().toLowerCase();
+  const filteredProblems = trimmedSearch
+    ? completedFilteredProblems.filter((p) =>
+        p.title.toLowerCase().includes(trimmedSearch) ||
+        (p.tags || []).some((tag) => tag.toLowerCase().includes(trimmedSearch))
+      )
+    : completedFilteredProblems;
+
   const totalProblems = filteredProblems.length;
   const totalPages = Math.ceil(totalProblems / problemsPerPage);
+
+  // A new search query can make the currently-viewed page empty (fewer
+  // matches than the page you were on) — jump back to page 1 whenever the
+  // query changes so results are never a page you have to manually back out
+  // of. Skips the very first run so it doesn't clobber the page restored
+  // from sessionStorage/the URL above on initial mount.
+  const isFirstSearchRender = React.useRef(true);
+  useEffect(() => {
+    if (isFirstSearchRender.current) {
+      isFirstSearchRender.current = false;
+      return;
+    }
+    setCurrentPage(1);
+  }, [trimmedSearch]);
 
   const changePage = (newPage) => {
     const validPage = Math.max(1, Math.min(newPage, totalPages || 1));
@@ -232,6 +255,30 @@ function ProblemListView({
 
       {/* ── Filters ── */}
       <section className="surface-card filter-bar-card">
+        {/* Search — filters the currently selected topic/difficulty by
+            title or tag, client-side (the full problem set is already
+            loaded for this view). Its own row above the topic chips so it
+            reads as "search everything", not another chip competing for
+            the same row's width. */}
+        <div className="search-input-field-v2" style={{ marginBottom: 16 }}>
+          <Search size={16} />
+          <input
+            type="text"
+            placeholder="Search problems by title or tag…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', color: 'var(--text-soft)' }}
+              aria-label="Clear search"
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
         <div className="filter-row-main">
           {/* Topic chips - dynamic from problem tags */}
           <div className="filter-group stretch">
@@ -283,11 +330,11 @@ function ProblemListView({
 
       {/* ── Problem List ── */}
       <section className="surface-card problems-table-card">
-        {allProblems.length === 0 ? (
+        {filteredProblems.length === 0 ? (
           <div className="empty-problems-state">
             <span className="empty-icon">🔍</span>
             <h3>No problems found</h3>
-            <p>Try adjusting the topic or difficulty filter.</p>
+            <p>{trimmedSearch ? `No matches for "${searchQuery.trim()}" — try a different search.` : 'Try adjusting the topic or difficulty filter.'}</p>
           </div>
         ) : (
           <>
