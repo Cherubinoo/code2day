@@ -266,6 +266,12 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
   const maxTabSwitches = contest?.max_tab_switches ?? 3;
   const enableTabCheck = contest?.enable_tab_switch_check !== false;
   const enableCopyPasteLock = contest?.enable_copy_paste_lock ?? false;
+  // A ref, not a plain boolean — see appUtils.configureEditorProtection's
+  // own docstring for why: Monaco's onMount fires once per editor
+  // instance, so a boolean captured there would go stale if `contest`
+  // finishes loading (or its lock setting changes) after that.
+  const allowCopyPasteRef = useRef(false);
+  allowCopyPasteRef.current = !enableCopyPasteLock;
 
   // ── Violation handler — fullscreen is always enforced, tab-switch/paste are contest-configurable ──
   const recordViolation = useCallback(async (reason) => {
@@ -800,8 +806,7 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
                       value={code || starterCodeByLanguage[selectedLanguage] || "// Write your solution here"}
                       onChange={(v) => setCode(v ?? "")}
                       onMount={(editor, monacoInstance) => {
-                        const allowCopyPaste = !enableCopyPasteLock;
-                        configureEditorProtection(editor, monacoInstance, allowCopyPaste);
+                        configureEditorProtection(editor, monacoInstance, allowCopyPasteRef);
                         editor.focus();
                       }}
                       options={{ minimap: { enabled: false }, fontSize: 14, automaticLayout: true, wordWrap: "on" }}

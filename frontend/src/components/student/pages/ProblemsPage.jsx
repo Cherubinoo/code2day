@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Search, X, ChevronDown, ChevronUp, TerminalSquare } from "lucide-react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
@@ -535,6 +535,13 @@ function WorkspaceView({
   const [consoleOpen, setConsoleOpen] = useState(false);
   const runCode = () => { setConsoleOpen(true); handleRunCode(); };
   const submitCode = () => { setConsoleOpen(true); handleSubmitCode(); };
+  // A ref, not a plain boolean — Monaco's onMount fires exactly once per
+  // editor instance, so a boolean captured there goes stale the moment a
+  // staff/HOD copy-paste permission change lands afterward (or even just
+  // if the dashboard fetch hadn't resolved yet at mount time). Updated on
+  // every render so configureEditorProtection always reads the latest value.
+  const allowCopyPasteRef = useRef(false);
+  allowCopyPasteRef.current = Boolean(dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste);
 
   return (
     <div className="page-stack problem-page">
@@ -800,8 +807,7 @@ function WorkspaceView({
                     value={code || selectedProblem?.starter_code?.[selectedLanguage] || starterCodeByLanguage[selectedLanguage] || "// Write your solution here"}
                     onChange={(value) => setCode(value ?? "")}
                     onMount={(editor, monaco) => {
-                      const allowCopyPaste = Boolean(dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste);
-                      configureEditorProtection(editor, monaco, allowCopyPaste);
+                      configureEditorProtection(editor, monaco, allowCopyPasteRef);
                       console.log("Monaco editor mounted successfully");
                       editor.focus();
                       setTimeout(() => {

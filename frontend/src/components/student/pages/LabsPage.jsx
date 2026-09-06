@@ -252,6 +252,12 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
   // it so results are never missed, and it can also be opened by hand to
   // type custom input before ever running.
   const [consoleOpen, setConsoleOpen] = useState(false);
+  // A ref, not a plain boolean — see appUtils.configureEditorProtection's
+  // own docstring for why: Monaco's onMount fires once per editor
+  // instance, so a boolean captured there would go stale the moment a
+  // staff/HOD copy-paste permission change lands afterward.
+  const allowCopyPasteRef = useRef(false);
+  allowCopyPasteRef.current = Boolean(dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste);
   const [sessionLocked, setSessionLocked] = useState(false);
   const [sessionLockReason, setSessionLockReason] = useState("");
   const [violationModalOpen, setViolationModalOpen] = useState(false);
@@ -827,8 +833,7 @@ function ExerciseEditor({ lab, exercise, allExercises = [], onSelectExercise, on
                   value={code}
                   onChange={handleEditorCodeChange}
                   onMount={(editor, monaco) => {
-                    const allowCopyPaste = Boolean(dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste);
-                    configureEditorProtection(editor, monaco, allowCopyPaste);
+                    configureEditorProtection(editor, monaco, allowCopyPasteRef);
                     editor.focus();
                     setTimeout(() => editor.layout(), 200);
                   }}

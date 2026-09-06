@@ -232,13 +232,35 @@ export function estimateComplexity(code, language) {
   };
 }
 
+// `allowCopyPaste` may be a plain boolean (legacy — evaluated once, at
+// mount), a ref object (`{ current: bool }`), or a zero-arg function —
+// the latter two are read LIVE on every copy/cut/paste attempt rather
+// than captured once when the editor mounts. That distinction matters:
+// Monaco's onMount callback only ever fires once per editor instance, so
+// a plain boolean captured there goes stale the moment the real
+// permission changes afterward (e.g. a staff/HOD toggle takes effect, or
+// the dashboard fetch that supplies it simply hadn't resolved yet at the
+// exact moment the editor mounted) — and previously had no way to
+// recover, since it also permanently rebound Ctrl+C/V/X to a no-op for
+// the lifetime of that editor instance. Pass a ref/getter that reads
+// from your latest React state so a permission change actually takes
+// effect without requiring the editor to remount.
+function resolveAllowCopyPaste(allowCopyPaste) {
+  if (typeof allowCopyPaste === "function") return Boolean(allowCopyPaste());
+  if (allowCopyPaste && typeof allowCopyPaste === "object" && "current" in allowCopyPaste) {
+    return Boolean(allowCopyPaste.current);
+  }
+  return Boolean(allowCopyPaste);
+}
+
 export function configureEditorProtection(editor, monaco, allowCopyPaste = false) {
-  if (!editor || allowCopyPaste) return;
+  if (!editor) return;
 
   try {
     const domNode = editor.getDomNode();
     if (domNode) {
       const preventAction = (e) => {
+        if (resolveAllowCopyPaste(allowCopyPaste)) return;
         e.preventDefault();
         e.stopPropagation();
         return false;
@@ -256,18 +278,14 @@ export function configureEditorProtection(editor, monaco, allowCopyPaste = false
     console.warn("Could not attach DOM protection listeners:", err);
   }
 
-  if (monaco && editor.addCommand) {
-    try {
-      const noop = () => {};
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyC, noop);
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, noop);
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyX, noop);
-      editor.addCommand(monaco.KeyMod.Shift | monaco.KeyCode.Insert, noop);
-      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Insert, noop);
-    } catch (err) {
-      console.warn("Could not attach Monaco command overrides:", err);
-    }
-  }
+  // Deliberately no Monaco addCommand overrides for Ctrl+C/V/X here — those
+  // rebind the keybinding for the editor instance's entire lifetime with no
+  // way to un-bind it later, which is exactly what used to permanently latch
+  // copy/paste blocked for a session. The DOM-level listeners above already
+  // cover the keyboard-shortcut path (a native copy/cut/paste ClipboardEvent
+  // still fires and bubbles to domNode first) as well as the right-click-menu
+  // path, and they re-check the live permission on every attempt instead of
+  // baking in whatever it was at mount time.
 }
 
 // Returns a youtube.com/embed/<id> iframe src if the URL is a recognizable

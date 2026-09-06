@@ -8,7 +8,7 @@
 // of it already-exported, reusable utilities — runCodeExecution, appUtils'
 // buildJsonPostOptions, normalizeProblems) is the separate "track" asked for,
 // without dragging Competitive Practice into App.jsx's state.
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import { ChevronLeft, Loader2 } from "lucide-react";
@@ -33,6 +33,12 @@ export default function CompetitiveProblemWorkspace({ problemSlug, dashboard, on
   const [outputLog, setOutputLog] = useState("Run your code to see output here.");
   const [executionBusy, setExecutionBusy] = useState(false);
   const [executionMeta, setExecutionMeta] = useState({ status: "", time: "", memory: "" });
+  // A ref, not a plain boolean — see appUtils.configureEditorProtection's
+  // own docstring for why: Monaco's onMount fires once per editor
+  // instance, so a boolean captured there would go stale the moment a
+  // staff/HOD copy-paste permission change lands afterward.
+  const allowCopyPasteRef = useRef(false);
+  allowCopyPasteRef.current = Boolean(dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste);
 
   useEffect(() => {
     let isMounted = true;
@@ -193,8 +199,7 @@ export default function CompetitiveProblemWorkspace({ problemSlug, dashboard, on
             value={code}
             onChange={(value) => setCode(value ?? "")}
             onMount={(editor, monacoInstance) => {
-              const allowCopyPaste = Boolean(dashboard?.user?.allow_copy_paste || dashboard?.student?.allow_copy_paste);
-              configureEditorProtection(editor, monacoInstance, allowCopyPaste);
+              configureEditorProtection(editor, monacoInstance, allowCopyPasteRef);
               editor.focus();
               setTimeout(() => editor.layout(), 200);
             }}

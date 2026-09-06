@@ -145,6 +145,12 @@ function ContestWorkspacePage({ contestId, onBack }) {
   const [toast, setToast] = useState(null); // { message, type }
   const autoSubmittedRef = useRef(false);
   const isContestActiveRef = useRef(true); // tracks if we're still in contest
+  // A ref, not a plain boolean — see appUtils.configureEditorProtection's
+  // own docstring for why: Monaco's onMount fires once per editor
+  // instance, so a boolean captured there would go stale if `contest`
+  // finishes loading (or its lock setting changes) after that.
+  const allowCopyPasteRef = useRef(false);
+  allowCopyPasteRef.current = Boolean(contest?.enable_copy_paste_lock === false);
 
   // Violation tracking
   const violationCountRef = useRef(0);
@@ -1105,8 +1111,7 @@ function ContestWorkspacePage({ contestId, onBack }) {
                   value={code || starterCodeByLanguage[selectedLanguage] || "// Write your solution here"}
                   onChange={handleEditorCodeChange}
                   onMount={(editor, monaco) => {
-                    const allowCopyPaste = Boolean(contest?.enable_copy_paste_lock === false);
-                    configureEditorProtection(editor, monaco, allowCopyPaste);
+                    configureEditorProtection(editor, monaco, allowCopyPasteRef);
                     editor.focus();
                     setTimeout(() => editor.layout(), 200);
                   }}
