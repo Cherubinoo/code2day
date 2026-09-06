@@ -31,6 +31,13 @@ function renderInline(text) {
     .replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function renderDescription(raw) {
   if (!raw) return null;
   const strRaw = typeof raw === "string" ? raw : (typeof raw === "object" ? (raw.description || raw.body || JSON.stringify(raw)) : String(raw));
@@ -44,6 +51,41 @@ function renderDescription(raw) {
 
     if (!trimmed) {
       elements.push(<div key={`sp-${i}`} style={{ height: 10 }} />);
+      i++;
+      continue;
+    }
+
+    // Fenced code block (```lang ... ```): kept verbatim (no inline
+    // markdown/bold processing, whitespace preserved) since LLM-generated
+    // walkthroughs use these for ASCII-art trace diagrams where alignment
+    // matters — running them through the paragraph branch below used to
+    // print the ``` fences and every diagram line literally.
+    if (/^```/.test(trimmed)) {
+      i++;
+      const codeLines = [];
+      while (i < lines.length && !/^```/.test(lines[i].trim())) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      if (i < lines.length) i++; // consume closing fence
+      elements.push(
+        <pre key={`code-${i}`} className="desc-code-block">
+          <code dangerouslySetInnerHTML={{ __html: escapeHtml(codeLines.join('\n')) }} />
+        </pre>
+      );
+      continue;
+    }
+
+    // Markdown heading (#, ##, ### ...) — LLM walkthroughs use these to
+    // break a long explanation into named sections; previously these were
+    // shown as literal "### Section Name" paragraph text.
+    const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const HeadingTag = level <= 2 ? 'h3' : 'h4';
+      elements.push(
+        <HeadingTag key={`h-${i}`} className="desc-heading" dangerouslySetInnerHTML={{ __html: renderInline(headingMatch[2]) }} />
+      );
       i++;
       continue;
     }
