@@ -167,6 +167,35 @@ class _LineReader:
         return self.lines[self.pos]
 
 
+def looks_like_wire_format(text, type_nodes):
+    """True if `text` deserializes cleanly as this package's own wire
+    format for `type_nodes` in sequence — one shared reader, exactly the
+    same "read each param's block back-to-back" pass integration.py's
+    _effective_stdin() produces via serialize_value(), with every line
+    consumed and none left over.
+
+    Used to tell a genuinely wire-format TestCase.stdin apart from one
+    that's mislabeled input_format="wire" while actually still holding
+    raw, un-adapted example text (e.g. `root = [4,1,6,...]`) — a real,
+    observed bug: TestCase.input_format defaults to "wire", so a row
+    created without ever being explicitly tagged "raw_text" skips
+    _effective_stdin's adaptation entirely, sending Judge0 the raw text
+    verbatim. Deliberately biased toward false negatives (calling a
+    single bare-string param's raw text "wire-format" even when it isn't,
+    since any text is technically a valid — if wrong — string value)
+    rather than false positives: incorrectly flagging an already-correct
+    wire-format row would send a working problem's actual runtime value
+    through adaptation instead, which is only guaranteed safe for genuine
+    raw text."""
+    reader = _LineReader(text or "")
+    try:
+        for node in type_nodes:
+            _read(node, reader)
+    except (SerializationError, ValueError, IndexError, TypeError):
+        return False
+    return reader.pos == len(reader.lines)
+
+
 def deserialize_value(type_node, text):
     """Canonical stdin text -> structured Python value. Exact inverse of
     serialize_value for every supported type — used by the round-trip tests
