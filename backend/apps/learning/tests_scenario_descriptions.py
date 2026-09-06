@@ -189,3 +189,64 @@ class AdminTopicRegenerateScenarioDescriptionsViewTests(TestCase):
         self.assertEqual(len(data["processed"]), 1)
         self.array_problem.refresh_from_db()
         self.assertEqual(self.array_problem.description, "Reworded scenario version.")
+
+
+class AdminGenerateScenarioDescriptionSingleProblemViewTests(TestCase):
+    """The individual-question-level entry point, alongside the bank-wide
+    and per-topic sweeps — same underlying generate_scenario_description(),
+    scoped to exactly one problem_id."""
+
+    def setUp(self):
+        self.admin = User.objects.create_superuser(username="admin-scn-single", password="secret123", email="c@c.com")
+        self.client.login(username="admin-scn-single", password="secret123")
+        self.problem = Problem.objects.create(
+            title="Single Problem Scenario Test", slug="single-problem-scenario-test",
+            description="Original raw statement.", difficulty="Easy", tags=["Array"],
+        )
+
+    def _post(self, problem_id, force=False):
+        url = reverse("admin-problem-bank-generate-scenario-description", args=[problem_id])
+        return self.client.post(url, {"force": True} if force else {})
+
+    def test_requires_superuser(self):
+        User.objects.create_user(username="student-scn-single", password="secret123")
+        self.client.logout()
+        self.client.login(username="student-scn-single", password="secret123")
+        response = self._post(self.problem.id)
+        self.assertEqual(response.status_code, 403)
+
+    def test_not_found_returns_404(self):
+        response = self._post(999999)
+        self.assertEqual(response.status_code, 404)
+
+    @patch("apps.learning.services.testcase_generator.generate_text_with_fallback")
+    def test_generates_and_backs_up_original(self, mocked_fallback):
+        mocked_fallback.return_value = "A librarian must reshelve books matching two labels to a target."
+        response = self._post(self.problem.id)
+        self.assertEqual(response.status_code, 200)
+
+        self.problem.refresh_from_db()
+        self.assertEqual(self.problem.description, "A librarian must reshelve books matching two labels to a target.")
+        self.assertTrue(self.problem.description_is_scenario)
+        self.assertEqual(self.problem.description_original, "Original raw statement.")
+
+    def test_second_call_without_force_is_rejected(self):
+        self.problem.description_is_scenario = True
+        self.problem.save(update_fields=["description_is_scenario"])
+        response = self._post(self.problem.id)
+        self.assertEqual(response.status_code, 400)
+
+    @patch("apps.learning.services.testcase_generator.generate_text_with_fallback")
+    def test_force_regenerates_without_re_backing_up(self, mocked_fallback):
+        mocked_fallback.return_value = "First version."
+        self._post(self.problem.id)
+        self.problem.refresh_from_db()
+        original_backup = self.problem.description_original
+
+        mocked_fallback.return_value = "Second version."
+        response = self._post(self.problem.id, force=True)
+        self.assertEqual(response.status_code, 200)
+
+        self.problem.refresh_from_db()
+        self.assertEqual(self.problem.description, "Second version.")
+        self.assertEqual(self.problem.description_original, original_backup)

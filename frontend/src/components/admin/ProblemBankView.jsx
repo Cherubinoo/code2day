@@ -513,6 +513,19 @@ const ProblemBankView = ({ onBack }) => {
     }
   }
 
+  async function generateScenarioDescription(problem, force) {
+    setGenStates((s) => ({ ...s, [problem.id]: { ...(s[problem.id] || {}), scenarioBusy: true, scenarioMsg: '' } }));
+    try {
+      const body = force ? { force: true } : {};
+      await api.post(`/admin/v2/problem-bank/${problem.id}/generate-scenario-description/`, body);
+      const msg = 'Scenario description generated.';
+      setProblems((prev) => prev.map((p) => (p.id === problem.id ? { ...p, description_is_scenario: true } : p)));
+      setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], scenarioBusy: false, scenarioMsg: msg } }));
+    } catch (err) {
+      setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], scenarioBusy: false, scenarioMsg: apiErrorMessage(err, 'Failed.') } }));
+    }
+  }
+
   async function toggleExpand(problem) {
     if (expandedId === problem.id) {
       setExpandedId(null);
@@ -1399,6 +1412,19 @@ const ProblemBankView = ({ onBack }) => {
                           {gen.genericBusy ? 'Generating…' : p.has_generic_schema ? 'Regenerate Judge Schema' : 'Generate Judge Schema'}
                         </button>
                         <button
+                          onClick={() => generateScenarioDescription(p, p.description_is_scenario)}
+                          disabled={gen.scenarioBusy}
+                          title="Rewrite this problem's description into an original real-world scenario (same inputs/outputs, no LeetCode branding/cross-references) via the LLM"
+                          style={{
+                            marginLeft: 8, padding: '8px 14px', borderRadius: 10, border: '1px solid var(--border-soft)',
+                            background: 'white', color: 'var(--olive-900)', fontWeight: 700, fontSize: 12,
+                            cursor: gen.scenarioBusy ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6,
+                          }}
+                        >
+                          {gen.scenarioBusy ? <Loader2 size={13} className="spin" /> : <Sparkles size={13} />}
+                          {gen.scenarioBusy ? 'Generating…' : p.description_is_scenario ? 'Regenerate Scenario' : 'Generate Scenario'}
+                        </button>
+                        <button
                           onClick={() => deleteProblem(p)}
                           disabled={deletingId === p.id}
                           title="Delete problem"
@@ -1423,6 +1449,11 @@ const ProblemBankView = ({ onBack }) => {
                         {gen.genericMsg && (
                           <div style={{ fontSize: 11, marginTop: 4, color: /failed|error/i.test(gen.genericMsg) ? '#dc2626' : '#166534' }}>
                             {gen.genericMsg}
+                          </div>
+                        )}
+                        {gen.scenarioMsg && (
+                          <div style={{ fontSize: 11, marginTop: 4, color: /failed|error/i.test(gen.scenarioMsg) ? '#dc2626' : '#166534' }}>
+                            {gen.scenarioMsg}
                           </div>
                         )}
                       </td>

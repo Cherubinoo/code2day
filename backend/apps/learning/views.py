@@ -12512,6 +12512,7 @@ class AdminProblemBankView(APIView):
             "explanation": p.explanation,
             "has_param_schema": bool(p.param_schema),
             "has_generic_schema": bool(p.generic_schema),
+            "description_is_scenario": p.description_is_scenario,
             "uses_generic_judge": p.uses_generic_judge,
             "has_raw_text_test_cases": p.has_raw_text_test_cases,
             "needs_test_case_regeneration": (
@@ -12821,6 +12822,48 @@ class AdminProblemGenerateExplanationView(APIView):
         problem.explanation = explanation
         problem.save(update_fields=["explanation"])
         return Response({"explanation": problem.explanation})
+
+
+class AdminProblemGenerateScenarioDescriptionView(APIView):
+    """System Admin: on-demand (re)generate the scenario description for
+    ONE Problem via the LLM — same generate_scenario_description() call
+    the bank-wide and per-topic sweeps use, just scoped to a single
+    problem_id. The individual-question-level entry point alongside those
+    two, so an admin isn't forced to sweep an entire topic just to fix one
+    problem's rewrite."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, problem_id):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        problem = Problem.objects.filter(id=problem_id).first()
+        if not problem:
+            return Response({"error": "Not found"}, status=404)
+
+        force = bool(request.data.get("force"))
+        if problem.description_is_scenario and not force:
+            return Response(
+                {"error": "This problem already has a scenario description. Pass force=true to replace it."},
+                status=400,
+            )
+
+        from .services.testcase_generator import generate_scenario_description, TestCaseGenError
+        try:
+            rewritten = generate_scenario_description(
+                title=problem.title, description=problem.description, examples=problem.examples,
+            )
+        except TestCaseGenError as exc:
+            return Response({"error": f"Generation failed: {exc}"}, status=502)
+
+        update_fields = ["description", "description_is_scenario"]
+        if not problem.description_original:
+            problem.description_original = problem.description
+            update_fields.append("description_original")
+        problem.description = rewritten
+        problem.description_is_scenario = True
+        problem.save(update_fields=update_fields)
+        return Response({"description": problem.description})
 
 
 class AdminProblemGenerateGenericSchemaView(APIView):
