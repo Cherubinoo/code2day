@@ -63,11 +63,20 @@ class ProblemSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Problem
+        # Deliberately excludes `description` — a full problem statement per
+        # row, times ~1825 rows, made this list response ~1.4MB on every
+        # app load (the single biggest driver of slow page loads / gunicorn
+        # sync workers getting tied up long enough to refuse new
+        # connections under concurrent load). The student-facing UI never
+        # actually needs it here: App.jsx only reads a selected problem's
+        # `description` after separately fetching ProblemDetailView (which
+        # uses ProblemDetailSerializer below, and still includes it) for
+        # that one slug. `companies` stays — ProblemsPage.jsx's list cards
+        # render it directly, unlike description.
         fields = (
             "id",
             "title",
             "slug",
-            "description",
             "difficulty",
             "tags",
             "is_daily",
@@ -107,6 +116,7 @@ class ProblemDetailSerializer(ProblemSerializer):
 
     class Meta(ProblemSerializer.Meta):
         fields = ProblemSerializer.Meta.fields + (
+            "description",
             "examples",
             "explanation",
             "editorial",

@@ -77,6 +77,34 @@ class DashboardApiTests(TestCase):
         self.assertIn("Python", problem_payload["available_languages"])
         self.assertNotIn("editorial", problem_payload)
 
+    def test_problem_list_excludes_description(self):
+        # description is a full problem statement per row — including it in
+        # the bulk list (~1825 rows) made this endpoint's response ~1.4MB on
+        # every app load, a real production slowness/connection-refused
+        # driver. The student UI only ever needs it for the ONE selected
+        # problem, fetched separately via problem-detail below.
+        Problem.objects.create(
+            title="Two Sum Variants 2", slug="two-sum-variants-2",
+            description="a description that must not leak into the list", difficulty="Easy", tags=["Array"],
+        )
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("problem-list"))
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        problem_payload = next(item for item in payload if item["slug"] == "two-sum-variants-2")
+        self.assertNotIn("description", problem_payload)
+        self.assertIn("companies", problem_payload)  # list cards still render this directly
+
+    def test_problem_detail_still_includes_description(self):
+        problem = Problem.objects.create(
+            title="Two Sum Variants 3", slug="two-sum-variants-3",
+            description="the real problem statement", difficulty="Easy", tags=["Array"],
+        )
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("problem-detail", args=[problem.slug]))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["description"], "the real problem statement")
+
     def test_problem_detail_returns_examples_and_editorial(self):
         problem = Problem.objects.create(
             title="Two Sum Variants",

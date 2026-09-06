@@ -1074,105 +1074,124 @@ const ProblemBankView = ({ onBack }) => {
           </button>
         )}
         <button
-          onClick={fillMissingData}
-          disabled={fillMissing.busy}
-          title="Sweep every problem in the bank and generate whatever it's missing — test cases, schema, explanation — skipping anything already present"
-          style={{
-            background: 'white', border: '1px solid var(--border-soft)',
-            borderRadius: 12, padding: '10px 16px', cursor: fillMissing.busy ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-          }}
-        >
-          {fillMissing.busy ? <Loader2 size={16} className="spin" /> : <Settings2 size={16} />}
-          {fillMissing.busy ? 'Filling in…' : 'Fill Missing Data'}
-        </button>
-        <button
-          onClick={generateGenericSchemasBulk}
-          disabled={genericGenBulk.busy}
-          title="One-hit run: generate the new type-driven judge schema (generic_schema) via the LLM for every problem that doesn't have one yet — no validation, just generation"
-          style={{
-            background: 'white', border: '1px solid var(--border-soft)',
-            borderRadius: 12, padding: '10px 16px', cursor: genericGenBulk.busy ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-          }}
-        >
-          {genericGenBulk.busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
-          {genericGenBulk.busy ? 'Generating…' : 'Generate Judge Schemas'}
-        </button>
-        <button
-          onClick={validateGenericSchemasBulk}
-          disabled={genericValidateBulk.busy}
-          title="Validate every generic_schema (every type must actually parse), regenerate anything wrong or still missing once, and enable the new judge for whatever passes"
-          style={{
-            background: 'white', border: '1px solid var(--border-soft)',
-            borderRadius: 12, padding: '10px 16px', cursor: genericValidateBulk.busy ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-          }}
-        >
-          {genericValidateBulk.busy ? <Loader2 size={16} className="spin" /> : <FlaskConical size={16} />}
-          {genericValidateBulk.busy ? 'Validating…' : 'Validate & Enable Judge'}
-        </button>
-        <button
-          onClick={retryFlaggedSchemasBulk}
-          disabled={retryFlaggedBulk.busy}
-          title="Deliberately retry only the problems flagged as still-invalid after a regeneration attempt — the normal Validate pass skips these so a few stubborn problems can't block the whole sweep"
-          style={{
-            background: 'white', border: '1px solid var(--border-soft)',
-            borderRadius: 12, padding: '10px 16px', cursor: retryFlaggedBulk.busy ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-          }}
-        >
-          {retryFlaggedBulk.busy ? <Loader2 size={16} className="spin" /> : <RotateCcw size={16} />}
-          {retryFlaggedBulk.busy ? 'Retrying…' : 'Retry Flagged Schemas'}
-        </button>
-        <button
-          onClick={regenerateRawTextTestCasesBulk}
-          disabled={rawTextRegenBulk.busy}
-          title="Fix problems whose generic judge is enabled but still has a raw, un-adapted example test case — regenerates that problem's test cases via the LLM into proper wire format"
-          style={{
-            background: needsRegenCount > 0 ? '#fef3c7' : 'white',
-            border: needsRegenCount > 0 ? '1px solid #fcd34d' : '1px solid var(--border-soft)',
-            borderRadius: 12, padding: '10px 16px', cursor: rawTextRegenBulk.busy ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8,
-            color: needsRegenCount > 0 ? '#92400e' : 'var(--olive-900)', fontWeight: 700,
-          }}
-        >
-          {rawTextRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <AlertTriangle size={16} />}
-          {rawTextRegenBulk.busy ? 'Fixing…' : `Fix Raw-Text Test Cases${needsRegenCount > 0 ? ` (${needsRegenCount})` : ''}`}
-        </button>
-        <button
-          onClick={regenerateAllExplanationsBulk}
-          disabled={explanationRegenBulk.busy}
-          title="Force-regenerate EVERY problem's explanation with the new story-based prompt, overwriting whatever's there already"
-          style={{
-            background: 'white', border: '1px solid var(--border-soft)',
-            borderRadius: 12, padding: '10px 16px', cursor: explanationRegenBulk.busy ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-          }}
-        >
-          {explanationRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <BookOpen size={16} />}
-          {explanationRegenBulk.busy ? 'Regenerating…' : 'Regenerate All Explanations (Story)'}
-        </button>
-        <button
-          onClick={regenerateScenarioDescriptionsBulk}
-          disabled={scenarioDescRegenBulk.busy}
-          title="Rewrite EVERY problem's description into an original real-world scenario (same inputs/outputs, no LeetCode branding/cross-references), overwriting whatever statement is there now"
-          style={{
-            background: 'white', border: '1px solid var(--border-soft)',
-            borderRadius: 12, padding: '10px 16px', cursor: scenarioDescRegenBulk.busy ? 'not-allowed' : 'pointer',
-            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-          }}
-        >
-          {scenarioDescRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
-          {scenarioDescRegenBulk.busy ? 'Regenerating…' : 'Generate Scenario Descriptions'}
-        </button>
-        <button
           onClick={load}
           disabled={loading}
           style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}
         >
           <RefreshCw size={16} className={loading ? 'spin' : ''} /> Refresh
         </button>
+      </div>
+
+      {/* Bank-wide bulk actions, grouped by what they actually do — these
+          used to be one unlabeled row of 7 near-identical white buttons,
+          which made it impossible to tell "what's for what" at a glance.
+          Each group below only ever touches the ONE thing named in its
+          header; hover a button for the exact behavior. */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+          Judge Migration — schema &amp; test cases
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
+          <button
+            onClick={fillMissingData}
+            disabled={fillMissing.busy}
+            title="Sweep every problem in the bank and generate whatever it's missing — test cases, schema, explanation — skipping anything already present"
+            style={{
+              background: 'white', border: '1px solid var(--border-soft)',
+              borderRadius: 12, padding: '10px 16px', cursor: fillMissing.busy ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+            }}
+          >
+            {fillMissing.busy ? <Loader2 size={16} className="spin" /> : <Settings2 size={16} />}
+            {fillMissing.busy ? 'Filling in…' : 'Fill Missing Data'}
+          </button>
+          <button
+            onClick={generateGenericSchemasBulk}
+            disabled={genericGenBulk.busy}
+            title="One-hit run: generate the new type-driven judge schema (generic_schema) via the LLM for every problem that doesn't have one yet — no validation, just generation"
+            style={{
+              background: 'white', border: '1px solid var(--border-soft)',
+              borderRadius: 12, padding: '10px 16px', cursor: genericGenBulk.busy ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+            }}
+          >
+            {genericGenBulk.busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
+            {genericGenBulk.busy ? 'Generating…' : 'Generate Judge Schemas'}
+          </button>
+          <button
+            onClick={validateGenericSchemasBulk}
+            disabled={genericValidateBulk.busy}
+            title="Validate every generic_schema (every type must actually parse), regenerate anything wrong or still missing once, and enable the new judge for whatever passes"
+            style={{
+              background: 'white', border: '1px solid var(--border-soft)',
+              borderRadius: 12, padding: '10px 16px', cursor: genericValidateBulk.busy ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+            }}
+          >
+            {genericValidateBulk.busy ? <Loader2 size={16} className="spin" /> : <FlaskConical size={16} />}
+            {genericValidateBulk.busy ? 'Validating…' : 'Validate & Enable Judge'}
+          </button>
+          <button
+            onClick={retryFlaggedSchemasBulk}
+            disabled={retryFlaggedBulk.busy}
+            title="Deliberately retry only the problems flagged as still-invalid after a regeneration attempt — the normal Validate pass skips these so a few stubborn problems can't block the whole sweep"
+            style={{
+              background: 'white', border: '1px solid var(--border-soft)',
+              borderRadius: 12, padding: '10px 16px', cursor: retryFlaggedBulk.busy ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+            }}
+          >
+            {retryFlaggedBulk.busy ? <Loader2 size={16} className="spin" /> : <RotateCcw size={16} />}
+            {retryFlaggedBulk.busy ? 'Retrying…' : 'Retry Flagged Schemas'}
+          </button>
+          <button
+            onClick={regenerateRawTextTestCasesBulk}
+            disabled={rawTextRegenBulk.busy}
+            title="Fix problems whose generic judge is enabled but still has a raw, un-adapted example test case — regenerates that problem's test cases via the LLM into proper wire format"
+            style={{
+              background: needsRegenCount > 0 ? '#fef3c7' : 'white',
+              border: needsRegenCount > 0 ? '1px solid #fcd34d' : '1px solid var(--border-soft)',
+              borderRadius: 12, padding: '10px 16px', cursor: rawTextRegenBulk.busy ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8,
+              color: needsRegenCount > 0 ? '#92400e' : 'var(--olive-900)', fontWeight: 700,
+            }}
+          >
+            {rawTextRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <AlertTriangle size={16} />}
+            {rawTextRegenBulk.busy ? 'Fixing…' : `Fix Raw-Text Test Cases${needsRegenCount > 0 ? ` (${needsRegenCount})` : ''}`}
+          </button>
+        </div>
+
+        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+          Student-Facing Content — description &amp; explanation text
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+          <button
+            onClick={regenerateAllExplanationsBulk}
+            disabled={explanationRegenBulk.busy}
+            title="Force-regenerate EVERY problem's explanation (the 'Explanation' tab) with the new story-based prompt, overwriting whatever's there already"
+            style={{
+              background: 'white', border: '1px solid var(--border-soft)',
+              borderRadius: 12, padding: '10px 16px', cursor: explanationRegenBulk.busy ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+            }}
+          >
+            {explanationRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <BookOpen size={16} />}
+            {explanationRegenBulk.busy ? 'Regenerating…' : 'Regenerate All Explanations (Story)'}
+          </button>
+          <button
+            onClick={regenerateScenarioDescriptionsBulk}
+            disabled={scenarioDescRegenBulk.busy}
+            title="Rewrite EVERY problem's description (the 'Problem' tab) into an original real-world scenario (same inputs/outputs, no LeetCode branding/cross-references), overwriting whatever statement is there now. Prefer running this per-topic instead (Browse by Topic → expand a topic) so you can review a small batch before running the whole bank."
+            style={{
+              background: 'white', border: '1px solid var(--border-soft)',
+              borderRadius: 12, padding: '10px 16px', cursor: scenarioDescRegenBulk.busy ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+            }}
+          >
+            {scenarioDescRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
+            {scenarioDescRegenBulk.busy ? 'Regenerating…' : 'Generate Scenario Descriptions (All Problems)'}
+          </button>
+        </div>
       </div>
 
       {fillMissing.msg && (
