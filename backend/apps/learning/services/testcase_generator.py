@@ -547,6 +547,47 @@ def generate_explanation(*, title, description, examples=None, difficulty=None, 
     return explanation
 
 
+SCENARIO_DESCRIPTION_PROMPT_TEMPLATE = """You are rewriting a coding problem's statement into an original, real-world scenario — the same technical problem, dressed in a story instead of dry algorithmic phrasing, so it reads as this platform's own content rather than a copy of a well-known problem bank.
+
+Title: {title}
+
+Original statement:
+{description}
+
+Rewrite it as a short, concrete scenario (a person, team, or system doing some everyday or workplace task whose structure naturally matches the underlying data/algorithm — e.g. a warehouse dispatcher for a graph problem, a librarian shelving returns for a tree problem, a cashier counting change for a greedy/array problem). Then state precisely what must be computed, in plain language.
+
+Hard rules — the input, output, constraints, and every example's actual values must remain EXACTLY as they are in the original; you are changing the framing and variable *flavor text* only, never the technical contract a program would be graded against:
+- Do not invent new inputs, outputs, edge cases, or constraints, and do not drop any that are already there.
+- Never mention LeetCode, any other problem-bank/platform name, a problem number, or include any URL — strip out any "this is the same as problem N" note entirely; the rewritten statement must read as fully original.
+- Do not include the raw formal Input:/Output: example blocks yourself — those are kept separately; just write the narrative statement (scenario + what must be computed + any constraints called out in prose).
+- Keep it readable in a similar length to the original — a short scenario paragraph or two, not a long story.
+
+Respond with ONLY the rewritten statement text — no title repetition, no markdown headers, no commentary about what you changed.
+"""
+
+
+def generate_scenario_description(*, title, description, examples=None, providers=None):
+    """Returns a rewritten problem statement — the same technical problem
+    wrapped in an original real-world scenario, with any source-platform
+    branding/cross-references (LeetCode name, problem numbers, URLs)
+    stripped out. Raises a TestCaseGenError subclass if every active
+    provider fails or returns an empty rewrite.
+
+    `examples` isn't used in the prompt (the rewrite must never change
+    example values, so the model isn't given them to paraphrase — the
+    formal Input:/Output: blocks stay exactly as stored) but is accepted so
+    callers can pass the same kwargs used elsewhere without filtering.
+    `providers` overrides the normal rotation lookup — used to pin one
+    provider per parallel worker in the bulk sweep, same convention as
+    generate_explanation()."""
+    prompt = SCENARIO_DESCRIPTION_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
+    text = generate_text_with_fallback(prompt, log_label=f"{title} (scenario description)", providers=providers)
+    rewritten = text.strip()
+    if not rewritten:
+        raise TestCaseGenServiceError("LLM returned an empty scenario description.")
+    return rewritten
+
+
 PARAM_SCHEMA_PROMPT_TEMPLATE = """You are inferring a structured execution schema for an online judge, given a problem statement.
 
 Title: {title}
@@ -639,9 +680,9 @@ def generate_hint(*, title, description, providers=None):
 
 
 HINTS_LIST_PROMPT_TEMPLATE = """You are writing a progressive hint ladder for a student attempting the
-following problem — the same kind of hint list LeetCode shows: 2 to 4 hints, each one
-giving away a little more than the last, without ever stating the full solution or
-final code.
+following problem: 2 to 4 hints, each one giving away a little more than the last,
+without ever stating the full solution or final code. Reason from the problem itself
+— never reference LeetCode, any other problem-bank/platform, or a problem number.
 
 Title: {title}
 

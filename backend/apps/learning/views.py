@@ -13520,6 +13520,141 @@ class AdminProblemBankRegenerateAllExplanationsView(APIView):
         })
 
 
+def _run_scenario_description_sweep(base_qs, *, time_budget_seconds, max_actions, round_size_per_provider, force=False):
+    """Shared by the bank-wide and per-topic "Generate Scenario
+    Descriptions" views — everything except how `base_qs` gets scoped
+    (whole bank vs. one topic's tag) is identical. Rewrites
+    Problem.description into an original real-world scenario (same
+    input/output contract, no source-platform branding/cross-references),
+    tracked via a real DB flag (Problem.description_is_scenario) rather
+    than a client-held cursor, so a problem is only ever rewritten once —
+    a later click (even a different admin session, even scoped to a
+    different topic that happens to overlap) only touches problems still
+    on the original statement, unless `force` re-touches already-migrated
+    ones too (e.g. redoing one topic with a tweaked prompt). The
+    pre-rewrite text is preserved once in description_original the first
+    time a problem is touched, never overwritten again, so the original is
+    never lost even though `description` itself gets overwritten.
+
+    Runs the batch through run_across_providers_in_parallel() — assigning
+    problems round-robin across whichever LLMProviders are currently
+    marked active is what "balances the work across models" here: mark
+    exactly 2 providers active (e.g. two cheaper/faster models suited to a
+    mostly-mechanical rewrite) and this sweep naturally splits the load
+    between them, same as every other bulk sweep in this file.
+
+    Returns the same {"processed", "elapsed_seconds", "remaining_problems"}
+    shape every bulk-sweep view in this file already returns, or an
+    {"error": ...} dict (caller decides the HTTP status) if no provider is
+    available at all."""
+    import time
+    from .services.testcase_generator import (
+        generate_scenario_description, NoProvidersAvailableError,
+        run_across_providers_in_parallel, _providers_in_rotation_order,
+    )
+
+    def scoped_qs():
+        qs = base_qs
+        if not force:
+            qs = qs.filter(description_is_scenario=False)
+        return qs
+
+    try:
+        provider_count = len(_providers_in_rotation_order())
+    except NoProvidersAvailableError as exc:
+        return {"error": str(exc)}
+
+    start = time.monotonic()
+    batch_size = min(max_actions, provider_count * round_size_per_provider)
+    problems = list(scoped_qs().order_by("id")[:batch_size])
+
+    def call_one(problem, provider):
+        return generate_scenario_description(
+            title=problem.title, description=problem.description,
+            examples=problem.examples, providers=[provider],
+        )
+
+    results = run_across_providers_in_parallel(problems, call_one, timeout_seconds=time_budget_seconds)
+
+    processed = []
+    for problem, rewritten, error in results:
+        entry = {"id": problem.id, "title": problem.title}
+        if error is not None:
+            entry["error"] = str(error)
+        else:
+            update_fields = ["description", "description_is_scenario"]
+            if not problem.description_original:
+                problem.description_original = problem.description
+                update_fields.append("description_original")
+            problem.description = rewritten
+            problem.description_is_scenario = True
+            problem.save(update_fields=update_fields)
+            entry["generated"] = True
+        processed.append(entry)
+
+    return {
+        "processed": processed,
+        "elapsed_seconds": round(time.monotonic() - start, 1),
+        "remaining_problems": scoped_qs().count(),
+    }
+
+
+class AdminProblemBankRegenerateScenarioDescriptionsView(APIView):
+    """System Admin: bank-wide "Generate Scenario Descriptions" sweep —
+    see _run_scenario_description_sweep for the actual behavior. Use
+    AdminProblemTopicRegenerateScenarioDescriptionsView instead to work
+    through the bank in topic-sized chunks (Array, Trees, ...)."""
+    permission_classes = [IsAuthenticated]
+
+    TIME_BUDGET_SECONDS = 90
+    MAX_ACTIONS = 200
+    ROUND_SIZE_PER_PROVIDER = 6
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        result = _run_scenario_description_sweep(
+            Problem.objects.all(),
+            time_budget_seconds=self.TIME_BUDGET_SECONDS,
+            max_actions=self.MAX_ACTIONS,
+            round_size_per_provider=self.ROUND_SIZE_PER_PROVIDER,
+        )
+        if "error" in result:
+            return Response(result, status=502)
+        return Response(result)
+
+
+class AdminProblemTopicRegenerateScenarioDescriptionsView(APIView):
+    """System Admin: the per-topic entry point for "Generate Scenario
+    Descriptions" — same sweep as AdminProblemBankRegenerateScenarioDescriptionsView,
+    scoped to one topic's tag (or the "Untagged" tile) via _problems_in_topic,
+    same as AdminProblemTopicGenerateGenericJudgeView does for the judge
+    migration. Only touches problems in the given topic; only ones not
+    already converted unless force=true (redo this topic even for problems
+    already on a scenario description — e.g. after tweaking the prompt)."""
+    permission_classes = [IsAuthenticated]
+
+    TIME_BUDGET_SECONDS = 90
+    MAX_ACTIONS = 50
+
+    def post(self, request, topic):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        force = bool(request.data.get("force"))
+        result = _run_scenario_description_sweep(
+            _problems_in_topic(topic),
+            time_budget_seconds=self.TIME_BUDGET_SECONDS,
+            max_actions=self.MAX_ACTIONS,
+            round_size_per_provider=6,
+            force=force,
+        )
+        if "error" in result:
+            return Response(result, status=502)
+        return Response(result)
+
+
 def _migrate_problem_to_generic_judge(problem):
     """One problem's full pipeline onto the new type-driven judging
     framework: ensure a generic_schema exists (generate via LLM if

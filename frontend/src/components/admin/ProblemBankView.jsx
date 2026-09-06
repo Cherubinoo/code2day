@@ -235,6 +235,68 @@ function TopicGenericJudgePanel({ topic }) {
   );
 }
 
+// Per-topic "Generate Scenario Descriptions" — same sweep as the bulk
+// button at the top of this page (rewrites Problem.description into an
+// original real-world scenario, no LeetCode branding/cross-references),
+// scoped to just this topic. Same one-click-processes-a-chunk pattern as
+// TopicGenericJudgePanel above, no polling needed.
+function TopicScenarioDescriptionsPanel({ topic }) {
+  const [state, setState] = useState({ busy: false, msg: '' });
+  const encTopic = encodeURIComponent(topic);
+
+  async function run(force) {
+    setState({ busy: true, msg: '' });
+    try {
+      const data = (await api.post(
+        `/admin/v2/problem-bank/topics/${encTopic}/regenerate-scenario-descriptions/`,
+        force ? { force: true } : {},
+        { timeout: LONG_RUNNING_TIMEOUT },
+      )).data;
+      const generatedCount = data.processed.filter((p) => p.generated).length;
+      const errorCount = data.processed.filter((p) => p.error).length;
+      let msg = `Processed ${data.processed.length}: ${generatedCount} scenario description(s) generated.`;
+      if (errorCount) msg += ` ${errorCount} failed — see server logs for details.`;
+      msg += data.remaining_problems > 0
+        ? ` ${data.remaining_problems} left in this topic — click again to continue.`
+        : ' Topic fully migrated.';
+      setState({ busy: false, msg });
+    } catch (err) {
+      setState({ busy: false, msg: apiErrorMessage(err, 'Network error.') });
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--bg-1)' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--olive-900)', marginBottom: 6 }}>
+        Scenario Descriptions
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={() => run(false)}
+          disabled={state.busy}
+          title="Rewrite the description for every problem in this topic not yet on a scenario description into an original real-world scenario"
+          style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: 'var(--olive-700)', color: 'white', fontWeight: 700, fontSize: 12, cursor: state.busy ? 'not-allowed' : 'pointer' }}
+        >
+          {state.busy ? 'Generating…' : 'Generate Scenarios For This Topic'}
+        </button>
+        <button
+          onClick={() => run(true)}
+          disabled={state.busy}
+          title="Also re-rewrite problems in this topic that already have a scenario description"
+          style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border-soft)', background: 'white', color: 'var(--text-soft)', fontWeight: 700, fontSize: 12, cursor: state.busy ? 'not-allowed' : 'pointer' }}
+        >
+          Force Regenerate
+        </button>
+      </div>
+      {state.msg && (
+        <div style={{ marginTop: 6, fontSize: 11, color: /fail|error|network/i.test(state.msg) ? '#dc2626' : 'var(--text-soft)' }}>
+          {state.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Splits the bank into per-tag tiles (Array, Dynamic Programming, …) plus an
 // "Untagged" tile, each expandable into its own TopicMetadataPanel — lets an
 // admin work through metadata generation in topic-sized chunks instead of
@@ -292,6 +354,7 @@ function ProblemTopicTiles({ onViewTopic }) {
                   }}
                 />
                 <TopicGenericJudgePanel topic={t.topic} />
+                <TopicScenarioDescriptionsPanel topic={t.topic} />
               </>
             )}
           </div>
@@ -319,6 +382,7 @@ const ProblemBankView = ({ onBack }) => {
   const [retryFlaggedBulk, setRetryFlaggedBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [rawTextRegenBulk, setRawTextRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [explanationRegenBulk, setExplanationRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
+  const [scenarioDescRegenBulk, setScenarioDescRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [mutationError, setMutationError] = useState('');
   const PAGE_SIZE = 50;
 
@@ -930,6 +994,51 @@ const ProblemBankView = ({ onBack }) => {
     }
   }
 
+  // One-time bank-wide content migration: rewrites every problem's
+  // description into an original real-world scenario (same input/output
+  // contract, no LeetCode branding/cross-references), overwriting whatever
+  // statement is there now — but only once per problem, same
+  // DB-flag-tracked-progress convention as the explanation sweep above
+  // (Problem.description_is_scenario). Work is balanced across whichever
+  // LLMProviders are currently marked active in the LLM Providers tab —
+  // mark exactly 2 there to split this job across 2 models.
+  async function regenerateScenarioDescriptionsBulk() {
+    if (!window.confirm(
+      'This rewrites the description for every problem still on its original statement into a real-world scenario ' +
+      '(same inputs/outputs, no LeetCode references). This cannot be undone from here — the original text is kept ' +
+      'in description_original, but overwrites description directly. Continue?'
+    )) {
+      return;
+    }
+    setScenarioDescRegenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
+    let totalProcessed = 0, totalOk = 0, totalErr = 0;
+    try {
+      for (let round = 1; round <= MAX_ROUNDS; round++) {
+        const data = (await api.post(
+          '/admin/v2/problem-bank/regenerate-scenario-descriptions/',
+          undefined,
+          { timeout: LONG_RUNNING_TIMEOUT },
+        )).data;
+        totalProcessed += data.processed.length;
+        totalOk += data.processed.filter((p) => p.generated).length;
+        totalErr += data.processed.filter((p) => p.error).length;
+        const total = totalProcessed + data.remaining_problems; // stable: everything still on the original statement
+        await load(); // refresh description previews as each round lands
+
+        const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalOk} scenario description(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
+        if (data.processed.length === 0 || data.remaining_problems === 0) {
+          const doneMsg = totalProcessed === 0 ? 'Nothing left to regenerate.' : `${progress} Done — every problem now has a scenario description.`;
+          setScenarioDescRegenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
+          return;
+        }
+        setScenarioDescRegenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
+      }
+      setScenarioDescRegenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
+    } catch (err) {
+      setScenarioDescRegenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
+    }
+  }
+
   const missingCount = problems.filter((p) => p.test_case_count === 0).length;
   const needsRegenCount = problems.filter((p) => p.needs_test_case_regeneration).length;
 
@@ -1045,6 +1154,19 @@ const ProblemBankView = ({ onBack }) => {
           {explanationRegenBulk.busy ? 'Regenerating…' : 'Regenerate All Explanations (Story)'}
         </button>
         <button
+          onClick={regenerateScenarioDescriptionsBulk}
+          disabled={scenarioDescRegenBulk.busy}
+          title="Rewrite EVERY problem's description into an original real-world scenario (same inputs/outputs, no LeetCode branding/cross-references), overwriting whatever statement is there now"
+          style={{
+            background: 'white', border: '1px solid var(--border-soft)',
+            borderRadius: 12, padding: '10px 16px', cursor: scenarioDescRegenBulk.busy ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
+          }}
+        >
+          {scenarioDescRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
+          {scenarioDescRegenBulk.busy ? 'Regenerating…' : 'Generate Scenario Descriptions'}
+        </button>
+        <button
           onClick={load}
           disabled={loading}
           style={{ background: 'white', border: '1px solid var(--border-soft)', borderRadius: 12, padding: '10px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700 }}
@@ -1063,6 +1185,7 @@ const ProblemBankView = ({ onBack }) => {
       <BulkProgressPanel state={retryFlaggedBulk} />
       <BulkProgressPanel state={rawTextRegenBulk} />
       <BulkProgressPanel state={explanationRegenBulk} />
+      <BulkProgressPanel state={scenarioDescRegenBulk} />
 
       {mode === 'topics' ? (
         <ProblemTopicTiles onViewTopic={(label) => { setSearch(label); setMissingOnly(false); setMode('list'); }} />

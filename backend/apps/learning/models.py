@@ -374,6 +374,19 @@ class Problem(models.Model):
                    "Lets the 'Regenerate All Explanations' admin sweep track real DB-persisted progress and skip already-migrated "
                    "problems on a later run, instead of relying on a browser-held cursor that resets on refresh.",
     )
+    description_original = models.TextField(
+        blank=True, default="",
+        help_text="The raw, pre-migration `description` text (usually the original LeetCode-style statement), "
+                   "captured once the first time description_is_scenario flips to True — never overwritten again. "
+                   "Kept so a scenario rewrite can be compared against or reverted from without re-scraping the dataset.",
+    )
+    description_is_scenario = models.BooleanField(
+        default=False,
+        help_text="Whether `description` has been rewritten into a real-world scenario (same input/output contract, "
+                   "no LeetCode branding or cross-references) by the 'Generate Scenario Descriptions' admin sweep. "
+                   "Same DB-persisted-progress convention as explanation_is_story — a problem is only ever rewritten "
+                   "once, and a later sweep click only touches problems still on the original statement.",
+    )
     editorial = models.TextField(blank=True, default="")
     companies = models.TextField(blank=True, default="")
     source_dataset_id = models.CharField(max_length=50, blank=True, default="")
