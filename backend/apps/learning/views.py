@@ -5381,6 +5381,7 @@ class StaffInstitutionDetailView(APIView):
                 "current_streak": student.current_streak,
                 "last_active": student.account.last_login if student.account else None,
                 "is_active": student.account.is_active if student.account else True,
+                "allow_copy_paste": student.allow_copy_paste,
             })
 
         # Get staff (filter by department for HOD/Academics, all for admin/staff)
@@ -5656,6 +5657,8 @@ class StaffDetailView(APIView):
                     "solved_count": student.solved_count,
                     "current_streak": student.current_streak,
                     "last_active": student.last_login_on.isoformat() if student.last_login_on else None,
+                    "is_active": student.account.is_active if student.account else True,
+                    "allow_copy_paste": student.allow_copy_paste,
                 })
 
             batch_sections = sorted(set(s for s in all_batch_students.values_list('section', flat=True) if s))
@@ -5837,6 +5840,8 @@ class DepartmentDetailView(APIView):
                     "solved_count": student.solved_count,
                     "current_streak": student.current_streak,
                     "last_active": student.last_login_on.isoformat() if student.last_login_on else None,
+                    "is_active": student.account.is_active if student.account else True,
+                    "allow_copy_paste": student.allow_copy_paste,
                 })
 
             batch_sections = sorted(set(s for s in all_batch_students.values_list('section', flat=True) if s))
