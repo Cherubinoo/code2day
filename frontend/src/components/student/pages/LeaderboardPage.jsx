@@ -1,34 +1,41 @@
 import { useState, useEffect } from 'react';
-import { Crown, Medal, Flame, Brain, Code2, Loader2, Trophy, ArrowUp, ArrowDown } from 'lucide-react';
+import { Crown, Medal, Flame, Code2, Zap, CalendarCheck, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
 
 const RANK_MEDAL_COLOR = { 1: '#f59e0b', 2: '#94a3b8', 3: '#b45309' };
 const RANK_MEDAL_EMOJI = { 1: '🥇', 2: '🥈', 3: '🥉' };
-const ROW_GRID_FULL = '60px minmax(160px,1fr) 90px 90px 90px 90px';
-const ROW_GRID_COMPACT = '44px minmax(0,1fr) 64px';
+const ROW_GRID_FULL = '48px minmax(140px,1fr) 60px 56px 52px 60px';
+const ROW_GRID_COMPACT = '36px minmax(0,1fr) 56px';
 const LAST_RANK_KEY = 'code2day-leaderboard-last-rank';
 
-// Simple points -> level/progress mapping so the table and "Your rank"
-// banner can show an XP bar without a real leveling system on the backend.
-function levelInfo(points) {
-  const safePoints = Math.max(0, points || 0);
-  return { level: Math.floor(safePoints / 100) + 1, progress: safePoints % 100 };
+// A small, flat "Lv N" pill — replaces the old full-width XP progress bar
+// that used to render on every single row (heavy for a list of 100
+// students). `level`/`level_progress` now come straight from the backend
+// (StudentLeaderboardView computes them off the same points used for
+// ranking) instead of being re-derived here.
+function LevelPill({ level, light = false }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', fontSize: 10, fontWeight: 800,
+      padding: '1px 6px', borderRadius: 999, whiteSpace: 'nowrap',
+      color: light ? 'white' : 'var(--olive-700)',
+      background: light ? 'rgba(255,255,255,0.2)' : 'var(--bg-1)',
+      border: light ? 'none' : '1px solid var(--border-soft)',
+    }}>
+      Lv {level}
+    </span>
+  );
 }
 
-function XpBar({ points, height = 6, light = false }) {
-  const { level, progress } = levelInfo(points);
+function XpBar({ progress, height = 5 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
-      <span style={{ fontSize: 10, fontWeight: 800, color: light ? 'rgba(255,255,255,0.9)' : 'var(--olive-700)', whiteSpace: 'nowrap' }}>Lv {level}</span>
+    <div style={{
+      flex: 1, height, borderRadius: height, minWidth: 32, overflow: 'hidden',
+      background: 'rgba(255,255,255,0.25)',
+    }}>
       <div style={{
-        flex: 1, height, borderRadius: height, minWidth: 32, overflow: 'hidden',
-        background: light ? 'rgba(255,255,255,0.25)' : 'var(--bg-1)',
-        border: light ? 'none' : '1px solid var(--border-soft)',
-      }}>
-        <div style={{
-          width: `${progress}%`, height: '100%', borderRadius: height, transition: 'width 0.6s ease',
-          background: light ? 'rgba(255,255,255,0.9)' : 'linear-gradient(90deg, var(--olive-500), var(--olive-700))',
-        }} />
-      </div>
+        width: `${progress}%`, height: '100%', borderRadius: height, transition: 'width 0.6s ease',
+        background: 'rgba(255,255,255,0.9)',
+      }} />
     </div>
   );
 }
@@ -36,44 +43,38 @@ function XpBar({ points, height = 6, light = false }) {
 function StreakChip({ streak }) {
   const active = streak > 0;
   return (
-    <span className={`leaderboard-streak-chip${active ? ' active' : ''}`} style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 999,
-      fontSize: 12, fontWeight: 800, color: active ? '#ea580c' : 'var(--text-soft)',
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 3, padding: '2px 6px', borderRadius: 999,
+      fontSize: 11, fontWeight: 800, color: active ? '#ea580c' : 'var(--text-soft)',
       background: active ? 'rgba(234, 88, 12, 0.1)' : 'var(--bg-1)',
     }}>
-      <Flame size={12} color={active ? '#ea580c' : undefined} /> {streak}
+      <Flame size={11} color={active ? '#ea580c' : undefined} /> {streak}
     </span>
   );
 }
 
+// Flat, compact podium — the old version scaled/floated #1 up with a big
+// drop shadow, which read as heavy for what's really just three small
+// cards. This keeps the medal-color border as the only per-rank accent.
 function PodiumCard({ row }) {
   if (!row) return null;
-  const isFirst = row.rank === 1;
   return (
-    <div
-      style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
-        padding: isFirst ? '20px 16px 16px' : '14px 12px 12px',
-        borderRadius: 18,
-        background: isFirst
-          ? 'linear-gradient(160deg, #fef3c7, #fde68a)'
-          : row.rank === 2 ? 'linear-gradient(160deg, #f1f5f9, #e2e8f0)' : 'linear-gradient(160deg, #fed7aa, #fdba74)',
-        border: `2px solid ${RANK_MEDAL_COLOR[row.rank]}`,
-        transform: isFirst ? 'translateY(-10px) scale(1.06)' : 'none',
-        boxShadow: isFirst ? '0 12px 28px -8px rgba(245, 158, 11, 0.5)' : '0 6px 16px -6px rgba(0,0,0,0.15)',
-        minWidth: 0,
-      }}
-    >
-      <div style={{ fontSize: isFirst ? 34 : 26 }}>{RANK_MEDAL_EMOJI[row.rank]}</div>
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+      padding: '10px 14px', borderRadius: 14, minWidth: 96,
+      background: 'white', border: `1.5px solid ${RANK_MEDAL_COLOR[row.rank]}`,
+    }}>
+      <div style={{ fontSize: 20 }}>{RANK_MEDAL_EMOJI[row.rank]}</div>
       <div style={{
-        fontWeight: 800, fontSize: isFirst ? 14 : 13, color: 'var(--olive-950)',
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%', textAlign: 'center',
+        fontWeight: 800, fontSize: 12.5, color: 'var(--olive-950)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 100, textAlign: 'center',
       }}>
         {row.name}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontWeight: 900, fontSize: isFirst ? 18 : 15, color: RANK_MEDAL_COLOR[row.rank] }}>
-        <Trophy size={isFirst ? 16 : 14} /> {row.points}
+      <div style={{ fontWeight: 900, fontSize: 14, color: RANK_MEDAL_COLOR[row.rank] }}>
+        {row.points} pts
       </div>
+      <LevelPill level={row.level} />
     </div>
   );
 }
@@ -137,8 +138,8 @@ export default function LeaderboardPage() {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '80px 20px', color: 'var(--text-soft)' }}>
-        <Loader2 size={20} className="spin" style={{ marginRight: 10 }} /> Loading leaderboard…
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '60px 20px', color: 'var(--text-soft)' }}>
+        <Loader2 size={18} className="spin" style={{ marginRight: 10 }} /> Loading leaderboard…
       </div>
     );
   }
@@ -155,103 +156,107 @@ export default function LeaderboardPage() {
   const rowGrid = isCompact ? ROW_GRID_COMPACT : ROW_GRID_FULL;
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: '24px 20px 60px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-        <Crown size={28} color="#f59e0b" />
-        <h1 style={{ margin: 0, fontSize: '1.6rem', fontWeight: 900, color: 'var(--olive-950)' }}>Institution Leaderboard</h1>
+    <div style={{ maxWidth: 760, margin: '0 auto', padding: '18px 16px 48px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <Crown size={20} color="#f59e0b" />
+        <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 900, color: 'var(--olive-950)' }}>Institution Leaderboard</h1>
       </div>
-      <p style={{ margin: '0 0 24px', color: 'var(--text-soft)', fontSize: 14 }}>
-        Ranked by points across every student in your institution — {total_students} student{total_students !== 1 ? 's' : ''} total.
-        Points combine problems solved, aptitude solved, contest scores, and your activity streak.
+      <p style={{ margin: '0 0 16px', color: 'var(--text-soft)', fontSize: 12.5 }}>
+        {total_students} student{total_students !== 1 ? 's' : ''} · points = problems + aptitude + contests + streak + SQL Frog XP
       </p>
 
       {podium.some(Boolean) && (
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: 12, marginBottom: 24, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'stretch', justifyContent: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
           {podium.map((row, i) => row ? <PodiumCard key={row.register_number || i} row={row} /> : null)}
         </div>
       )}
 
       {me && (
         <div className={rankChange ? 'leaderboard-rank-changed' : ''} style={{
-          display: 'flex', alignItems: 'center', gap: 16, padding: '16px 20px', marginBottom: 24,
-          borderRadius: 16, background: 'linear-gradient(135deg, var(--olive-700), var(--olive-900))', color: 'white',
+          display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', marginBottom: 16,
+          borderRadius: 12, background: 'linear-gradient(135deg, var(--olive-700), var(--olive-900))', color: 'white',
         }}>
-          <div style={{ fontSize: '1.6rem', fontWeight: 900, minWidth: 60, textAlign: 'center' }}>
+          <div style={{ fontSize: '1.2rem', fontWeight: 900, minWidth: 44, textAlign: 'center' }}>
             {RANK_MEDAL_EMOJI[me.rank] || `#${me.rank}`}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 800, fontSize: 15, display: 'flex', alignItems: 'center', gap: 6 }}>
-              Your rank
+            <div style={{ fontWeight: 800, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+              You · {me.points} pts
+              <LevelPill level={me.level} light />
               {rankChange && (
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 12, fontWeight: 800, color: rankChange === 'up' ? '#bbf7d0' : '#fecaca' }}>
-                  {rankChange === 'up' ? <ArrowUp size={13} /> : <ArrowDown size={13} />} rank {rankChange === 'up' ? 'up' : 'down'}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 11, fontWeight: 800, color: rankChange === 'up' ? '#bbf7d0' : '#fecaca' }}>
+                  {rankChange === 'up' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
                 </span>
               )}
             </div>
-            <div style={{ fontSize: 13, opacity: 0.85 }}>{me.points} points · {me.problems_solved} problems · {me.aptitude_solved} aptitude · {me.streak}-day streak</div>
-            <div style={{ maxWidth: 220 }}>
-              <XpBar points={me.points} light />
+            <div style={{ fontSize: 11.5, opacity: 0.85, marginTop: 1 }}>
+              {me.problems_solved} problems ({me.solved_today} today) · {me.xp} XP · {me.streak}-day streak
+            </div>
+            <div style={{ maxWidth: 200, marginTop: 4 }}>
+              <XpBar progress={me.level_progress} />
             </div>
           </div>
         </div>
       )}
 
-      <div style={{ background: 'white', borderRadius: 16, border: '1px solid var(--border-soft)', overflow: 'hidden' }}>
+      <div style={{ background: 'white', borderRadius: 12, border: '1px solid var(--border-soft)', overflow: 'hidden' }}>
        <div style={{ overflowX: 'auto' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: rowGrid, gap: 8, padding: '10px 16px', fontSize: 11, fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', borderBottom: '1px solid var(--border-soft)' }}>
-          <span>Rank</span>
+        <div style={{ display: 'grid', gridTemplateColumns: rowGrid, gap: 6, padding: '7px 12px', fontSize: 10, fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', borderBottom: '1px solid var(--border-soft)' }}>
+          <span>#</span>
           <span>Student</span>
-          <span style={{ textAlign: 'right' }}>Points</span>
+          <span style={{ textAlign: 'right' }}>Pts</span>
           {!isCompact && (
             <>
-              <span style={{ textAlign: 'right' }}>Problems</span>
-              <span style={{ textAlign: 'right' }}>Aptitude</span>
+              <span style={{ textAlign: 'right' }} title="Problems solved today">
+                <CalendarCheck size={11} style={{ verticalAlign: '-2px' }} />
+              </span>
+              <span style={{ textAlign: 'right' }} title="SQL Frog XP">
+                <Zap size={11} style={{ verticalAlign: '-2px' }} />
+              </span>
               <span style={{ textAlign: 'right' }}>Streak</span>
             </>
           )}
         </div>
         {leaderboard.length === 0 ? (
-          <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-soft)', fontSize: 13 }}>No students yet.</div>
+          <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-soft)', fontSize: 13 }}>No students yet.</div>
         ) : (
           (rest.length > 0 ? rest : leaderboard).map((row) => (
             <div
               key={row.register_number || row.rank}
               style={{
-                display: 'grid', gridTemplateColumns: rowGrid, gap: 8, alignItems: 'center',
-                padding: '12px 16px', borderBottom: '1px solid var(--bg-1)',
+                display: 'grid', gridTemplateColumns: rowGrid, gap: 6, alignItems: 'center',
+                padding: '7px 12px', borderBottom: '1px solid var(--bg-1)',
                 background: row.is_you ? 'var(--sage-50)' : 'transparent',
-                borderLeft: row.is_you ? '3px solid var(--olive-700)' : '3px solid transparent',
+                borderLeft: row.is_you ? '2px solid var(--olive-700)' : '2px solid transparent',
               }}
             >
-              <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontWeight: 800, color: RANK_MEDAL_COLOR[row.rank] || 'var(--text-soft)' }}>
-                {row.rank <= 3 ? <Medal size={16} /> : null} {row.rank}
+              <span style={{ display: 'flex', alignItems: 'center', gap: 3, fontWeight: 800, fontSize: 12.5, color: RANK_MEDAL_COLOR[row.rank] || 'var(--text-soft)' }}>
+                {row.rank <= 3 ? <Medal size={13} /> : null} {row.rank}
               </span>
               <span style={{ minWidth: 0 }}>
-                <div style={{ fontWeight: 700, color: 'var(--olive-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {row.name}{row.is_you ? ' (You)' : ''}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--olive-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {row.name}{row.is_you ? ' (You)' : ''}
+                  </span>
+                  <LevelPill level={row.level} />
                 </div>
                 {isCompact ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--text-soft)' }}><Code2 size={11} /> {row.problems_solved}</span>
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--text-soft)' }}><Brain size={11} /> {row.aptitude_solved}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 2, flexWrap: 'wrap' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 10.5, color: 'var(--text-soft)' }}><Code2 size={10} /> {row.problems_solved}<span style={{ opacity: 0.7 }}>({row.solved_today}td)</span></span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 10.5, color: 'var(--text-soft)' }}><Zap size={10} /> {row.xp}</span>
                     <StreakChip streak={row.streak} />
                   </div>
                 ) : (
-                  <div style={{ fontSize: 11, color: 'var(--text-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {row.register_number}{row.department ? ` · ${row.department}` : ''}{row.batch ? ` · ${row.batch}` : ''}
+                  <div style={{ fontSize: 10.5, color: 'var(--text-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <Code2 size={10} style={{ verticalAlign: '-1px' }} /> {row.problems_solved} solved{row.department ? ` · ${row.department}` : ''}
                   </div>
                 )}
-                <XpBar points={row.points} />
               </span>
-              <span style={{ textAlign: 'right', fontWeight: 900, color: 'var(--olive-700)' }}>{row.points}</span>
+              <span style={{ textAlign: 'right', fontWeight: 900, fontSize: 13, color: 'var(--olive-700)' }}>{row.points}</span>
               {!isCompact && (
                 <>
-                  <span style={{ textAlign: 'right', fontSize: 13, color: 'var(--text-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-                    <Code2 size={12} /> {row.problems_solved}
-                  </span>
-                  <span style={{ textAlign: 'right', fontSize: 13, color: 'var(--text-soft)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-                    <Brain size={12} /> {row.aptitude_solved}
-                  </span>
+                  <span style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-soft)' }}>{row.solved_today}</span>
+                  <span style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-soft)' }}>{row.xp}</span>
                   <span style={{ textAlign: 'right' }}>
                     <StreakChip streak={row.streak} />
                   </span>

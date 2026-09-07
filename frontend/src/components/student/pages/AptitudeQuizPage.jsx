@@ -401,11 +401,17 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
             </h3>
 
             {currentQ.question_image && (
-              <div style={{ marginBottom: '32px' }}>
+              // Capped well below the full card width and given its own
+              // max-width, not just maxWidth:100% on the <img> — a wide
+              // question card used to let even a modest image stretch to
+              // fill the whole card; objectFit:contain plus a bounded
+              // container makes an image's own resolution/aspect ratio,
+              // not the card's width, decide how big it actually shows.
+              <div style={{ maxWidth: '460px', margin: '0 auto 20px' }}>
                 <img
                   src={currentQ.question_image}
                   alt="Question"
-                  style={{ maxWidth: '100%', maxHeight: '360px', borderRadius: '12px', display: 'block' }}
+                  style={{ maxWidth: '100%', maxHeight: '260px', width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: '12px', display: 'block', margin: '0 auto' }}
                   onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
                 />
                 <div style={{ display: 'none', alignItems: 'center', gap: 8, padding: '14px 16px', borderRadius: '12px', background: 'var(--bg-2)', color: 'var(--text-soft)', fontSize: '0.85rem' }}>
@@ -468,11 +474,11 @@ const AptitudeQuizPage = ({ topicId, onBack }) => {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                       <FormattedText text={opt.value} />
                       {opt.image && (
-                        <div>
+                        <div style={{ maxWidth: '220px' }}>
                           <img
                             src={opt.image}
                             alt={`Option ${opt.key}`}
-                            style={{ maxWidth: '100%', maxHeight: '160px', borderRadius: '8px', display: 'block' }}
+                            style={{ maxWidth: '100%', maxHeight: '110px', width: 'auto', height: 'auto', objectFit: 'contain', borderRadius: '8px', display: 'block' }}
                             onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
                           />
                           <div style={{ display: 'none', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: '8px', background: 'var(--bg-1)', color: 'var(--text-soft)', fontSize: '0.75rem' }}>

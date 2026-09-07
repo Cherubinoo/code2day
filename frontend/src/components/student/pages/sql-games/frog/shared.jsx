@@ -19,6 +19,42 @@ export const WORLD_NAMES = {
   8: "The Grand Trial",
 };
 
+// One accent color per world so the workspace feels like it's actually in
+// that world without shipping any new art/animation — just a recolor of a
+// handful of existing elements (kicker text, a card border, the hint
+// button) via CSS variables. Deliberately just a palette swap, nothing
+// that adds render cost.
+export const WORLD_THEMES = {
+  1: { accent: "#16a34a", soft: "#f0fdf4" },   // Beginner Pond — lily green
+  2: { accent: "#b45309", soft: "#fffbeb" },   // Frog Village — warm amber
+  3: { accent: "#0891b2", soft: "#ecfeff" },   // Connected Islands — tropical teal
+  4: { accent: "#7c3aed", soft: "#f5f3ff" },   // Mystery Forest — misty purple
+  5: { accent: "#4338ca", soft: "#eef2ff" },   // Wizard Forest — indigo
+  6: { accent: "#dc2626", soft: "#fef2f2" },   // Volcano Valley — lava red
+  7: { accent: "#a16207", soft: "#fefce8" },   // SQL Kingdom — royal gold
+  8: { accent: "#334155", soft: "#f1f5f9" },   // The Grand Trial — slate
+};
+
+// Mirrors the visual half of the backend's cosmetics catalog
+// (apps/learning/sql_games/frog/cosmetics.py) — cost/ownership is fetched
+// live from /api/sql-frog/shop/, but the css_filter/emoji used to actually
+// render an equipped item is small and static enough to keep a local copy
+// of, same reasoning as WORLD_NAMES above.
+export const COSMETICS_BY_ID = {
+  skin_default: { filter: "none" },
+  skin_blue: { filter: "hue-rotate(150deg) saturate(1.4)" },
+  skin_purple: { filter: "hue-rotate(230deg) saturate(1.6)" },
+  skin_red: { filter: "hue-rotate(-100deg) saturate(2)" },
+  skin_gold: { filter: "sepia(1) saturate(4) hue-rotate(-10deg) brightness(1.1)" },
+  skin_shadow: { filter: "grayscale(1) brightness(0.55)" },
+  acc_none: { emoji: null },
+  acc_hat: { emoji: "🎩" },
+  acc_glasses: { emoji: "🕶️" },
+  acc_bow: { emoji: "🎀" },
+  acc_crown: { emoji: "👑" },
+  acc_wizard: { emoji: "🧙" },
+};
+
 const SOUND_PREF_KEY = "sql-frog-sound-enabled";
 
 export function useSoundPref() {
@@ -42,13 +78,21 @@ export function playSound(soundEnabled, name) {
 
 // A frog face built from CSS/emoji + a mood-driven animation class, instead
 // of a single static emoji — the closest we can get to "a real character
-// reacting to you" without shipping image/SVG assets.
-export function FrogMascot({ mood = "idle", size = 40 }) {
+// reacting to you" without shipping image/SVG assets. `equipped` (from
+// progress.equipped_cosmetics, e.g. {skin: "skin_blue", accessory: "acc_hat"})
+// recolors the frog via a CSS filter and overlays an accessory emoji —
+// bought-and-equipped shop items actually show up wherever the mascot does.
+export function FrogMascot({ mood = "idle", size = 40, equipped }) {
   const animClass = mood === "happy" ? "sqlg-frog-jump" : mood === "sad" ? "sqlg-frog-shake" : "sqlg-frog-idle";
   const face = mood === "happy" ? "😄" : mood === "sad" ? "😥" : mood === "thinking" ? "🤔" : "🙂";
+  const skin = COSMETICS_BY_ID[equipped?.skin] || COSMETICS_BY_ID.skin_default;
+  const accessory = COSMETICS_BY_ID[equipped?.accessory];
   return (
-    <span className={animClass} style={{ display: "inline-flex", position: "relative", fontSize: size }}>
+    <span className={animClass} style={{ display: "inline-flex", position: "relative", fontSize: size, filter: skin.filter }}>
       🐸
+      {accessory?.emoji && (
+        <span style={{ position: "absolute", left: "50%", top: -size * 0.35, transform: "translateX(-50%)", fontSize: size * 0.55 }}>{accessory.emoji}</span>
+      )}
       {mood !== "idle" && (
         <span style={{ position: "absolute", right: -6, bottom: -2, fontSize: size * 0.4 }}>{face}</span>
       )}

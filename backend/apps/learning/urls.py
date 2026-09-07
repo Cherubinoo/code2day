@@ -108,6 +108,9 @@ from .views import (
     SqlFrogLevelDetailView,
     SqlFrogRunView,
     SqlFrogHintView,
+    SqlFrogShopView,
+    SqlFrogPurchaseCosmeticView,
+    SqlFrogEquipCosmeticView,
     RegisterNumberListView,
     StudentContestDetailView,
     StudentContestListView,
@@ -324,6 +327,9 @@ urlpatterns = [
     path("sql-frog/levels/<str:level_id>/", SqlFrogLevelDetailView.as_view(), name="sql-frog-level-detail"),
     path("sql-frog/levels/<str:level_id>/run/", SqlFrogRunView.as_view(), name="sql-frog-run"),
     path("sql-frog/levels/<str:level_id>/hint/", SqlFrogHintView.as_view(), name="sql-frog-hint"),
+    path("sql-frog/shop/", SqlFrogShopView.as_view(), name="sql-frog-shop"),
+    path("sql-frog/shop/purchase/", SqlFrogPurchaseCosmeticView.as_view(), name="sql-frog-shop-purchase"),
+    path("sql-frog/shop/equip/", SqlFrogEquipCosmeticView.as_view(), name="sql-frog-shop-equip"),
 
     # Editor bootstrap
     path("editor/bootstrap/", EditorBootstrapView.as_view(), name="editor-bootstrap"),

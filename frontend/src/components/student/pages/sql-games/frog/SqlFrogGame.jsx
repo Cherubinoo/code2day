@@ -30,26 +30,24 @@ export default function SqlFrogGame({ onExitToHub }) {
 
   useEffect(() => {
     fetchProgress().finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Plain component state, not browser history — a level opened via a
+  // direct load/refresh (no pushState ever happened this session) used to
+  // make "back" fall through to whatever page the browser thinks came
+  // before this one instead of the pond map, since nothing here ever
+  // pushed a "map" entry to land back on. A level -> map -> hub stack
+  // that's just React state can't drift out of sync with what's on screen.
   const openLevel = (levelId) => {
     playSound(soundEnabled, "jump");
-    window.history.pushState({ sqlFrog: "level", levelId }, "");
     setActiveLevelId(levelId);
   };
 
   const backToMap = () => {
-    window.history.back();
+    playSound(soundEnabled, "click");
+    setActiveLevelId(null);
   };
-
-  useEffect(() => {
-    function handlePopState(e) {
-      const s = e.state;
-      setActiveLevelId(s && s.sqlFrog === "level" ? s.levelId : null);
-    }
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
 
   if (loading) {
     return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "80px 20px", color: "var(--text-soft)" }}><Loader2 size={20} className="spin" style={{ marginRight: 10 }} /> Loading the pond…</div>;
@@ -64,6 +62,7 @@ export default function SqlFrogGame({ onExitToHub }) {
         <LevelView
           levelId={activeLevelId}
           allLevels={progress.worlds.flatMap((w) => w.levels)}
+          equipped={progress.equipped_cosmetics}
           onBack={backToMap}
           onOpenLevel={openLevel}
           onCompleted={fetchProgress}
@@ -75,6 +74,8 @@ export default function SqlFrogGame({ onExitToHub }) {
           soundEnabled={soundEnabled}
           onToggleSound={toggleSound}
           onOpenLevel={openLevel}
+          onExitToHub={onExitToHub}
+          onProgressChanged={fetchProgress}
         />
       )}
     </div>

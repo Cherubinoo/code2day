@@ -22,7 +22,17 @@ from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
 from .models import SqlFrogProgress, StudentProfile
-from .sql_games.frog import ALL_LEVELS, ALL_LEVELS_BY_ID, VILLAGE_LEVEL_IDS, WORLD_NAMES
+from .sql_games.frog import (
+    ALL_COSMETICS,
+    ALL_COSMETICS_BY_ID,
+    ALL_LEVELS,
+    ALL_LEVELS_BY_ID,
+    DEFAULT_OWNED,
+    PURCHASE_XP_BONUS,
+    VILLAGE_LEVEL_IDS,
+    WORLD_NAMES,
+    slot_for,
+)
 
 
 class SqlFrogLevelContentTests(SimpleTestCase):
@@ -310,3 +320,104 @@ class SqlFrogHintViewTests(TestCase):
         self.client.post(self._url("w1_l01"), {"hint_level": 2}, content_type="application/json")
         progress = SqlFrogProgress.objects.get(student=self.profile)
         self.assertEqual(progress.hints_used.get("w1_l01"), 3)
+
+
+class SqlFrogCosmeticsCatalogTests(SimpleTestCase):
+    """Structural checks on the shop catalog itself, mirroring
+    SqlFrogLevelContentTests for levels."""
+
+    def test_every_cosmetic_has_a_resolvable_slot(self):
+        for item in ALL_COSMETICS:
+            self.assertIn(slot_for(item["id"]), ("skin", "accessory"), f"{item['id']} has no resolvable slot")
+
+    def test_default_owned_items_exist_and_are_free(self):
+        for item_id in DEFAULT_OWNED:
+            self.assertIn(item_id, ALL_COSMETICS_BY_ID)
+            self.assertEqual(ALL_COSMETICS_BY_ID[item_id]["cost"], 0)
+
+    def test_every_cosmetic_id_is_unique(self):
+        ids = [item["id"] for item in ALL_COSMETICS]
+        self.assertEqual(len(ids), len(set(ids)))
+
+
+class SqlFrogShopViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="sqlfrog_student_shop", password="secret123")
+        self.profile = StudentProfile.objects.create(
+            account=self.user, name="Frog Fan", register_number="SQLFROGS01",
+            personal_email="frogfans@example.com", mobile_number="9999999994",
+        )
+        self.client.force_login(self.user)
+
+    def test_requires_login(self):
+        self.client.logout()
+        response = self.client.get(reverse("sql-frog-shop"))
+        self.assertEqual(response.status_code, 401)
+
+    def test_default_items_are_owned_from_the_start(self):
+        response = self.client.get(reverse("sql-frog-shop"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        owned_ids = {item["id"] for item in data["items"] if item["owned"]}
+        self.assertEqual(owned_ids, set(DEFAULT_OWNED))
+        self.assertEqual(len(data["items"]), len(ALL_COSMETICS))
+
+    def test_cannot_purchase_without_enough_coins(self):
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=self.profile)
+        progress.coins = 5
+        progress.save()
+        response = self.client.post(reverse("sql-frog-shop-purchase"), {"item_id": "skin_gold"}, content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+        progress.refresh_from_db()
+        self.assertEqual(progress.coins, 5)
+        self.assertNotIn("skin_gold", progress.owned_cosmetic_ids)
+
+    def test_purchase_deducts_coins_and_grants_xp_bonus(self):
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=self.profile)
+        progress.coins = 100
+        progress.save()
+
+        item = ALL_COSMETICS_BY_ID["skin_blue"]
+        response = self.client.post(reverse("sql-frog-shop-purchase"), {"item_id": "skin_blue"}, content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["xp_awarded"], PURCHASE_XP_BONUS)
+
+        progress.refresh_from_db()
+        self.assertEqual(progress.coins, 100 - item["cost"])
+        self.assertEqual(progress.xp, PURCHASE_XP_BONUS)
+        self.assertIn("skin_blue", progress.owned_cosmetic_ids)
+
+    def test_cannot_purchase_the_same_item_twice(self):
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=self.profile)
+        progress.coins = 1000
+        progress.save()
+        self.client.post(reverse("sql-frog-shop-purchase"), {"item_id": "skin_blue"}, content_type="application/json")
+        response = self.client.post(reverse("sql-frog-shop-purchase"), {"item_id": "skin_blue"}, content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+
+        progress.refresh_from_db()
+        self.assertEqual(progress.xp, PURCHASE_XP_BONUS)  # only awarded once
+
+    def test_cannot_equip_an_item_not_owned(self):
+        response = self.client.post(reverse("sql-frog-shop-equip"), {"item_id": "acc_crown"}, content_type="application/json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_equip_after_purchase_updates_the_right_slot(self):
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=self.profile)
+        progress.coins = 1000
+        progress.save()
+        self.client.post(reverse("sql-frog-shop-purchase"), {"item_id": "acc_crown"}, content_type="application/json")
+        response = self.client.post(reverse("sql-frog-shop-equip"), {"item_id": "acc_crown"}, content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["equipped"], {"accessory": "acc_crown"})
+
+        progress.refresh_from_db()
+        self.assertEqual(progress.equipped_cosmetics, {"accessory": "acc_crown"})
+
+    def test_progress_endpoint_reports_equipped_cosmetics(self):
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=self.profile)
+        progress.equipped_cosmetics = {"skin": "skin_red"}
+        progress.save()
+        response = self.client.get(reverse("sql-frog-progress"))
+        self.assertEqual(response.json()["equipped_cosmetics"], {"skin": "skin_red"})

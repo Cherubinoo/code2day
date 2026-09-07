@@ -1300,6 +1300,14 @@ class SqlFrogProgress(models.Model):
     completed_level_ids = models.JSONField(default=list, blank=True)
     # Stats only ({"w1_l04": 2, ...}) — hints never reduce XP/coin rewards.
     hints_used = models.JSONField(default=dict, blank=True)
+    # Cosmetic shop — item ids from sql_games/frog/cosmetics.py (code, same
+    # "content lives in code, not DB rows" convention as the levels
+    # themselves), e.g. ["skin_blue", "hat_crown"].
+    owned_cosmetic_ids = models.JSONField(default=list, blank=True)
+    # {"skin": "skin_blue", "accessory": "hat_crown"} — at most one item per
+    # slot; a slot missing/None means the default (no skin tint, no
+    # accessory). Every id here must also appear in owned_cosmetic_ids.
+    equipped_cosmetics = models.JSONField(default=dict, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

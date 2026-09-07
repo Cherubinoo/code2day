@@ -42,6 +42,7 @@ class SqlFrogProgressView(StudentAuthMixin, APIView):
             "completed_level_ids": list(completed),
             "worlds": worlds,
             "future_worlds": FUTURE_WORLDS,
+            "equipped_cosmetics": progress.equipped_cosmetics,
         })
 
 class SqlFrogLevelDetailView(StudentAuthMixin, APIView):
@@ -163,6 +164,99 @@ class SqlFrogHintView(StudentAuthMixin, APIView):
         progress.save(update_fields=["hints_used", "updated_at"])
 
         return Response({"hint_level": hint_level, "hint": level["hints"][hint_level - 1]})
+
+def _sql_frog_owned_ids(progress):
+    """A student's owned cosmetic ids always includes the free defaults —
+    computed rather than stored redundantly, so DEFAULT_OWNED changing
+    later (e.g. a new always-free starter item) reaches every existing
+    SqlFrogProgress row without a data migration."""
+    return set(progress.owned_cosmetic_ids) | set(SQL_FROG_DEFAULT_OWNED_COSMETICS)
+
+def _sql_frog_cosmetics_payload(progress):
+    owned = _sql_frog_owned_ids(progress)
+    equipped = dict(progress.equipped_cosmetics)
+    return {
+        "coins": progress.coins,
+        "xp": progress.xp,
+        "equipped": equipped,
+        "items": [
+            {**item, "slot": sql_frog_cosmetic_slot_for(item["id"]), "owned": item["id"] in owned}
+            for item in SQL_FROG_ALL_COSMETICS
+        ],
+    }
+
+class SqlFrogShopView(StudentAuthMixin, APIView):
+    """SQL Frog: the cosmetic shop's catalog plus this student's owned/
+    equipped state and coin balance — everything the shop UI needs in one
+    call. Coins are the only thing spent here; the level/XP economy is
+    untouched by cosmetics."""
+
+    def get(self, request):
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=profile)
+        return Response(_sql_frog_cosmetics_payload(progress))
+
+class SqlFrogPurchaseCosmeticView(StudentAuthMixin, APIView):
+    """SQL Frog: buy one cosmetic with coins. Purchasing (not just owning)
+    grants a small XP bonus on top of the coin cost — an explicit design
+    choice: a purchase is never *pure* cost, it's still forward progress.
+    Never re-charges or re-awards XP for an item already owned."""
+
+    def post(self, request):
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        item_id = request.data.get("item_id")
+        item = SQL_FROG_ALL_COSMETICS_BY_ID.get(item_id)
+        if not item:
+            return Response({"detail": "Unknown item."}, status=404)
+
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=profile)
+        if item_id in _sql_frog_owned_ids(progress):
+            return Response({"error": "You already own this item."}, status=400)
+        if progress.coins < item["cost"]:
+            return Response({"error": "Not enough coins for this item."}, status=400)
+
+        progress.coins -= item["cost"]
+        progress.xp += SQL_FROG_PURCHASE_XP_BONUS
+        progress.owned_cosmetic_ids = list(set(progress.owned_cosmetic_ids) | {item_id})
+        progress.save(update_fields=["coins", "xp", "owned_cosmetic_ids", "updated_at"])
+
+        payload = _sql_frog_cosmetics_payload(progress)
+        payload["xp_awarded"] = SQL_FROG_PURCHASE_XP_BONUS
+        payload["purchased_item_id"] = item_id
+        payload["rank"] = _sql_frog_rank(progress.xp)
+        return Response(payload)
+
+class SqlFrogEquipCosmeticView(StudentAuthMixin, APIView):
+    """SQL Frog: equip an owned cosmetic into its slot (or unequip by
+    passing an item_id with no visual — e.g. "acc_none" — since every slot
+    always resolves to *some* item, there's no separate null/clear path)."""
+
+    def post(self, request):
+        profile, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        item_id = request.data.get("item_id")
+        item = SQL_FROG_ALL_COSMETICS_BY_ID.get(item_id)
+        if not item:
+            return Response({"detail": "Unknown item."}, status=404)
+
+        progress, _ = SqlFrogProgress.objects.get_or_create(student=profile)
+        if item_id not in _sql_frog_owned_ids(progress):
+            return Response({"error": "You don't own this item yet."}, status=400)
+
+        slot = sql_frog_cosmetic_slot_for(item_id)
+        equipped = dict(progress.equipped_cosmetics)
+        equipped[slot] = item_id
+        progress.equipped_cosmetics = equipped
+        progress.save(update_fields=["equipped_cosmetics", "updated_at"])
+
+        return Response(_sql_frog_cosmetics_payload(progress))
 
 class InterviewTrackView(UnifiedAuthMixin, APIView):
     """Resolves the caller's Interview Practice track from their department

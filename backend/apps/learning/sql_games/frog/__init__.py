@@ -35,6 +35,15 @@ from .worlds_2_to_8 import (
     WORLD_NAMES,
     _village_schema_view,
 )
+from .cosmetics import (
+    ACCESSORIES,
+    ALL_COSMETICS,
+    ALL_COSMETICS_BY_ID,
+    DEFAULT_OWNED,
+    PURCHASE_XP_BONUS,
+    SKINS,
+    slot_for,
+)
 
 ALL_LEVELS = sorted(WORLD_1_LEVELS + ALL_NEW_LEVELS, key=lambda lvl: lvl["order"])
 ALL_LEVELS_BY_ID = {lvl["id"]: lvl for lvl in ALL_LEVELS}
@@ -66,4 +75,11 @@ __all__ = [
     "WORLD_NAMES",
     "FUTURE_WORLDS",
     "_village_schema_view",
+    "SKINS",
+    "ACCESSORIES",
+    "ALL_COSMETICS",
+    "ALL_COSMETICS_BY_ID",
+    "DEFAULT_OWNED",
+    "PURCHASE_XP_BONUS",
+    "slot_for",
 ]

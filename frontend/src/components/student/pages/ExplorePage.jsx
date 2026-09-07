@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Trophy, Clock, Target, Award, Users, ChevronRight, X, MessageSquare } from 'lucide-react';
 import UserSystemUpdatesWidget from '../../common/UserSystemUpdatesWidget';
+import { renderInline } from '../../../lib/descriptionRenderer';
 
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -147,7 +148,11 @@ function ExplorePage({
             <div>
               <p className="kicker">Today&apos;s featured problem</p>
               <h3>{dashboard.dailyProblem.title}</h3>
-              <p>{dashboard.dailyProblem.description}</p>
+              {/* renderInline (not the full block-level renderDescription) —
+                  this stays a single-paragraph teaser card, it just needed
+                  `` `code` `` and **bold** to actually render instead of
+                  showing the literal markdown characters. */}
+              <p dangerouslySetInnerHTML={{ __html: renderInline(dashboard.dailyProblem.description) }} />
               <div className="tag-row">
                 {(dashboard.dailyProblem.tags ?? []).map((tag) => (
                   <span key={tag} className="tag">

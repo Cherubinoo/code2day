@@ -23,6 +23,12 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
     POINTS_PER_APTITUDE = 5
     POINTS_PER_STREAK_DAY = 2
 
+    # Every 100 points is one level — computed server-side off the exact
+    # same points value used for ranking, rather than the frontend
+    # re-deriving it (and risking drifting out of sync if this formula, or
+    # the point weights above, ever change).
+    POINTS_PER_LEVEL = 100
+
     def get(self, request):
         profile, profile_type, error = self.get_authenticated_profile(request)
         if error:
@@ -34,8 +40,10 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
 
         from django.db.models.functions import Coalesce
 
+        today = timezone.now().date()
         students = StudentProfile.objects.filter(institution=profile.institution).select_related('department').annotate(
             problems_solved=Count('solved_problems', distinct=True),
+            solved_today=Count('solved_problems', filter=Q(solved_problems__solved_at__date=today), distinct=True),
             aptitude_solved=Count('solved_aptitude', distinct=True),
             contest_score=Coalesce(Sum('contest_participations__total_score'), 0),
             sql_frog_xp=Coalesce('sql_frog_progress__xp', 0),
@@ -56,6 +64,8 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
         leaderboard = []
         current_entry = None
         for idx, (points, s) in enumerate(ranked, 1):
+            level = points // self.POINTS_PER_LEVEL + 1
+            level_progress = points % self.POINTS_PER_LEVEL
             entry = {
                 "rank": idx,
                 "register_number": s.register_number,
@@ -63,10 +73,14 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
                 "department": s.department.code if s.department else "",
                 "batch": s.batch,
                 "points": points,
+                "level": level,
+                "level_progress": level_progress,  # 0-99, how far into the current level
                 "problems_solved": s.problems_solved,
+                "solved_today": s.solved_today,
                 "aptitude_solved": s.aptitude_solved,
                 "contest_score": s.contest_score,
                 "streak": s.current_streak,
+                "xp": s.sql_frog_xp,
                 "is_you": s.id == profile.id,
             }
             if s.id == profile.id:

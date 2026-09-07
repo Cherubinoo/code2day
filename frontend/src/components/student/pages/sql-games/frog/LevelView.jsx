@@ -3,10 +3,10 @@ import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import {
   ChevronLeft, Loader2, Play, Lightbulb, Sparkles, RotateCcw, ScrollText,
-  ChevronDown, ChevronUp, PartyPopper,
+  ChevronDown, ChevronUp, PartyPopper, X,
 } from "lucide-react";
 import { buildJsonPostOptions, extractApiError } from "../../../../../lib/appUtils";
-import { playSound, FrogMascot, ConfettiBurst, AnimatedNumber, SchemaPanel, ResultFrogs, WORLD_NAMES } from "./shared";
+import { playSound, FrogMascot, ConfettiBurst, AnimatedNumber, SchemaPanel, ResultFrogs, WORLD_NAMES, WORLD_THEMES } from "./shared";
 
 // Use the bundled ESM Monaco build instead of the AMD/CDN loader path —
 // same configuration ProblemsPage.jsx and LabsPage.jsx already do; a page
@@ -60,11 +60,18 @@ function MissionBriefingModal({ level, onDismiss }) {
   );
 }
 
-function RewardModal({ level, result, perfectSolve, onBack, onNext }) {
+function RewardModal({ level, result, perfectSolve, onBack, onNext, onClose }) {
   const [confettiKey, setConfettiKey] = useState(0);
   return (
-    <div className="sqlg-modal-backdrop sqlg-backdrop-in">
-      <div className="sqlg-modal-card sqlg-modal-in" style={{ position: "relative" }}>
+    <div className="sqlg-modal-backdrop sqlg-backdrop-in" onClick={onClose}>
+      <div className="sqlg-modal-card sqlg-modal-in" style={{ position: "relative" }} onClick={(e) => e.stopPropagation()}>
+        <button
+          onClick={onClose}
+          title="Close — stay here and look at the output"
+          style={{ position: "absolute", top: 14, right: 14, background: "var(--bg-2)", border: "none", borderRadius: 8, padding: 6, cursor: "pointer", color: "var(--text-soft)", display: "flex" }}
+        >
+          <X size={16} />
+        </button>
         {confettiKey >= 0 && <ConfettiBurst key={confettiKey} onDone={() => setConfettiKey(-1)} />}
         <div style={{ fontSize: "2.6rem", marginBottom: 8 }}>⭐🐸⭐</div>
         <h2 style={{ margin: "0 0 4px" }}>Level Complete!</h2>
@@ -88,7 +95,7 @@ function RewardModal({ level, result, perfectSolve, onBack, onNext }) {
           🧠 Skill Unlocked: {result.skill_unlocked}
         </div>
 
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
           <button onClick={onBack} style={{ flex: 1, padding: "10px 16px", borderRadius: 12, border: "1px solid var(--border-soft)", background: "white", fontWeight: 700, cursor: "pointer" }}>
             Pond Map
           </button>
@@ -98,12 +105,18 @@ function RewardModal({ level, result, perfectSolve, onBack, onNext }) {
             </button>
           )}
         </div>
+        <button
+          onClick={onClose}
+          style={{ width: "100%", padding: "8px 16px", borderRadius: 12, border: "none", background: "none", fontWeight: 700, fontSize: "0.82rem", color: "var(--text-soft)", cursor: "pointer" }}
+        >
+          Review the output first
+        </button>
       </div>
     </div>
   );
 }
 
-export default function LevelView({ levelId, allLevels, onBack, onCompleted, onOpenLevel, soundEnabled }) {
+export default function LevelView({ levelId, allLevels, equipped, onBack, onCompleted, onOpenLevel, soundEnabled }) {
   const [level, setLevel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -115,12 +128,14 @@ export default function LevelView({ levelId, allLevels, onBack, onCompleted, onO
   const [showBriefing, setShowBriefing] = useState(true);
   const [showReward, setShowReward] = useState(false);
   const [referenceOpen, setReferenceOpen] = useState(true);
+  const [hintOpen, setHintOpen] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     setLoadError("");
     setResult(null);
     setHints([]);
+    setHintOpen(false);
     setShowReward(false);
     setShowBriefing(true);
     fetch(`/api/sql-frog/levels/${levelId}/`, { credentials: "include" })
@@ -137,6 +152,7 @@ export default function LevelView({ levelId, allLevels, onBack, onCompleted, onO
   const runQuery = async () => {
     if (!query.trim() || running) return;
     setRunning(true);
+    playSound(soundEnabled, "jump"); // small frog sound — instant feedback the click registered
     try {
       const res = await fetch(`/api/sql-frog/levels/${levelId}/run/`, buildJsonPostOptions({ query }));
       const body = await res.json();
@@ -163,7 +179,7 @@ export default function LevelView({ levelId, allLevels, onBack, onCompleted, onO
 
   const requestHint = async (hintLevel) => {
     setHintLoading(true);
-    playSound(soundEnabled, "click");
+    playSound(soundEnabled, "jump"); // small frog sound, same cue as Run — not the generic "click" blip
     try {
       const res = await fetch(`/api/sql-frog/levels/${levelId}/hint/`, buildJsonPostOptions({ hint_level: hintLevel }));
       const body = await res.json();
@@ -197,6 +213,7 @@ export default function LevelView({ levelId, allLevels, onBack, onCompleted, onO
   const mascotMood = running ? "thinking" : result?.success ? "happy" : result && !result.success ? "sad" : "idle";
   const nextLevel = allLevels?.find((l) => l.order === level.order + 1);
   const perfectSolve = hints.filter(Boolean).length === 0;
+  const theme = WORLD_THEMES[level.world] || WORLD_THEMES[1];
 
   return (
     <div>
@@ -208,6 +225,7 @@ export default function LevelView({ levelId, allLevels, onBack, onCompleted, onO
           perfectSolve={perfectSolve}
           onBack={onBack}
           onNext={nextLevel?.unlocked ? () => onOpenLevel(nextLevel.id) : null}
+          onClose={() => setShowReward(false)}
         />
       )}
 
@@ -224,12 +242,12 @@ export default function LevelView({ levelId, allLevels, onBack, onCompleted, onO
           <ScrollText size={16} /> Mission
         </button>
         <div style={{ flex: 1 }} />
-        <FrogMascot mood={mascotMood} size={30} />
+        <FrogMascot mood={mascotMood} size={30} equipped={equipped} />
       </div>
 
       <section className="page-header compact-header problem-page-header">
         <div>
-          <p className="kicker">Level {level.order} · World {level.world} — {WORLD_NAMES[level.world] || ""}</p>
+          <p className="kicker" style={{ color: theme.accent }}>Level {level.order} · World {level.world} — {WORLD_NAMES[level.world] || ""}</p>
           <h1>{level.title}</h1>
         </div>
       </section>
@@ -259,7 +277,7 @@ export default function LevelView({ levelId, allLevels, onBack, onCompleted, onO
             with the results and hints living right underneath it so the
             editor + what-happened-when-I-ran-it loop stays in one glance. */}
         <div>
-          <div className="surface-card sqlg-card-in" style={{ padding: 0, overflow: "hidden", marginBottom: 16 }}>
+          <div className="surface-card sqlg-card-in" style={{ padding: 0, overflow: "hidden", marginBottom: 16, borderTop: `3px solid ${theme.accent}` }}>
             <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border-soft)", fontWeight: 800, fontSize: "0.8rem", color: "var(--text-soft)", textTransform: "uppercase" }}>Query</div>
             <div className="sqlg-editor-shell">
               <Editor
@@ -271,13 +289,69 @@ export default function LevelView({ levelId, allLevels, onBack, onCompleted, onO
                 options={{ minimap: { enabled: false }, fontSize: 14, scrollBeyondLastLine: false, lineNumbers: "on", padding: { top: 12 } }}
               />
             </div>
-            <div style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid var(--border-soft)" }}>
+            <div style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid var(--border-soft)", position: "relative" }}>
               <button onClick={runQuery} disabled={running || !query.trim()} className="primary-button" style={{ borderRadius: 10, padding: "10px 20px", display: "flex", alignItems: "center", gap: 6 }}>
                 {running ? <Loader2 size={16} className="spin" /> : <Play size={16} />} {running ? "Running…" : "Run Query"}
               </button>
               <button onClick={() => setQuery("")} title="Clear" style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border-soft)", background: "white", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                 <RotateCcw size={15} /> Clear
               </button>
+
+              {!result?.success && (
+                <div style={{ marginLeft: "auto", position: "relative" }}>
+                  <button
+                    onClick={() => setHintOpen((v) => !v)}
+                    className="sqlg-hint-btn"
+                    style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", fontWeight: 800, fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
+                  >
+                    🐸 <Lightbulb size={15} /> Hint{hints.filter(Boolean).length > 0 ? ` ${hints.filter(Boolean).length}/3` : ""}
+                  </button>
+
+                  {/* A small speech-bubble popover instead of a permanent
+                      full-width panel — hints are opt-in help, not
+                      something that should occupy real estate on every
+                      level whether the player wants it or not. */}
+                  {hintOpen && (
+                    <div className="sqlg-modal-in" style={{
+                      position: "absolute", bottom: "calc(100% + 10px)", right: 0, width: 260, zIndex: 50,
+                      background: "white", border: "1px solid var(--border-soft)", borderRadius: 14, padding: 14,
+                      boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+                        <span style={{ fontSize: "1.05rem" }}>🐸💡</span>
+                        <span style={{ fontWeight: 800, fontSize: "0.8rem" }}>Need a hint?</span>
+                        <div style={{ flex: 1 }} />
+                        <button onClick={() => setHintOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-soft)", display: "flex" }}>
+                          <X size={14} />
+                        </button>
+                      </div>
+                      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                        {[1, 2, 3].map((n) => (
+                          <button
+                            key={n}
+                            onClick={() => requestHint(n)}
+                            disabled={hintLoading || !!hints[n - 1]}
+                            className="sqlg-hint-btn"
+                            style={{ flex: 1, padding: "5px 0", borderRadius: 8, border: "1px solid var(--border-soft)", background: hints[n - 1] ? "var(--bg-2)" : "white", fontSize: "0.75rem", fontWeight: 700, cursor: hints[n - 1] ? "default" : "pointer" }}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                      <div style={{ maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
+                        {hints.filter(Boolean).length === 0 ? (
+                          <div style={{ fontSize: "0.75rem", color: "var(--text-soft)" }}>Tap a number — 1 is gentle, 3 is the answer.</div>
+                        ) : (
+                          hints.filter(Boolean).map((h, i) => (
+                            <div key={i} className="sqlg-toast-in" style={{ padding: "8px 10px", borderRadius: 8, background: "var(--bg-2)", fontSize: "0.78rem" }}>{h}</div>
+                          ))
+                        )}
+                      </div>
+                      <div style={{ position: "absolute", bottom: -6, right: 28, width: 12, height: 12, background: "white", borderRight: "1px solid var(--border-soft)", borderBottom: "1px solid var(--border-soft)", transform: "rotate(45deg)" }} />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -301,30 +375,6 @@ export default function LevelView({ levelId, allLevels, onBack, onCompleted, onO
                   </table>
                 </div>
               )}
-            </div>
-          )}
-
-          {!result?.success && (
-            <div className="surface-card sqlg-card-in" style={{ padding: 20 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: hints.filter(Boolean).length ? 12 : 0 }}>
-                <Lightbulb size={16} style={{ color: "#d97706" }} />
-                <span style={{ fontWeight: 800, fontSize: "0.85rem" }}>Need a hint?</span>
-                <div style={{ flex: 1 }} />
-                {[1, 2, 3].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => requestHint(n)}
-                    disabled={hintLoading || !!hints[n - 1]}
-                    className="sqlg-hint-btn"
-                    style={{ padding: "6px 12px", borderRadius: 8, border: "1px solid var(--border-soft)", background: hints[n - 1] ? "var(--bg-2)" : "white", fontSize: "0.75rem", fontWeight: 700, cursor: hints[n - 1] ? "default" : "pointer" }}
-                  >
-                    Hint {n}
-                  </button>
-                ))}
-              </div>
-              {hints.filter(Boolean).map((h, i) => (
-                <div key={i} className="sqlg-toast-in" style={{ padding: "8px 12px", borderRadius: 8, background: "var(--bg-2)", fontSize: "0.85rem", marginBottom: 6 }}>💡 {h}</div>
-              ))}
             </div>
           )}
         </div>

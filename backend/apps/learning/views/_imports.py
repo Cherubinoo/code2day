@@ -126,6 +126,11 @@ from ..sql_games.frog import (
     FUTURE_WORLDS,
     VILLAGE_LEVEL_IDS as SQL_FROG_VILLAGE_LEVEL_IDS,
     WORLD_NAMES as SQL_FROG_WORLD_NAMES,
+    ALL_COSMETICS as SQL_FROG_ALL_COSMETICS,
+    ALL_COSMETICS_BY_ID as SQL_FROG_ALL_COSMETICS_BY_ID,
+    DEFAULT_OWNED as SQL_FROG_DEFAULT_OWNED_COSMETICS,
+    PURCHASE_XP_BONUS as SQL_FROG_PURCHASE_XP_BONUS,
+    slot_for as sql_frog_cosmetic_slot_for,
 )
 # NOT _village_schema_view here — this file has no __all__, so `import *`
 # (which every module in this package does: `from .._imports import *`)
