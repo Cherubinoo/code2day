@@ -120,7 +120,17 @@ from ..services.judge0 import (
     Judge0ServiceError,
     Judge0TimeoutError,
 )
-from ..sql_frog_levels import WORLD_1_LEVELS, WORLD_1_LEVELS_BY_ID, FUTURE_WORLDS
+from ..sql_games.frog import (
+    ALL_LEVELS as SQL_FROG_ALL_LEVELS,
+    ALL_LEVELS_BY_ID as SQL_FROG_ALL_LEVELS_BY_ID,
+    FUTURE_WORLDS,
+    VILLAGE_LEVEL_IDS as SQL_FROG_VILLAGE_LEVEL_IDS,
+    WORLD_NAMES as SQL_FROG_WORLD_NAMES,
+)
+# NOT _village_schema_view here — this file has no __all__, so `import *`
+# (which every module in this package does: `from .._imports import *`)
+# silently drops any underscore-prefixed name re-exported from here. See
+# _shared.py, which already handles that correctly via an explicit __all__.
 from ..services.reading_qa_import import create_passages_in_db, parse_workbook_to_passages
 from ..services.execution_adapter import (
     normalize_comparable_output,

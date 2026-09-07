@@ -11,9 +11,11 @@ below doing `from .._shared import *` would silently NOT receive them,
 surfacing only as a NameError deep inside a view method at request time.
 """
 from ._imports import *
+from ..sql_games.frog import _village_schema_view as _sql_frog_village_schema_view
 
 __all__ = [
     'logger',
+    '_sql_frog_village_schema_view',
     'WatermarkDocTemplate',
     'create_watermarked_pdf',
     'build_activity_calendar',

@@ -1,0 +1,250 @@
+/* SQL Games — shared visual language for every game under sql-games/
+   (SQL Frog today, more later). Every class is prefixed `sqlg-` so nothing
+   here collides with the rest of the app's global stylesheet. */
+
+.sqlg-root {
+  --sqlg-pond: #0f6e4f;
+  --sqlg-pond-dark: #0a4d38;
+  --sqlg-lily: #16a34a;
+  --sqlg-water: #e0f2ea;
+  --sqlg-gold: #d97706;
+  --sqlg-purple: #7c3aed;
+}
+
+/* ── Entrance / stagger ─────────────────────────────────────────────── */
+@keyframes sqlg-card-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.sqlg-card-in { animation: sqlg-card-in 0.35s ease both; }
+
+@keyframes sqlg-modal-in {
+  from { opacity: 0; transform: translateY(18px) scale(0.92); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.sqlg-modal-in { animation: sqlg-modal-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+@keyframes sqlg-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.sqlg-backdrop-in { animation: sqlg-backdrop-in 0.2s ease both; }
+
+/* ── Frog reactions ─────────────────────────────────────────────────── */
+@keyframes sqlg-frog-idle {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50% { transform: translateY(-3px) scaleY(1.03); }
+}
+.sqlg-frog-idle { display: inline-block; animation: sqlg-frog-idle 2.2s ease-in-out infinite; }
+
+@keyframes sqlg-frog-jump {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  30% { transform: translateY(-14px) rotate(-8deg); }
+  55% { transform: translateY(-14px) rotate(8deg); }
+  75% { transform: translateY(-4px) rotate(-3deg); }
+}
+.sqlg-frog-jump { display: inline-block; animation: sqlg-frog-jump 0.6s ease; }
+
+@keyframes sqlg-frog-shake {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  20% { transform: translateX(-5px) rotate(-4deg); }
+  40% { transform: translateX(5px) rotate(4deg); }
+  60% { transform: translateX(-4px) rotate(-3deg); }
+  80% { transform: translateX(4px) rotate(3deg); }
+}
+.sqlg-frog-shake { display: inline-block; animation: sqlg-frog-shake 0.4s ease; }
+
+@keyframes sqlg-hop-in-place {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.sqlg-hop { animation: sqlg-hop-in-place 0.9s ease-in-out infinite; }
+
+/* ── Locked lily pad "nuh-uh" wiggle ─────────────────────────────────── */
+@keyframes sqlg-wiggle {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px) rotate(-2deg); }
+  40% { transform: translateX(6px) rotate(2deg); }
+  60% { transform: translateX(-4px) rotate(-1deg); }
+  80% { transform: translateX(4px) rotate(1deg); }
+}
+.sqlg-wiggle { animation: sqlg-wiggle 0.4s ease; }
+
+/* ── Glow ring for the next playable lily pad ────────────────────────── */
+@keyframes sqlg-pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.55); }
+  70% { box-shadow: 0 0 0 12px rgba(22, 163, 74, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+}
+.sqlg-pulse-ring { animation: sqlg-pulse-ring 1.8s ease-out infinite; }
+
+/* ── Confetti burst (pure CSS, no canvas) ────────────────────────────── */
+.sqlg-confetti-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: inherit;
+}
+@keyframes sqlg-confetti-fall {
+  0% { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(220px) rotate(360deg); opacity: 0; }
+}
+.sqlg-confetti-piece {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  animation: sqlg-confetti-fall 1.4s ease-in forwards;
+}
+
+/* ── Toast pop for hint reveals / mini notices ───────────────────────── */
+@keyframes sqlg-toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.sqlg-toast-in { animation: sqlg-toast-in 0.25s ease both; }
+
+/* ── Number counter tick (XP / coins) ─────────────────────────────────── */
+@keyframes sqlg-counter-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.35); }
+  100% { transform: scale(1); }
+}
+.sqlg-counter-pop { display: inline-block; animation: sqlg-counter-pop 0.35s ease; }
+
+/* ── World map: dashed connector line between lily pads ──────────────── */
+.sqlg-lilypad-row {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding-top: 6px;
+}
+.sqlg-lilypad-wrap {
+  position: relative;
+}
+.sqlg-lilypad-wrap:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  width: 18px;
+  height: 0;
+  border-top: 3px dashed rgba(22, 163, 74, 0.35);
+}
+
+.sqlg-lilypad {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 12px;
+  border-radius: 18px;
+  min-width: 108px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  position: relative;
+}
+.sqlg-lilypad:not(.sqlg-lilypad-locked):hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 22px rgba(15, 110, 79, 0.18);
+}
+.sqlg-lilypad:active:not(.sqlg-lilypad-locked) {
+  transform: translateY(-1px) scale(0.97);
+}
+.sqlg-lilypad-locked {
+  cursor: not-allowed;
+}
+
+.sqlg-frog-token {
+  position: absolute;
+  top: -26px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1.3rem;
+}
+
+/* ── Mission briefing / reward modal shell ───────────────────────────── */
+.sqlg-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 40, 30, 0.6);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+}
+.sqlg-modal-card {
+  background: white;
+  border-radius: 24px;
+  padding: 32px;
+  max-width: 460px;
+  width: 100%;
+  max-height: 88vh;
+  overflow-y: auto;
+  text-align: center;
+  position: relative;
+}
+
+/* ── Workspace layout (bigger play space) ────────────────────────────── */
+.sqlg-workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .sqlg-workspace { grid-template-columns: 1fr; }
+}
+
+.sqlg-reference-panel {
+  position: sticky;
+  top: 12px;
+}
+
+.sqlg-editor-shell textarea,
+.sqlg-editor-shell .monaco-editor {
+  border-radius: 0 0 0 0;
+}
+
+/* ── Hint chip ────────────────────────────────────────────────────────── */
+.sqlg-hint-btn {
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.sqlg-hint-btn:not(:disabled):hover {
+  transform: translateY(-2px);
+}
+
+/* ── Perfect-solve badge ──────────────────────────────────────────────── */
+@keyframes sqlg-badge-shine {
+  0% { background-position: -60px 0; }
+  100% { background-position: 120px 0; }
+}
+.sqlg-perfect-badge {
+  background: linear-gradient(90deg, #fde68a 0%, #fbbf24 40%, #fde68a 80%);
+  background-size: 200px 100%;
+  animation: sqlg-badge-shine 2.2s linear infinite;
+}
+
+/* ── Game hub cards ───────────────────────────────────────────────────── */
+.sqlg-hub-card {
+  border-radius: 22px;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.sqlg-hub-card.sqlg-hub-card-playable {
+  cursor: pointer;
+}
+.sqlg-hub-card.sqlg-hub-card-playable:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 16px 32px rgba(15, 110, 79, 0.2);
+}
+.sqlg-hub-card-locked {
+  opacity: 0.6;
+}

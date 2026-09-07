@@ -750,7 +750,7 @@ export const navItems = [
   { id: "interview", label: "Interview Practice", icon: Mic },
   { id: "competitive", label: "Competitive Practice", icon: Swords },
   { id: "lms", label: "LMS", icon: GraduationCap },
-  { id: "sql", label: "SQL Practice", icon: Database },
+  { id: "sql", label: "SQL Games", icon: Database },
   { id: "progress", label: "Progress",  icon: BarChart3 },
   { id: "discuss",  label: "Discuss",   icon: MessageSquare },
 ];

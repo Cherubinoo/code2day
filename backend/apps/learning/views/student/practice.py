@@ -6,9 +6,12 @@ from .._shared import *
 
 
 class SqlFrogProgressView(StudentAuthMixin, APIView):
-    """SQL Frog: the player's overall progress — XP/coins/rank, World 1's
-    level list with locked/unlocked/completed state, and a stub list of
-    Worlds 2-7 for the map/skill-tree view (content not built yet)."""
+    """SQL Frog: the player's overall progress — XP/coins/rank, and every
+    world's level list with locked/unlocked/completed state. Unlock is
+    still a single global sequence across ALL_LEVELS (order 1..N spans
+    every world), so finishing World N's last level unlocks World N+1's
+    first exactly like finishing one level unlocks the next within a
+    world — no special-casing at a world boundary."""
 
     def get(self, request):
         profile, error = self.get_authenticated_profile(request)
@@ -18,10 +21,10 @@ class SqlFrogProgressView(StudentAuthMixin, APIView):
         progress, _ = SqlFrogProgress.objects.get_or_create(student=profile)
         completed = set(progress.completed_level_ids)
 
-        levels = []
-        unlocked_so_far = True  # level 1 always unlocked
-        for lvl in WORLD_1_LEVELS:
-            levels.append({
+        worlds_by_number = {}
+        unlocked_so_far = True  # level 1 (globally) always unlocked
+        for lvl in SQL_FROG_ALL_LEVELS:
+            worlds_by_number.setdefault(lvl["world"], []).append({
                 "id": lvl["id"], "order": lvl["order"], "title": lvl["title"],
                 "skill_unlocked": lvl["skill_unlocked"],
                 "completed": lvl["id"] in completed,
@@ -29,45 +32,58 @@ class SqlFrogProgressView(StudentAuthMixin, APIView):
             })
             unlocked_so_far = lvl["id"] in completed
 
+        worlds = [
+            {"world": w, "name": SQL_FROG_WORLD_NAMES.get(w, f"World {w}"), "levels": levels}
+            for w, levels in worlds_by_number.items()
+        ]
+
         return Response({
             "xp": progress.xp, "coins": progress.coins, "rank": _sql_frog_rank(progress.xp),
             "completed_level_ids": list(completed),
-            "levels": levels,
+            "worlds": worlds,
             "future_worlds": FUTURE_WORLDS,
         })
 
 class SqlFrogLevelDetailView(StudentAuthMixin, APIView):
     """One level's teaching content — story/concept/example/mission/schema.
-    Never includes expected_result or the reference solution."""
+    Never includes expected_result or the reference solution. `schemas` is
+    always a list (one entry for a single-table World 1/2 level, two for
+    every World 3+ level that needs both `frogs` and `ponds`) so the
+    frontend never has to branch on how many tables a level's mission uses."""
 
     def get(self, request, level_id):
         profile, error = self.get_authenticated_profile(request)
         if error:
             return error
 
-        level = WORLD_1_LEVELS_BY_ID.get(level_id)
+        level = SQL_FROG_ALL_LEVELS_BY_ID.get(level_id)
         if not level:
             return Response({"detail": "Level not found."}, status=404)
 
         progress, _ = SqlFrogProgress.objects.get_or_create(student=profile)
         completed = set(progress.completed_level_ids)
         idx = level["order"] - 1
-        unlocked = idx == 0 or WORLD_1_LEVELS[idx - 1]["id"] in completed
+        unlocked = idx == 0 or SQL_FROG_ALL_LEVELS[idx - 1]["id"] in completed
         if not unlocked:
             return Response({"detail": "This level isn't unlocked yet."}, status=403)
 
+        if level["id"] in SQL_FROG_VILLAGE_LEVEL_IDS:
+            schemas = _sql_frog_village_schema_view()
+        else:
+            schemas = [{
+                "table": "frogs",
+                "columns": ["id", "name", "color", "weight_kg", "score", "team"],
+                "sample_rows": [[1, "Kermit", "green", 8.5, 92, "Leap"], [2, "Pepe", "green", 6.0, 75, "Splash"]],
+            }]
+
         return Response({
-            "id": level["id"], "order": level["order"], "title": level["title"],
+            "id": level["id"], "order": level["order"], "world": level["world"], "title": level["title"],
             "story": level["story"], "concept_title": level["concept_title"],
             "concept_explanation": level["concept_explanation"], "example": level["example"],
             "mission": level["mission"], "completed": level["id"] in completed,
             "xp_reward": level["xp_reward"], "coin_reward": level["coin_reward"],
             "skill_unlocked": level["skill_unlocked"],
-            "schema": {
-                "table": "frogs",
-                "columns": ["id", "name", "color", "weight_kg", "score", "team"],
-                "sample_rows": [[1, "Kermit", "green", 8.5, 92, "Leap"], [2, "Pepe", "green", 6.0, 75, "Splash"]],
-            },
+            "schemas": schemas,
         })
 
 class SqlFrogRunView(StudentAuthMixin, APIView):
@@ -81,7 +97,7 @@ class SqlFrogRunView(StudentAuthMixin, APIView):
         if error:
             return error
 
-        level = WORLD_1_LEVELS_BY_ID.get(level_id)
+        level = SQL_FROG_ALL_LEVELS_BY_ID.get(level_id)
         if not level:
             return Response({"detail": "Level not found."}, status=404)
 
@@ -92,7 +108,7 @@ class SqlFrogRunView(StudentAuthMixin, APIView):
         progress, _ = SqlFrogProgress.objects.get_or_create(student=profile)
         completed = set(progress.completed_level_ids)
         idx = level["order"] - 1
-        unlocked = idx == 0 or WORLD_1_LEVELS[idx - 1]["id"] in completed
+        unlocked = idx == 0 or SQL_FROG_ALL_LEVELS[idx - 1]["id"] in completed
         if not unlocked:
             return Response({"detail": "This level isn't unlocked yet."}, status=403)
 
@@ -129,7 +145,7 @@ class SqlFrogHintView(StudentAuthMixin, APIView):
         if error:
             return error
 
-        level = WORLD_1_LEVELS_BY_ID.get(level_id)
+        level = SQL_FROG_ALL_LEVELS_BY_ID.get(level_id)
         if not level:
             return Response({"detail": "Level not found."}, status=404)
 
