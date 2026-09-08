@@ -1927,16 +1927,17 @@ def _run_scenario_description_sweep(base_qs, *, time_budget_seconds, max_actions
     Descriptions" views — everything except how `base_qs` gets scoped
     (whole bank vs. one topic's tag) is identical. Rewrites
     Problem.description into an original real-world scenario (same
-    input/output contract, no source-platform branding/cross-references),
-    tracked via a real DB flag (Problem.description_is_scenario) rather
-    than a client-held cursor, so a problem is only ever rewritten once —
-    a later click (even a different admin session, even scoped to a
-    different topic that happens to overlap) only touches problems still
-    on the original statement, unless `force` re-touches already-migrated
-    ones too (e.g. redoing one topic with a tweaked prompt). The
-    pre-rewrite text is preserved once in description_original the first
-    time a problem is touched, never overwritten again, so the original is
-    never lost even though `description` itself gets overwritten.
+    input/output contract, no source-platform branding/cross-references)
+    and Problem.title to match the new scenario's framing, tracked via a
+    real DB flag (Problem.description_is_scenario) rather than a
+    client-held cursor, so a problem is only ever rewritten once — a later
+    click (even a different admin session, even scoped to a different
+    topic that happens to overlap) only touches problems still on the
+    original statement, unless `force` re-touches already-migrated ones
+    too (e.g. redoing one topic with a tweaked prompt). The pre-rewrite
+    text is preserved once in description_original the first time a
+    problem is touched, never overwritten again, so the original is never
+    lost even though `description` (and `title`) get overwritten.
 
     Runs the batch through run_across_providers_in_parallel() — assigning
     problems round-robin across whichever LLMProviders are currently
@@ -1951,7 +1952,7 @@ def _run_scenario_description_sweep(base_qs, *, time_budget_seconds, max_actions
     available at all."""
     import time
     from ..services.testcase_generator import (
-        generate_scenario_description, NoProvidersAvailableError,
+        generate_scenario_description_with_title, NoProvidersAvailableError,
         run_across_providers_in_parallel, _providers_in_rotation_order,
     )
 
@@ -1971,7 +1972,7 @@ def _run_scenario_description_sweep(base_qs, *, time_budget_seconds, max_actions
     problems = list(scoped_qs().order_by("id")[:batch_size])
 
     def call_one(problem, provider):
-        return generate_scenario_description(
+        return generate_scenario_description_with_title(
             title=problem.title, description=problem.description,
             examples=problem.examples, providers=[provider],
         )
@@ -1979,19 +1980,22 @@ def _run_scenario_description_sweep(base_qs, *, time_budget_seconds, max_actions
     results = run_across_providers_in_parallel(problems, call_one, timeout_seconds=time_budget_seconds)
 
     processed = []
-    for problem, rewritten, error in results:
+    for problem, result, error in results:
         entry = {"id": problem.id, "title": problem.title}
         if error is not None:
             entry["error"] = str(error)
         else:
-            update_fields = ["description", "description_is_scenario"]
+            new_title, rewritten = result
+            update_fields = ["title", "description", "description_is_scenario"]
             if not problem.description_original:
                 problem.description_original = problem.description
                 update_fields.append("description_original")
+            problem.title = new_title
             problem.description = rewritten
             problem.description_is_scenario = True
             problem.save(update_fields=update_fields)
             entry["generated"] = True
+            entry["new_title"] = new_title
         processed.append(entry)
 
     return {

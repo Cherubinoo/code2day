@@ -457,6 +457,7 @@ const ProblemBankView = ({ onBack }) => {
     }
     if (expOutcome.ok) {
       update.explanation = expOutcome.data.explanation;
+      if (expOutcome.data.title) update.title = expOutcome.data.title;
       messages.push('Explanation generated.');
     } else {
       messages.push(`Explanation: ${expOutcome.networkError ? 'network error.' : (expOutcome.data?.error || 'failed.')}`);
@@ -518,9 +519,13 @@ const ProblemBankView = ({ onBack }) => {
     setGenStates((s) => ({ ...s, [problem.id]: { ...(s[problem.id] || {}), scenarioBusy: true, scenarioMsg: '' } }));
     try {
       const body = force ? { force: true } : {};
-      await api.post(`/admin/v2/problem-bank/${problem.id}/generate-scenario-description/`, body);
+      const data = (await api.post(`/admin/v2/problem-bank/${problem.id}/generate-scenario-description/`, body)).data;
       const msg = 'Scenario description generated.';
-      setProblems((prev) => prev.map((p) => (p.id === problem.id ? { ...p, description_is_scenario: true } : p)));
+      setProblems((prev) => prev.map((p) => (
+        p.id === problem.id
+          ? { ...p, description_is_scenario: true, ...(data.title ? { title: data.title } : {}) }
+          : p
+      )));
       setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], scenarioBusy: false, scenarioMsg: msg } }));
     } catch (err) {
       setGenStates((s) => ({ ...s, [problem.id]: { ...s[problem.id], scenarioBusy: false, scenarioMsg: apiErrorMessage(err, 'Failed.') } }));

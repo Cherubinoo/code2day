@@ -260,7 +260,11 @@ class AdminProblemGenerateExplanationView(APIView):
     """System Admin: on-demand (re)generate a brief explanation for one
     Problem via the LLM fallback chain. Separate endpoint from test-case
     generation so the admin bank can fire both concurrently instead of
-    waiting on one before starting the other."""
+    waiting on one before starting the other.
+
+    Also replaces Problem.title with a new one matching the story hook the
+    LLM just wrote for the explanation, so the two never end up describing
+    different framings of the problem."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, problem_id):
@@ -278,26 +282,31 @@ class AdminProblemGenerateExplanationView(APIView):
                 status=400,
             )
 
-        from ...services.testcase_generator import generate_explanation, TestCaseGenError
+        from ...services.testcase_generator import generate_explanation_with_title, TestCaseGenError
         try:
-            explanation = generate_explanation(
+            new_title, explanation = generate_explanation_with_title(
                 title=problem.title, description=problem.description,
                 examples=problem.examples, difficulty=problem.difficulty,
             )
         except TestCaseGenError as exc:
             return Response({"error": f"Generation failed: {exc}"}, status=502)
 
+        problem.title = new_title
         problem.explanation = explanation
-        problem.save(update_fields=["explanation"])
-        return Response({"explanation": problem.explanation})
+        problem.save(update_fields=["title", "explanation"])
+        return Response({"title": problem.title, "explanation": problem.explanation})
 
 class AdminProblemGenerateScenarioDescriptionView(APIView):
     """System Admin: on-demand (re)generate the scenario description for
-    ONE Problem via the LLM — same generate_scenario_description() call
-    the bank-wide and per-topic sweeps use, just scoped to a single
+    ONE Problem via the LLM — same generate_scenario_description_with_title()
+    call the bank-wide and per-topic sweeps use, just scoped to a single
     problem_id. The individual-question-level entry point alongside those
     two, so an admin isn't forced to sweep an entire topic just to fix one
-    problem's rewrite."""
+    problem's rewrite.
+
+    Also replaces Problem.title with one matching the new scenario's
+    framing, same guardrails as the rewrite itself: input/output/
+    constraints/examples never change, only the title and narrative."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, problem_id):
@@ -315,22 +324,23 @@ class AdminProblemGenerateScenarioDescriptionView(APIView):
                 status=400,
             )
 
-        from ...services.testcase_generator import generate_scenario_description, TestCaseGenError
+        from ...services.testcase_generator import generate_scenario_description_with_title, TestCaseGenError
         try:
-            rewritten = generate_scenario_description(
+            new_title, rewritten = generate_scenario_description_with_title(
                 title=problem.title, description=problem.description, examples=problem.examples,
             )
         except TestCaseGenError as exc:
             return Response({"error": f"Generation failed: {exc}"}, status=502)
 
-        update_fields = ["description", "description_is_scenario"]
+        update_fields = ["title", "description", "description_is_scenario"]
         if not problem.description_original:
             problem.description_original = problem.description
             update_fields.append("description_original")
+        problem.title = new_title
         problem.description = rewritten
         problem.description_is_scenario = True
         problem.save(update_fields=update_fields)
-        return Response({"description": problem.description})
+        return Response({"title": problem.title, "description": problem.description})
 
 class AdminProblemGenerateGenericSchemaView(APIView):
     """System Admin: single-problem "one hit run" for the new type-driven
@@ -911,18 +921,19 @@ class AdminProblemBankValidateGenericSchemasView(APIView):
         })
 
 class AdminProblemBankRegenerateAllExplanationsView(APIView):
-    """System Admin: force-regenerates Problem.explanation for every
-    problem that hasn't been migrated to the story-driven prompt in
-    EXPLANATION_PROMPT_TEMPLATE yet (old explanations were plain
-    pedagogical text, not story-hooked) — a one-time bank-wide style
-    migration, not an ordinary "fill what's missing" sweep, but still
-    tracked with a real DB flag (Problem.explanation_is_story) rather than
-    a client-held cursor: a problem is only ever regenerated once, and a
-    later click (even after a page refresh, even from a different admin
-    session) picks up exactly the problems still on the old style — never
-    redoing ones already migrated. Set only after a successful generation,
-    so a failed one is retried on the next click rather than silently
-    left on the old style forever.
+    """System Admin: force-regenerates Problem.explanation (and Problem.title
+    to match the new story hook) for every problem that hasn't been
+    migrated to the story-driven prompt in EXPLANATION_WITH_TITLE_PROMPT_TEMPLATE
+    yet (old explanations were plain pedagogical text, not story-hooked) —
+    a one-time bank-wide style migration, not an ordinary "fill what's
+    missing" sweep, but still tracked with a real DB flag
+    (Problem.explanation_is_story) rather than a client-held cursor: a
+    problem is only ever regenerated once, and a later click (even after a
+    page refresh, even from a different admin session) picks up exactly
+    the problems still on the old style — never redoing ones already
+    migrated. Set only after a successful generation, so a failed one is
+    retried on the next click rather than silently left on the old style
+    forever.
 
     Runs the batch through run_across_providers_in_parallel() — see
     AdminProblemBankGenerateGenericSchemasView's docstring for why."""
@@ -938,7 +949,7 @@ class AdminProblemBankRegenerateAllExplanationsView(APIView):
 
         import time
         from ...services.testcase_generator import (
-            generate_explanation, NoProvidersAvailableError,
+            generate_explanation_with_title, NoProvidersAvailableError,
             run_across_providers_in_parallel, _providers_in_rotation_order,
         )
 
@@ -955,7 +966,7 @@ class AdminProblemBankRegenerateAllExplanationsView(APIView):
         problems = list(Problem.objects.filter(needs_story_q()).order_by("id")[:batch_size])
 
         def call_one(problem, provider):
-            return generate_explanation(
+            return generate_explanation_with_title(
                 title=problem.title, description=problem.description,
                 examples=problem.examples, difficulty=problem.difficulty,
                 providers=[provider],
@@ -964,15 +975,18 @@ class AdminProblemBankRegenerateAllExplanationsView(APIView):
         results = run_across_providers_in_parallel(problems, call_one, timeout_seconds=self.TIME_BUDGET_SECONDS)
 
         processed = []
-        for problem, explanation, error in results:
+        for problem, result, error in results:
             entry = {"id": problem.id, "title": problem.title}
             if error is not None:
                 entry["error"] = str(error)
             else:
+                new_title, explanation = result
+                problem.title = new_title
                 problem.explanation = explanation
                 problem.explanation_is_story = True
-                problem.save(update_fields=["explanation", "explanation_is_story"])
+                problem.save(update_fields=["title", "explanation", "explanation_is_story"])
                 entry["generated"] = True
+                entry["new_title"] = new_title
             processed.append(entry)
 
         remaining = Problem.objects.filter(needs_story_q()).count()

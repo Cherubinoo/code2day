@@ -252,6 +252,15 @@ def _consume_stream(url, payload, headers, timeout_seconds):
         with requests.post(url, json=payload, headers=headers, timeout=timeout_seconds, stream=True) as response:
             if response.status_code != 200:
                 raise TestCaseGenServiceError(f"HTTP {response.status_code}: {response.text[:500]}")
+            # text/event-stream responses usually carry no charset, so
+            # `requests` falls back to guessing (often Latin-1) for
+            # iter_lines(decode_unicode=True) — any multi-byte UTF-8
+            # character the LLM writes (e.g. "→") then gets decoded one
+            # byte at a time into mojibake ("â\x86'"-style garbage) baked
+            # straight into the stored explanation. Providers are OpenAI-
+            # compatible and always emit UTF-8, so force it explicitly
+            # instead of trusting the guess.
+            response.encoding = "utf-8"
             for raw_line in response.iter_lines(decode_unicode=True):
                 if not raw_line or not raw_line.startswith("data:"):
                     continue
@@ -492,8 +501,31 @@ def generate_test_cases(*, title, description, examples=None, num_cases=None, di
     providers = providers if providers is not None else _providers_in_rotation_order()
     prompt = _build_prompt(title, description, examples, num_cases)
     cases = _try_providers_in_order(providers, prompt, transform=_parse_and_validate_cases, log_label=f"{title} (test cases)")
+    cases = _cap_sample_cases(cases)
     logger.info("Generated %d test cases for %r", len(cases), title)
     return cases
+
+
+MAX_SAMPLE_CASES = 2
+
+
+def _cap_sample_cases(cases):
+    """At most MAX_SAMPLE_CASES cases stay visible ("is_sample": True,
+    shown to students as worked "Example N" cards) — the LLM sometimes
+    marks every given example as a sample (e.g. 3+ provided examples all
+    get reproduced with is_sample=True), which used to mean every one of
+    them became a visible example with no cap. Anything past the first
+    MAX_SAMPLE_CASES stays a real test case (still generated, still used
+    for grading) but is demoted to hidden rather than shown."""
+    seen = 0
+    capped = []
+    for case in cases:
+        if case.get("is_sample"):
+            seen += 1
+            if seen > MAX_SAMPLE_CASES:
+                case = {**case, "is_sample": False}
+        capped.append(case)
+    return capped
 
 
 EXPLANATION_PROMPT_TEMPLATE = """You are a gifted teacher who makes programming problems stick by wrapping them in a short, relatable story before teaching the theory — the way a great lecturer hooks a class with a scenario before writing on the board.
@@ -509,7 +541,7 @@ Write the explanation as a story-driven walkthrough, in this order:
 3. Step-by-Step Approach & Key Insights: Explain the algorithmic approach, key insights, and edge cases to handle, keeping the story's character as the one carrying out each step.
 4. Visualization: For Tree or Graph problems, include an ASCII diagram of a sample tree and trace its step-by-step traversal so the student can visually understand the process.
 
-Write at least 4 short paragraphs. Do not return a one-line explanation. Keep the story brief and grounded — it's a memorable hook and a thread to follow through the explanation, not the main content.
+Keep it precise and tailored to this exact problem — 3-4 short, focused paragraphs total, not a padded essay. Every sentence should teach something specific to this problem's actual mechanics, not generic filler that could apply to any problem. Do not return a one-line explanation, and do not restate the same point twice to pad length. Keep the story brief and grounded — it's a memorable hook and a thread to follow through the explanation, not the main content.
 Respond with ONLY the explanation text, clear, educational, and structured.
 """
 HINT_PROMPT_TEMPLATE = """You are writing a single short hint for a student who is stuck on the
@@ -545,6 +577,49 @@ def generate_explanation(*, title, description, examples=None, difficulty=None, 
     if not explanation:
         raise TestCaseGenServiceError("LLM returned an empty explanation.")
     return explanation
+
+
+EXPLANATION_WITH_TITLE_PROMPT_TEMPLATE = """You are a gifted teacher who makes programming problems stick by wrapping them in a short, relatable story before teaching the theory — the way a great lecturer hooks a class with a scenario before writing on the board.
+
+Title: {title}
+
+Description:
+{description}
+
+Write the explanation as a story-driven walkthrough, in this order:
+1. Story Hook: Open with a brief (2-4 sentence) relatable mini-story — a character doing some everyday task — whose structure naturally mirrors the problem's actual data structure/algorithm (e.g. a librarian shelving books for tree traversal, a delivery rider planning stops for graph search, a cashier's stack of trays for a Stack problem). It must map onto the real mechanics, not just be decoration.
+2. Core Problem Concept: Bridge from the story to explain what the problem is actually asking in plain language, tying the story's character/objects to the real terms. If it involves a Binary Tree, Graph, Stack, or specific Data Structure, clearly explain the structure and properties (e.g. for Binary Trees: Root, Left Subtree, Right Subtree, and how Preorder/Inorder/Postorder traversals work).
+3. Step-by-Step Approach & Key Insights: Explain the algorithmic approach, key insights, and edge cases to handle, keeping the story's character as the one carrying out each step.
+4. Visualization: For Tree or Graph problems, include an ASCII diagram of a sample tree and trace its step-by-step traversal so the student can visually understand the process.
+
+Keep the explanation precise and tailored to this exact problem — 3-4 short, focused paragraphs total, not a padded essay. Every sentence should teach something specific to this problem's actual mechanics, not generic filler that could apply to any problem. Do not return a one-line explanation, and do not restate the same point twice to pad length. Keep the story brief and grounded — it's a memorable hook and a thread to follow through the explanation, not the main content.
+
+Also propose a new title for the problem that reflects the story hook you wrote (e.g. if the story is a librarian shelving books for a tree problem, something like "The Librarian's Shelving Order" rather than the generic original title) — short (4-8 words), and still clearly readable as a programming-problem title, not a story chapter name.
+
+Respond with ONLY a JSON object of this exact shape, no markdown fences, no commentary:
+{{"title": "...", "explanation": "..."}}
+"""
+
+
+def generate_explanation_with_title(*, title, description, examples=None, difficulty=None, providers=None):
+    """Like generate_explanation(), but also asks the LLM for a new title
+    matching the story hook, returned as (new_title, explanation). Used
+    only by the Problem Bank admin's explanation regeneration (single-
+    problem and bulk) — generate_explanation() itself is untouched and
+    still title-free for its other callers (lab exercises, the "fill
+    missing metadata" sweep), where changing the title as a side effect of
+    filling in a missing explanation would be a surprising, unrequested
+    side effect."""
+    prompt = EXPLANATION_WITH_TITLE_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
+    text = generate_text_with_fallback(prompt, log_label=f"{title} (explanation+title)", providers=providers)
+    data = _extract_json(text)
+    new_title = (data.get("title") or "").strip()
+    explanation = (data.get("explanation") or "").strip()
+    if not explanation:
+        raise TestCaseGenServiceError("LLM returned an empty explanation.")
+    if not new_title:
+        raise TestCaseGenServiceError("LLM returned an empty title.")
+    return new_title, explanation
 
 
 SCENARIO_DESCRIPTION_PROMPT_TEMPLATE = """You are rewriting a coding problem's statement into an original, real-world scenario — the same technical problem, dressed in a story instead of dry algorithmic phrasing, so it reads as this platform's own content rather than a copy of a well-known problem bank.
@@ -586,6 +661,50 @@ def generate_scenario_description(*, title, description, examples=None, provider
     if not rewritten:
         raise TestCaseGenServiceError("LLM returned an empty scenario description.")
     return rewritten
+
+
+SCENARIO_DESCRIPTION_WITH_TITLE_PROMPT_TEMPLATE = """You are rewriting a coding problem's statement into an original, real-world scenario — the same technical problem, dressed in a story instead of dry algorithmic phrasing, so it reads as this platform's own content rather than a copy of a well-known problem bank.
+
+Title: {title}
+
+Original statement:
+{description}
+
+Rewrite it as a short, concrete scenario (a person, team, or system doing some everyday or workplace task whose structure naturally matches the underlying data/algorithm — e.g. a warehouse dispatcher for a graph problem, a librarian shelving returns for a tree problem, a cashier counting change for a greedy/array problem). Then state precisely what must be computed, in plain language.
+
+Hard rules — the input, output, constraints, and every example's actual values must remain EXACTLY as they are in the original; you are changing the framing and variable *flavor text* only, never the technical contract a program would be graded against:
+- Do not invent new inputs, outputs, edge cases, or constraints, and do not drop any that are already there.
+- Never mention LeetCode, any other problem-bank/platform name, a problem number, or include any URL — strip out any "this is the same as problem N" note entirely; the rewritten statement must read as fully original.
+- Do not include the raw formal Input:/Output: example blocks yourself — those are kept separately; just write the narrative statement (scenario + what must be computed + any constraints called out in prose).
+- Keep it readable in a similar length to the original — a short scenario paragraph or two, not a long story.
+
+Also propose a new title matching the new scenario's flavor (e.g. "The Warehouse Dispatcher's Route" for a graph problem framed around a warehouse dispatcher) — short (4-8 words), same technical problem, just fitting the new framing instead of the old generic/source-platform-style one.
+
+Respond with ONLY a JSON object of this exact shape, no markdown fences, no commentary:
+{{"title": "...", "description": "..."}}
+- "description" is the rewritten narrative statement exactly as specified above (scenario + what must be computed) — never the raw Input:/Output: blocks, never touching example values.
+"""
+
+
+def generate_scenario_description_with_title(*, title, description, examples=None, providers=None):
+    """Like generate_scenario_description(), but also asks the LLM for a
+    new title matching the new scenario, returned as (new_title,
+    description). Same hard rules apply (input/output/constraints/examples
+    untouched) — only the title and narrative framing change. Used only by
+    the Problem Bank admin's scenario-description regeneration (single-
+    problem and the bank-wide/per-topic bulk sweep) —
+    generate_scenario_description() itself is untouched for any other
+    caller."""
+    prompt = SCENARIO_DESCRIPTION_WITH_TITLE_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
+    text = generate_text_with_fallback(prompt, log_label=f"{title} (scenario description+title)", providers=providers)
+    data = _extract_json(text)
+    new_title = (data.get("title") or "").strip()
+    rewritten = (data.get("description") or "").strip()
+    if not rewritten:
+        raise TestCaseGenServiceError("LLM returned an empty scenario description.")
+    if not new_title:
+        raise TestCaseGenServiceError("LLM returned an empty title.")
+    return new_title, rewritten
 
 
 PARAM_SCHEMA_PROMPT_TEMPLATE = """You are inferring a structured execution schema for an online judge, given a problem statement.

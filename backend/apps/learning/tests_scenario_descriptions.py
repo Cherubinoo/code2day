@@ -3,8 +3,16 @@
 generate_scenario_description() — rewrites Problem.description into an
 original real-world scenario, same DB-flag-tracked-progress convention as
 the existing "Regenerate All Explanations" sweep. LLM calls mocked
-throughout, same approach as test_schema_generator.py."""
+throughout, same approach as test_schema_generator.py.
 
+The admin-facing views/sweep actually call generate_scenario_description_
+with_title() (title + description together, as one JSON object) —
+generate_scenario_description() itself stays plain-text and title-free for
+its other, unrelated callers, so its own two direct unit tests below mock
+generate_text_with_fallback with plain prose, while everything mocking the
+admin endpoints/sweep must return the JSON shape that function expects."""
+
+import json
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
@@ -13,6 +21,14 @@ from django.urls import reverse
 
 from .models import LLMProvider, Problem
 from .services.testcase_generator import TestCaseGenServiceError, generate_scenario_description
+
+
+def _scenario_json(description, title="A New Story Title"):
+    """The JSON string generate_scenario_description_with_title() expects
+    back from the LLM — mocked_fallback.return_value throughout this file
+    (everywhere except the two direct generate_scenario_description() unit
+    tests, which use the old plain-text function)."""
+    return json.dumps({"title": title, "description": description})
 
 
 class GenerateScenarioDescriptionTests(TestCase):
@@ -60,17 +76,21 @@ class AdminRegenerateScenarioDescriptionsViewTests(TestCase):
 
     @patch("apps.learning.services.testcase_generator.generate_text_with_fallback")
     def test_rewrites_description_and_backs_up_original(self, mocked_fallback):
-        mocked_fallback.return_value = "A cashier needs to find two price tags that sum to a customer's budget."
+        mocked_fallback.return_value = _scenario_json(
+            "A cashier needs to find two price tags that sum to a customer's budget.", title="The Cashier's Price Match",
+        )
 
         response = self._post()
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(len(data["processed"]), 1)
         self.assertTrue(data["processed"][0]["generated"])
+        self.assertEqual(data["processed"][0]["new_title"], "The Cashier's Price Match")
         self.assertEqual(data["remaining_problems"], 0)
 
         self.problem.refresh_from_db()
         self.assertEqual(self.problem.description, "A cashier needs to find two price tags that sum to a customer's budget.")
+        self.assertEqual(self.problem.title, "The Cashier's Price Match")
         self.assertTrue(self.problem.description_is_scenario)
         # Original preserved verbatim, including the leaked LeetCode note —
         # this is the one place that's still allowed to exist (a backup),
@@ -79,7 +99,7 @@ class AdminRegenerateScenarioDescriptionsViewTests(TestCase):
 
     @patch("apps.learning.services.testcase_generator.generate_text_with_fallback")
     def test_second_run_does_not_touch_already_migrated_problems(self, mocked_fallback):
-        mocked_fallback.return_value = "A cashier needs to find two price tags that sum to a customer's budget."
+        mocked_fallback.return_value = _scenario_json("A cashier needs to find two price tags that sum to a customer's budget.")
         self._post()
         self.problem.refresh_from_db()
         original_backup = self.problem.description_original
@@ -88,7 +108,7 @@ class AdminRegenerateScenarioDescriptionsViewTests(TestCase):
             title="Other Problem", slug="other-problem-scenario-test",
             description="Some other original statement.", difficulty="Easy", tags=["Array"],
         )
-        mocked_fallback.return_value = "A different scenario entirely."
+        mocked_fallback.return_value = _scenario_json("A different scenario entirely.")
         response = self._post()
         data = response.json()
 
@@ -158,7 +178,7 @@ class AdminTopicRegenerateScenarioDescriptionsViewTests(TestCase):
 
     @patch("apps.learning.services.testcase_generator.generate_text_with_fallback")
     def test_only_touches_problems_in_the_given_topic(self, mocked_fallback):
-        mocked_fallback.return_value = "A warehouse worker pairs two bin labels that sum to a target code."
+        mocked_fallback.return_value = _scenario_json("A warehouse worker pairs two bin labels that sum to a target code.")
 
         response = self._post("Array")
         self.assertEqual(response.status_code, 200)
@@ -173,7 +193,7 @@ class AdminTopicRegenerateScenarioDescriptionsViewTests(TestCase):
 
     @patch("apps.learning.services.testcase_generator.generate_text_with_fallback")
     def test_force_re_touches_already_migrated_problems_in_topic(self, mocked_fallback):
-        mocked_fallback.return_value = "First scenario version."
+        mocked_fallback.return_value = _scenario_json("First scenario version.")
         self._post("Array")
         self.array_problem.refresh_from_db()
         self.assertTrue(self.array_problem.description_is_scenario)
@@ -183,7 +203,7 @@ class AdminTopicRegenerateScenarioDescriptionsViewTests(TestCase):
         self.assertEqual(response.json()["processed"], [])
 
         # With force, it re-touches the already-migrated problem.
-        mocked_fallback.return_value = "Reworded scenario version."
+        mocked_fallback.return_value = _scenario_json("Reworded scenario version.")
         response = self._post("Array", force=True)
         data = response.json()
         self.assertEqual(len(data["processed"]), 1)
@@ -221,12 +241,16 @@ class AdminGenerateScenarioDescriptionSingleProblemViewTests(TestCase):
 
     @patch("apps.learning.services.testcase_generator.generate_text_with_fallback")
     def test_generates_and_backs_up_original(self, mocked_fallback):
-        mocked_fallback.return_value = "A librarian must reshelve books matching two labels to a target."
+        mocked_fallback.return_value = _scenario_json(
+            "A librarian must reshelve books matching two labels to a target.", title="The Librarian's Label Match",
+        )
         response = self._post(self.problem.id)
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["title"], "The Librarian's Label Match")
 
         self.problem.refresh_from_db()
         self.assertEqual(self.problem.description, "A librarian must reshelve books matching two labels to a target.")
+        self.assertEqual(self.problem.title, "The Librarian's Label Match")
         self.assertTrue(self.problem.description_is_scenario)
         self.assertEqual(self.problem.description_original, "Original raw statement.")
 
@@ -238,12 +262,12 @@ class AdminGenerateScenarioDescriptionSingleProblemViewTests(TestCase):
 
     @patch("apps.learning.services.testcase_generator.generate_text_with_fallback")
     def test_force_regenerates_without_re_backing_up(self, mocked_fallback):
-        mocked_fallback.return_value = "First version."
+        mocked_fallback.return_value = _scenario_json("First version.")
         self._post(self.problem.id)
         self.problem.refresh_from_db()
         original_backup = self.problem.description_original
 
-        mocked_fallback.return_value = "Second version."
+        mocked_fallback.return_value = _scenario_json("Second version.")
         response = self._post(self.problem.id, force=True)
         self.assertEqual(response.status_code, 200)
 
