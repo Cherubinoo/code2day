@@ -67,6 +67,7 @@ __all__ = [
     '_validate_interview_question_payload',
     '_compute_skill_insights',
     '_build_student_performance_charts',
+    '_build_department_performance_charts',
     'publish_contest_helper',
     '_mask_api_key',
     '_extract_balanced_braces',
@@ -1503,6 +1504,178 @@ def _build_student_performance_charts(student, solved_problems=None, topic_accur
             'aptitude_solved': aptitude_solved,
             'contest_solved': contest_solved,
             'active_days': active_days,
+        },
+    }
+
+def _build_department_performance_charts(department, institution, days=30):
+    """Department-wide analogue of _build_student_performance_charts — same
+    chart shapes (overall_performance / profile_radar / daily_solved_trend /
+    knowledge_distribution / contest_performance), aggregated across every
+    student in the department instead of one student. Feeds the HOD
+    'Department Performance & Analytics' tab, which used to be wired to
+    fabricated stand-ins (student-count-derived proxies) instead of real
+    department solving data — this is the real thing."""
+    student_ids = list(
+        StudentProfile.objects.filter(department=department, institution=institution).values_list('id', flat=True)
+    )
+    num_students = max(1, len(student_ids))
+
+    total_programming = Problem.objects.count()
+    total_aptitude = AptitudeQuestion.objects.count()
+
+    programming_solved = SolvedProblem.objects.filter(student_id__in=student_ids).count()
+    aptitude_solved = SolvedAptitude.objects.filter(student_id__in=student_ids).count()
+
+    accepted_contest_solved = (
+        ContestSubmission.objects
+        .filter(student_id__in=student_ids, status='Accepted')
+        .values('contest_id', 'problem_id', 'student_id')
+        .distinct()
+        .count()
+    )
+    aptitude_contest_solved = AptitudeContestSubmission.objects.filter(student_id__in=student_ids, is_correct=True).count()
+    contest_solved = accepted_contest_solved + aptitude_contest_solved
+
+    start_day = timezone.localdate() - timedelta(days=days - 1)
+    date_labels = [(start_day + timedelta(days=i)) for i in range(days)]
+
+    def counts_by_date(qs, date_field):
+        key = f'{date_field}__date'
+        rows = qs.filter(**{f'{date_field}__date__gte': start_day}).values(key).annotate(count=Count('id'))
+        return {row[key]: row['count'] for row in rows}
+
+    programming_by_day = counts_by_date(SolvedProblem.objects.filter(student_id__in=student_ids), 'solved_at')
+    aptitude_by_day = counts_by_date(SolvedAptitude.objects.filter(student_id__in=student_ids), 'solved_at')
+    contest_code_by_day = counts_by_date(ContestSubmission.objects.filter(student_id__in=student_ids, status='Accepted'), 'submitted_at')
+    contest_apt_by_day = counts_by_date(AptitudeContestSubmission.objects.filter(student_id__in=student_ids, is_correct=True), 'submitted_at')
+
+    cumulative = 0
+    daily_solved_trend = []
+    for day in date_labels:
+        programming_count = programming_by_day.get(day, 0)
+        aptitude_count = aptitude_by_day.get(day, 0)
+        contest_count = contest_code_by_day.get(day, 0) + contest_apt_by_day.get(day, 0)
+        cumulative += programming_count + aptitude_count
+        daily_solved_trend.append({
+            'date': day.isoformat(),
+            'programming': programming_count,
+            'aptitude': aptitude_count,
+            'contest': contest_count,
+            'daily_total': programming_count + aptitude_count,
+            'overall_total': cumulative,
+        })
+
+    active_days = sum(1 for row in daily_solved_trend if row['daily_total'] > 0)
+    overall_possible = max(1, (total_programming + total_aptitude) * num_students)
+    overall_solved = programming_solved + aptitude_solved
+    contest_attempts = ContestParticipation.objects.filter(student_id__in=student_ids, is_active=False).count()
+    contest_perf_pct = min(100, round((contest_solved / max(1, contest_attempts)) * 20, 1)) if contest_attempts else 0
+
+    programming_tags = defaultdict(int)
+    for sp in SolvedProblem.objects.filter(student_id__in=student_ids).select_related('problem'):
+        tags = sp.problem.tags or []
+        if isinstance(tags, str):
+            tags = [tag.strip() for tag in tags.split(',') if tag.strip()]
+        if tags:
+            for tag in list(tags)[:4]:
+                programming_tags[str(tag).strip().title()] += 1
+        else:
+            programming_tags[sp.problem.difficulty or 'Programming'] += 1
+
+    aptitude_topics = defaultdict(int)
+    for row in SolvedAptitude.objects.filter(student_id__in=student_ids).values('question__topic__title').annotate(count=Count('id')).order_by('-count')[:10]:
+        topic = row['question__topic__title'] or 'Aptitude'
+        aptitude_topics[topic] += row['count']
+
+    topic_labels = []
+    for label, _ in sorted(programming_tags.items(), key=lambda item: item[1], reverse=True)[:6]:
+        if label not in topic_labels:
+            topic_labels.append(label)
+    for label, _ in sorted(aptitude_topics.items(), key=lambda item: item[1], reverse=True)[:6]:
+        if label not in topic_labels:
+            topic_labels.append(label)
+    topic_labels = topic_labels[:8]
+
+    knowledge_distribution = {
+        'labels': topic_labels,
+        'programming': [programming_tags.get(label, 0) for label in topic_labels],
+        'aptitude': [aptitude_topics.get(label, 0) for label in topic_labels],
+    }
+
+    # One row per contest the department has participated in, built from
+    # each participation's own cached problems_solved/total_score rather
+    # than re-querying every submission per student — avoids an N+1 query
+    # per participant across a whole department.
+    by_contest = {}
+    for cp in (
+        ContestParticipation.objects
+        .filter(student_id__in=student_ids, is_active=False)
+        .select_related('contest')
+        .order_by('started_at')
+    ):
+        c = cp.contest
+        entry = by_contest.setdefault(c.id, {'contest': c, 'solved_sum': 0, 'participants': 0, 'started_at': cp.started_at})
+        entry['solved_sum'] += cp.problems_solved
+        entry['participants'] += 1
+        entry['started_at'] = min(entry['started_at'], cp.started_at)
+
+    contest_performance = []
+    for entry in sorted(by_contest.values(), key=lambda e: e['started_at'])[-25:]:
+        c = entry['contest']
+        total_items = c.aptitude_questions.count() if c.contest_type == 'aptitude' else c.problems.count()
+        avg_solved = round(entry['solved_sum'] / max(1, entry['participants']), 1)
+        contest_performance.append({
+            'label': c.title[:18],
+            'title': c.title,
+            'date': entry['started_at'].date().isoformat(),
+            'contest_type': c.contest_type,
+            'solved': avg_solved,
+            'total': total_items,
+            'score_pct': round(avg_solved / max(1, total_items) * 100, 1),
+            'participants': entry['participants'],
+        })
+
+    return {
+        'overall_performance': [
+            {'label': 'Programming', 'value': programming_solved},
+            {'label': 'Aptitude', 'value': aptitude_solved},
+            {'label': 'Contest', 'value': contest_solved},
+        ],
+        'profile_radar': {
+            'labels': ['Programming', 'Aptitude', 'Contest', 'Daily', 'Overall'],
+            'daily': [
+                round(programming_by_day.get(timezone.localdate(), 0) / max(1, programming_solved) * 100, 1),
+                round(aptitude_by_day.get(timezone.localdate(), 0) / max(1, aptitude_solved) * 100, 1),
+                round((contest_code_by_day.get(timezone.localdate(), 0) + contest_apt_by_day.get(timezone.localdate(), 0)) / max(1, contest_solved) * 100, 1),
+                round(active_days / days * 100, 1),
+                round((programming_by_day.get(timezone.localdate(), 0) + aptitude_by_day.get(timezone.localdate(), 0)) / max(1, overall_solved) * 100, 1),
+            ],
+            'overall': [
+                round(programming_solved / max(1, total_programming * num_students) * 100, 1),
+                round(aptitude_solved / max(1, total_aptitude * num_students) * 100, 1),
+                contest_perf_pct,
+                round(active_days / days * 100, 1),
+                round(overall_solved / overall_possible * 100, 1),
+            ],
+        },
+        'knowledge_distribution': knowledge_distribution,
+        'daily_solved_trend': daily_solved_trend,
+        'contest_performance': contest_performance,
+        # Department-wide average bank progress (solved / (bank size * student
+        # count)) rather than raw solved / bank size — the latter can exceed
+        # 100% trivially once more than one student has solved the same
+        # question, which reads as a broken percentage rather than a stat.
+        'aptitude': {
+            'solved': aptitude_solved,
+            'total': total_aptitude,
+            'percentage': round(aptitude_solved / max(1, total_aptitude * num_students) * 100, 1),
+        },
+        'summary_cards': {
+            'programming_solved': programming_solved,
+            'aptitude_solved': aptitude_solved,
+            'contest_solved': contest_solved,
+            'active_days': active_days,
+            'student_count': num_students,
         },
     }
 

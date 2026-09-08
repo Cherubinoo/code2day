@@ -240,6 +240,7 @@ from .views import (
     HODCompanyDetailView,
     SystemAdminDashboardView,
     DepartmentDetailView,
+    DepartmentPerformanceAnalyticsView,
     StaffInstitutionDetailView,
     StaffPerformanceView,
     StaffDetailView,
@@ -398,6 +399,7 @@ urlpatterns = [
     path("admin/v2/institutions/<int:inst_pk>/departments/", DepartmentManagementView.as_view(), name="admin-dept-mgmt"),
     path("admin/v2/institutions/<int:inst_pk>/departments/<int:pk>/", DepartmentManagementView.as_view(), name="admin-dept-mgmt-detail"),
     path("departments/<int:dept_id>/details/", DepartmentDetailView.as_view(), name="department-detail"),
+    path("departments/<int:dept_id>/performance-analytics/", DepartmentPerformanceAnalyticsView.as_view(), name="department-performance-analytics"),
 
     # Competitive Practice — Examinations & Syllabus (admin content bank)
     path("admin/v2/examinations/", AdminExaminationListCreateView.as_view(), name="admin-examination-list"),

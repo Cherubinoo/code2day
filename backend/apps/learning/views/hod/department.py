@@ -164,6 +164,50 @@ class DepartmentDetailView(APIView):
             },
         })
 
+class DepartmentPerformanceAnalyticsView(APIView):
+    """Real department-wide solving analytics for the HOD 'Department
+    Performance & Analytics' tab — overall performance split, a profile
+    radar, a daily solved trend, and a knowledge/topic distribution,
+    aggregated across every student in the department. Replaces a frontend
+    stopgap that fabricated these numbers from student-count proxies
+    (e.g. "80% of student count" standing in for aptitude solved) whenever
+    real per-student solving data wasn't threaded through."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, dept_id):
+        is_staff = hasattr(request.user, 'staff_profile')
+        is_admin = request.user.is_superuser
+
+        if not is_staff and not is_admin:
+            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        user_profile = request.user.staff_profile if is_staff else None
+        user_role = user_profile.role if user_profile else None
+        inst = user_profile.institution if user_profile else None
+
+        dept = get_object_or_404(Department, id=dept_id)
+
+        if is_staff:
+            if user_role in ("hod", "academics") and dept != user_profile.department:
+                return Response({"detail": "You can only view your own department."}, status=status.HTTP_403_FORBIDDEN)
+            if dept.institution != inst:
+                return Response({"detail": "You do not have access to this department."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            days = int(request.query_params.get('days', 30))
+        except (TypeError, ValueError):
+            days = 30
+        days = max(7, min(90, days))
+
+        charts = _build_department_performance_charts(dept, dept.institution, days=days)
+
+        return Response({
+            "department": {"id": dept.id, "name": dept.name, "code": dept.code},
+            "days": days,
+            "charts": charts,
+        })
+
+
 class DepartmentStudentsFilterView(APIView):
     """Get students in department with filtering options"""
     permission_classes = [IsAuthenticated]

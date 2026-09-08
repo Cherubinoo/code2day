@@ -350,6 +350,21 @@ def _bar_chart(data, labels, bar_color=_INDIGO, w=300, h=120):
     return d
 
 
+def _progress_bar(pct, color=_INDIGO, w=120, h=10, bg='#e5e7eb'):
+    """A small horizontal proportional-fill bar (0.0-1.0), used inline in
+    table cells. Replaces the old ASCII block-character (█/░) bars, which
+    render inconsistently across PDF viewers/fonts and read as clutter
+    rather than a clear visual — a crisp colored rectangle reads instantly
+    at a glance regardless of viewer or zoom level."""
+    d = Drawing(w, h)
+    pct = max(0.0, min(1.0, pct))
+    d.add(Rect(0, 0, w, h, fillColor=_hx(bg), strokeColor=None))
+    if pct > 0:
+        d.add(Rect(0, 0, max(w * pct, 1.5 if pct > 0 else 0), h, fillColor=_hx(color), strokeColor=None))
+    d.add(Rect(0, 0, w, h, fillColor=None, strokeColor=_hx(_BORDER), strokeWidth=0.5))
+    return d
+
+
 def _spider_chart(data, labels, max_val=100, size=150):
     """Return a Drawing with a radar/spider chart."""
     from reportlab.graphics.charts.spider import SpiderChart

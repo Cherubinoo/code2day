@@ -86,6 +86,9 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
   const [unreadDiscussCount, setUnreadDiscussCount] = useState(0);
   const [departments, setDepartments] = useState([]);
   const [selectedDeptId, setSelectedDeptId] = useState(null);
+  const [deptAnalytics, setDeptAnalytics] = useState(null);
+  const [deptAnalyticsLoading, setDeptAnalyticsLoading] = useState(false);
+  const [deptAnalyticsDays, setDeptAnalyticsDays] = useState(30);
 
   // Contest tab specific state
   const [hodContestSearch, setHodContestSearch] = useState('');
@@ -251,6 +254,34 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
       // silent fail — chart just keeps showing the previous range
     }
   }
+
+  // Real department-wide solving analytics for the Performance tab — this
+  // used to be faked from student-count proxies (e.g. "80% of student
+  // count" standing in for aptitude solved) whenever nobody had wired real
+  // per-student data through, which is why the daily-trend and topic charts
+  // always rendered empty regardless of how much the department had solved.
+  async function fetchDeptAnalytics(deptId, days) {
+    if (!deptId) return;
+    setDeptAnalyticsLoading(true);
+    try {
+      const res = await fetch(`/api/departments/${deptId}/performance-analytics/?days=${days}`, { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setDeptAnalytics(data.charts || null);
+      }
+    } catch (err) {
+      // silent fail — panel just keeps showing the previous data (or empty state)
+    } finally {
+      setDeptAnalyticsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activeTab === 'performance' && department?.id) {
+      fetchDeptAnalytics(department.id, deptAnalyticsDays);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, department?.id, deptAnalyticsDays]);
 
   async function handleStaffClick(facultyId) {
     setSelectedStaff(facultyId);
@@ -1073,27 +1104,56 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
           {activeTab === 'performance' && (
             <div className="performance-tab">
               <div className="premium-card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
                   <div>
                     <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>
                       Department Performance &amp; Analytics
                     </h3>
                     <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '14px' }}>
-                      Overall student solving activity, contest benchmarks, and skill distribution for {department?.name || 'your department'}.
+                      Real solving activity across every student in {department?.name || 'your department'} — problems, aptitude, and contests, not a proxy estimate.
                     </p>
                   </div>
+                  <div style={{ display: 'flex', background: 'var(--bg-2)', borderRadius: 10, padding: 3, gap: 2 }}>
+                    {[7, 30, 90].map((d) => (
+                      <button
+                        key={d}
+                        onClick={() => setDeptAnalyticsDays(d)}
+                        style={{
+                          padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                          fontSize: 12, fontWeight: 700,
+                          background: deptAnalyticsDays === d ? 'var(--olive-900)' : 'transparent',
+                          color: deptAnalyticsDays === d ? 'white' : 'var(--text-soft)',
+                          transition: 'all 0.15s',
+                        }}
+                      >
+                        {d}d
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <PerformanceDashboard
-                  scoreHistory={leaderboard || []}
-                  testsCompleted={stats.totalContests || 0}
-                  solvedCount={stats.studentCount || 0}
-                  summaryCards={{
-                    programming_solved: stats.totalContests || 0,
-                    aptitude_solved: Math.round((stats.studentCount || 0) * 0.8),
-                    contest_solved: stats.totalContests || 0,
-                    active_days: weeklyActivity.length || 7,
-                  }}
-                />
+                {deptAnalyticsLoading && !deptAnalytics ? (
+                  <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--text-soft)', fontSize: 14 }}>
+                    Loading department analytics…
+                  </div>
+                ) : (
+                  <PerformanceDashboard
+                    scoreHistory={leaderboard || []}
+                    testsCompleted={stats.totalContests || 0}
+                    solvedCount={stats.studentCount || 0}
+                    overallPerformance={deptAnalytics?.overall_performance || []}
+                    profileRadar={deptAnalytics?.profile_radar}
+                    dailySolvedTrend={deptAnalytics?.daily_solved_trend || []}
+                    knowledgeDistribution={deptAnalytics?.knowledge_distribution}
+                    contestPerformance={deptAnalytics?.contest_performance || []}
+                    aptitude={deptAnalytics?.aptitude}
+                    summaryCards={deptAnalytics?.summary_cards || {
+                      programming_solved: 0,
+                      aptitude_solved: 0,
+                      contest_solved: 0,
+                      active_days: 0,
+                    }}
+                  />
+                )}
               </div>
             </div>
           )}

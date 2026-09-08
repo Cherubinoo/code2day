@@ -50,7 +50,7 @@ class StudentReportPDFView(APIView):
         # ── Build PDF ────────────────────────────────────────────────────
         from ...pdf_reports import (
             create_watermarked_pdf_contest, _bar_chart, _pie_chart,
-            _spider_chart, _bell_curve_chart,
+            _spider_chart, _bell_curve_chart, _progress_bar,
         )
         buffer = BytesIO()
         doc = create_watermarked_pdf_contest(
@@ -150,6 +150,11 @@ class StudentReportPDFView(APIView):
             'contests': 'Contest Participation Report',
         }
         els.append(Paragraph(report_titles.get(report_type, 'Student Performance Report'), title_style))
+        els.append(Paragraph(
+            f"Prepared for <b>{student.name}</b> ({student.register_number}) — every figure below reflects "
+            f"this student's own solved problems, attempts, and activity, not a class average.",
+            sub_style,
+        ))
 
         # ── Section 1: Student Info Card ─────────────────────────────────
         els.append(Paragraph("Student Information", header_style))
@@ -203,6 +208,11 @@ class StudentReportPDFView(APIView):
         # ── Section 4: Difficulty Breakdown Chart ────────────────────────
         if rd['total_solved'] > 0:
             els.append(Paragraph("Difficulty Breakdown", header_style))
+            first_name = student.name.split()[0] if student.name else "This student"
+            els.append(Paragraph(
+                f"Share of {first_name}'s {rd['total_solved']} solved problems by difficulty level.",
+                sub_style,
+            ))
             diff_values = [rd['easy'], rd['medium'], rd['hard']]
             diff_labels = ['Easy', 'Medium', 'Hard']
             diff_colors = ['#22c55e', '#f59e0b', '#ef4444']
@@ -210,15 +220,49 @@ class StudentReportPDFView(APIView):
             els.append(Spacer(1, 0.2 * inch))
 
         # ── Section 5: Topic-by-Topic Breakdown ──────────────────────────
-        if rd['topic_breakdown']:
+        # Programming tags and Aptitude topics are shown as two clearly
+        # labeled tables rather than one merged list — a solved-count under
+        # an unlabeled "Topic" column left it ambiguous whether "Arrays" (a
+        # programming tag) and "Percentages" (an aptitude topic) were even
+        # measuring the same kind of practice.
+        LEVEL_COLORS = {'Not Started': '#94a3b8', 'Beginner': '#b45309', 'Intermediate': '#1d4ed8', 'Advanced': '#15803d'}
+        _level_style_cache = {}
+
+        def _level_cell(level):
+            style = _level_style_cache.get(level)
+            if style is None:
+                style = ParagraphStyle(
+                    f'RPLevel{level.replace(" ", "")}', parent=styles['Normal'], fontName='Helvetica-Bold',
+                    fontSize=8, textColor=colors.HexColor(LEVEL_COLORS.get(level, '#333333')),
+                )
+                _level_style_cache[level] = style
+            return Paragraph(level, style)
+
+        def _topic_table(rows, threshold=10):
+            data = [["Topic", "Solved", "Proficiency", f"Progress to Advanced ({threshold}+)"]]
+            for tb in rows:
+                bar_color = LEVEL_COLORS.get(tb['level'], '#4f46e5')
+                data.append([
+                    tb['topic'], str(tb['count']), _level_cell(tb['level']),
+                    _progress_bar(tb['count'] / threshold, color=bar_color, w=130, h=10),
+                ])
+            return _styled_table(data, [1.9 * inch, 0.7 * inch, 1.2 * inch, 2.6 * inch])
+
+        if rd['programming_topic_breakdown'] or rd['aptitude_topic_breakdown']:
             els.append(Paragraph("Topic-by-Topic Breakdown", header_style))
-            els.append(Paragraph("Proficiency: Not Started (0) → Beginner (1-4) → Intermediate (5-9) → Advanced (10+)", sub_style))
-            topic_data = [["Topic", "Solved", "Proficiency", "Progress"]]
-            for tb in rd['topic_breakdown']:
-                bar_len = min(tb['count'], 15)
-                bar = '█' * bar_len + '░' * (15 - bar_len)
-                topic_data.append([tb['topic'], str(tb['count']), tb['level'], bar])
-            els.append(_styled_table(topic_data, [2 * inch, 0.8 * inch, 1.3 * inch, 2.4 * inch]))
+            els.append(Paragraph(
+                "Proficiency is based on problems solved per topic: Not Started (0) -&gt; Beginner (1-4) "
+                "-&gt; Intermediate (5-9) -&gt; Advanced (10+). Programming and Aptitude are tracked "
+                "separately since they draw from different question banks.",
+                sub_style,
+            ))
+            if rd['programming_topic_breakdown']:
+                els.append(Paragraph("Programming Topics", ParagraphStyle('RPSubHeader', parent=sub_style, fontName='Helvetica-Bold', fontSize=9.5, textColor=colors.HexColor(GREEN_HDR), spaceBefore=6, spaceAfter=4)))
+                els.append(_topic_table(rd['programming_topic_breakdown']))
+                els.append(Spacer(1, 0.15 * inch))
+            if rd['aptitude_topic_breakdown']:
+                els.append(Paragraph("Aptitude Topics", ParagraphStyle('RPSubHeader2', parent=sub_style, fontName='Helvetica-Bold', fontSize=9.5, textColor=colors.HexColor(GREEN_HDR), spaceBefore=6, spaceAfter=4)))
+                els.append(_topic_table(rd['aptitude_topic_breakdown']))
             els.append(Spacer(1, 0.25 * inch))
 
         # ── Section 6: 12-Week Trend ─────────────────────────────────────
@@ -255,6 +299,11 @@ class StudentReportPDFView(APIView):
 
         # Overall pie + daily trend bar
         els.append(Paragraph("Performance Charts", header_style))
+        els.append(Paragraph(
+            "A visual summary of activity across Programming, Aptitude, and Contests, and how "
+            "problem-solving has trended day to day over the last two weeks.",
+            sub_style,
+        ))
         overall_rows = chart_data.get('overall_performance', [])
         overall_values = [row.get('value', 0) for row in overall_rows]
         overall_labels = [row.get('label', '') for row in overall_rows]
@@ -302,10 +351,13 @@ class StudentReportPDFView(APIView):
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ]))
         els.append(adv_table)
+        caption_style = ParagraphStyle('RPCaption', parent=styles['Normal'], fontSize=7.5, textColor=colors.HexColor('#6b7280'), alignment=1)
         adv_labels = Table([
-            [Paragraph("Strength Analysis", styles['Normal']), Paragraph("Platform Standing (Percentile)", styles['Normal'])],
+            [Paragraph("<b>Strength Analysis</b>", styles['Normal']), Paragraph("<b>Platform Standing (Percentile)</b>", styles['Normal'])],
+            [Paragraph("Programming, Aptitude, Contest, Daily-activity, and Overall scores (0-100, further out = stronger).", caption_style),
+             Paragraph("Where this student's campus rank falls on the normal distribution of every student's rank.", caption_style)],
         ], colWidths=[2.2 * inch, 4.2 * inch])
-        adv_labels.setStyle(TableStyle([('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTSIZE', (0, 0), (-1, -1), 8)]))
+        adv_labels.setStyle(TableStyle([('ALIGN', (0, 0), (-1, -1), 'CENTER'), ('FONTSIZE', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, 0), 2)]))
         els.append(adv_labels)
         els.append(Spacer(1, 0.2 * inch))
 
@@ -319,6 +371,10 @@ class StudentReportPDFView(APIView):
         ]
         if knowledge_labels:
             els.append(Paragraph("Knowledge Distribution", header_style))
+            els.append(Paragraph(
+                "Solved-problem counts across this student's top topics (Programming + Aptitude combined per topic).",
+                sub_style,
+            ))
             els.append(_bar_chart(knowledge_values, [label[:12] for label in knowledge_labels], bar_color='#4f46e5', w=480, h=150))
             els.append(Spacer(1, 0.25 * inch))
 
@@ -494,31 +550,40 @@ class StudentReportPDFView(APIView):
         total_students = StudentProfile.objects.filter(institution=student.institution).count()
 
         # ── Topic-by-topic breakdown ─────────────────────────────────────
-        # Combine programming tags + aptitude topics
-        all_topics = dict(skill_counts)  # already has programming tags
+        # Kept as two separate, labeled groups (Programming vs Aptitude)
+        # rather than merged into one undifferentiated "Topic" list — a
+        # programming tag ("Arrays") and an aptitude topic ("Percentages")
+        # measure different kinds of practice, so blending their counts
+        # together under one number reads as more mysterious than useful.
+        def _proficiency_level(count):
+            if count == 0:
+                return "Not Started"
+            if count <= 4:
+                return "Beginner"
+            if count <= 9:
+                return "Intermediate"
+            return "Advanced"
 
-        # Add aptitude topic counts
         apt_topic_qs = SolvedAptitude.objects.filter(student=student).values(
             'question__topic__title'
         ).annotate(count=Count('id')).order_by('-count')
+        aptitude_topic_counts = defaultdict(int)
         for row in apt_topic_qs:
             topic = row['question__topic__title']
             if topic:
-                key = topic.strip().title()
-                all_topics[key] = all_topics.get(key, 0) + row['count']
+                aptitude_topic_counts[topic.strip().title()] += row['count']
 
-        # Build proficiency list
-        topic_breakdown = []
-        for topic, count in sorted(all_topics.items(), key=lambda x: x[1], reverse=True):
-            if count == 0:
-                level = "Not Started"
-            elif count <= 4:
-                level = "Beginner"
-            elif count <= 9:
-                level = "Intermediate"
-            else:
-                level = "Advanced"
-            topic_breakdown.append({'topic': topic, 'count': count, 'level': level})
+        programming_topic_breakdown = [
+            {'topic': topic, 'count': count, 'level': _proficiency_level(count), 'category': 'Programming'}
+            for topic, count in sorted(skill_counts.items(), key=lambda x: x[1], reverse=True)
+        ]
+        aptitude_topic_breakdown = [
+            {'topic': topic, 'count': count, 'level': _proficiency_level(count), 'category': 'Aptitude'}
+            for topic, count in sorted(aptitude_topic_counts.items(), key=lambda x: x[1], reverse=True)
+        ]
+        # Combined list — still used by insights/action-plan generation,
+        # which only care about topic/count/level, not which group it came from.
+        topic_breakdown = programming_topic_breakdown + aptitude_topic_breakdown
 
         # ── 12-Week Trend ────────────────────────────────────────────────
         today = timezone.localdate()
@@ -675,6 +740,8 @@ class StudentReportPDFView(APIView):
             'contest_submissions': contest_submissions,
             'consistency_notes': consistency_notes,
             'topic_breakdown': topic_breakdown,
+            'programming_topic_breakdown': programming_topic_breakdown,
+            'aptitude_topic_breakdown': aptitude_topic_breakdown,
             'weekly_trend': weekly_trend,
             'company_readiness': company_readiness,
             'insights': insights,
