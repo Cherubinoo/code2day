@@ -201,7 +201,22 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
               const filteredStaff = staffData.staff?.filter(s => s.department_id === deptId) || [];
               setStaffList(filteredStaff);
               setDepartment(deptData.department);
-              setDepartmentStudents(deptData.analytics?.batch_wise?.[0]?.students || []); // Fallback
+              // deptData.analytics.batch_wise is one entry per batch, and
+              // each entry's own `students` never carries a `batch` field
+              // (it's implied by the parent group) — flatten every batch's
+              // students here and stamp `batch` back onto each one, or the
+              // Batch Analytics tab's own re-grouping (which reads
+              // student.batch) dumps every student into a fake "Unknown"
+              // batch. Previously this only ever read batch_wise[0], so
+              // every batch past the first was silently dropped too — that
+              // went unnoticed because HOD/Academics have no department
+              // switcher to trigger this code path; TPU/Director/Principal
+              // do.
+              setDepartmentStudents(
+                (deptData.analytics?.batch_wise || []).flatMap((bw) =>
+                  (bw.students || []).map((s) => ({ ...s, batch: bw.batch }))
+                )
+              );
               setStats(prev => ({ ...prev, staffCount: filteredStaff.length }));
             }
             
