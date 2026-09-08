@@ -24,6 +24,7 @@ import { useTabNav } from '../../lib/useTabNav';
 import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
 import SolvingActivityChart from '../common/SolvingActivityChart';
 import HourlyBatchReportModal from '../common/HourlyBatchReportModal';
+import { addLeadershipStaff, editLeadershipStaff, deleteLeadershipStaff } from '../leadership/leadershipStaffApi';
 
 
 
@@ -640,22 +641,28 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
     askDouble(
       async () => {
         try {
-          const csrfToken = getCsrfToken();
-          const headers = {};
-          if (csrfToken) headers['X-CSRFToken'] = csrfToken;
-          const res = await fetch(`/api/hod/staff/${staff.faculty_id}/`, {
-            method: 'DELETE',
-            credentials: 'include',
-            headers,
-          });
-          if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
-            alert(data.error || 'Failed to delete staff');
-            return;
+          if (isInstitutionLead) {
+            // TPU/Director/Principal: institution-wide endpoint — see
+            // components/leadership/leadershipStaffApi.js.
+            await deleteLeadershipStaff(staff.faculty_id);
+          } else {
+            const csrfToken = getCsrfToken();
+            const headers = {};
+            if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+            const res = await fetch(`/api/hod/staff/${staff.faculty_id}/`, {
+              method: 'DELETE',
+              credentials: 'include',
+              headers,
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              alert(data.error || 'Failed to delete staff');
+              return;
+            }
           }
           setStaffList(prev => prev.filter(s => s.faculty_id !== staff.faculty_id));
-        } catch {
-          alert('Network error. Please try again.');
+        } catch (err) {
+          alert(err.message || 'Network error. Please try again.');
         }
       },
       `Delete ${staff.name}?`,
@@ -672,25 +679,33 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
     setStaffFormBusy(true);
     setStaffFormErr('');
     try {
-      const csrfToken = getCsrfToken();
-      const headers = { 'Content-Type': 'application/json' };
-      if (csrfToken) headers['X-CSRFToken'] = csrfToken;
-      const body = isAdding
-        ? { faculty_id: faculty_id.trim(), name: name.trim(), role, password: password.trim(), ...(isInstitutionLead ? { department_id } : {}) }
-        : { name: name.trim(), role, ...(password.trim() ? { password: password.trim() } : {}) };
-      const url = isAdding ? '/api/hod/staff/' : `/api/hod/staff/${staffForm.faculty_id}/`;
-      const res = await fetch(url, {
-        method: isAdding ? 'POST' : 'PUT',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setStaffFormErr(data.error || 'Failed to save');
-        setStaffFormBusy(false);
-        return;
-      }
+      // TPU/Director/Principal go through the dedicated institution-wide
+      // endpoint (components/leadership/leadershipStaffApi.js); HOD/
+      // Academics keep using their own department-scoped one. Both throw
+      // on failure so the catch block below handles both uniformly.
+      const data = isInstitutionLead
+        ? isAdding
+          ? await addLeadershipStaff({ faculty_id: faculty_id.trim(), name: name.trim(), role, password: password.trim(), department_id })
+          : await editLeadershipStaff(staffForm.faculty_id, { name: name.trim(), role, password: password.trim() })
+        : await (async () => {
+            const csrfToken = getCsrfToken();
+            const headers = { 'Content-Type': 'application/json' };
+            if (csrfToken) headers['X-CSRFToken'] = csrfToken;
+            const body = isAdding
+              ? { faculty_id: faculty_id.trim(), name: name.trim(), role, password: password.trim() }
+              : { name: name.trim(), role, ...(password.trim() ? { password: password.trim() } : {}) };
+            const url = isAdding ? '/api/hod/staff/' : `/api/hod/staff/${staffForm.faculty_id}/`;
+            const res = await fetch(url, {
+              method: isAdding ? 'POST' : 'PUT',
+              credentials: 'include',
+              headers,
+              body: JSON.stringify(body),
+            });
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.error || 'Failed to save');
+            return json;
+          })();
+
       // Update local staffList
       if (isAdding) {
         // The backend now returns the actual department_id the new staff
@@ -706,8 +721,8 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
         }
       }
       closeStaffForm();
-    } catch {
-      setStaffFormErr('Network error. Please try again.');
+    } catch (err) {
+      setStaffFormErr(err.message || 'Network error. Please try again.');
       setStaffFormBusy(false);
     }
   }

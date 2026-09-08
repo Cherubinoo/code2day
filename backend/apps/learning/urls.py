@@ -237,6 +237,8 @@ from .views import (
     InstitutionManagementView,
     HODManageStaffView,
     HODManageStaffDetailView,
+    LeadershipManageStaffView,
+    LeadershipManageStaffDetailView,
     HODCompanyListView,
     HODCompanyDetailView,
     SystemAdminDashboardView,
@@ -597,6 +599,8 @@ urlpatterns = [
     # ── HOD Staff Management ─────────────────────────────────────────────────
     path("hod/staff/",                  HODManageStaffView.as_view(),       name="hod-manage-staff"),
     path("hod/staff/<str:faculty_id>/", HODManageStaffDetailView.as_view(), name="hod-manage-staff-detail"),
+    path("leadership/staff/",                  LeadershipManageStaffView.as_view(),       name="leadership-manage-staff"),
+    path("leadership/staff/<str:faculty_id>/", LeadershipManageStaffDetailView.as_view(), name="leadership-manage-staff-detail"),
 
     # ── HOD Company Management (Company Based Lab Practical) ─────────────────
     path("hod/companies/",                     HODCompanyListView.as_view(),   name="hod-companies-list"),

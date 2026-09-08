@@ -1,6 +1,13 @@
 """Views extracted from the original monolithic apps/learning/views.py
 (module: hod/staff_management). Pure code motion — see apps/learning/views/_imports.py
-and _shared.py for why this split can't hit a missing-name error."""
+and _shared.py for why this split can't hit a missing-name error.
+
+Department-scoped staff management for HOD/Academics. The institution-wide
+equivalent for TPU/Director/Principal lives in
+apps/learning/views/leadership/staff_management.py — they're different
+enough (scoped to one department vs. any department in the institution)
+that keeping them as separate views reads more clearly than one view
+branching on role, even though the request/response shapes look similar."""
 from .._imports import *
 from .._shared import *
 
@@ -17,27 +24,16 @@ class HODDeptStaffView(APIView):
         )
         return Response(list(dept_staff))
 
-
-# Institution-wide leadership roles — TPU, Director, and Principal are all
-# the same function: full institution visibility, and they can add a new
-# staff member or HOD to any department, unlike HOD/Academics who are
-# scoped to their own department.
-INSTITUTION_WIDE_STAFF_ROLES = ("tpu", "director", "principal")
-
-
 class HODManageStaffView(APIView):
-    """HOD/Academics: add new staff member to own department. TPU/Director/
-    Principal: add new staff member to any department in their institution
-    (they have no home department themselves, so the caller must say which
-    department the new staff/HOD belongs to)."""
+    """HOD: add new staff member to own department."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         hod = _staff_from_request(request)
-        if not hod or hod.role not in ("hod", "academics", "admin") + INSTITUTION_WIDE_STAFF_ROLES:
+        if not hod or hod.role not in ("hod", "academics", "admin"):
             return Response({"error": "HOD access required"}, status=403)
-        if not hod.institution:
-            return Response({"error": "No institution assigned to your account"}, status=400)
+        if not hod.department or not hod.institution:
+            return Response({"error": "HOD has no department assigned"}, status=400)
 
         data = request.data
         faculty_id = (data.get("faculty_id") or "").strip()
@@ -52,21 +48,6 @@ class HODManageStaffView(APIView):
         if role not in ("staff", "hod", "academics", "tpu", "ja"):
             role = "staff"
 
-        if hod.role in INSTITUTION_WIDE_STAFF_ROLES:
-            # TPU/Director/Principal: institution-wide, not scoped to a home
-            # department (even if their own StaffProfile happens to carry a
-            # department FK) — the new staff/HOD's department must always
-            # be chosen explicitly.
-            department_id = data.get("department_id")
-            if not department_id:
-                return Response({"error": "department_id is required when adding staff institution-wide."}, status=400)
-            department = Department.objects.filter(id=department_id, institution=hod.institution).first()
-            if not department:
-                return Response({"error": "Department not found in your institution."}, status=400)
-        else:
-            # HOD/Academics: always their own department, same as before.
-            department = hod.department
-
         if StaffProfile.objects.filter(faculty_id=faculty_id).exists():
             return Response({"error": "A staff member with this Faculty ID already exists."}, status=400)
 
@@ -74,7 +55,7 @@ class HODManageStaffView(APIView):
             faculty_id=faculty_id,
             name=name,
             role=role,
-            department=department,
+            department=hod.department,
             institution=hod.institution,
             is_active=True,
             password=password,
@@ -85,26 +66,20 @@ class HODManageStaffView(APIView):
             "role": staff.role,
             "role_display": staff.get_role_display(),
             "is_active": staff.is_active,
-            "department_id": staff.department_id,
         }, status=201)
 
 class HODManageStaffDetailView(APIView):
-    """HOD/Academics: edit a staff member in own department. TPU/Director/
-    Principal: edit any staff member institution-wide."""
+    """HOD: edit a staff member in own department."""
     permission_classes = [IsAuthenticated]
-
-    def _find_target(self, hod, faculty_id):
-        if hod.role in INSTITUTION_WIDE_STAFF_ROLES:
-            return StaffProfile.objects.filter(faculty_id=faculty_id, institution=hod.institution).first()
-        return StaffProfile.objects.filter(faculty_id=faculty_id, department=hod.department).first()
 
     def put(self, request, faculty_id):
         hod = _staff_from_request(request)
-        if not hod or hod.role not in ("hod", "academics", "admin") + INSTITUTION_WIDE_STAFF_ROLES:
+        if not hod or hod.role not in ("hod", "academics", "admin"):
             return Response({"error": "HOD access required"}, status=403)
 
-        target = self._find_target(hod, faculty_id)
-        if not target:
+        try:
+            target = StaffProfile.objects.get(faculty_id=faculty_id, department=hod.department)
+        except StaffProfile.DoesNotExist:
             return Response({"error": "Staff not found in your department"}, status=404)
 
         data = request.data
@@ -130,11 +105,12 @@ class HODManageStaffDetailView(APIView):
 
     def delete(self, request, faculty_id):
         hod = _staff_from_request(request)
-        if not hod or hod.role not in ("hod", "academics", "admin") + INSTITUTION_WIDE_STAFF_ROLES:
+        if not hod or hod.role not in ("hod", "academics", "admin"):
             return Response({"error": "HOD access required"}, status=403)
 
-        target = self._find_target(hod, faculty_id)
-        if not target:
+        try:
+            target = StaffProfile.objects.get(faculty_id=faculty_id, department=hod.department)
+        except StaffProfile.DoesNotExist:
             return Response({"error": "Staff not found in your department"}, status=404)
 
         if target.id == hod.id:
@@ -146,4 +122,3 @@ class HODManageStaffDetailView(APIView):
         else:
             target.delete()
         return Response({"message": "Staff deleted"})
-
