@@ -1,8 +1,14 @@
 """Views extracted from the original monolithic apps/learning/views.py
 (module: common). Pure code motion — see apps/learning/views/_imports.py
 and _shared.py for why this split can't hit a missing-name error."""
+from django.core.cache import cache
+
 from ._imports import *
 from ._shared import *
+# Imported directly (not routed through _imports.py) since that module has
+# no __all__ and would silently drop this underscore-prefixed name on
+# `from .._imports import *` — see the _imports.py header comment.
+from ..middleware import _CONFIG_CACHE_KEY as _MAINTENANCE_CONFIG_CACHE_KEY
 
 
 class DashboardView(UnifiedAuthMixin, APIView):
@@ -210,27 +216,47 @@ class DashboardView(UnifiedAuthMixin, APIView):
         weekly_activity = build_weekly_activity(activity_calendar)
         topic_stats = build_topic_stats(profile)
         
-        # Unified Performance Ranking (Coding + Contests + Consistency)
-        students_with_counts = (
-            StudentProfile.objects.filter(institution=profile.institution)
-            .annotate(
-                coding_solved=Count(
-                    'solutions',
-                    filter=Q(solutions__all_tests_passed=True),
-                    distinct=True
-                ),
-                contests_attended=Count('contest_participations', distinct=True),
-                aptitude_solved=Count('solved_aptitude', distinct=True),
-            )
-            .order_by('-coding_solved', '-contests_attended', '-aptitude_solved', '-current_streak', 'name')
+        # Unified Performance Ranking (Coding + Contests + Consistency) —
+        # this used to materialize every student in the institution
+        # (annotated, then ordered) and scan for this one student's
+        # position in Python. On a ~2300-student institution that ran the
+        # full annotated query and instantiated ~2300 model objects on
+        # every single dashboard load. Same ranking/tie-break rule
+        # (coding solved > contests attended > aptitude solved > streak >
+        # name A-Z), computed instead as "how many students rank strictly
+        # better than me" via a single COUNT query.
+        annotate_ranking_fields = dict(
+            coding_solved=Count('solutions', filter=Q(solutions__all_tests_passed=True), distinct=True),
+            contests_attended=Count('contest_participations', distinct=True),
+            aptitude_solved=Count('solved_aptitude', distinct=True),
         )
-        
-        campus_rank = 1
-        for idx, student in enumerate(students_with_counts, start=1):
-            if student.id == profile.id:
-                campus_rank = idx
-                break
-        
+        my_ranking = (
+            StudentProfile.objects.filter(institution=profile.institution, id=profile.id)
+            .annotate(**annotate_ranking_fields)
+            .values('coding_solved', 'contests_attended', 'aptitude_solved')
+            .first()
+        ) or {'coding_solved': 0, 'contests_attended': 0, 'aptitude_solved': 0}
+        my_coding = my_ranking['coding_solved']
+        my_contests = my_ranking['contests_attended']
+        my_aptitude = my_ranking['aptitude_solved']
+        my_streak = profile.current_streak
+        my_name = profile.name or ''
+
+        better_count = (
+            StudentProfile.objects.filter(institution=profile.institution)
+            .annotate(**annotate_ranking_fields)
+            .filter(
+                Q(coding_solved__gt=my_coding) |
+                Q(coding_solved=my_coding, contests_attended__gt=my_contests) |
+                Q(coding_solved=my_coding, contests_attended=my_contests, aptitude_solved__gt=my_aptitude) |
+                Q(coding_solved=my_coding, contests_attended=my_contests, aptitude_solved=my_aptitude, current_streak__gt=my_streak) |
+                Q(coding_solved=my_coding, contests_attended=my_contests, aptitude_solved=my_aptitude, current_streak=my_streak, name__lt=my_name)
+            )
+            .count()
+        )
+        campus_rank = better_count + 1
+        total_students_in_institution = StudentProfile.objects.filter(institution=profile.institution).count()
+
         # Awards & Achievements Logic
         total_solved = SolvedProblem.objects.filter(student=profile).count()
         total_aptitude_solved = SolvedAptitude.objects.filter(student=profile).count()
@@ -279,7 +305,7 @@ class DashboardView(UnifiedAuthMixin, APIView):
             "streak": profile.current_streak,
             "loginDays": profile.login_days,
             "rank": campus_rank,
-            "totalStudents": students_with_counts.count(),
+            "totalStudents": total_students_in_institution,
             "registerNumber": profile.register_number,
             "email": profile.personal_email,
             "total_problems_count": Problem.objects.count(),
@@ -1616,6 +1642,10 @@ class GlobalMaintenanceControlView(APIView):
 
         setattr(config, field, value)
         config.save()
+        # MaintenanceMiddleware caches this row briefly to keep it off the
+        # hot path of every request — invalidate immediately on write so an
+        # admin toggling maintenance mode doesn't have to wait out the TTL.
+        cache.delete(_MAINTENANCE_CONFIG_CACHE_KEY)
         return Response({r: getattr(config, f) for r, f in self.ROLE_FIELDS.items()})
 
 class CSRFTokenView(APIView):

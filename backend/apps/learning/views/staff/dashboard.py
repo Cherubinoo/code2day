@@ -41,6 +41,12 @@ class StaffInstitutionDetailView(APIView):
                 institution=institution
             ).select_related('account', 'department')
 
+        # Annotated at the DB level (one query for every student's solved
+        # count) instead of the per-student `student.solved_problems.count()`
+        # this loop used to run — that was one extra query per student, so
+        # ~2300 extra queries on an institution-wide load of this view.
+        students_qs = students_qs.annotate(solved_count=Count('solved_problems', distinct=True))
+
         # Build student list with metrics
         student_list = []
         for student in students_qs:
@@ -51,7 +57,7 @@ class StaffInstitutionDetailView(APIView):
                 "section": student.section,
                 "department": student.department.code if student.department else "N/A",
                 "department_name": student.department.name if student.department else "N/A",
-                "solved_count": student.solved_problems.count(),
+                "solved_count": student.solved_count,
                 "current_streak": student.current_streak,
                 "last_active": student.account.last_login if student.account else None,
                 "is_active": student.account.is_active if student.account else True,
@@ -146,6 +152,29 @@ class StaffPerformanceView(APIView):
         else:
             staff_qs = StaffProfile.objects.filter(institution=institution)
 
+        # contests_created annotated at the DB level (one query for every
+        # staff member) instead of `staff.contests.filter(...).count()` per
+        # staff member below.
+        staff_qs = staff_qs.annotate(
+            contests_created_count=Count('contests', filter=Q(contests__institution=institution), distinct=True)
+        )
+
+        # assigned_students/student_progress are keyed by *department*, not
+        # by individual staff member — every staff member in the same
+        # department used to redundantly re-run the same two count queries.
+        # Precomputed once per department (2 queries total) instead of
+        # 2-per-staff-member (~360 extra queries for ~180 staff).
+        dept_student_counts = {
+            row['department_id']: row['c']
+            for row in StudentProfile.objects.filter(institution=institution)
+                .values('department_id').annotate(c=Count('id'))
+        }
+        dept_solved_counts = {
+            row['student__department_id']: row['c']
+            for row in SolvedProblem.objects.filter(student__institution=institution)
+                .values('student__department_id').annotate(c=Count('id'))
+        }
+
         staff_performance = []
         for staff in staff_qs:
             # Calculate days active (since account creation)
@@ -153,19 +182,8 @@ class StaffPerformanceView(APIView):
             if staff.account and staff.account.date_joined:
                 days_active = (timezone.now() - staff.account.date_joined).days
 
-            # Get number of students in this staff's department (managed by staff)
-            assigned_students = StudentProfile.objects.filter(
-                institution=institution,
-                department=staff.department
-            ).count() if staff.department else 0
-
-            # Student progress (problems solved by students in department)
-            student_progress = 0
-            if staff.department:
-                student_progress = SolvedProblem.objects.filter(
-                    student__department=staff.department,
-                    student__institution=institution
-                ).count()
+            assigned_students = dept_student_counts.get(staff.department_id, 0) if staff.department_id else 0
+            student_progress = dept_solved_counts.get(staff.department_id, 0) if staff.department_id else 0
 
             # Contests created by this staff with top performers
             staff_contests = []
@@ -186,7 +204,7 @@ class StaffPerformanceView(APIView):
                     "top_performers": contest_summary["top_performers"],
                 })
 
-            contests_created = staff.contests.filter(institution=institution).count()
+            contests_created = staff.contests_created_count
 
             staff_performance.append({
                 "faculty_id": staff.faculty_id,

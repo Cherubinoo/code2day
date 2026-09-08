@@ -1,6 +1,17 @@
+from django.core.cache import cache
 from django.http import JsonResponse
 from .models import SystemConfiguration, Institution, StudentProfile, StaffProfile
 from .module_registry import locked_module_for_request
+
+# Cache key/TTL for the global SystemConfiguration singleton this middleware
+# reads on every authenticated request. Without this, every request to
+# every endpoint (dashboards, discussion polling, etc.) paid for a
+# get_or_create() DB round-trip just to check maintenance flags that change
+# maybe a few times a year. A short TTL keeps a maintenance-mode toggle
+# taking effect within seconds while removing the query from the hot path.
+_CONFIG_CACHE_KEY = "maintenance_system_configuration"
+_CONFIG_CACHE_TTL_SECONDS = 15
+
 
 class MaintenanceMiddleware:
     def __init__(self, get_response):
@@ -22,9 +33,6 @@ class MaintenanceMiddleware:
         if not user.is_authenticated:
             return self.get_response(request)
 
-        # Get Global Config
-        config, _ = SystemConfiguration.objects.get_or_create(id=1)
-        
         # Check roles
         role = None
         institution = None
@@ -38,6 +46,13 @@ class MaintenanceMiddleware:
 
         if not role:
             return self.get_response(request)
+
+        # Get Global Config — cached briefly (see _CONFIG_CACHE_TTL_SECONDS
+        # above) since this middleware runs on every authenticated request.
+        config = cache.get(_CONFIG_CACHE_KEY)
+        if config is None:
+            config, _ = SystemConfiguration.objects.get_or_create(id=1)
+            cache.set(_CONFIG_CACHE_KEY, config, _CONFIG_CACHE_TTL_SECONDS)
 
         # 1. Check Global Maintenance — one flag per role, covering every
         # StudentProfile/StaffProfile role (student, staff, hod, tpu,

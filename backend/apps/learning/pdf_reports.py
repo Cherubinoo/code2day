@@ -974,11 +974,19 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
     # ------------------------------------------------------------------
     def _leaderboard_section(self, contest, participations, problems, is_apt, n_problems):
         story = [_section_header('PARTICIPANT RESULTS', _RAMCO_RED)]
+        from django.db.models import Count, Q
         from .models import AptitudeContestSubmission
-        if not participations.exists():
+        # Materialized once (was re-executed separately for top3 and for
+        # the full-table loop below) — this also lets us bulk-fetch every
+        # participant's submission data in a fixed handful of queries
+        # instead of the ~2 + MAX_Q queries *per participant* this used to
+        # run (e.g. ~27,600 queries for a 2300-student, 10-problem
+        # institution-wide contest, all inside one synchronous PDF request).
+        participations = list(participations)
+        if not participations:
             story.append(Paragraph("No participants yet.", ParagraphStyle("np", fontSize=9)))
             return story
-        top3 = list(participations[:3])
+        top3 = participations[:3]
         medals = ["1st", "2nd", "3rd"]
         pod_bg = ["#FFD700", "#C0C0C0", "#CD7F32"]
         pod_data = [["", "Name", "Reg. No.", "Score/100", "Solved", "Time"]]
@@ -1014,28 +1022,63 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
         pcw = round(rem / n_pc, 3) if n_pc else 0.4
         cw = [0.35*inch, 1.8*inch, 1.1*inch, 0.75*inch, 0.55*inch, 0.7*inch, 0.7*inch, 0.7*inch]
         cw += [pcw*inch] * (len(disp) + (1 if extra else 0))
+        # Bulk-precompute everything the per-participant loop below used to
+        # fetch one query at a time. Every participant's total/correct
+        # submission counts come from one aggregate query; every displayed
+        # problem's per-student result comes from one more.
+        student_ids = [part.student_id for part in participations]
+        disp_ids = [prob.id for prob in disp]
+
+        if is_apt:
+            totals_map = {
+                row['student_id']: (row['total'], row['correct'])
+                for row in AptitudeContestSubmission.objects.filter(contest=contest, student_id__in=student_ids)
+                    .values('student_id').annotate(total=Count('id'), correct=Count('id', filter=Q(is_correct=True)))
+            }
+            # unique_together=("contest","student","question") guarantees at
+            # most one row per pair, so a plain dict (no ordering needed)
+            # exactly matches the original per-pair `.first()`.
+            per_problem_map = {
+                (row['student_id'], row['question_id']): row
+                for row in AptitudeContestSubmission.objects.filter(contest=contest, student_id__in=student_ids, question_id__in=disp_ids)
+                    .values('student_id', 'question_id', 'is_correct')
+            }
+        else:
+            totals_map = {
+                row['student_id']: (row['total'], row['correct'])
+                for row in ContestSubmission.objects.filter(contest=contest, student_id__in=student_ids)
+                    .values('student_id').annotate(total=Count('id'), correct=Count('id', filter=Q(status="Accepted")))
+            }
+            # ContestSubmission allows multiple attempts per (student,
+            # problem) with no uniqueness constraint — original code picked
+            # the highest-score one via `.order_by("-score").first()`. This
+            # ordering (score desc, then most-recent-first to break ties,
+            # matching the model's own default `-submitted_at` ordering)
+            # reproduces that per pair while fetching every pair in one query.
+            per_problem_map = {}
+            for row in (ContestSubmission.objects.filter(contest=contest, student_id__in=student_ids, problem_id__in=disp_ids)
+                        .values('student_id', 'problem_id', 'score', 'status')
+                        .order_by('student_id', 'problem_id', '-score', '-submitted_at')):
+                key = (row['student_id'], row['problem_id'])
+                if key not in per_problem_map:
+                    per_problem_map[key] = row
+
         rows = [hdr]
         for rank, part in enumerate(participations, 1):
             t = part.total_time_taken or part.time_spent_seconds or 0
             norm = self._normalise_score(part.total_score, n_problems, contest.contest_type)
-            if is_apt:
-                total_s = AptitudeContestSubmission.objects.filter(contest=contest, student=part.student).count()
-                correct = AptitudeContestSubmission.objects.filter(contest=contest, student=part.student, is_correct=True).count()
-            else:
-                total_s = ContestSubmission.objects.filter(contest=contest, student=part.student).count()
-                correct = ContestSubmission.objects.filter(contest=contest, student=part.student, status="Accepted").count()
+            total_s, correct = totals_map.get(part.student_id, (0, 0))
             acc = f"{round(correct/total_s*100,1)}%" if total_s else "-"
             eff = f"{round(part.problems_solved/total_s*100,1)}%" if total_s else "-"
             row = [str(rank), part.student.name[:22], part.student.register_number or "-",
                    f"{norm}/100", f"{part.problems_solved}/{n_problems}", acc, eff,
                    f"{t//60}m {t%60}s" if t else "-"]
             for prob in disp:
+                b = per_problem_map.get((part.student_id, prob.id))
                 if is_apt:
-                    b = AptitudeContestSubmission.objects.filter(contest=contest, student=part.student, question=prob).first()
-                    row.append("v" if (b and b.is_correct) else ("x" if b else "-"))
+                    row.append("v" if (b and b['is_correct']) else ("x" if b else "-"))
                 else:
-                    b = ContestSubmission.objects.filter(contest=contest, student=part.student, problem=prob).order_by("-score").first()
-                    row.append("v" if (b and b.status == "Accepted") else (str(b.score) if b else "-"))
+                    row.append("v" if (b and b['status'] == "Accepted") else (str(b['score']) if b else "-"))
             if extra:
                 row.append("...")
             rows.append(row)

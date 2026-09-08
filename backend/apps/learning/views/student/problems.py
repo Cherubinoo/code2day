@@ -605,40 +605,53 @@ class PlaygroundRunView(StudentAuthMixin, APIView):
         return Response(result, status=status.HTTP_200_OK)
 
 class CampusRankingView(APIView):
-    """Get campus-wide student rankings based on problems solved."""
+    """Get campus-wide (institution-wide) student rankings based on problems
+    solved. Previously had no institution filter at all — on a multi-tenant
+    install this silently mixed every institution's students into one
+    ranking, and materialized the entire platform's StudentProfile table
+    into Python on every call. Now scoped to the caller's own institution
+    (matching StudentLeaderboardView's convention) and computed via a top-10
+    query plus a count-of-better-students query instead of loading
+    everyone."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # Get all students with their solved problem counts using SolvedProblem table
-        students_with_counts = (
-            StudentProfile.objects.annotate(
-                solved_count=Count(
-                    'solved_problems',
-                    distinct=True
-                )
-            )
-            .values('id', 'name', 'register_number', 'solved_count')
-            .order_by('-solved_count', 'name')
-        )
+        institution = None
+        current_student = None
+        if hasattr(request.user, 'student_profile'):
+            current_student = request.user.student_profile
+            institution = current_student.institution
+        elif hasattr(request.user, 'staff_profile'):
+            institution = request.user.staff_profile.institution
 
-        leaderboard = list(students_with_counts)
+        base_qs = StudentProfile.objects.annotate(
+            solved_count=Count('solved_problems', distinct=True)
+        )
+        if institution:
+            base_qs = base_qs.filter(institution=institution)
+
+        total_students = base_qs.count()
+
+        top_students = list(
+            base_qs.values('id', 'name', 'register_number', 'solved_count')
+            .order_by('-solved_count', 'name')[:10]
+        )
 
         # Calculate rank for current user (students only)
         user_rank = None
-        if hasattr(request.user, 'student_profile'):
-            current_student = request.user.student_profile
-            for idx, student in enumerate(leaderboard, start=1):
-                if student['id'] == current_student.id:
-                    user_rank = idx
-                    break
-
-        # Get top 10 students for leaderboard
-        top_students = leaderboard[:10]
+        if current_student:
+            my_row = base_qs.filter(id=current_student.id).values('solved_count').first()
+            my_solved = my_row['solved_count'] if my_row else 0
+            better_count = base_qs.filter(
+                Q(solved_count__gt=my_solved) |
+                Q(solved_count=my_solved, name__lt=current_student.name or '')
+            ).count()
+            user_rank = better_count + 1
 
         return Response({
-            'userRank': user_rank or len(leaderboard),
-            'totalStudents': len(leaderboard),
+            'userRank': user_rank or total_students,
+            'totalStudents': total_students,
             'leaderboard': [
                 {
                     'rank': idx + 1,
