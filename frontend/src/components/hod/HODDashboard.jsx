@@ -808,7 +808,7 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <p style={{ margin: 0 }}>Management Control Center • {staffData.department?.name || 'Overall Institution'}</p>
                   
-                  {!isInstitutionLead && departments.length > 0 && (
+                  {departments.length > 0 && (
                     <select 
                       value={selectedDeptId || ''} 
                       onChange={(e) => {
@@ -1086,18 +1086,24 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
                   </div>
                 </div>
 
-                <div className="metric-card premium-card">
-                  <div className="icon-box" style={{ background: stats.pendingApprovals > 0 ? '#fef2f2' : '#f0fdf4', color: stats.pendingApprovals > 0 ? '#dc2626' : '#16a34a' }}>
-                    {stats.pendingApprovals > 0 ? <Calendar size={24} /> : <CheckCircle size={24} />}
-                  </div>
-                  <div>
-                    <h4>PENDING</h4>
-                    <div className="value" style={{ color: stats.pendingApprovals > 0 ? '#dc2626' : 'inherit' }}>
-                      {stats.pendingApprovals}
+                {/* TPU/Director/Principal have no Contest Center tab (no
+                    contest approval capability), so a "pending approvals"
+                    stat pointing at a feature they can't act on is just
+                    noise for them. */}
+                {!isInstitutionLead && (
+                  <div className="metric-card premium-card">
+                    <div className="icon-box" style={{ background: stats.pendingApprovals > 0 ? '#fef2f2' : '#f0fdf4', color: stats.pendingApprovals > 0 ? '#dc2626' : '#16a34a' }}>
+                      {stats.pendingApprovals > 0 ? <Calendar size={24} /> : <CheckCircle size={24} />}
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-soft)', fontWeight: '600' }}>Approvals Needed</div>
+                    <div>
+                      <h4>PENDING</h4>
+                      <div className="value" style={{ color: stats.pendingApprovals > 0 ? '#dc2626' : 'inherit' }}>
+                        {stats.pendingApprovals}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-soft)', fontWeight: '600' }}>Approvals Needed</div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               <SolvingActivityChart data={weeklyActivity} onRangeChange={fetchActivityRange} />
@@ -1315,7 +1321,7 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
                             <Pencil size={13} /> Edit
                           </button>
 
-                          {staff.role !== 'hod' && staff.role !== 'admin' && (
+                          {staff.role !== 'admin' && (isInstitutionLead ? !INSTITUTION_LEAD_ROLES.includes(staff.role) : staff.role !== 'hod') && (
                             <button
                               onClick={(e) => { e.stopPropagation(); handleDeleteStaff(staff); }}
                               title="Delete staff member"
