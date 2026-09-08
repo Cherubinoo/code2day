@@ -99,6 +99,7 @@ from ..models import (
     InterviewFolder,
     InterviewFolderMedia,
     InterviewQuestion,
+    InterviewQuestionProgress,
     SqlFrogProgress,
 )
 from ..db_manager import create_institution_db, delete_institution_db

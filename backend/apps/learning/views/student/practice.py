@@ -288,7 +288,12 @@ class InterviewTrackView(UnifiedAuthMixin, APIView):
 
         if track:
             label = track.name
-            topics = _serialize_interview_track(track)["topics"]
+            progress_map = dict(
+                InterviewQuestionProgress.objects
+                .filter(student=profile, question__topic__track=track)
+                .values_list('question_id', 'status')
+            )
+            topics = _serialize_interview_track(track, progress_map)["topics"]
         else:
             label = INTERVIEW_TRACK_LABELS.get(track_key, track_key.replace('_', ' ').title())
             topics = []
@@ -298,6 +303,44 @@ class InterviewTrackView(UnifiedAuthMixin, APIView):
             "track_key": track_key,
             "track_label": label,
             "topics": topics,
+        })
+
+
+class InterviewQuestionSwipeView(UnifiedAuthMixin, APIView):
+    """Student: record a Practice Mode swipe decision on one Interview
+    Practice question — left/"review_again" keeps it in the deck, right/
+    "learned" retires it. Idempotent per (student, question): re-swiping
+    just updates the existing row rather than accumulating history, since
+    only the current triage state matters for what the deck shows next."""
+
+    def post(self, request, question_id):
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+        if profile_type != "student":
+            return Response({"detail": "Student access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        new_status = (request.data.get('status') or '').strip()
+        valid_statuses = dict(InterviewQuestionProgress.STATUS_CHOICES)
+        if new_status not in valid_statuses:
+            return Response({"detail": f"status must be one of {list(valid_statuses)}."}, status=400)
+
+        question = get_object_or_404(InterviewQuestion, id=question_id)
+
+        progress, _created = InterviewQuestionProgress.objects.update_or_create(
+            student=profile, question=question, defaults={"status": new_status},
+        )
+
+        counts = InterviewQuestionProgress.objects.filter(
+            student=profile, question__topic_id=question.topic_id,
+        ).values('status').annotate(count=Count('id'))
+        status_counts = {row['status']: row['count'] for row in counts}
+
+        return Response({
+            "question_id": question.id,
+            "status": progress.status,
+            "topic_learned_count": status_counts.get('learned', 0),
+            "topic_review_count": status_counts.get('review_again', 0),
         })
 
 class CompetitiveSubtopicQuestionsView(APIView):

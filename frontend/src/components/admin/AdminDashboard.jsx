@@ -1508,6 +1508,7 @@ const AdminDashboard = () => {
                                     <option value="academics">Academic Coordinator</option>
                                     <option value="tpu">TPU Coordinator</option>
                                     <option value="director">Director</option>
+                                    <option value="principal">Principal</option>
                                     <option value="ja">Junior Admin (JA)</option>
                                     <option value="admin">Node Admin</option>
                                   </select>
@@ -1839,6 +1840,7 @@ const AdminDashboard = () => {
                   <option value="academics">Academic Coordinator</option>
                   <option value="tpu">TPU Coordinator</option>
                   <option value="director">Director</option>
+                  <option value="principal">Principal</option>
                   <option value="ja">Junior Admin (JA)</option>
                   <option value="admin">Node Admin</option>
                 </select>

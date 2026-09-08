@@ -359,14 +359,15 @@ function App() {
     };
   }, [activeRegisterNumber, userType]);
 
-  // Prompt any staff-type account (staff/HOD/academics/TPU/director/JA)
-  // missing an email or mobile number to add one, once per login — checked
-  // only the first time the dashboard payload carries staff data so it
-  // doesn't re-trigger on every unrelated dashboard refresh in this session.
+  // Prompt any staff-type account (staff/HOD/academics/TPU/director/
+  // principal/JA) missing an email or mobile number to add one, once per
+  // login — checked only the first time the dashboard payload carries
+  // staff data so it doesn't re-trigger on every unrelated dashboard
+  // refresh in this session.
   useEffect(() => {
     if (contactPromptCheckedRef.current) return;
     if (!dashboard?.staff) return;
-    if (!["staff", "hod", "academics", "tpu", "director", "ja"].includes(userType)) return;
+    if (!["staff", "hod", "academics", "tpu", "director", "principal", "ja"].includes(userType)) return;
     contactPromptCheckedRef.current = true;
     if (!dashboard.staff.email && !dashboard.staff.mobile_number) {
       setShowContactPrompt(true);
@@ -872,7 +873,7 @@ function App() {
         admin_id: registerNumber.trim(),
         password,
       };
-    } else if (loginType === "staff" || ["staff", "hod", "academics", "director", "tpu", "ja"].includes(authStudent?.user_type)) {
+    } else if (loginType === "staff" || ["staff", "hod", "academics", "director", "tpu", "principal", "ja"].includes(authStudent?.user_type)) {
       endpoint = isFirstLogin ? "/api/auth/staff/first-login/" : "/api/auth/staff/login/";
       requestBody = {
         faculty_id: registerNumber.trim(),
@@ -941,7 +942,7 @@ function App() {
       
       // Navigate to role-specific dashboard
       const targetPage = type === "admin" ? "admin" :
-                         (type === "director" || type === "tpu" || type === "hod" || type === "academics") ? "hod" :
+                         (type === "director" || type === "tpu" || type === "principal" || type === "hod" || type === "academics") ? "hod" :
                          type === "ja" ? "ja" :
                          type === "staff" ? "staff" : "explore";
       navigate(targetPage, { replace: true });
@@ -1503,8 +1504,8 @@ function App() {
       );
       break;
     case "hod":
-      activeView = (userType === "hod" || userType === "director" || userType === "tpu" || userType === "academics") ? (
-        <HODDashboard institutionId={selectedInstitutionId} lockedModules={dashboard.locked_modules || []} />
+      activeView = (userType === "hod" || userType === "director" || userType === "tpu" || userType === "principal" || userType === "academics") ? (
+        <HODDashboard institutionId={selectedInstitutionId} lockedModules={dashboard.locked_modules || []} role={userType} />
       ) : (
         <div style={{ padding: 40 }}>
           <h2>Access Denied</h2>
@@ -1523,7 +1524,7 @@ function App() {
       );
       break;
     case "staff":
-      activeView = ["staff", "hod", "admin", "director", "tpu", "ja", "academics"].includes(userType) ? (
+      activeView = ["staff", "hod", "admin", "director", "tpu", "principal", "ja", "academics"].includes(userType) ? (
         <StaffDashboard institutionId={selectedInstitutionId} lockedModules={dashboard.locked_modules || []} />
       ) : (
         <div style={{ padding: 40 }}>
@@ -1585,7 +1586,7 @@ function App() {
         navigate("admin", { replace: true });
         break;
       }
-      if (userType === "hod" || userType === "director" || userType === "tpu" || userType === "academics") {
+      if (userType === "hod" || userType === "director" || userType === "tpu" || userType === "principal" || userType === "academics") {
         navigate("hod", { replace: true });
         break;
       }

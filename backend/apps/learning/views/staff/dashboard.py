@@ -127,6 +127,10 @@ class StaffPerformanceView(APIView):
         user_profile = request.user.staff_profile
         user_role = user_profile.role
         user_department = user_profile.department
+        # Institution-wide roles are never department-scoped, even if their
+        # own StaffProfile record happens to carry a department FK.
+        if user_role in ("admin", "director", "tpu", "principal", "ja"):
+            user_department = None
 
         institution = Institution.objects.filter(institution_id=institution_id).first()
         if not institution:
@@ -910,7 +914,7 @@ class StudentCopyPasteToggleView(APIView):
                 status=status.HTTP_403_FORBIDDEN
             )
 
-        if staff_profile.role not in ['hod', 'admin', 'ja', 'tpu', 'director'] and student.department_id != staff_profile.department_id:
+        if staff_profile.role not in ['hod', 'admin', 'ja', 'tpu', 'director', 'principal'] and student.department_id != staff_profile.department_id:
             return Response(
                 {"detail": "You can only manage students in your department."},
                 status=status.HTTP_403_FORBIDDEN

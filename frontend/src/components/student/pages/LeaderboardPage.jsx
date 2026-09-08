@@ -1,27 +1,30 @@
 import { useState, useEffect } from 'react';
-import { Crown, Medal, Flame, Code2, Zap, CalendarCheck, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
+import { Crown, Medal, Flame, Code2, Zap, CalendarCheck, Loader2, ArrowUp, ArrowDown, ChevronDown, Gamepad2 } from 'lucide-react';
 
 const RANK_MEDAL_COLOR = { 1: '#f59e0b', 2: '#94a3b8', 3: '#b45309' };
 const RANK_MEDAL_EMOJI = { 1: '🥇', 2: '🥈', 3: '🥉' };
 const ROW_GRID_FULL = '48px minmax(140px,1fr) 60px 56px 52px 60px';
 const ROW_GRID_COMPACT = '36px minmax(0,1fr) 56px';
 const LAST_RANK_KEY = 'code2day-leaderboard-last-rank';
+const PAGE_SIZES = [10, 25, 50, 100];
 
 // A small, flat "Lv N" pill — replaces the old full-width XP progress bar
 // that used to render on every single row (heavy for a list of 100
 // students). `level`/`level_progress` now come straight from the backend
-// (StudentLeaderboardView computes them off the same points used for
-// ranking) instead of being re-derived here.
-function LevelPill({ level, light = false }) {
+// (StudentLeaderboardView computes them off a capped, curved level formula
+// — small point gaps for the first few levels, much larger ones near the
+// level-99 ceiling — instead of the old flat "every 100 points" scheme,
+// which had no cap and made "Level 47" a meaningless number).
+function LevelPill({ level, levelMax, light = false }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', fontSize: 10, fontWeight: 800,
       padding: '1px 6px', borderRadius: 999, whiteSpace: 'nowrap',
-      color: light ? 'white' : 'var(--olive-700)',
-      background: light ? 'rgba(255,255,255,0.2)' : 'var(--bg-1)',
-      border: light ? 'none' : '1px solid var(--border-soft)',
+      color: light ? 'white' : levelMax ? '#92400e' : 'var(--olive-700)',
+      background: light ? 'rgba(255,255,255,0.2)' : levelMax ? '#fef3c7' : 'var(--bg-1)',
+      border: light ? 'none' : levelMax ? '1px solid #fde68a' : '1px solid var(--border-soft)',
     }}>
-      Lv {level}
+      {levelMax ? '★ ' : ''}Lv {level}
     </span>
   );
 }
@@ -74,7 +77,7 @@ function PodiumCard({ row }) {
       <div style={{ fontWeight: 900, fontSize: 14, color: RANK_MEDAL_COLOR[row.rank] }}>
         {row.points} pts
       </div>
-      <LevelPill level={row.level} />
+      <LevelPill level={row.level} levelMax={row.level_max} />
     </div>
   );
 }
@@ -87,6 +90,9 @@ export default function LeaderboardPage() {
     typeof window !== 'undefined' ? window.matchMedia('(max-width: 640px)').matches : false
   ));
   const [rankChange, setRankChange] = useState(null); // 'up' | 'down' | null
+  const [limit, setLimit] = useState(10);
+  const [department, setDepartment] = useState('');
+  const [refetching, setRefetching] = useState(false);
 
   useEffect(() => {
     const mql = window.matchMedia('(max-width: 640px)');
@@ -98,9 +104,12 @@ export default function LeaderboardPage() {
 
   useEffect(() => {
     let cancelled = false;
+    setRefetching(true);
     (async () => {
       try {
-        const res = await fetch('/api/student/leaderboard/', { credentials: 'include' });
+        const params = new URLSearchParams({ limit: String(limit) });
+        if (department) params.set('department', department);
+        const res = await fetch(`/api/student/leaderboard/?${params.toString()}`, { credentials: 'include' });
         const payload = await res.json();
         if (cancelled) return;
         if (!res.ok) {
@@ -111,11 +120,11 @@ export default function LeaderboardPage() {
       } catch {
         if (!cancelled) setError('Network error loading the leaderboard.');
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) { setLoading(false); setRefetching(false); }
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [limit, department]);
 
   const me = data?.current_student;
 
@@ -150,10 +159,11 @@ export default function LeaderboardPage() {
     );
   }
 
-  const { leaderboard = [], total_students = 0 } = data || {};
+  const { leaderboard = [], total_students = 0, available_departments = [], max_level = 99 } = data || {};
   const podium = [leaderboard.find((r) => r.rank === 2), leaderboard.find((r) => r.rank === 1), leaderboard.find((r) => r.rank === 3)];
   const rest = leaderboard.filter((r) => r.rank > 3);
   const rowGrid = isCompact ? ROW_GRID_COMPACT : ROW_GRID_FULL;
+  const canShowMore = limit < 100 && leaderboard.length >= limit && leaderboard.length < total_students;
 
   return (
     <div style={{ maxWidth: 760, margin: '0 auto', padding: '18px 16px 48px' }}>
@@ -161,9 +171,26 @@ export default function LeaderboardPage() {
         <Crown size={20} color="#f59e0b" />
         <h1 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 900, color: 'var(--olive-950)' }}>Institution Leaderboard</h1>
       </div>
-      <p style={{ margin: '0 0 16px', color: 'var(--text-soft)', fontSize: 12.5 }}>
-        {total_students} student{total_students !== 1 ? 's' : ''} · points = problems + aptitude + contests + streak + SQL Frog XP
+      <p style={{ margin: '0 0 14px', color: 'var(--text-soft)', fontSize: 12.5 }}>
+        {total_students} student{total_students !== 1 ? 's' : ''}{department ? ' in this department' : ''} · levels run 1–{max_level}, ranked by problems, aptitude, contests, streak &amp; SQL Frog XP combined
       </p>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+        <select
+          value={department}
+          onChange={(e) => setDepartment(e.target.value)}
+          style={{
+            padding: '6px 10px', borderRadius: 8, border: '1px solid var(--border-soft)',
+            fontSize: 12.5, fontWeight: 700, color: 'var(--olive-900)', background: 'white', cursor: 'pointer',
+          }}
+        >
+          <option value="">All Departments</option>
+          {available_departments.map((d) => (
+            <option key={d.code} value={d.code}>{d.name}</option>
+          ))}
+        </select>
+        {refetching && <Loader2 size={16} className="spin" style={{ color: 'var(--text-soft)', alignSelf: 'center' }} />}
+      </div>
 
       {podium.some(Boolean) && (
         <div style={{ display: 'flex', alignItems: 'stretch', justifyContent: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -180,9 +207,12 @@ export default function LeaderboardPage() {
             {RANK_MEDAL_EMOJI[me.rank] || `#${me.rank}`}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 800, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ fontWeight: 800, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               You · {me.points} pts
-              <LevelPill level={me.level} light />
+              <LevelPill level={me.level} levelMax={me.level_max} light />
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10.5, fontWeight: 800, opacity: 0.85 }}>
+                <Gamepad2 size={11} /> SQL Rank #{me.sql_rank}
+              </span>
               {rankChange && (
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 11, fontWeight: 800, color: rankChange === 'up' ? '#bbf7d0' : '#fecaca' }}>
                   {rankChange === 'up' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
@@ -190,10 +220,13 @@ export default function LeaderboardPage() {
               )}
             </div>
             <div style={{ fontSize: 11.5, opacity: 0.85, marginTop: 1 }}>
-              {me.problems_solved} problems ({me.solved_today} today) · {me.xp} XP · {me.streak}-day streak
+              {me.problems_solved} problems ({me.solved_today} today) · {me.xp} SQL XP · {me.streak}-day streak
             </div>
-            <div style={{ maxWidth: 200, marginTop: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, maxWidth: 260, marginTop: 4 }}>
               <XpBar progress={me.level_progress} />
+              <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.8, whiteSpace: 'nowrap' }}>
+                {me.level_max ? 'Max level' : `${me.points_into_level}/${me.points_for_level} to Lv ${me.level + 1}`}
+              </span>
             </div>
           </div>
         </div>
@@ -238,7 +271,7 @@ export default function LeaderboardPage() {
                   <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--olive-900)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {row.name}{row.is_you ? ' (You)' : ''}
                   </span>
-                  <LevelPill level={row.level} />
+                  <LevelPill level={row.level} levelMax={row.level_max} />
                 </div>
                 {isCompact ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 2, flexWrap: 'wrap' }}>
@@ -267,6 +300,34 @@ export default function LeaderboardPage() {
         )}
        </div>
       </div>
+
+      {canShowMore && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
+          <button
+            type="button"
+            onClick={() => setLimit((prev) => PAGE_SIZES.find((size) => size > prev) || 100)}
+            disabled={refetching}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 16px', borderRadius: 10,
+              border: '1px solid var(--border-soft)', background: 'white', color: 'var(--olive-700)',
+              fontSize: 12.5, fontWeight: 700, cursor: refetching ? 'default' : 'pointer',
+            }}
+          >
+            <ChevronDown size={14} /> Show more ({Math.min(total_students, PAGE_SIZES.find((size) => size > limit) || 100)} of {total_students})
+          </button>
+        </div>
+      )}
+      {limit > 10 && (
+        <div style={{ display: 'flex', justifyContent: 'center', marginTop: 8 }}>
+          <button
+            type="button"
+            onClick={() => setLimit(10)}
+            style={{ background: 'none', border: 'none', color: 'var(--text-soft)', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
+          >
+            Back to top 10
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -62,6 +62,8 @@ __all__ = [
     '_serialize_interview_folder',
     '_serialize_interview_topic',
     '_serialize_interview_track',
+    '_flatten_interview_folder_questions',
+    '_flatten_interview_topic_questions',
     'interview_folder_media_proxy',
     'INTERVIEW_QUESTION_FIELDS',
     '_validate_interview_question_payload',
@@ -589,7 +591,7 @@ def get_discussion_messages(user, profile, profile_type, thread_type="general", 
     if thread_type == "staff":
         if profile_type in ["staff", "hod"] and profile.department:
             return qs.filter(thread_type="staff", department=profile.department)
-        elif profile_type in ["admin", "ja", "tpu"]:
+        elif profile_type in ["admin", "ja", "tpu", "director", "principal"]:
             return qs.filter(thread_type="staff", institution=profile.institution)
         return qs.none()
 
@@ -1239,8 +1241,11 @@ def syllabus_folder_media_proxy(request, media_id):
     content_type = media.content_type or mimetypes.guess_type(media.file.name)[0] or "application/octet-stream"
     return _serve_media_file(request, media.file, content_type)
 
-def _serialize_interview_question(q):
-    return {
+def _serialize_interview_question(q, progress_map=None):
+    """progress_map: optional {question_id: "review_again"|"learned"} for
+    the calling student — omitted entirely for admin callers (None), so
+    `progress_status` only ever appears in student-facing responses."""
+    data = {
         "id": q.id,
         "external_id": q.external_id,
         "question_type": q.question_type,
@@ -1254,6 +1259,9 @@ def _serialize_interview_question(q):
         "key_concepts": q.key_concepts,
         "source_reference": q.source_reference,
     }
+    if progress_map is not None:
+        data["progress_status"] = progress_map.get(q.id)
+    return data
 
 def _serialize_interview_folder_media(m):
     return {
@@ -1266,32 +1274,47 @@ def _serialize_interview_folder_media(m):
         "order": m.order,
     }
 
-def _serialize_interview_folder(folder):
+def _serialize_interview_folder(folder, progress_map=None):
     return {
         "id": folder.id,
         "title": folder.title,
-        "questions": [_serialize_interview_question(q) for q in folder.questions.all()],
+        "questions": [_serialize_interview_question(q, progress_map) for q in folder.questions.all()],
         "media": [_serialize_interview_folder_media(m) for m in folder.media_items.all()],
-        "subfolders": [_serialize_interview_folder(f) for f in folder.subfolders.all()],
+        "subfolders": [_serialize_interview_folder(f, progress_map) for f in folder.subfolders.all()],
     }
 
-def _serialize_interview_topic(topic):
+def _serialize_interview_topic(topic, progress_map=None):
     return {
         "id": topic.id,
         "title": topic.title,
         "question_count": len([q for q in topic.questions.all() if q.folder_id is None]),
-        "questions": [_serialize_interview_question(q) for q in topic.questions.all() if q.folder_id is None],
-        "folders": [_serialize_interview_folder(f) for f in topic.folders.all() if f.parent_id is None],
+        "questions": [_serialize_interview_question(q, progress_map) for q in topic.questions.all() if q.folder_id is None],
+        "folders": [_serialize_interview_folder(f, progress_map) for f in topic.folders.all() if f.parent_id is None],
     }
 
-def _serialize_interview_track(track):
+def _serialize_interview_track(track, progress_map=None):
     return {
         "id": track.id,
         "key": track.key,
         "name": track.name,
         "description": track.description,
-        "topics": [_serialize_interview_topic(t) for t in track.topics.all()],
+        "topics": [_serialize_interview_topic(t, progress_map) for t in track.topics.all()],
     }
+
+def _flatten_interview_folder_questions(folder):
+    ids = [q.id for q in folder.questions.all()]
+    for sf in folder.subfolders.all():
+        ids += _flatten_interview_folder_questions(sf)
+    return ids
+
+def _flatten_interview_topic_questions(topic):
+    """Every question id under a topic, top-level and nested in folders —
+    the queue a Practice Mode swipe deck pulls from."""
+    ids = [q.id for q in topic.questions.all()]
+    for f in topic.folders.all():
+        if f.parent_id is None:
+            ids += _flatten_interview_folder_questions(f)
+    return ids
 
 def interview_folder_media_proxy(request, media_id):
     """Serve one Interview folder-media file's bytes through the /api/

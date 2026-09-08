@@ -197,7 +197,7 @@ class DiscussionMessageListCreateView(UnifiedAuthMixin, APIView):
             elif thread_type == "hod_tp_ja" and profile:
                 recipients_qs = User.objects.filter(
                     staff_profile__institution=profile.institution,
-                    staff_profile__role__in=["hod", "admin", "ja", "tpu", "director"]
+                    staff_profile__role__in=["hod", "admin", "ja", "tpu", "director", "principal"]
                 )
                 room_name = "HOD & Admin Panel"
             elif thread_type == "general" and profile:

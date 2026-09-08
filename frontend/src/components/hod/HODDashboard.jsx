@@ -27,12 +27,30 @@ import HourlyBatchReportModal from '../common/HourlyBatchReportModal';
 
 
 
-const HODDashboard = ({ institutionId, lockedModules = [] }) => {
+// TPU (Training & Placement), Director, and Principal are all the same
+// role and function on this dashboard: institution-wide, read-mostly
+// visibility into students/staff and performance, plus the ability to add
+// staff/HODs — none of contest approval, lab management, personal lab
+// practicals, or LMS authoring, and no account lock/unlock.
+const INSTITUTION_LEAD_ROLES = ['tpu', 'director', 'principal'];
+
+// Tabs this role has no access to at all — hidden from the sidebar and
+// bounced back to Overview if reached directly via a stale ?tab= URL.
+const TABS_HIDDEN_FOR_ROLE = {
+  tpu: ['contests', 'labs', 'my-practicals', 'lms'],
+  director: ['contests', 'labs', 'my-practicals', 'lms'],
+  principal: ['contests', 'labs', 'my-practicals', 'lms'],
+};
+
+const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
+  const isInstitutionLead = INSTITUTION_LEAD_ROLES.includes(role);
+
   // Tabs tied to a lockable module disappear entirely when that module is
   // locked institution-wide — matches the module lock hiding from the
   // student nav too, so nobody at a locked institution can reach it from
   // either side.
   const MODULE_BY_TAB = { contests: 'contest', labs: 'labs', 'my-practicals': 'labs', companies: 'company', discuss: 'discuss' };
+  const hiddenForRole = TABS_HIDDEN_FOR_ROLE[role] || [];
   const sidebarItems = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'performance', label: 'Performance', icon: Trophy },
@@ -45,9 +63,20 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
     { id: 'my-practicals', label: 'My Practicals', icon: Pencil },
     { id: 'lms', label: 'LMS', icon: Library },
     { id: 'discuss', label: 'Discuss', icon: MessageSquare },
-  ].filter((item) => !MODULE_BY_TAB[item.id] || !lockedModules.includes(MODULE_BY_TAB[item.id]));
+  ].filter((item) => !MODULE_BY_TAB[item.id] || !lockedModules.includes(MODULE_BY_TAB[item.id]))
+   .filter((item) => !hiddenForRole.includes(item.id));
 
   const [activeTab, setActiveTab] = useTabNav('overview');
+
+  // A stale ?tab= link (bookmark, browser back) could still point at a tab
+  // this role no longer sees in the sidebar — bounce back to Overview
+  // instead of rendering a tab with no nav entry pointing at it.
+  useEffect(() => {
+    if (hiddenForRole.includes(activeTab)) {
+      setActiveTab('overview');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, role]);
   const [stats, setStats] = useState({
     staffCount: 0,
     studentCount: 0,
@@ -97,7 +126,7 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
 
   // Staff add/edit form state
   const [staffForm, setStaffForm] = useState(null); // null=closed, "add"=new, {faculty_id,...}=editing
-  const [staffFormData, setStaffFormData] = useState({ faculty_id: '', name: '', role: 'staff', password: '' });
+  const [staffFormData, setStaffFormData] = useState({ faculty_id: '', name: '', role: 'staff', password: '', department_id: '' });
   const [staffFormBusy, setStaffFormBusy] = useState(false);
   const [staffFormErr, setStaffFormErr] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -588,14 +617,14 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
   }
 
   function openAddStaff() {
-    setStaffFormData({ faculty_id: '', name: '', role: 'staff', password: '' });
+    setStaffFormData({ faculty_id: '', name: '', role: 'staff', password: '', department_id: '' });
     setStaffFormErr('');
     setShowPassword(false);
     setStaffForm('add');
   }
 
   function openEditStaff(staff) {
-    setStaffFormData({ faculty_id: staff.faculty_id, name: staff.name, role: staff.role || 'staff', password: '' });
+    setStaffFormData({ faculty_id: staff.faculty_id, name: staff.name, role: staff.role || 'staff', password: '', department_id: '' });
     setStaffFormErr('');
     setShowPassword(false);
     setStaffForm(staff);
@@ -636,9 +665,10 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
 
   async function submitStaffForm() {
     const isAdding = staffForm === 'add';
-    const { faculty_id, name, role, password } = staffFormData;
+    const { faculty_id, name, role, password, department_id } = staffFormData;
     if (!faculty_id.trim()) { setStaffFormErr('Faculty ID is required'); return; }
     if (!name.trim()) { setStaffFormErr('Name is required'); return; }
+    if (isAdding && isInstitutionLead && !department_id) { setStaffFormErr('Choose which department this staff member belongs to'); return; }
     setStaffFormBusy(true);
     setStaffFormErr('');
     try {
@@ -646,7 +676,7 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
       const headers = { 'Content-Type': 'application/json' };
       if (csrfToken) headers['X-CSRFToken'] = csrfToken;
       const body = isAdding
-        ? { faculty_id: faculty_id.trim(), name: name.trim(), role, password: password.trim() }
+        ? { faculty_id: faculty_id.trim(), name: name.trim(), role, password: password.trim(), ...(isInstitutionLead ? { department_id } : {}) }
         : { name: name.trim(), role, ...(password.trim() ? { password: password.trim() } : {}) };
       const url = isAdding ? '/api/hod/staff/' : `/api/hod/staff/${staffForm.faculty_id}/`;
       const res = await fetch(url, {
@@ -663,7 +693,12 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
       }
       // Update local staffList
       if (isAdding) {
-        setStaffList(prev => [...prev, { ...data, department_id: prev[0]?.department_id }]);
+        // The backend now returns the actual department_id the new staff
+        // member was placed in (their own for HOD/Academics, the chosen
+        // one for TPU/Director/Principal) — no need to guess it from an
+        // existing row, which used to silently mislabel every institution-
+        // wide add with whatever department happened to be first in the list.
+        setStaffList(prev => [...prev, data]);
       } else {
         setStaffList(prev => prev.map(s => s.faculty_id === data.faculty_id ? { ...s, ...data } : s));
         if (staffDetail && staffDetail.staff?.faculty_id === data.faculty_id) {
@@ -773,7 +808,7 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                   <p style={{ margin: 0 }}>Management Control Center • {staffData.department?.name || 'Overall Institution'}</p>
                   
-                  {departments.length > 0 && (
+                  {!isInstitutionLead && departments.length > 0 && (
                     <select 
                       value={selectedDeptId || ''} 
                       onChange={(e) => {
@@ -1241,7 +1276,7 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                         </div>
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          {staff.role !== 'hod' && staff.role !== 'admin' && (
+                          {!isInstitutionLead && staff.role !== 'hod' && staff.role !== 'admin' && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1417,6 +1452,32 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                       ))}
                     </div>
                   </div>
+
+                  {/* Department — only institution-wide roles (TPU/Director/
+                      Principal) need to choose one; HOD/Academics always add
+                      to their own department automatically. */}
+                  {staffForm === 'add' && isInstitutionLead && (
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: 'var(--text-soft)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Department *
+                      </label>
+                      <select
+                        value={staffFormData.department_id}
+                        onChange={(e) => setStaffFormData(d => ({ ...d, department_id: e.target.value }))}
+                        style={{
+                          width: '100%', padding: '10px 14px', borderRadius: 10,
+                          border: '1.5px solid var(--border-soft)', fontSize: '14px',
+                          fontWeight: '600', outline: 'none', boxSizing: 'border-box',
+                          background: 'var(--bg-1)', color: 'var(--text-hard)', cursor: 'pointer',
+                        }}
+                      >
+                        <option value="">Choose a department…</option>
+                        {departments.map(d => (
+                          <option key={d.id} value={d.id}>{d.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   {/* Password */}
                   <div>
@@ -2268,7 +2329,7 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                   <div>
                     <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: '800', color: 'var(--text-hard)' }}>Student Directory</h3>
                     <p style={{ margin: '4px 0 0', color: 'var(--text-soft)', fontSize: '14px' }}>
-                      Listing all students in {department?.name || 'the department'}.
+                      {isInstitutionLead ? 'Listing all students, institution-wide.' : `Listing all students in ${department?.name || 'the department'}.`}
                     </p>
                   </div>
                   
@@ -2288,7 +2349,8 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                       </select>
                     </div>
 
-                    {/* Overall Batch Copy-Paste Controls */}
+                    {/* Overall Batch Copy-Paste Controls — TPU is view-only, no lock/unlock */}
+                    {!isInstitutionLead && (
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: 'var(--bg-1)', padding: '4px 8px', borderRadius: 12, border: '1px solid var(--border-soft)' }}>
                       <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.04em', marginRight: 2 }}>
                         Copy-Paste:
@@ -2333,8 +2395,10 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                         <Lock size={12} /> Block All
                       </button>
                     </div>
+                    )}
 
-                    {/* Overall Account Status Controls */}
+                    {/* Overall Account Status Controls — TPU is view-only, no lock/unlock */}
+                    {!isInstitutionLead && (
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: 'var(--bg-1)', padding: '4px 8px', borderRadius: 12, border: '1px solid var(--border-soft)' }}>
                       <span style={{ fontSize: '11px', fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: '0.04em', marginRight: 2 }}>
                         Account Login:
@@ -2379,6 +2443,7 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                         <ShieldOff size={12} /> Block All
                       </button>
                     </div>
+                    )}
 
                     {/* Batch Report Download Buttons */}
                     <button
@@ -2514,31 +2579,47 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                               </span>
                             </td>
                             <td style={{ textAlign: 'center', padding: '16px 8px' }}>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleStudentCopyPasteToggle(student.register_number, student.allow_copy_paste);
-                                }}
-                                style={{
-                                  padding: '5px 12px',
-                                  borderRadius: 8,
-                                  border: '1px solid ' + (student.allow_copy_paste ? '#bbf7d0' : '#fca5a5'),
-                                  background: student.allow_copy_paste ? '#f0fdf4' : '#fff5f5',
-                                  color: student.allow_copy_paste ? '#15803d' : '#dc2626',
-                                  fontSize: 12,
-                                  fontWeight: 700,
-                                  cursor: 'pointer',
-                                }}
-                                title={student.allow_copy_paste ? "Disable copy-paste for this student" : "Enable copy-paste for this student"}
-                              >
-                                {student.allow_copy_paste ? "📋 Allowed" : "🚫 Blocked"}
-                              </button>
+                              {isInstitutionLead ? (
+                                <span
+                                  style={{
+                                    padding: '5px 12px',
+                                    borderRadius: 8,
+                                    border: '1px solid ' + (student.allow_copy_paste ? '#bbf7d0' : '#fca5a5'),
+                                    background: student.allow_copy_paste ? '#f0fdf4' : '#fff5f5',
+                                    color: student.allow_copy_paste ? '#15803d' : '#dc2626',
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  {student.allow_copy_paste ? "📋 Allowed" : "🚫 Blocked"}
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStudentCopyPasteToggle(student.register_number, student.allow_copy_paste);
+                                  }}
+                                  style={{
+                                    padding: '5px 12px',
+                                    borderRadius: 8,
+                                    border: '1px solid ' + (student.allow_copy_paste ? '#bbf7d0' : '#fca5a5'),
+                                    background: student.allow_copy_paste ? '#f0fdf4' : '#fff5f5',
+                                    color: student.allow_copy_paste ? '#15803d' : '#dc2626',
+                                    fontSize: 12,
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                  }}
+                                  title={student.allow_copy_paste ? "Disable copy-paste for this student" : "Enable copy-paste for this student"}
+                                >
+                                  {student.allow_copy_paste ? "📋 Allowed" : "🚫 Blocked"}
+                                </button>
+                              )}
                             </td>
                             <td style={{ textAlign: 'right', padding: '16px 8px' }}>
-                              <button 
+                              <button
                                 onClick={() => handleStudentClick(student.register_number)}
-                                style={{ 
-                                  padding: '6px 12px', borderRadius: '8px', 
+                                style={{
+                                  padding: '6px 12px', borderRadius: '8px',
                                   border: '1px solid var(--border-soft)', background: 'white',
                                   color: 'var(--olive-800)', fontSize: '12px', fontWeight: '600',
                                   cursor: 'pointer'
@@ -2887,25 +2968,37 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                                           {student.last_active ? new Date(student.last_active).toLocaleDateString() : 'Never'}
                                         </td>
                                         <td style={{ padding: '8px', textAlign: 'center' }}>
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              handleStudentCopyPasteToggle(student.register_number, student.allow_copy_paste);
-                                            }}
-                                            style={{
-                                              padding: '4px 10px',
-                                              borderRadius: 6,
+                                          {isInstitutionLead ? (
+                                            <span style={{
+                                              padding: '4px 10px', borderRadius: 6,
                                               border: '1px solid ' + (student.allow_copy_paste ? '#bbf7d0' : '#fca5a5'),
                                               background: student.allow_copy_paste ? '#f0fdf4' : '#fff5f5',
                                               color: student.allow_copy_paste ? '#15803d' : '#dc2626',
-                                              fontSize: 11,
-                                              fontWeight: 700,
-                                              cursor: 'pointer',
-                                            }}
-                                            title={student.allow_copy_paste ? "Disable copy-paste for this student" : "Enable copy-paste for this student"}
-                                          >
-                                            {student.allow_copy_paste ? "📋 Allowed" : "🚫 Blocked"}
-                                          </button>
+                                              fontSize: 11, fontWeight: 700,
+                                            }}>
+                                              {student.allow_copy_paste ? "📋 Allowed" : "🚫 Blocked"}
+                                            </span>
+                                          ) : (
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleStudentCopyPasteToggle(student.register_number, student.allow_copy_paste);
+                                              }}
+                                              style={{
+                                                padding: '4px 10px',
+                                                borderRadius: 6,
+                                                border: '1px solid ' + (student.allow_copy_paste ? '#bbf7d0' : '#fca5a5'),
+                                                background: student.allow_copy_paste ? '#f0fdf4' : '#fff5f5',
+                                                color: student.allow_copy_paste ? '#15803d' : '#dc2626',
+                                                fontSize: 11,
+                                                fontWeight: 700,
+                                                cursor: 'pointer',
+                                              }}
+                                              title={student.allow_copy_paste ? "Disable copy-paste for this student" : "Enable copy-paste for this student"}
+                                            >
+                                              {student.allow_copy_paste ? "📋 Allowed" : "🚫 Blocked"}
+                                            </button>
+                                          )}
                                         </td>
                                         <td style={{ padding: '8px', textAlign: 'center' }}>
                                           <button
@@ -3046,18 +3139,20 @@ const HODDashboard = ({ institutionId, lockedModules = [] }) => {
                         Close ✕
                       </button>
                     </div>
-                    <button
-                      onClick={() => handleStudentBlockToggle(studentDetail.student.register_number)}
-                      style={{
-                        padding: '6px 14px', borderRadius: 6, border: 'none', fontSize: 12, cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', gap: 6,
-                        background: studentDetail.student.is_active === false ? '#d1fae5' : '#fee2e2',
-                        color: studentDetail.student.is_active === false ? '#059669' : '#dc2626',
-                      }}
-                    >
-                      {studentDetail.student.is_active === false ? <Shield size={13} /> : <ShieldOff size={13} />}
-                      {studentDetail.student.is_active === false ? 'Unblock Student' : 'Block Student'}
-                    </button>
+                    {!isInstitutionLead && (
+                      <button
+                        onClick={() => handleStudentBlockToggle(studentDetail.student.register_number)}
+                        style={{
+                          padding: '6px 14px', borderRadius: 6, border: 'none', fontSize: 12, cursor: 'pointer',
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          background: studentDetail.student.is_active === false ? '#d1fae5' : '#fee2e2',
+                          color: studentDetail.student.is_active === false ? '#059669' : '#dc2626',
+                        }}
+                      >
+                        {studentDetail.student.is_active === false ? <Shield size={13} /> : <ShieldOff size={13} />}
+                        {studentDetail.student.is_active === false ? 'Unblock Student' : 'Block Student'}
+                      </button>
+                    )}
                   </div>
                 </div>
 

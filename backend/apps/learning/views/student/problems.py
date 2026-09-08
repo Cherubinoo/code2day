@@ -1,6 +1,8 @@
 """Views extracted from the original monolithic apps/learning/views.py
 (module: student/problems). Pure code motion — see apps/learning/views/_imports.py
 and _shared.py for why this split can't hit a missing-name error."""
+import math
+
 from .._imports import *
 from .._shared import *
 
@@ -23,11 +25,34 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
     POINTS_PER_APTITUDE = 5
     POINTS_PER_STREAK_DAY = 2
 
-    # Every 100 points is one level — computed server-side off the exact
-    # same points value used for ranking, rather than the frontend
-    # re-deriving it (and risking drifting out of sync if this formula, or
-    # the point weights above, ever change).
-    POINTS_PER_LEVEL = 100
+    # Level curve: a flat "every 100 points is a level" produced an
+    # uncapped, meaningless "Level 47" for anyone with a few thousand
+    # points. Levels are now capped at 99 and each one costs more than the
+    # last (level L requires 8*L*(L-1) cumulative points — 16 for level 2,
+    # 720 for level 10, ~77,600 for the level-99 ceiling) so early levels
+    # come fast off a handful of solves and the top end stays a long-term,
+    # multi-semester goal rather than something a single active week clears.
+    MAX_LEVEL = 99
+    LEVEL_CURVE_SCALE = 8
+
+    @classmethod
+    def _level_threshold(cls, level):
+        """Cumulative points required to REACH `level` (level 1 = 0 points)."""
+        return cls.LEVEL_CURVE_SCALE * level * (level - 1)
+
+    @classmethod
+    def _level_for_points(cls, points):
+        if points <= 0:
+            return 1
+        # Closed-form inverse of the threshold formula, then nudged to the
+        # exact boundary to absorb float rounding at large point values.
+        level = int((1 + math.sqrt(1 + 4 * points / cls.LEVEL_CURVE_SCALE)) / 2)
+        level = max(1, level)
+        while level < cls.MAX_LEVEL and cls._level_threshold(level + 1) <= points:
+            level += 1
+        while level > 1 and cls._level_threshold(level) > points:
+            level -= 1
+        return min(level, cls.MAX_LEVEL)
 
     def get(self, request):
         profile, profile_type, error = self.get_authenticated_profile(request)
@@ -40,6 +65,13 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
 
         from django.db.models.functions import Coalesce
 
+        try:
+            limit = int(request.query_params.get('limit', 10))
+        except (TypeError, ValueError):
+            limit = 10
+        limit = max(1, min(100, limit))
+        department_filter = (request.query_params.get('department') or '').strip()
+
         today = timezone.now().date()
         students = StudentProfile.objects.filter(institution=profile.institution).select_related('department').annotate(
             problems_solved=Count('solved_problems', distinct=True),
@@ -48,6 +80,16 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
             contest_score=Coalesce(Sum('contest_participations__total_score'), 0),
             sql_frog_xp=Coalesce('sql_frog_progress__xp', 0),
         )
+
+        # Every department with at least one student here, for the filter
+        # dropdown — computed off the unfiltered set so switching filters
+        # never makes an option disappear.
+        available_departments = sorted({
+            (s.department.code, s.department.name) for s in students if s.department
+        }, key=lambda pair: pair[1])
+
+        if department_filter:
+            students = [s for s in students if s.department and s.department.code == department_filter]
 
         ranked = []
         for s in students:
@@ -61,11 +103,22 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
             ranked.append((points, s))
         ranked.sort(key=lambda t: (-t[0], t[1].name or ""))
 
+        # A separate ranking by SQL Frog XP alone — "points" folds it into
+        # one composite score, but a student who's put real time into the
+        # SQL game specifically wants to see how that stacks up on its own,
+        # not just as a few extra points buried in the total.
+        sql_ranked = sorted(ranked, key=lambda t: (-t[1].sql_frog_xp, t[1].name or ""))
+        sql_rank_by_id = {s.id: idx for idx, (_, s) in enumerate(sql_ranked, 1)}
+
         leaderboard = []
         current_entry = None
         for idx, (points, s) in enumerate(ranked, 1):
-            level = points // self.POINTS_PER_LEVEL + 1
-            level_progress = points % self.POINTS_PER_LEVEL
+            level = self._level_for_points(points)
+            current_floor = self._level_threshold(level)
+            next_floor = self._level_threshold(level + 1) if level < self.MAX_LEVEL else current_floor
+            points_into_level = points - current_floor
+            points_for_level = max(1, next_floor - current_floor)
+            level_progress = 100 if level >= self.MAX_LEVEL else round(points_into_level / points_for_level * 100, 1)
             entry = {
                 "rank": idx,
                 "register_number": s.register_number,
@@ -74,24 +127,32 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
                 "batch": s.batch,
                 "points": points,
                 "level": level,
-                "level_progress": level_progress,  # 0-99, how far into the current level
+                "level_max": level >= self.MAX_LEVEL,
+                "level_progress": level_progress,  # 0-100, how far into the current level
+                "points_into_level": points_into_level,
+                "points_for_level": points_for_level,
                 "problems_solved": s.problems_solved,
                 "solved_today": s.solved_today,
                 "aptitude_solved": s.aptitude_solved,
                 "contest_score": s.contest_score,
                 "streak": s.current_streak,
                 "xp": s.sql_frog_xp,
+                "sql_rank": sql_rank_by_id[s.id],
                 "is_you": s.id == profile.id,
             }
             if s.id == profile.id:
                 current_entry = entry
-            if idx <= 100:
+            if idx <= limit:
                 leaderboard.append(entry)
 
         return Response({
             "leaderboard": leaderboard,
             "current_student": current_entry,
             "total_students": len(ranked),
+            "limit": limit,
+            "department_filter": department_filter,
+            "available_departments": [{"code": code, "name": name} for code, name in available_departments],
+            "max_level": self.MAX_LEVEL,
         })
 
 class DailyLeaderboardView(UnifiedAuthMixin, APIView):

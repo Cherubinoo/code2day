@@ -33,7 +33,7 @@ function TopBar({ activePage, dashboard, handleLogout, navItems, setActivePage, 
     if (userType === "admin") return adminNavItems;
     if (userType === "academics") return academicsNavItems;
     if (userType === "hod") return hodNavItems;
-    if (userType === "staff" || userType === "director" || userType === "tpu" || userType === "ja") return staffNavItems;
+    if (userType === "staff" || userType === "director" || userType === "tpu" || userType === "principal" || userType === "ja") return staffNavItems;
     return navItems;
   };
 

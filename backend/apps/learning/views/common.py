@@ -16,11 +16,18 @@ class DashboardView(UnifiedAuthMixin, APIView):
         range_start = parse_date_param(request.query_params.get('start_date'))
         range_end = parse_date_param(request.query_params.get('end_date'))
 
-        # Handle staff/hod/academics/admin/director/tpu/ja users differently
-        if profile_type in ["staff", "hod", "academics", "admin", "director", "tpu", "ja"]:
+        # Handle staff/hod/academics/admin/director/tpu/principal/ja users differently
+        if profile_type in ["staff", "hod", "academics", "admin", "director", "tpu", "principal", "ja"]:
             # Get profile details
             profile_obj = profile if profile else None
             user_department = getattr(profile_obj, 'department', None) if profile_obj else None
+
+            # Institution-wide roles always see the whole institution, never
+            # department-scoped data — even if their own StaffProfile record
+            # happens to carry a department FK (stale/seed data), since their
+            # dashboard is framed around "Overall Institution", not one dept.
+            if profile_type in ["admin", "director", "tpu", "principal", "ja"]:
+                user_department = None
 
             # Filter by institution for multi-tenant support
             inst = getattr(profile_obj, 'institution', None)
@@ -40,7 +47,7 @@ class DashboardView(UnifiedAuthMixin, APIView):
             else:
                 student_count = StudentProfile.objects.filter(institution=inst).count() if inst else StudentProfile.objects.count()
                 contest_count = Contest.objects.filter(institution=inst).count() if inst else Contest.objects.count()
-                pending_approvals = Contest.objects.filter(status='pending_approval', institution=inst).count() if profile_type in ["admin", "director", "tpu", "ja"] and inst else 0
+                pending_approvals = Contest.objects.filter(status='pending_approval', institution=inst).count() if profile_type in ["admin", "director", "tpu", "principal", "ja"] and inst else 0
 
                 weekly_activity = build_solved_activity_series(
                     Q(student__institution=inst) if inst else Q(),
@@ -108,7 +115,7 @@ class DashboardView(UnifiedAuthMixin, APIView):
             
             # Get list of departments for institutional roles
             depts_list = []
-            if profile_type in ["admin", "director", "tpu", "ja"]:
+            if profile_type in ["admin", "director", "tpu", "principal", "ja"]:
                 depts_qs = Department.objects.filter(institution=inst) if inst else Department.objects.all()
                 for d in depts_qs:
                     depts_list.append({
@@ -121,9 +128,10 @@ class DashboardView(UnifiedAuthMixin, APIView):
             user_payload = {
                 "name": profile.name if profile else request.user.first_name,
                 "title": (
-                    "Administrator" if profile_type == "admin" else 
-                    "Director" if profile_type == "director" else 
-                    "TPU Coordinator" if profile_type == "tpu" else 
+                    "Administrator" if profile_type == "admin" else
+                    "Director" if profile_type == "director" else
+                    "TPU Coordinator" if profile_type == "tpu" else
+                    "Principal" if profile_type == "principal" else
                     "Junior Admin" if profile_type == "ja" else
                     "HOD" if profile_type == "hod" else "Staff"
                 ),
@@ -162,7 +170,7 @@ class DashboardView(UnifiedAuthMixin, APIView):
                         "score": s.solved,
                         "rank": 0
                     })
-            elif profile_type in ["admin", "director", "tpu", "ja"] and inst:
+            elif profile_type in ["admin", "director", "tpu", "principal", "ja"] and inst:
                 top_students = StudentProfile.objects.filter(institution=inst).annotate(
                     solved=Count('solved_problems', distinct=True)
                 ).order_by('-solved')[:10]
@@ -750,7 +758,7 @@ class BatchCopyPasteToggleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, batch_code):
-        if not (request.user.is_superuser or request.user.is_staff or getattr(request.user, 'role', '') in ('admin', 'hod', 'tpu', 'director', 'ja') or hasattr(request.user, 'staff_profile')):
+        if not (request.user.is_superuser or request.user.is_staff or getattr(request.user, 'role', '') in ('admin', 'hod', 'tpu', 'director', 'principal', 'ja') or hasattr(request.user, 'staff_profile')):
             return Response({"detail": "Staff or HOD access required."}, status=status.HTTP_403_FORBIDDEN)
 
         staff_profile = getattr(request.user, 'staff_profile', None)
@@ -761,7 +769,7 @@ class BatchCopyPasteToggleView(APIView):
         
         if staff_profile:
             student_qs = student_qs.filter(institution_id=staff_profile.institution_id)
-            if staff_profile.role not in ['admin', 'ja', 'tpu', 'director']:
+            if staff_profile.role not in ['admin', 'ja', 'tpu', 'director', 'principal']:
                 student_qs = student_qs.filter(department_id=staff_profile.department_id)
 
         if 'allow_copy_paste' in request.data:
@@ -786,7 +794,7 @@ class BatchBlockToggleView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, batch_code):
-        if not (request.user.is_superuser or request.user.is_staff or getattr(request.user, 'role', '') in ('admin', 'hod', 'tpu', 'director', 'ja') or hasattr(request.user, 'staff_profile')):
+        if not (request.user.is_superuser or request.user.is_staff or getattr(request.user, 'role', '') in ('admin', 'hod', 'tpu', 'director', 'principal', 'ja') or hasattr(request.user, 'staff_profile')):
             return Response({"detail": "Staff or HOD access required."}, status=status.HTTP_403_FORBIDDEN)
 
         staff_profile = getattr(request.user, 'staff_profile', None)
@@ -797,7 +805,7 @@ class BatchBlockToggleView(APIView):
         
         if staff_profile:
             student_qs = student_qs.filter(institution_id=staff_profile.institution_id)
-            if staff_profile.role not in ['admin', 'ja', 'tpu', 'director']:
+            if staff_profile.role not in ['admin', 'ja', 'tpu', 'director', 'principal']:
                 student_qs = student_qs.filter(department_id=staff_profile.department_id)
 
         if 'is_active' in request.data:

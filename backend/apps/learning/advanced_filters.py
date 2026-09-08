@@ -116,8 +116,8 @@ class AdvancedStudentFilterView(UnifiedAuthMixin, APIView):
                 department=profile.department
             )
         
-        elif profile_type in ["director", "tpu", "ja"]:
-            # Directors, TPU, JA can see all students in their institution
+        elif profile_type in ["director", "tpu", "principal", "ja"]:
+            # Directors, TPU, Principals, JA can see all students in their institution
             return StudentProfile.objects.filter(
                 institution=profile.institution
             )

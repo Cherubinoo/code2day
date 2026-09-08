@@ -640,7 +640,7 @@ class ContestReportPDFView(UnifiedAuthMixin, APIView):
             # accessible to any staff/HOD in that institution; otherwise the
             # departments must match.
             return contest.department is None or profile.department == contest.department
-        elif profile_type in ("director", "tpu", "ja"):
+        elif profile_type in ("director", "tpu", "principal", "ja"):
             return profile.institution == contest.institution
         elif profile_type == "admin":
             return True
@@ -1340,7 +1340,7 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
             if profile.institution != contest.institution:
                 return False
             return contest.department is None or profile.department == contest.department
-        elif profile_type in ("director", "tpu", "ja"):
+        elif profile_type in ("director", "tpu", "principal", "ja"):
             return profile.institution == contest.institution
         elif profile_type == "admin":
             return True

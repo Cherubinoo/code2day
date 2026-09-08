@@ -586,6 +586,7 @@ class SystemUpdate(models.Model):
         ("ja", "Junior Admins Only"),
         ("tpu", "TPU Officers Only"),
         ("director", "Directors Only"),
+        ("principal", "Principals Only"),
     )
     CATEGORY_CHOICES = (
         ("feature", "New Feature"),
@@ -1288,6 +1289,29 @@ class InterviewQuestion(models.Model):
         return f"{self.topic} — {self.question_text[:50]}"
 
 
+class InterviewQuestionProgress(models.Model):
+    """One student's swipe decision on one Interview Practice question —
+    the card-based "learn again" (left) / "learned" (right) gesture from
+    the practice-mode deck. A "learned" question drops out of the deck;
+    "review_again" keeps resurfacing it. Absence of a row means the
+    question has never been swiped yet (still in the deck, un-triaged)."""
+    STATUS_CHOICES = (("review_again", "Review Again"), ("learned", "Learned"))
+
+    student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name="interview_question_progress")
+    question = models.ForeignKey(InterviewQuestion, on_delete=models.CASCADE, related_name="student_progress")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "interview_question_progress"
+        constraints = [
+            models.UniqueConstraint(fields=["student", "question"], name="unique_interview_question_progress"),
+        ]
+
+    def __str__(self):
+        return f"{self.student.register_number} / Q{self.question_id} = {self.status}"
+
+
 class SqlFrogProgress(models.Model):
     """One student's progress through "SQL Frog: Journey to the SQL
     Kingdom" — the gamified SQL-learning game. Levels themselves are
@@ -1466,6 +1490,7 @@ class StaffProfile(models.Model):
         ("academics", "Academic Coordinator"),
         ("tpu", "TPU (Training & Placement)"),
         ("director", "Director"),
+        ("principal", "Principal"),
         ("ja", "Junior Admin (JA)"),
         ("admin", "System Admin"),
     )
