@@ -56,6 +56,8 @@ INSTALLED_APPS = [
     "corsheaders",
     "rest_framework",
     "apps.learning",
+    "apps.communication_hub",
+    "apps.interview",
 ]
 
 MIDDLEWARE = [
@@ -100,7 +102,7 @@ DATABASES = {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": os.getenv("DB_NAME", "code2day"),
         "USER": os.getenv("DB_USER", "postgres" if DEBUG else "judge0"),
-        "PASSWORD": os.getenv("DB_PASSWORD", ""),
+        "PASSWORD": os.getenv("DB_PASSWORD", "123"),
         "HOST": os.getenv("DB_HOST", "localhost" if DEBUG else "172.18.0.1"),
         "PORT": os.getenv("DB_PORT", "5432"),
     }

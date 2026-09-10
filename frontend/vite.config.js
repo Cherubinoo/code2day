@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
 function stripMonacoBrokenSourceMaps() {
   const monacoPathPattern = /monaco-editor[\\/](min|dev)[\\/]vs[\\/].+\.js$/;
@@ -21,7 +22,7 @@ function stripMonacoBrokenSourceMaps() {
 }
 
 export default defineConfig({
-  plugins: [react(), stripMonacoBrokenSourceMaps()],
+  plugins: [react(), tailwindcss(), stripMonacoBrokenSourceMaps()],
   server: {
     port: 5173,
     allowedHosts: ["code2day.ramcoad.com"],

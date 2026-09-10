@@ -1563,3 +1563,42 @@ class LabExerciseSubmission(models.Model):
 
     def __str__(self):
         return f"{self.student} → {self.exercise}"
+
+
+class LearningPlan(models.Model):
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="learning_plans"
+    )
+    title = models.CharField(max_length=255)
+    target_role = models.CharField(max_length=150, blank=True, default="General")
+    start_date = models.DateField(auto_now_add=True)
+    end_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=50, default="active")
+    profile_fingerprint = models.CharField(max_length=64, blank=True, default="")
+    company_checklist = models.JSONField(default=list)
+    ai_generated = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"Plan {self.id} — {self.title} (User: {self.user.username})"
+
+
+class LearningTask(models.Model):
+    plan = models.ForeignKey(
+        LearningPlan,
+        on_delete=models.CASCADE,
+        related_name="tasks"
+    )
+    task_name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default='')
+    duration = models.CharField(max_length=100, blank=True, default='1 week')
+    category = models.CharField(max_length=100, blank=True, default='Technical')
+    resource_link = models.TextField(blank=True, default='')
+    completed = models.BooleanField(default=False)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    extended_metadata = models.JSONField(default=dict)
+
+    def __str__(self):
+        return f"Task {self.id} — {self.task_name}"
+

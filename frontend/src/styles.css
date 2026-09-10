@@ -1,3 +1,27 @@
+@import "tailwindcss";
+@import "./App.css";
+@import "./premium-theme.css";
+
+@theme {
+  --color-premium-bg: #F7F2EB;
+  --color-premium-sidebar: #2E3135;
+  --color-premium-card: #FCFBF9;
+  --color-premium-border: #ECE5DD;
+  --color-premium-primary: #1F2022;
+  --color-premium-secondary: #747474;
+  --color-premium-accent: #B18B5E;
+  --color-premium-success: #5F8D69;
+  --color-premium-warning: #B18B5E;
+  --color-premium-error: #2E3135;
+  
+  --font-sans: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  --radius-card: 22px;
+  --radius-btn: 16px;
+  --radius-sidebar: 28px;
+  --radius-profile: 20px;
+  --shadow-soft: 0 8px 30px rgba(0,0,0,0.05);
+}
+
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }

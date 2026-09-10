@@ -18,6 +18,8 @@ import ProblemsPage from "./components/student/pages/ProblemsPage";
 import CompanyPage from "./components/student/pages/CompanyPage";
 import ProgressPage from "./components/student/pages/ProgressPage";
 import RoadmapsPage from "./components/student/pages/RoadmapsPage";
+import CommunicationPage from "./components/student/pages/CommunicationPage";
+import InterviewPage from "./components/student/pages/InterviewPage";
 import DevelopersProfile from "./components/common/DevelopersProfile";
 import Footer from "./components/common/Footer";
 import "./layout-fix.css";
@@ -1256,6 +1258,12 @@ function App() {
       break;
     case "aptitude":
       activeView = <AptitudePage onToggleWorkspace={setIsInsideWorkspace} />;
+      break;
+    case "communication":
+      activeView = <CommunicationPage />;
+      break;
+    case "interview":
+      activeView = <InterviewPage />;
       break;
     case "discuss":
       activeView = (

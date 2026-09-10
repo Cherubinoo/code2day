@@ -1,4 +1,4 @@
-import { LayoutGrid, Map, Code2, Building2, Brain, FolderCode, Trophy, BarChart3, MessageSquare, Database, Terminal, FlaskConical } from "lucide-react";
+import { LayoutGrid, Map, Code2, Building2, Brain, FolderCode, Trophy, BarChart3, MessageSquare, Database, Terminal, FlaskConical, Mic, UserCheck } from "lucide-react";
 
 function buildFallbackCalendar() {
   const today = new Date();
@@ -597,15 +597,17 @@ export const discussionThreads = [
 export const LAB_LANGUAGES = ["Python", "C", "C++", "Java"];
 
 export const navItems = [
-  { id: "explore",  label: "Explore",   icon: LayoutGrid },
-  { id: "roadmaps", label: "Roadmaps",  icon: Map },
-  { id: "problems", label: "Problems",  icon: Code2 },
-  { id: "labs",     label: "Labs",      icon: FlaskConical },
-  { id: "company",  label: "Companies", icon: Building2 },
-  { id: "aptitude", label: "Aptitude",  icon: Brain },
-  { id: "contest",  label: "Contest",   icon: Trophy },
-  { id: "progress", label: "Progress",  icon: BarChart3 },
-  { id: "discuss",  label: "Discuss",   icon: MessageSquare },
+  { id: "explore",       label: "Explore",          icon: LayoutGrid },
+  { id: "roadmaps",      label: "Roadmaps",         icon: Map },
+  { id: "problems",      label: "Problems",         icon: Code2 },
+  { id: "labs",          label: "Labs",             icon: FlaskConical },
+  { id: "company",       label: "Companies",        icon: Building2 },
+  { id: "aptitude",      label: "Aptitude",         icon: Brain },
+  { id: "communication", label: "Communication",    icon: Mic },
+  { id: "interview",     label: "Interview",        icon: UserCheck },
+  { id: "contest",       label: "Contest",          icon: Trophy },
+  { id: "progress",      label: "Progress",         icon: BarChart3 },
+  { id: "discuss",       label: "Discuss",          icon: MessageSquare },
 ];
 
 export const difficultyOrder = ["All Levels", "Easy", "Medium", "Hard"];

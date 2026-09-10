@@ -1,4 +1,5 @@
 from django.urls import path
+from . import advisor_views
 
 from .views import (
     JADashboardView,
@@ -354,4 +355,9 @@ urlpatterns = [
 
     # ── TEMPORARY: data-loss diagnostic, remove after investigation ──────────
     path("_diag/db/<str:token>/", TempDataDiagnosticsView.as_view(), name="temp-data-diagnostics"),
+
+    # ── AI Smart Roadmap & Career Advisor Endpoints ───────────────────────────
+    path("advisor/", advisor_views.get_advisor_data, name="get_advisor_data"),
+    path("tasks/<int:pk>/complete/", advisor_views.complete_advisor_task, name="complete_advisor_task"),
+    path("company/", advisor_views.select_target_company, name="select_target_company"),
 ]

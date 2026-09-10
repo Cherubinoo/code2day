@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import SmartRoadmap from './learning/SmartRoadmap';
+import MockInterviews from './interview/MockInterviews';
 
-export default function RoadmapsPage() {
+export default function InterviewPage() {
   const [user, setUser] = useState(() => {
     const savedUser = localStorage.getItem('user');
     try {
@@ -24,8 +24,8 @@ export default function RoadmapsPage() {
   };
 
   return (
-    <div style={{ width: '100%', minHeight: '100vh', background: '#F6F3EE', padding: '0', boxSizing: 'border-box' }}>
-      <SmartRoadmap
+    <div style={{ width: '100%', minHeight: '100vh', background: '#F8F3EA', padding: '24px 32px', boxSizing: 'border-box' }}>
+      <MockInterviews
         token={token}
         API_BASE={API_BASE}
         user={user}
