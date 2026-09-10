@@ -1807,36 +1807,79 @@ class Contest(models.Model):
         creator = self.created_by.faculty_id if self.created_by else "Unknown"
         return f"{self.title} - {creator} ({self.department.code if self.department else 'No Dept'})"
     
+    def _parsed_section_scoping(self):
+        """(section_pairs, plain_sections, restricted_batches) parsed from
+        assigned_sections, using the SAME rules ContestListCreateView.post
+        assigns students by:
+          - "batch::section" or {"batch","section"} → that batch is
+            *restricted* to exactly the listed section(s); its other
+            sections are NOT reached even if the batch is in assigned_batches.
+          - a bare "section" string → that section in ANY batch.
+        """
+        section_pairs = []      # (batch, section)
+        plain_sections = []     # section only, no batch
+        restricted_batches = set()
+        for entry in (self.assigned_sections or []):
+            if isinstance(entry, dict):
+                b, s = entry.get("batch"), entry.get("section")
+            else:
+                entry = str(entry)
+                if "::" in entry:
+                    b, _, s = entry.partition("::")
+                else:
+                    b, s = "", entry
+            if b and s:
+                section_pairs.append((b, s))
+                restricted_batches.add(b)
+            elif s:
+                plain_sections.append(s)
+        return section_pairs, plain_sections, restricted_batches
+
+    def _assigned_students_q(self):
+        """Q over StudentProfile for everyone this contest reaches — the one
+        place batch-vs-section scoping is resolved, mirroring how
+        ContestListCreateView.post builds the assigned_students set. A batch
+        in assigned_batches only counts at batch level when it has no
+        batch::section restriction; restricted batches count only their
+        listed sections."""
+        section_pairs, plain_sections, restricted_batches = self._parsed_section_scoping()
+
+        q = models.Q(id__in=self.assigned_students.values_list("id", flat=True))
+
+        unrestricted_batches = [b for b in (self.assigned_batches or []) if b not in restricted_batches]
+        if unrestricted_batches:
+            q |= models.Q(batch__in=unrestricted_batches, department=self.department)
+        for b, s in section_pairs:
+            q |= models.Q(batch=b, section=s, department=self.department)
+        for s in plain_sections:
+            q |= models.Q(section=s, department=self.department)
+        return q
+
+    def assigned_students_queryset(self):
+        return StudentProfile.objects.filter(self._assigned_students_q()).distinct()
+
     def is_student_assigned(self, student):
-        """Strict check if a student is assigned to this contest (batch, section, or individual)"""
+        """Strict check if a student is assigned to this contest (batch, section, or individual)."""
         if self.assigned_students.filter(id=student.id).exists():
             return True
 
-        if self.department and student.department != self.department:
+        if self.department_id and student.department_id != self.department_id:
             return False
 
-        # If specific sections are assigned, student MUST match one of the assigned sections
-        if self.assigned_sections:
-            student_key = f"{student.batch}::{student.section}"
-            for entry in self.assigned_sections:
-                if isinstance(entry, str):
-                    if entry == student_key or entry == student.section:
-                        return True
-                    if "::" in entry:
-                        b, _, s = entry.partition("::")
-                        if student.batch == b and student.section == s:
-                            return True
-                elif isinstance(entry, dict):
-                    b = entry.get("batch")
-                    s = entry.get("section")
-                    if (not b or b == student.batch) and s == student.section:
-                        return True
-            # Explicit section scoping was set, but student section didn't match any
-            return False
+        section_pairs, plain_sections, restricted_batches = self._parsed_section_scoping()
 
-        # Otherwise fallback to batch level check
-        if self.assigned_batches and student.batch in self.assigned_batches:
+        for b, s in section_pairs:
+            if student.batch == b and student.section == s:
+                return True
+        if student.section in plain_sections:
             return True
+
+        # Batch level — only for batches NOT narrowed to specific sections.
+        for b in (self.assigned_batches or []):
+            if b in restricted_batches:
+                continue
+            if student.batch == b:
+                return True
 
         return False
     
@@ -1894,17 +1937,11 @@ class Contest(models.Model):
 
     @property
     def assigned_student_count(self):
-        """Total unique students assigned via individual, batch, or section assignment"""
-        q = models.Q(id__in=self.assigned_students.values_list('id', flat=True))
-        if self.assigned_batches:
-            # We filter by department too to be safe, as batches might not be globally unique
-            q |= models.Q(batch__in=self.assigned_batches, department=self.department)
-        for entry in self.assigned_sections:
-            batch, _, section = str(entry).partition("::")
-            if batch and section:
-                q |= models.Q(batch=batch, section=section, department=self.department)
-
-        return StudentProfile.objects.filter(q).distinct().count()
+        """Unique students this contest actually reaches — batch-level for a
+        fully-allocated batch, only the listed section(s) for a
+        section-scoped one, plus any individually-assigned students. See
+        _assigned_students_q()."""
+        return self.assigned_students_queryset().count()
     
     def submit_for_approval(self):
         """Submit contest for HOD approval"""

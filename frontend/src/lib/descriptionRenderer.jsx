@@ -5,9 +5,30 @@
 // problem" card) just dumped the raw string into a <p>, so the same
 // backtick/bold/heading/code-fence markdown that renders correctly on the
 // Problems page showed up as literal ** and ``` characters everywhere else.
+// Undo "UTF-8 bytes decoded as Latin-1/CP1252" corruption (a curly quote
+// shows up as â€™, x² as xÂ², √ as â^€ ...). Some older stored explanations
+// were saved before the generator's decode was pinned to UTF-8. Only kicks
+// in when the tell-tale markers are present and a re-decode actually removes
+// them without introducing replacement chars, so clean/accented text is
+// never touched.
+const MOJIBAKE_RE = /Ã.|Â.|â€|â|â|â|�/;
+export function fixMojibake(s) {
+  if (!s || typeof s !== "string" || !MOJIBAKE_RE.test(s)) return s;
+  try {
+    const bytes = Uint8Array.from(Array.from(s, (c) => c.charCodeAt(0) & 0xff));
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const before = (s.match(/Ã|Â|â€/g) || []).length;
+    const after = (decoded.match(/Ã|Â|â€/g) || []).length;
+    if (after < before && !decoded.includes("�")) return fixMojibake(decoded);
+  } catch {
+    // string isn't cleanly a mis-decoded UTF-8 byte stream — leave it alone
+  }
+  return s;
+}
+
 export function renderInline(text) {
   if (!text || typeof text !== "string") return "";
-  return text
+  return fixMojibake(text)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.+?)\*/g, '<em>$1</em>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -22,7 +43,8 @@ export function escapeHtml(text) {
 
 export function renderDescription(raw) {
   if (!raw) return null;
-  const strRaw = typeof raw === "string" ? raw : (typeof raw === "object" ? (raw.description || raw.body || JSON.stringify(raw)) : String(raw));
+  const strRaw0 = typeof raw === "string" ? raw : (typeof raw === "object" ? (raw.description || raw.body || JSON.stringify(raw)) : String(raw));
+  const strRaw = fixMojibake(strRaw0);
   const lines = strRaw.replace(/\\n/g, '\n').split('\n');
   const elements = [];
   let i = 0;

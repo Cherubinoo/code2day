@@ -116,6 +116,32 @@ def _build_prompt(title, description, examples, num_cases):
     )
 
 
+_MOJIBAKE_MARKERS = ("Ã", "Â", "â€", "â\x80", "â\x84", "â\x86", "Ã¢", "�")
+
+
+def _fix_mojibake(text):
+    """Undo the classic "UTF-8 bytes decoded as Latin-1/CP1252" corruption
+    (e.g. a curly apostrophe shows up as ``â€™`` and ``x²`` as ``xÂ²``).
+
+    Some stored explanations were generated before the streaming decode was
+    pinned to UTF-8, so their text is doubly-encoded garbage. Re-encoding as
+    CP1252 and decoding as UTF-8 reverses it. Only applied when it actually
+    removes mojibake markers and introduces no U+FFFD replacement chars, so
+    clean text (and legitimately accented prose) is never touched."""
+    if not text or not any(m in text for m in _MOJIBAKE_MARKERS):
+        return text
+    try:
+        repaired = text.encode("cp1252", errors="strict").decode("utf-8", errors="strict")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text
+    before = sum(text.count(m) for m in _MOJIBAKE_MARKERS)
+    after = sum(repaired.count(m) for m in _MOJIBAKE_MARKERS)
+    if after < before and "�" not in repaired:
+        # A single pass often leaves a second layer ("Ã¢â‚¬â„¢"); recurse once.
+        return _fix_mojibake(repaired)
+    return text
+
+
 _JSON_SIMPLE_ESCAPES = set('"\\/bfnrt')
 
 
@@ -528,21 +554,27 @@ def _cap_sample_cases(cases):
     return capped
 
 
-EXPLANATION_PROMPT_TEMPLATE = """You are a gifted teacher who makes programming problems stick by wrapping them in a short, relatable story before teaching the theory — the way a great lecturer hooks a class with a scenario before writing on the board.
+_EXPLANATION_BODY_RULES = """Write it as ONE continuous "Problem Explanation" — a single flowing piece of teaching prose. Do NOT split it into labelled sections and do NOT use headings like "Story Hook", "Core Problem Concept", "Step-by-Step Approach", "Key Insights", "Edge Cases" or "Visualization". It should read as one explanation a teacher gives out loud, start to finish.
+
+Cover, woven together naturally in this order but with no visible labels:
+- Open with a brief (2-3 sentence) relatable hook — a character doing an everyday task whose structure mirrors this problem's real data structure/algorithm — then slide straight from the hook into the actual concept without announcing the transition.
+- What the problem is really asking, in plain language, tying the hook's objects to the real terms. If it involves a Binary Tree, Graph, Stack or similar, explain that structure and its relevant properties.
+- The approach to solve it, the key insight that makes it work, and the edge cases to watch for — as ordinary prose, keeping the hook's character carrying out the steps.
+- Then walk through {sample_count} concrete worked example(s) chosen to fit this problem: for each, give a specific input, the expected output, and a short trace of how the approach reaches that output. Pick the example count and shape from the problem's own complexity — one is plenty for a simple problem, two when a second case shows a meaningfully different path or edge case.
+- For Tree or Graph problems, include a small ASCII diagram of the sample structure and trace the walk over it.
+
+Keep it precise and tailored to THIS problem — a few short paragraphs, not a padded essay, every sentence teaching something specific to this problem's mechanics. No generic filler, no restating a point to pad length, never a one-line answer."""
+
+EXPLANATION_PROMPT_TEMPLATE = """You are a gifted teacher who makes a programming problem stick by opening with a short relatable hook and then teaching the idea in plain language.
 
 Title: {title}
 
 Description:
 {description}
 
-Write the explanation as a story-driven walkthrough, in this order:
-1. Story Hook: Open with a brief (2-4 sentence) relatable mini-story — a character doing some everyday task — whose structure naturally mirrors the problem's actual data structure/algorithm (e.g. a librarian shelving books for tree traversal, a delivery rider planning stops for graph search, a cashier's stack of trays for a Stack problem). It must map onto the real mechanics, not just be decoration.
-2. Core Problem Concept: Bridge from the story to explain what the problem is actually asking in plain language, tying the story's character/objects to the real terms. If it involves a Binary Tree, Graph, Stack, or specific Data Structure, clearly explain the structure and properties (e.g. for Binary Trees: Root, Left Subtree, Right Subtree, and how Preorder/Inorder/Postorder traversals work).
-3. Step-by-Step Approach & Key Insights: Explain the algorithmic approach, key insights, and edge cases to handle, keeping the story's character as the one carrying out each step.
-4. Visualization: For Tree or Graph problems, include an ASCII diagram of a sample tree and trace its step-by-step traversal so the student can visually understand the process.
+""" + _EXPLANATION_BODY_RULES.format(sample_count="one or two") + """
 
-Keep it precise and tailored to this exact problem — 3-4 short, focused paragraphs total, not a padded essay. Every sentence should teach something specific to this problem's actual mechanics, not generic filler that could apply to any problem. Do not return a one-line explanation, and do not restate the same point twice to pad length. Keep the story brief and grounded — it's a memorable hook and a thread to follow through the explanation, not the main content.
-Respond with ONLY the explanation text, clear, educational, and structured.
+Respond with ONLY the explanation text — clear, educational, continuous prose. No section headings, no JSON, no commentary.
 """
 HINT_PROMPT_TEMPLATE = """You are writing a single short hint for a student who is stuck on the
 following problem.
@@ -573,28 +605,22 @@ def generate_explanation(*, title, description, examples=None, difficulty=None, 
     worker in the bulk sweeps."""
     prompt = EXPLANATION_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
     text = generate_text_with_fallback(prompt, log_label=f"{title} (explanation)", providers=providers)
-    explanation = text.strip()
+    explanation = _fix_mojibake(text.strip())
     if not explanation:
         raise TestCaseGenServiceError("LLM returned an empty explanation.")
     return explanation
 
 
-EXPLANATION_WITH_TITLE_PROMPT_TEMPLATE = """You are a gifted teacher who makes programming problems stick by wrapping them in a short, relatable story before teaching the theory — the way a great lecturer hooks a class with a scenario before writing on the board.
+EXPLANATION_WITH_TITLE_PROMPT_TEMPLATE = """You are a gifted teacher who makes a programming problem stick by opening with a short relatable hook and then teaching the idea in plain language.
 
 Title: {title}
 
 Description:
 {description}
 
-Write the explanation as a story-driven walkthrough, in this order:
-1. Story Hook: Open with a brief (2-4 sentence) relatable mini-story — a character doing some everyday task — whose structure naturally mirrors the problem's actual data structure/algorithm (e.g. a librarian shelving books for tree traversal, a delivery rider planning stops for graph search, a cashier's stack of trays for a Stack problem). It must map onto the real mechanics, not just be decoration.
-2. Core Problem Concept: Bridge from the story to explain what the problem is actually asking in plain language, tying the story's character/objects to the real terms. If it involves a Binary Tree, Graph, Stack, or specific Data Structure, clearly explain the structure and properties (e.g. for Binary Trees: Root, Left Subtree, Right Subtree, and how Preorder/Inorder/Postorder traversals work).
-3. Step-by-Step Approach & Key Insights: Explain the algorithmic approach, key insights, and edge cases to handle, keeping the story's character as the one carrying out each step.
-4. Visualization: For Tree or Graph problems, include an ASCII diagram of a sample tree and trace its step-by-step traversal so the student can visually understand the process.
+""" + _EXPLANATION_BODY_RULES.format(sample_count="one or two") + """
 
-Keep the explanation precise and tailored to this exact problem — 3-4 short, focused paragraphs total, not a padded essay. Every sentence should teach something specific to this problem's actual mechanics, not generic filler that could apply to any problem. Do not return a one-line explanation, and do not restate the same point twice to pad length. Keep the story brief and grounded — it's a memorable hook and a thread to follow through the explanation, not the main content.
-
-Also propose a new title for the problem that reflects the story hook you wrote (e.g. if the story is a librarian shelving books for a tree problem, something like "The Librarian's Shelving Order" rather than the generic original title) — short (4-8 words), and still clearly readable as a programming-problem title, not a story chapter name.
+Also propose a new title for the problem that reflects the hook you opened with (e.g. if the hook is a librarian shelving books for a tree problem, something like "The Librarian's Shelving Order" rather than the generic original title) — short (4-8 words), still clearly readable as a programming-problem title.
 
 Respond with ONLY a JSON object of this exact shape, no markdown fences, no commentary:
 {{"title": "...", "explanation": "..."}}
@@ -613,8 +639,8 @@ def generate_explanation_with_title(*, title, description, examples=None, diffic
     prompt = EXPLANATION_WITH_TITLE_PROMPT_TEMPLATE.format(title=title or "", description=description or "")
     text = generate_text_with_fallback(prompt, log_label=f"{title} (explanation+title)", providers=providers)
     data = _extract_json(text)
-    new_title = (data.get("title") or "").strip()
-    explanation = (data.get("explanation") or "").strip()
+    new_title = _fix_mojibake((data.get("title") or "").strip())
+    explanation = _fix_mojibake((data.get("explanation") or "").strip())
     if not explanation:
         raise TestCaseGenServiceError("LLM returned an empty explanation.")
     if not new_title:

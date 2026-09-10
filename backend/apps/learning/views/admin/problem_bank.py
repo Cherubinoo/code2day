@@ -1115,6 +1115,193 @@ class AdminProblemBankGenerateStarterCodeView(APIView):
             "remaining_problems": remaining,
         })
 
+class AdminProblemBankGenerateEverythingView(APIView):
+    """System Admin: the ONE button on the Problem Bank page.
+
+    For every problem still missing any of the three things a problem needs
+    to be fully ready, in one time-budgeted-per-click sweep:
+      1. Judge schema — generate `generic_schema` if missing, structurally
+         validate it, regenerate once if invalid, and flip
+         `uses_generic_judge` on only for a schema that ends up valid
+         (flagging `generic_schema_needs_review` for one that still won't).
+      2. Starter code — deterministically derive and persist
+         `generic_starter_code` from the now-valid schema (no LLM).
+      3. Problem Explanation — (re)write `explanation` in the single-block
+         "Problem Explanation" style and rename `title` to match its hook,
+         marking `explanation_is_story` so it's only ever done once.
+
+    Same auto-continuing contract as the other sweeps (`processed`,
+    `remaining_problems`, `elapsed_seconds`) so the frontend just keeps
+    calling until `remaining_problems` hits 0. The LLM work per problem
+    (schema gen/regen + explanation) runs through
+    run_across_providers_in_parallel(); the deterministic starter-code
+    codegen and all DB writes happen back on the request thread."""
+    permission_classes = [IsAuthenticated]
+
+    TIME_BUDGET_SECONDS = 90
+    MAX_ACTIONS = 120
+    ROUND_SIZE_PER_PROVIDER = 4  # each action is up to 3 LLM calls (schema, schema-regen, explanation)
+
+    def _needs_pass_q(self):
+        return (
+            Q(explanation_is_story=False)
+            | Q(generic_schema__isnull=True)
+            | Q(uses_generic_judge=False, generic_schema_needs_review=False)
+            | _missing_generic_starter_code_q(force=False)
+        )
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        import time
+        from ...services.judging.schema_generator import generate_generic_schema, validate_generic_schema
+        from ...services.judging.starter_code import generate_generic_starter_code
+        from ...services.testcase_generator import (
+            generate_explanation_with_title, TestCaseGenError, NoProvidersAvailableError,
+            run_across_providers_in_parallel, _providers_in_rotation_order,
+        )
+
+        try:
+            provider_count = len(_providers_in_rotation_order())
+        except NoProvidersAvailableError as exc:
+            return Response({"error": str(exc)}, status=502)
+
+        start = time.monotonic()
+        batch_size = min(self.MAX_ACTIONS, provider_count * self.ROUND_SIZE_PER_PROVIDER)
+        problems = list(Problem.objects.filter(self._needs_pass_q()).order_by("id")[:batch_size])
+
+        def call_one(problem, provider):
+            """Pure LLM work for one problem — no DB writes (runs in a worker
+            thread). Returns a dict the request thread persists."""
+            out = {
+                "schema": problem.generic_schema, "schema_generated": False,
+                "schema_errors": None, "schema_regenerated": False,
+                "title": None, "explanation": None, "explanation_error": None,
+            }
+
+            # 1. Schema (generate if missing → validate → regenerate once)
+            if not problem.generic_schema:
+                try:
+                    out["schema"] = generate_generic_schema(
+                        title=problem.title, description=problem.description, examples=problem.examples,
+                        providers=[provider], known_kind=_known_generic_schema_kind(problem),
+                    )
+                    out["schema_generated"] = True
+                except TestCaseGenError as exc:
+                    out["schema_errors"] = [f"generation failed: {exc}"]
+
+            if out["schema"] and not out["schema_generated"] and problem.uses_generic_judge:
+                pass  # already enabled — leave the schema alone
+            elif out["schema"]:
+                errors = validate_generic_schema(out["schema"])
+                if errors:
+                    try:
+                        regen = generate_generic_schema(
+                            title=problem.title, description=problem.description, examples=problem.examples,
+                            providers=[provider], known_kind=_known_generic_schema_kind(problem),
+                        )
+                        if not validate_generic_schema(regen):
+                            out["schema"] = regen
+                            out["schema_regenerated"] = True
+                            errors = []
+                        else:
+                            errors = validate_generic_schema(regen) or errors
+                    except TestCaseGenError:
+                        pass
+                out["schema_errors"] = errors or None
+
+            # 3. Explanation + title (always, until explanation_is_story)
+            if not problem.explanation_is_story:
+                try:
+                    new_title, explanation = generate_explanation_with_title(
+                        title=problem.title, description=problem.description,
+                        examples=problem.examples, difficulty=problem.difficulty,
+                        providers=[provider],
+                    )
+                    out["title"] = new_title
+                    out["explanation"] = explanation
+                except TestCaseGenError as exc:
+                    out["explanation_error"] = str(exc)
+
+            return out
+
+        results = run_across_providers_in_parallel(problems, call_one, timeout_seconds=self.TIME_BUDGET_SECONDS)
+
+        processed = []
+        for problem, result, error in results:
+            entry = {"id": problem.id, "title": problem.title}
+            if error is not None:
+                entry["error"] = str(error)
+                processed.append(entry)
+                continue
+
+            fields = set()
+
+            # Schema
+            if result["schema"] is not None and result["schema"] is not problem.generic_schema:
+                problem.generic_schema = result["schema"]
+                fields.add("generic_schema")
+            if result["schema_generated"]:
+                entry["schema_generated"] = True
+            if result["schema_regenerated"]:
+                entry["schema_regenerated"] = True
+            if problem.generic_schema:
+                if result["schema_errors"]:
+                    entry["schema_errors"] = result["schema_errors"]
+                    if not problem.uses_generic_judge:
+                        problem.generic_schema_needs_review = True
+                        fields.add("generic_schema_needs_review")
+                else:
+                    if not problem.uses_generic_judge:
+                        problem.uses_generic_judge = True
+                        fields.add("uses_generic_judge")
+                    if problem.generic_schema_needs_review:
+                        problem.generic_schema_needs_review = False
+                        fields.add("generic_schema_needs_review")
+                    entry["judge_enabled"] = True
+
+            # Starter code — deterministic, only once the judge is on
+            if problem.uses_generic_judge and problem.generic_schema and (
+                not problem.generic_starter_code or "generic_schema" in fields
+            ):
+                try:
+                    code = {}
+                    for language in DEFAULT_PRACTICE_LANGUAGES:
+                        snippet = generate_generic_starter_code(problem, language)
+                        if snippet:
+                            code[language] = snippet
+                    if code:
+                        problem.generic_starter_code = code
+                        fields.add("generic_starter_code")
+                        entry["starter_code_languages"] = list(code.keys())
+                except Exception as exc:  # noqa: BLE001 — report, keep sweeping
+                    entry["starter_code_error"] = str(exc)
+
+            # Explanation + title
+            if result["explanation"]:
+                problem.title = result["title"]
+                problem.explanation = result["explanation"]
+                problem.explanation_is_story = True
+                fields.update({"title", "explanation", "explanation_is_story"})
+                entry["explanation_generated"] = True
+                entry["new_title"] = result["title"]
+            elif result["explanation_error"]:
+                entry["explanation_error"] = result["explanation_error"]
+
+            if fields:
+                problem.save(update_fields=list(fields))
+            processed.append(entry)
+
+        remaining = Problem.objects.filter(self._needs_pass_q()).count()
+        flagged_total = Problem.objects.filter(generic_schema_needs_review=True).count()
+        return Response({
+            "processed": processed,
+            "elapsed_seconds": round(time.monotonic() - start, 1),
+            "remaining_problems": remaining,
+            "flagged_total": flagged_total,
+        })
+
 class AdminProblemTopicGenerateGenericJudgeView(APIView):
     """System Admin: the per-topic entry point for migrating a chunk of
     the Problem Bank onto the new type-driven judging framework in one

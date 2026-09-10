@@ -654,6 +654,31 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
     setStaffFormBusy(false);
   }
 
+  function handleContestDelete(contest) {
+    askDouble(
+      async () => {
+        try {
+          const res = await fetch(`/api/contests/${contest.id}/`, {
+            method: 'DELETE',
+            credentials: 'include',
+            headers: { 'X-CSRFToken': getCsrfToken() },
+          });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            alert(data.detail || 'Failed to delete contest.');
+            return;
+          }
+          setContests(prev => prev.filter(c => c.id !== contest.id));
+          refreshContests();
+        } catch (err) {
+          alert(err.message || 'Network error. Please try again.');
+        }
+      },
+      `Delete "${contest.title}"?`,
+      `This permanently removes the contest and every participation, submission and score recorded against it. This cannot be undone. Proceed?`
+    );
+  }
+
   function handleDeleteStaff(staff) {
     askDouble(
       async () => {
@@ -2267,6 +2292,11 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
                                 <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>
                                   By {contest.created_by?.name || 'Faculty'} • {new Date(contest.created_at).toLocaleDateString()}
                                 </div>
+                                {contest.deletion_requested && (
+                                  <div style={{ marginTop: 4, fontSize: '12px', fontWeight: 700, color: '#b45309' }}>
+                                    🕓 Deletion requested by {contest.deletion_requested_by || 'faculty'} — review in Pending Approvals
+                                  </div>
+                                )}
                               </div>
 
                               <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
@@ -2278,6 +2308,15 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
                                   <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--olive-700)' }}>{contest.total_submissions || 0}</div>
                                   <div style={{ fontSize: '11px', color: 'var(--text-soft)', textTransform: 'uppercase' }}>Submissions</div>
                                 </div>
+                                {!isInstitutionLead && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleContestDelete(contest); }}
+                                    title="Delete this contest"
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, display: 'flex', color: '#ef4444', flexShrink: 0 }}
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                )}
                                 <ChevronRight size={20} color="var(--text-soft)" />
                               </div>
                             </div>

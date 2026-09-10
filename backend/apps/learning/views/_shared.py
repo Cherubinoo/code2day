@@ -1748,18 +1748,13 @@ def publish_contest_helper(contest):
         category="contest"
     )
 
-    # Create Notifications for assigned students
-    # 1. Direct assignments
-    student_users = list(contest.assigned_students.values_list('account', flat=True))
-    
-    # 2. Batch assignments
-    if contest.assigned_batches:
-        batch_students = StudentProfile.objects.filter(
-            batch__in=contest.assigned_batches,
-            institution=contest.institution
-        ).values_list('account', flat=True)
-        student_users.extend(list(batch_students))
-    
+    # Create Notifications for every student the contest actually reaches —
+    # section-scoped batches reach only their listed section(s), not the
+    # whole batch (Contest.assigned_students_queryset resolves that).
+    student_users = list(
+        contest.assigned_students_queryset().values_list('account', flat=True)
+    )
+
     # Unique users
     unique_user_ids = set(filter(None, student_users))
     

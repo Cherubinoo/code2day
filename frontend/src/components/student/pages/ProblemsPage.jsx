@@ -6,7 +6,7 @@ import * as monaco from "monaco-editor";
 import { executionLanguageMap } from "../../../lib/codeExecution";
 import { starterCodeByLanguage } from "../../../lib/appData";
 import { formatDuration, configureEditorProtection } from "../../../lib/appUtils";
-import { renderInline, renderDescription } from "../../../lib/descriptionRenderer";
+import { renderDescription } from "../../../lib/descriptionRenderer";
 
 // Use the bundled ESM Monaco build instead of the AMD loader path.
 loader.config({ monaco });
@@ -570,85 +570,40 @@ function WorkspaceView({
                 )}
               </div>
 
-              <div className="tab-strip dense">
-                {["current", "explanation"].map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    className={problemDetailTab === tab ? "tab-pill active dense" : "tab-pill dense"}
-                    onClick={() => setProblemDetailTab(tab)}
-                  >
-                    {tab === "current" ? "Problem" : tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  </button>
-                ))}
-              </div>
-
               <div className="statement-scroll">
                 {selectedProblem ? (
                   <>
-                    {problemDetailTab === "current" && (
-                      <>
-                        {/* Problem description with structured rendering */}
-                        <div className="problem-description">
-                          {renderDescription(selectedProblem.description)}
-                        </div>
-                        <div className="info-box">
-                          <h4>Status & Tags</h4>
-                          <div className="tag-row">
-                            <span className="tag">
-                              {STATUS_CONFIG[selectedProblem.progress_state]?.label ?? "Todo"}
-                            </span>
-                            {(selectedProblem.tags ?? []).map((tag) => (
-                              <span key={tag} className="tag">{tag}</span>
-                            ))}
-                          </div>
-                        </div>
-                      </>
+                    <h4 style={{ color: '#38bdf8', marginBottom: 10 }}>Problem Explanation</h4>
+                    {selectedProblem.explanation ? (
+                      <div className="problem-description">
+                        {renderDescription(selectedProblem.explanation)}
+                      </div>
+                    ) : (
+                      <p className="body-copy">No explanation has been generated for this problem yet.</p>
                     )}
-                    {problemDetailTab === "explanation" && (
-                      <>
-                        {selectedProblem.explanation && (
-                          <div className="info-box" style={{ background: 'none', padding: 0, border: 'none' }}>
-                            <h4 style={{ color: '#38bdf8', marginBottom: 10 }}>💡 Detailed Explanation &amp; Walkthrough</h4>
-                            <div className="problem-description">
-                              {renderDescription(selectedProblem.explanation)}
-                            </div>
-                          </div>
-                        )}
 
-                        {selectedProblem.hints && selectedProblem.hints.length > 0 && (
-                          <div className="info-box" style={{ marginTop: 20 }}>
-                            <h4 style={{ color: '#facc15', marginBottom: 12 }}>🔑 Hints</h4>
-                            <ol className="desc-numbered">
-                              {selectedProblem.hints.map((hint, idx) => (
-                                <li key={idx} dangerouslySetInnerHTML={{ __html: renderInline(hint) }} />
-                              ))}
-                            </ol>
-                          </div>
-                        )}
-
-                        {selectedProblem.examples && selectedProblem.examples.length > 0 && (
-                          <div className="info-box" style={{ marginTop: selectedProblem.explanation ? 20 : 0 }}>
-                            <h4 style={{ color: '#a78bfa', marginBottom: 12 }}>🧪 Sample Test Cases</h4>
-                            {selectedProblem.examples.map((ex, idx) => (
-                              <div key={idx} className="example-block" style={{ marginBottom: 12, padding: 14, background: '#1e293b', borderRadius: 8, border: '1px solid #334155' }}>
-                                <div style={{ fontSize: 12, fontWeight: 700, color: '#94a3b8', marginBottom: 4 }}>Example {idx + 1}</div>
-                                <div style={{ fontSize: 13, fontFamily: 'monospace', color: '#e2e8f0' }}><strong>Input:</strong> <code>{ex.input}</code></div>
-                                <div style={{ fontSize: 13, fontFamily: 'monospace', color: '#e2e8f0', marginTop: 4 }}><strong>Output:</strong> <code>{ex.output}</code></div>
-                                {ex.explanation && (
-                                  <div style={{ fontSize: 13, color: '#cbd5e1', marginTop: 6, paddingTop: 6, borderTop: '1px solid #334155' }}>
-                                    <strong style={{ color: '#38bdf8' }}>Explanation:</strong> {ex.explanation}
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </>
-                    )}
+                    <details style={{ marginTop: 22 }}>
+                      <summary style={{ cursor: 'pointer', fontWeight: 700, color: '#94a3b8', fontSize: 13 }}>
+                        Show full problem statement
+                      </summary>
+                      <div className="problem-description" style={{ marginTop: 12 }}>
+                        {renderDescription(selectedProblem.description)}
+                      </div>
+                      <div className="info-box" style={{ marginTop: 12 }}>
+                        <h4>Status &amp; Tags</h4>
+                        <div className="tag-row">
+                          <span className="tag">
+                            {STATUS_CONFIG[selectedProblem.progress_state]?.label ?? "Todo"}
+                          </span>
+                          {(selectedProblem.tags ?? []).map((tag) => (
+                            <span key={tag} className="tag">{tag}</span>
+                          ))}
+                        </div>
+                      </div>
+                    </details>
                   </>
                 ) : (
-                  <p className="body-copy">Pick a problem to see the statement, explanation, and editorial.</p>
+                  <p className="body-copy">Pick a problem to see its explanation.</p>
                 )}
               </div>
             </article>

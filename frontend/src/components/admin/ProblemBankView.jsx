@@ -376,14 +376,8 @@ const ProblemBankView = ({ onBack }) => {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
-  const [fillMissing, setFillMissing] = useState({ busy: false, msg: '' });
-  const [genericGenBulk, setGenericGenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
-  const [genericValidateBulk, setGenericValidateBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
-  const [retryFlaggedBulk, setRetryFlaggedBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
-  const [rawTextRegenBulk, setRawTextRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
-  const [explanationRegenBulk, setExplanationRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
-  const [scenarioDescRegenBulk, setScenarioDescRegenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
-  const [starterCodeGenBulk, setStarterCodeGenBulk] = useState({ busy: false, msg: '', done: 0, total: 0 });
+  // The single "Generate Problem Explanation" sweep — schema + starter code + explanation in one pass.
+  const [generateEverything, setGenerateEverything] = useState({ busy: false, msg: '', done: 0, total: 0 });
   const [mutationError, setMutationError] = useState('');
   const PAGE_SIZE = 50;
 
@@ -799,303 +793,46 @@ const ProblemBankView = ({ onBack }) => {
     }
   }
 
-  // Bulk sweep: fills in whatever each problem is missing (test cases,
-  // schema, explanation) via the LLM, skipping anything already present.
-  // Capped server-side per click — call again to keep sweeping the rest.
-  async function fillMissingData() {
-    setFillMissing({ busy: true, msg: '' });
-    try {
-      const data = (await api.post('/admin/v2/problem-bank/fill-missing/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
-      const tcCount = data.processed.filter((p) => p.test_cases_generated).length;
-      const schemaCount = data.processed.filter((p) => p.schema_generated).length;
-      const expCount = data.processed.filter((p) => p.explanation_generated).length;
-      const hintsCount = data.processed.filter((p) => p.hints_generated).length;
-      const errorCount = data.processed.filter((p) => p.test_cases_error || p.schema_error || p.explanation_error || p.hints_error).length;
 
-      let msg = `Processed ${data.processed.length} problem(s): ${tcCount} test case set(s), ${schemaCount} schema(s), ${expCount} explanation(s), ${hintsCount} hint set(s) generated.`;
-      if (errorCount) msg += ` ${errorCount} error(s) — see details.`;
-      if (data.remaining_problems > 0) msg += ` ${data.remaining_problems} problem(s) still missing something — click again to continue.`;
-      else msg += ' Nothing left missing across the whole bank!';
-
-      setFillMissing({ busy: false, msg });
-      await load(); // refresh test_case_count / has_param_schema / explanation across the list
-    } catch (err) {
-      setFillMissing({ busy: false, msg: apiErrorMessage(err, 'Network error.') });
-    }
-  }
-
-  // Bulk "one hit run" for the new judging framework: generates
-  // generic_schema for every problem still missing one, no validation.
-  // Each server round-trip is time-budgeted (~90s) and reports how much of
-  // the bank is left, so we keep firing rounds automatically — updating the
-  // progress message after every round — until nothing remains, rather than
-  // making the admin click repeatedly. MAX_ROUNDS is just a runaway guard,
-  // not a target — with few providers configured each round only covers a
-  // handful of problems (provider_count * 6, backend-side), so a large bank
-  // genuinely needs hundreds of rounds; a low cap here just means "click
-  // again to continue" fires long before the sweep is actually done.
-  const MAX_ROUNDS = 2000;
-  async function generateGenericSchemasBulk() {
-    setGenericGenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
-    let totalProcessed = 0, totalOk = 0, totalErr = 0;
-    try {
-      for (let round = 1; round <= MAX_ROUNDS; round++) {
-        const data = (await api.post('/admin/v2/problem-bank/generate-generic-schemas/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
-        totalProcessed += data.processed.length;
-        totalOk += data.processed.filter((p) => p.generated).length;
-        totalErr += data.processed.filter((p) => p.error).length;
-        const total = totalProcessed + data.remaining_problems; // stable: everything still needing a schema
-        await load(); // refresh has_generic_schema badges as each round lands
-
-        const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalOk} schema(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
-        if (data.processed.length === 0 || data.remaining_problems === 0) {
-          const doneMsg = totalProcessed === 0 ? 'Every problem already has a schema.' : `${progress} Done — every problem now has a schema.`;
-          setGenericGenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
-          return;
-        }
-        setGenericGenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
-      }
-      setGenericGenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
-    } catch (err) {
-      setGenericGenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
-    }
-  }
-
-  // The "if missed or wrong" follow-up: generates a schema for anything
-  // still missing one, structurally validates every existing schema
-  // (regenerating once if invalid), and only flips uses_generic_judge on
-  // for the ones that end up valid. Same auto-continuing-rounds progress
-  // pattern as generateGenericSchemasBulk above.
-  //
-  // A schema still invalid after its one regeneration attempt gets FLAGGED
-  // server-side (Problem.generic_schema_needs_review) and excluded from
-  // this sweep from then on — otherwise a handful of problems the LLM
-  // just can't produce a valid schema for would get retried every round
-  // forever, burning tokens while `remaining_problems` never reaches 0 and
-  // blocking the sweep from ever finishing for the rest of the bank.
-  // flagged_total (from the last round's response) surfaces how many are
-  // sitting there waiting for the separate "Retry Flagged Schemas" button.
-  async function validateGenericSchemasBulk() {
-    setGenericValidateBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
-    let totalProcessed = 0, totalEnabled = 0, totalNewlyFlagged = 0, flaggedTotal = 0;
-    try {
-      for (let round = 1; round <= MAX_ROUNDS; round++) {
-        const data = (await api.post('/admin/v2/problem-bank/validate-generic-schemas/', undefined, { timeout: LONG_RUNNING_TIMEOUT })).data;
-        totalProcessed += data.processed.length;
-        totalEnabled += data.processed.filter((p) => p.enabled).length;
-        totalNewlyFlagged += data.processed.filter((p) => p.needs_review).length;
-        flaggedTotal = data.flagged_total ?? flaggedTotal;
-        const total = totalProcessed + data.remaining_problems; // stable: everything still needing a pass
-        await load(); // refresh "Judge: Enabled"/"Unvalidated" badges as each round lands
-
-        const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalEnabled} passed and enabled for the new judge${totalNewlyFlagged ? `, ${totalNewlyFlagged} flagged for review` : ''}.`;
-        if (data.processed.length === 0 || data.remaining_problems === 0) {
-          let doneMsg = totalProcessed === 0 ? 'Nothing left to validate.' : `${progress} Done.`;
-          if (flaggedTotal > 0) doneMsg += ` ${flaggedTotal} problem(s) still invalid after a retry — use "Retry Flagged Schemas" to try those again.`;
-          setGenericValidateBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
-          return;
-        }
-        setGenericValidateBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
-      }
-      setGenericValidateBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
-    } catch (err) {
-      setGenericValidateBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
-    }
-  }
-
-  // Explicit, deliberate re-attempt for exactly the problems the sweep
-  // above gave up on (generic_schema_needs_review=True) — a staff member
-  // triggers this on purpose; it's never fired automatically. Same
-  // request/response shape as validateGenericSchemasBulk, just scoped to
-  // the flagged set via {retry_flagged: true}.
-  async function retryFlaggedSchemasBulk() {
-    setRetryFlaggedBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
-    let totalProcessed = 0, totalEnabled = 0, totalStillBad = 0;
-    try {
-      for (let round = 1; round <= MAX_ROUNDS; round++) {
-        const data = (await api.post(
-          '/admin/v2/problem-bank/validate-generic-schemas/', { retry_flagged: true }, { timeout: LONG_RUNNING_TIMEOUT },
-        )).data;
-        totalProcessed += data.processed.length;
-        totalEnabled += data.processed.filter((p) => p.enabled).length;
-        totalStillBad += data.processed.filter((p) => p.needs_review).length;
-        const total = totalProcessed + data.remaining_problems;
-        await load();
-
-        const progress = `Retried ${totalProcessed}/${total} flagged problem(s): ${totalEnabled} now pass${totalStillBad ? `, ${totalStillBad} still invalid` : ''}.`;
-        if (data.processed.length === 0 || data.remaining_problems === 0) {
-          const doneMsg = totalProcessed === 0 ? 'No flagged schemas to retry.' : `${progress} Done.`;
-          setRetryFlaggedBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
-          return;
-        }
-        setRetryFlaggedBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
-      }
-      setRetryFlaggedBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
-    } catch (err) {
-      setRetryFlaggedBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
-    }
-  }
-
-  // Bulk fix for problems whose generic judge is enabled but still has a
-  // raw_text-tagged test case (see backend TestCase.input_format /
-  // needs_test_case_regeneration) — regenerates that problem's test
-  // cases from scratch via the LLM, same as the per-problem "Generate
-  // Test Cases" action, just across every flagged problem at once.
-  async function regenerateRawTextTestCasesBulk() {
-    setRawTextRegenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
-    let totalProcessed = 0, totalOk = 0, totalErr = 0;
-    try {
-      for (let round = 1; round <= MAX_ROUNDS; round++) {
-        const data = (await api.post(
-          '/admin/v2/problem-bank/regenerate-raw-text-testcases/', undefined, { timeout: LONG_RUNNING_TIMEOUT },
-        )).data;
-        totalProcessed += data.processed.length;
-        totalOk += data.processed.filter((p) => p.regenerated).length;
-        totalErr += data.processed.filter((p) => p.error).length;
-        const total = totalProcessed + data.remaining_problems;
-        await load(); // refresh the needs_test_case_regeneration badges as each round lands
-
-        const progress = `Fixed ${totalProcessed}/${total} problem(s): ${totalOk} regenerated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
-        if (data.processed.length === 0 || data.remaining_problems === 0) {
-          const doneMsg = totalProcessed === 0 ? 'No problems need their test cases regenerated.' : `${progress} Done.`;
-          setRawTextRegenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
-          return;
-        }
-        setRawTextRegenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
-      }
-      setRawTextRegenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
-    } catch (err) {
-      setRawTextRegenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
-    }
-  }
-
-  // One-time bank-wide style migration: FORCE-regenerates every problem's
-  // explanation with the story-driven prompt, overwriting whatever's there
-  // already (unlike the skip-if-exists sweeps above) — but only once per
-  // problem. The backend tracks progress via Problem.explanation_is_story
-  // (a real DB flag, set only after a successful generation), so "what's
-  // left" is a normal DB query, same as the other two sweeps — no
-  // client-held cursor, so a page refresh or a different admin session
-  // resuming this later still only touches problems not yet migrated.
-  async function regenerateAllExplanationsBulk() {
+  // The one button. Per click the server does a time-budgeted batch: for every
+  // problem still missing anything, generate/fix its judge schema (+validate,
+  // +enable), derive its starter code, and (re)write its Problem Explanation +
+  // title. Auto-continues round by round until nothing is left.
+  async function generateEverythingBulk() {
     if (!window.confirm(
-      'This overwrites the explanation for every problem still on the old style with a new story-based version. ' +
-      'This cannot be undone. Continue?'
+      'Generate the Problem Explanation for every problem (overwriting old ones and renaming each problem to match), ' +
+      'and along the way fix any missing judge schema and starter code. This runs in batches and cannot be undone. Continue?'
     )) {
       return;
     }
-    setExplanationRegenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
-    let totalProcessed = 0, totalOk = 0, totalErr = 0;
+    setGenerateEverything({ busy: true, msg: 'Starting…', done: 0, total: 0 });
+    let totalProcessed = 0, totalExpl = 0, totalErr = 0;
     try {
       for (let round = 1; round <= MAX_ROUNDS; round++) {
         const data = (await api.post(
-          '/admin/v2/problem-bank/regenerate-all-explanations/',
+          '/admin/v2/problem-bank/generate-everything/',
           undefined,
           { timeout: LONG_RUNNING_TIMEOUT },
         )).data;
         totalProcessed += data.processed.length;
-        totalOk += data.processed.filter((p) => p.generated).length;
-        totalErr += data.processed.filter((p) => p.error).length;
-        const total = totalProcessed + data.remaining_problems; // stable: everything still on the old style
-        await load(); // refresh explanation previews as each round lands
-
-        const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalOk} story explanation(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
-        if (data.processed.length === 0 || data.remaining_problems === 0) {
-          const doneMsg = totalProcessed === 0 ? 'Nothing left to regenerate.' : `${progress} Done — every problem now has a story explanation.`;
-          setExplanationRegenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
-          return;
-        }
-        setExplanationRegenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
-      }
-      setExplanationRegenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
-    } catch (err) {
-      setExplanationRegenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
-    }
-  }
-
-  // One-time bank-wide content migration: rewrites every problem's
-  // description into an original real-world scenario (same input/output
-  // contract, no LeetCode branding/cross-references), overwriting whatever
-  // statement is there now — but only once per problem, same
-  // DB-flag-tracked-progress convention as the explanation sweep above
-  // (Problem.description_is_scenario). Work is balanced across whichever
-  // LLMProviders are currently marked active in the LLM Providers tab —
-  // mark exactly 2 there to split this job across 2 models.
-  async function regenerateScenarioDescriptionsBulk() {
-    if (!window.confirm(
-      'This rewrites the description for every problem still on its original statement into a real-world scenario ' +
-      '(same inputs/outputs, no LeetCode references). This cannot be undone from here — the original text is kept ' +
-      'in description_original, but overwrites description directly. Continue?'
-    )) {
-      return;
-    }
-    setScenarioDescRegenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
-    let totalProcessed = 0, totalOk = 0, totalErr = 0;
-    try {
-      for (let round = 1; round <= MAX_ROUNDS; round++) {
-        const data = (await api.post(
-          '/admin/v2/problem-bank/regenerate-scenario-descriptions/',
-          undefined,
-          { timeout: LONG_RUNNING_TIMEOUT },
-        )).data;
-        totalProcessed += data.processed.length;
-        totalOk += data.processed.filter((p) => p.generated).length;
-        totalErr += data.processed.filter((p) => p.error).length;
-        const total = totalProcessed + data.remaining_problems; // stable: everything still on the original statement
-        await load(); // refresh description previews as each round lands
-
-        const progress = `Tested ${totalProcessed}/${total} problem(s): ${totalOk} scenario description(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
-        if (data.processed.length === 0 || data.remaining_problems === 0) {
-          const doneMsg = totalProcessed === 0 ? 'Nothing left to regenerate.' : `${progress} Done — every problem now has a scenario description.`;
-          setScenarioDescRegenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
-          return;
-        }
-        setScenarioDescRegenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
-      }
-      setScenarioDescRegenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
-    } catch (err) {
-      setScenarioDescRegenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
-    }
-  }
-
-  // Pre-computes and persists Problem.generic_starter_code (the `class
-  // Solution: ...` stub shown in the student editor) for every generic-judge
-  // problem that doesn't have one yet — no LLM involved, pure codegen off
-  // the already-stored generic_schema, so a single click sweeps the whole
-  // eligible set in one request rather than needing many rounds.
-  async function generateStarterCodeBulk(force = false) {
-    if (force && !window.confirm(
-      'This regenerates the starter code snapshot for every generic-judge problem, even ones that already have one. ' +
-      'Use this only after a fix to how starter code is generated. Continue?'
-    )) {
-      return;
-    }
-    setStarterCodeGenBulk({ busy: true, msg: 'Starting…', done: 0, total: 0 });
-    let totalProcessed = 0, totalOk = 0, totalErr = 0;
-    try {
-      for (let round = 1; round <= MAX_ROUNDS; round++) {
-        const data = (await api.post(
-          '/admin/v2/problem-bank/generate-starter-code/',
-          force ? { force: true } : undefined,
-          { timeout: LONG_RUNNING_TIMEOUT },
-        )).data;
-        totalProcessed += data.processed.length;
-        totalOk += data.processed.filter((p) => !p.error).length;
-        totalErr += data.processed.filter((p) => p.error).length;
+        totalExpl += data.processed.filter((p) => p.explanation_generated).length;
+        totalErr += data.processed.filter((p) => p.error || p.explanation_error || p.schema_errors).length;
         const total = totalProcessed + data.remaining_problems;
         await load();
 
-        const progress = `Processed ${totalProcessed}/${total} problem(s): ${totalOk} starter code snapshot(s) generated${totalErr ? `, ${totalErr} error(s)` : ''}.`;
+        const progress = `Processed ${totalProcessed}/${total} problem(s): ${totalExpl} explanation(s) written${totalErr ? `, ${totalErr} with issues` : ''}.`;
         if (data.processed.length === 0 || data.remaining_problems === 0) {
-          const doneMsg = totalProcessed === 0 ? 'Nothing left to generate.' : `${progress} Done — every generic-judge problem now has starter code.`;
-          setStarterCodeGenBulk({ busy: false, msg: doneMsg, done: totalProcessed, total });
+          const doneMsg = totalProcessed === 0
+            ? 'Nothing left — every problem is already done.'
+            : `${progress} Done — every problem now has a Problem Explanation.`;
+          setGenerateEverything({ busy: false, msg: doneMsg, done: totalProcessed, total });
           return;
         }
-        setStarterCodeGenBulk({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
+        setGenerateEverything({ busy: true, msg: `${progress} Continuing…`, done: totalProcessed, total });
       }
-      setStarterCodeGenBulk((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
+      setGenerateEverything((s) => ({ ...s, busy: false, msg: `Stopped after ${MAX_ROUNDS} rounds (${totalProcessed} processed) — click again to continue.` }));
     } catch (err) {
-      setStarterCodeGenBulk((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
+      setGenerateEverything((s) => ({ ...s, busy: false, msg: `${apiErrorMessage(err, 'Network error.')} (${totalProcessed} processed before this) — click again to continue.` }));
     }
   }
 
@@ -1142,184 +879,50 @@ const ProblemBankView = ({ onBack }) => {
         </button>
       </div>
 
-      {/* Bank-wide bulk actions, grouped by what they actually do — these
-          used to be one unlabeled row of 7 near-identical white buttons,
-          which made it impossible to tell "what's for what" at a glance.
-          Each group below only ever touches the ONE thing named in its
-          header; hover a button for the exact behavior. */}
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
-          Judge Migration — schema &amp; test cases
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
-          <button
-            onClick={fillMissingData}
-            disabled={fillMissing.busy}
-            title="Sweep every problem in the bank and generate whatever it's missing — test cases, schema, explanation — skipping anything already present"
-            style={{
-              background: 'white', border: '1px solid var(--border-soft)',
-              borderRadius: 12, padding: '10px 16px', cursor: fillMissing.busy ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-            }}
-          >
-            {fillMissing.busy ? <Loader2 size={16} className="spin" /> : <Settings2 size={16} />}
-            {fillMissing.busy ? 'Filling in…' : 'Fill Missing Data'}
-          </button>
-          <button
-            onClick={generateGenericSchemasBulk}
-            disabled={genericGenBulk.busy}
-            title="One-hit run: generate the new type-driven judge schema (generic_schema) via the LLM for every problem that doesn't have one yet — no validation, just generation"
-            style={{
-              background: 'white', border: '1px solid var(--border-soft)',
-              borderRadius: 12, padding: '10px 16px', cursor: genericGenBulk.busy ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-            }}
-          >
-            {genericGenBulk.busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
-            {genericGenBulk.busy ? 'Generating…' : 'Generate Judge Schemas'}
-          </button>
-          <button
-            onClick={validateGenericSchemasBulk}
-            disabled={genericValidateBulk.busy}
-            title="Validate every generic_schema (every type must actually parse), regenerate anything wrong or still missing once, and enable the new judge for whatever passes"
-            style={{
-              background: 'white', border: '1px solid var(--border-soft)',
-              borderRadius: 12, padding: '10px 16px', cursor: genericValidateBulk.busy ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-            }}
-          >
-            {genericValidateBulk.busy ? <Loader2 size={16} className="spin" /> : <FlaskConical size={16} />}
-            {genericValidateBulk.busy ? 'Validating…' : 'Validate & Enable Judge'}
-          </button>
-          <button
-            onClick={retryFlaggedSchemasBulk}
-            disabled={retryFlaggedBulk.busy}
-            title="Deliberately retry only the problems flagged as still-invalid after a regeneration attempt — the normal Validate pass skips these so a few stubborn problems can't block the whole sweep"
-            style={{
-              background: 'white', border: '1px solid var(--border-soft)',
-              borderRadius: 12, padding: '10px 16px', cursor: retryFlaggedBulk.busy ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-            }}
-          >
-            {retryFlaggedBulk.busy ? <Loader2 size={16} className="spin" /> : <RotateCcw size={16} />}
-            {retryFlaggedBulk.busy ? 'Retrying…' : 'Retry Flagged Schemas'}
-          </button>
-          <button
-            onClick={regenerateRawTextTestCasesBulk}
-            disabled={rawTextRegenBulk.busy}
-            title="Fix problems whose generic judge is enabled but still has a raw, un-adapted example test case — regenerates that problem's test cases via the LLM into proper wire format"
-            style={{
-              background: needsRegenCount > 0 ? '#fef3c7' : 'white',
-              border: needsRegenCount > 0 ? '1px solid #fcd34d' : '1px solid var(--border-soft)',
-              borderRadius: 12, padding: '10px 16px', cursor: rawTextRegenBulk.busy ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8,
-              color: needsRegenCount > 0 ? '#92400e' : 'var(--olive-900)', fontWeight: 700,
-            }}
-          >
-            {rawTextRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <AlertTriangle size={16} />}
-            {rawTextRegenBulk.busy ? 'Fixing…' : `Fix Raw-Text Test Cases${needsRegenCount > 0 ? ` (${needsRegenCount})` : ''}`}
-          </button>
-        </div>
-
-        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
-          Student-Facing Content — description &amp; explanation text
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          <button
-            onClick={regenerateAllExplanationsBulk}
-            disabled={explanationRegenBulk.busy}
-            title="Force-regenerate EVERY problem's explanation (the 'Explanation' tab) with the new story-based prompt, overwriting whatever's there already"
-            style={{
-              background: 'white', border: '1px solid var(--border-soft)',
-              borderRadius: 12, padding: '10px 16px', cursor: explanationRegenBulk.busy ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-            }}
-          >
-            {explanationRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <BookOpen size={16} />}
-            {explanationRegenBulk.busy ? 'Regenerating…' : 'Regenerate All Explanations (Story)'}
-          </button>
-          <button
-            onClick={regenerateScenarioDescriptionsBulk}
-            disabled={scenarioDescRegenBulk.busy}
-            title="Rewrite EVERY problem's description (the 'Problem' tab) into an original real-world scenario (same inputs/outputs, no LeetCode branding/cross-references), overwriting whatever statement is there now. Prefer running this per-topic instead (Browse by Topic → expand a topic) so you can review a small batch before running the whole bank."
-            style={{
-              background: 'white', border: '1px solid var(--border-soft)',
-              borderRadius: 12, padding: '10px 16px', cursor: scenarioDescRegenBulk.busy ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-            }}
-          >
-            {scenarioDescRegenBulk.busy ? <Loader2 size={16} className="spin" /> : <Sparkles size={16} />}
-            {scenarioDescRegenBulk.busy ? 'Regenerating…' : 'Generate Scenario Descriptions (All Problems)'}
-          </button>
-        </div>
-
-        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--text-soft)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8, marginTop: 18 }}>
-          Student Editor — starter code
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-          <button
-            onClick={() => generateStarterCodeBulk(false)}
-            disabled={starterCodeGenBulk.busy}
-            title="Generate and persist the 'class Solution: ...' starter code students see in the editor, at a go, for every generic-judge problem that doesn't have one yet. No LLM call — pure codegen off the stored judge schema."
-            style={{
-              background: 'white', border: '1px solid var(--border-soft)',
-              borderRadius: 12, padding: '10px 16px', cursor: starterCodeGenBulk.busy ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-            }}
-          >
-            {starterCodeGenBulk.busy ? <Loader2 size={16} className="spin" /> : <Code2 size={16} />}
-            {starterCodeGenBulk.busy ? 'Generating…' : 'Generate Starter Code (All Problems)'}
-          </button>
-          <button
-            onClick={() => generateStarterCodeBulk(true)}
-            disabled={starterCodeGenBulk.busy}
-            title="Regenerate the starter code snapshot for EVERY generic-judge problem, even ones that already have one — use only after a fix to how starter code is generated"
-            style={{
-              background: 'white', border: '1px solid var(--border-soft)',
-              borderRadius: 12, padding: '10px 16px', cursor: starterCodeGenBulk.busy ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8, color: 'var(--olive-900)', fontWeight: 700,
-            }}
-          >
-            <RotateCcw size={16} />
-            Regenerate All (Force)
-          </button>
-        </div>
+      {/* The one bank-wide action: (re)generate every problem's Problem
+          Explanation + matching title, and fix any missing judge schema /
+          starter code along the way. Runs in server-side batches and
+          auto-continues until nothing is left. */}
+      <div style={{ marginBottom: 20 }}>
+        <button
+          onClick={generateEverythingBulk}
+          disabled={generateEverything.busy}
+          title="For every problem still missing anything: (re)write its Problem Explanation and rename it to match, and fix any missing judge schema and starter code. Runs in batches and keeps going until done."
+          style={{
+            background: generateEverything.busy ? '#e2e8f0' : 'var(--olive-700, #2D6A4F)',
+            border: 'none', borderRadius: 12, padding: '12px 22px',
+            cursor: generateEverything.busy ? 'not-allowed' : 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 10, color: 'white', fontWeight: 800, fontSize: 14,
+          }}
+        >
+          {generateEverything.busy ? <Loader2 size={17} className="spin" /> : <Sparkles size={17} />}
+          {generateEverything.busy ? 'Generating…' : 'Generate Problem Explanations (All Problems)'}
+        </button>
       </div>
 
-      {fillMissing.msg && (
-        <div style={{ padding: 14, background: /error|failed/i.test(fillMissing.msg) ? '#fef2f2' : '#f0fdf4', color: /error|failed/i.test(fillMissing.msg) ? '#dc2626' : '#166534', borderRadius: 12, marginBottom: 16, fontSize: 13 }}>
-          {fillMissing.msg}
-        </div>
-      )}
-      <BulkProgressPanel state={genericGenBulk} />
-      <BulkProgressPanel state={genericValidateBulk} />
-      <BulkProgressPanel state={retryFlaggedBulk} />
-      <BulkProgressPanel state={rawTextRegenBulk} />
-      <BulkProgressPanel state={explanationRegenBulk} />
-      <BulkProgressPanel state={scenarioDescRegenBulk} />
-      <BulkProgressPanel state={starterCodeGenBulk} />
+      <BulkProgressPanel state={generateEverything} />
 
       {mode === 'topics' ? (
         <ProblemTopicTiles onViewTopic={(label) => { setSearch(label); setMissingOnly(false); setMode('list'); }} />
       ) : (
       <>
-      <div style={{ display: 'flex', gap: 16, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
-        <div style={{ position: 'relative', flex: 1, minWidth: 240 }}>
-          <Search size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+      <div style={{ display: 'flex', gap: 10, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', width: 320, maxWidth: '100%' }}>
+          <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
           <input
             type="text"
-            placeholder="Search by title, slug, or topic (Graph, Backtracking, …)…"
+            placeholder="Search title, slug, or topic…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            style={{ width: '100%', padding: '12px 16px 12px 40px', borderRadius: 14, border: '1px solid var(--border-soft)', fontSize: '0.95rem' }}
+            style={{ width: '100%', padding: '7px 10px 7px 30px', borderRadius: 8, border: '1px solid var(--border-soft)', fontSize: '0.85rem' }}
           />
         </div>
         <button
           onClick={() => setMissingOnly((v) => !v)}
           style={{
-            padding: '12px 18px', borderRadius: 14, border: missingOnly ? '2px solid #ef4444' : '1px solid var(--border-soft)',
+            padding: '7px 12px', borderRadius: 8, border: missingOnly ? '2px solid #ef4444' : '1px solid var(--border-soft)',
             background: missingOnly ? '#fef2f2' : 'white', color: missingOnly ? '#dc2626' : 'var(--text-soft)',
-            fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+            fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', fontSize: '0.8rem',
           }}
         >
           {missingOnly ? '⚠ Missing Test Cases Only' : 'Show All Problems'}

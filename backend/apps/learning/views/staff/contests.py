@@ -84,7 +84,7 @@ class ContestListCreateView(APIView):
                 "problem_count": contest.problems.count() if contest.contest_type in ("programming", "combined") else 0,
                 "aptitude_question_count": contest.aptitude_questions.count() if contest.contest_type in ("aptitude", "combined") else 0,
                 "contest_type": contest.contest_type,
-                "assigned_student_count": contest.assigned_students.count(),
+                "assigned_student_count": contest.assigned_student_count,
                 **_contest_deletion_state(contest),
             })
 
@@ -435,9 +435,10 @@ class ContestDetailView(APIView):
                 })
 
         # Which batches / sections this contest actually reaches — derived from
-        # the resolved assigned_students set so it's accurate whether the staff
-        # assigned by batch, by batch+section, or hand-picked individuals.
-        assigned_students_qs = contest.assigned_students.all().only('batch', 'section')
+        # the live section-aware assigned set (Contest.assigned_students_queryset),
+        # so a section-scoped batch shows only its section(s), never the whole
+        # batch, whether assigned by batch, batch+section, or hand-picked.
+        assigned_students_qs = contest.assigned_students_queryset().only('batch', 'section')
         resolved_batches = sorted({s.batch for s in assigned_students_qs if s.batch})
         resolved_sections = sorted(
             {f"{s.batch}-{s.section}" for s in assigned_students_qs if s.batch and s.section}

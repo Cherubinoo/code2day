@@ -975,14 +975,26 @@ class ContestBatchAssignView(APIView):
         contest.assigned_sections = sections
         contest.save(update_fields=['assigned_batches', 'assigned_sections'])
 
-        # Assign students from whole batches plus any specifically assigned sections
-        student_filter = Q(pk__in=[])
-        if batches:
-            student_filter |= Q(batch__in=batches)
+        # Assign students: a batch counts at batch level only when it isn't
+        # narrowed to specific sections; a section-scoped batch reaches only
+        # its listed section(s). (Same rule as ContestListCreateView.post and
+        # Contest._assigned_students_q.)
+        restricted_batches = set()
+        section_filter = Q(pk__in=[])
         for entry in sections:
             batch, _, section = str(entry).partition('::')
             if batch and section:
-                student_filter |= Q(batch=batch, section=section)
+                restricted_batches.add(batch)
+                section_filter |= Q(batch=batch, section=section)
+            elif section:
+                section_filter |= Q(section=section)
+
+        student_filter = Q(pk__in=[])
+        unrestricted_batches = [b for b in batches if b not in restricted_batches]
+        if unrestricted_batches:
+            student_filter |= Q(batch__in=unrestricted_batches)
+        if section_filter != Q(pk__in=[]):
+            student_filter |= section_filter
 
         students = StudentProfile.objects.filter(
             student_filter,
@@ -996,7 +1008,7 @@ class ContestBatchAssignView(APIView):
             "contest_id": contest.id,
             "assigned_batches": contest.assigned_batches,
             "assigned_sections": contest.assigned_sections,
-            "assigned_student_count": contest.assigned_students.count(),
+            "assigned_student_count": contest.assigned_student_count,
         })
 
 class AnnouncementListView(UnifiedAuthMixin, APIView):
