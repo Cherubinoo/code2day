@@ -362,6 +362,32 @@ const ContestDetailModal = ({ contestId, onClose }) => {
           </div>
         </div>
 
+        {/* Per-section averages (combined contests) */}
+        {analytics.section_averages && Object.keys(analytics.section_averages).length > 0 && (
+          <div style={{ padding: '0 32px 16px' }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginBottom: 8 }}>
+              Section Averages (weighted blend → total score)
+            </div>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              {Object.entries(analytics.section_averages).map(([key, avg]) => {
+                const label = { coding: 'Coding', aptitude: 'Aptitude', reading: 'Reading', custom: 'Custom' }[key] || key;
+                const weight = {
+                  coding: contest.coding_weight_percent,
+                  aptitude: contest.aptitude_weight_percent,
+                  reading: contest.reading_weight_percent,
+                  custom: contest.custom_weight_percent,
+                }[key];
+                return (
+                  <div key={key} style={{ padding: '10px 16px', background: 'white', borderRadius: 8, border: '1px solid #e5e7eb', minWidth: 120 }}>
+                    <div style={{ fontSize: 11, color: '#666' }}>{label}{weight != null ? ` · ${weight}%` : ''}</div>
+                    <div style={{ fontSize: 20, fontWeight: 'bold', color: '#4f46e5' }}>{Math.round(avg)}%</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Navigation Tabs */}
         <div style={{
           display: 'flex', gap: 12, padding: '0 32px', background: '#f9fafb',

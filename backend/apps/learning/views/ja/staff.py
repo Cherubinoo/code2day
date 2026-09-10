@@ -32,6 +32,113 @@ class JAStaffListView(APIView):
         ]
         return Response({"staff": data})
 
+# Roles a JA is allowed to assign a staff member into.
+_JA_ASSIGNABLE_ROLES = {"staff", "hod", "academics"}
+
+
+class JAStaffSearchView(APIView):
+    """JA: search every staff member in the institution (not just the JA's
+    department) by faculty id / name, for the department-assignment screen.
+    GET /api/ja/staff/all/?q=
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        q = (request.query_params.get('q') or '').strip()
+        staff = StaffProfile.objects.filter(
+            institution=profile.institution,
+        ).exclude(role="admin").select_related('department').order_by('name')
+        if q:
+            staff = staff.filter(Q(faculty_id__icontains=q) | Q(name__icontains=q))
+        staff = staff[:100]
+
+        data = [
+            {
+                "id": s.id,
+                "faculty_id": s.faculty_id,
+                "name": s.name,
+                "role": s.role,
+                "role_display": s.get_role_display(),
+                "department__name": s.department.name if s.department else None,
+                "is_active": s.is_active,
+                "in_my_department": s.department_id == profile.department_id,
+            }
+            for s in staff
+        ]
+        return Response({
+            "staff": data,
+            "my_department": profile.department.name if profile.department else None,
+            "assignable_roles": [
+                {"value": r, "label": dict(StaffProfile.ROLE_CHOICES)[r]}
+                for r in ("staff", "hod", "academics")
+            ],
+        })
+
+
+class JAStaffAssignView(APIView):
+    """JA: assign a staff member into the JA's OWN department and optionally set
+    a role. The department is always forced to the JA's department — never taken
+    from the payload.
+    POST /api/ja/staff/assign/   body: { faculty_id, role? }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        profile, err = _ja_guard(request)
+        if err:
+            return err
+
+        faculty_id = (request.data.get('faculty_id') or '').strip()
+        role = request.data.get('role')
+
+        if not faculty_id:
+            return Response({"detail": "faculty_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            staff = StaffProfile.objects.select_related('department').get(
+                faculty_id=faculty_id, institution=profile.institution,
+            )
+        except StaffProfile.DoesNotExist:
+            return Response({"detail": "Staff member not found in your institution."}, status=status.HTTP_404_NOT_FOUND)
+
+        if staff.role == "admin":
+            return Response({"detail": "Cannot reassign a System Admin account."}, status=status.HTTP_403_FORBIDDEN)
+
+        update_fields = ['department']
+        staff.department = profile.department  # forced — JA's own department
+
+        if role is not None and role != "":
+            if role not in _JA_ASSIGNABLE_ROLES:
+                return Response(
+                    {"detail": "You can only assign the Staff, HOD or Academic Coordinator roles."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            staff.role = role
+            update_fields.append('role')
+
+        staff.save(update_fields=update_fields)
+        logger.info(
+            "JA %s assigned staff %s to department %s%s",
+            profile.faculty_id, staff.faculty_id, profile.department,
+            f" as {role}" if 'role' in update_fields else "",
+        )
+        return Response({
+            "detail": f"{staff.name} assigned to {profile.department}.",
+            "staff": {
+                "id": staff.id,
+                "faculty_id": staff.faculty_id,
+                "name": staff.name,
+                "role": staff.role,
+                "role_display": staff.get_role_display(),
+                "department__name": staff.department.name if staff.department else None,
+            },
+        })
+
+
 class JABatchAdvisorView(APIView):
     """
     JA: get or set the class advisor for a batch section.

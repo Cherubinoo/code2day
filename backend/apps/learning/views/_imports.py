@@ -41,6 +41,8 @@ from ..models import (
     Contest,
     ContestParticipation,
     ContestSubmission,
+    ContestCustomQuestion,
+    ContestCustomAnswer,
     DiscussionMessage,
     ExecutionRecord,
     Institution,

@@ -195,6 +195,80 @@ class AptitudeContestSubmitView(APIView):
             "correct_count": participation.problems_solved,
         })
 
+class StudentContestCustomSubmitView(APIView):
+    """Submit an answer for a combined contest's Custom Questions section.
+    POST /api/student/contests/<contest_id>/custom/submit/
+    body: { question_id, selected_option, time_taken_seconds? }
+    Parallel of AptitudeContestSubmitView but against ContestCustomQuestion /
+    ContestCustomAnswer, and it recomputes the blended participation score via
+    _compute_contest_score_and_solved (custom questions only exist on combined
+    contests, whose total_score is a weighted blend)."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, contest_id):
+        if not hasattr(request.user, 'student_profile'):
+            return Response({"detail": "Student access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        student = request.user.student_profile
+        contest = Contest.objects.filter(id=contest_id).first()
+
+        if not contest or not contest.is_student_assigned(student):
+            return Response({"detail": "Contest not found or not accessible."}, status=status.HTTP_404_NOT_FOUND)
+
+        if contest.status != "published" or not contest.is_active:
+            return Response({"detail": "Contest is not active."}, status=status.HTTP_400_BAD_REQUEST)
+
+        question_id = request.data.get('question_id')
+        selected_option = request.data.get('selected_option')  # A, B, C, D
+        time_taken = request.data.get('time_taken_seconds', request.data.get('time_taken', 0)) or 0
+
+        question = contest.custom_questions.filter(id=question_id).first()
+        if not question:
+            return Response({"detail": "Question not found in this contest."}, status=status.HTTP_404_NOT_FOUND)
+
+        is_correct = bool(selected_option) and selected_option.strip().upper() == (question.correct_option or "").strip().upper()
+        score = 1 if is_correct else 0
+
+        try:
+            ContestCustomAnswer.objects.update_or_create(
+                contest=contest,
+                student=student,
+                question=question,
+                defaults={
+                    'selected_option': selected_option,
+                    'is_correct': is_correct,
+                    'score': score,
+                    'time_taken_seconds': time_taken,
+                },
+            )
+
+            participation, _ = ContestParticipation.objects.get_or_create(
+                contest=contest,
+                student=student,
+                defaults={'has_started': True, 'manually_stopped': False},
+            )
+
+            (participation.total_score,
+             participation.problems_solved,
+             participation.section_scores) = _compute_contest_score_and_solved(contest, student)
+            participation.save(update_fields=['total_score', 'problems_solved', 'section_scores'])
+        except Exception:
+            logger.exception(
+                "Failed to record custom submission for student %s, contest %s, question %s",
+                getattr(student, 'register_number', '?'), contest_id, question_id,
+            )
+            return Response(
+                {"detail": "Failed to record your answer. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response({
+            "success": True,
+            "is_correct": is_correct,
+            "score": score,
+            "correct_count": participation.problems_solved,
+        })
+
 class StudentContestListView(APIView):
     """Get contests assigned to the student"""
     permission_classes = [IsAuthenticated]
@@ -274,6 +348,7 @@ class StudentContestListView(APIView):
                     "started_at": participation.started_at,
                     "problems_solved": participation.problems_solved,
                     "total_score": participation.total_score,
+                    "section_scores": participation.section_scores,
                     "is_active": participation.is_active,
                 } if participation else None,
             })
@@ -361,6 +436,27 @@ class StudentContestDetailView(APIView):
                     "student_answer": submission.selected_option if submission else None,
                     "score": submission.score if submission else 0,
                 })
+        custom_data = []
+        if contest.contest_type == 'combined':
+            for cq in contest.custom_questions.all():
+                answer = ContestCustomAnswer.objects.filter(
+                    contest=contest, student=student, question=cq,
+                ).first()
+                custom_data.append({
+                    "id": cq.id,
+                    "order": cq.order,
+                    "question_type": "MCQ",
+                    "question_text": cq.question_text,
+                    "question_image": cq.question_image,
+                    "option_a": cq.option_a,
+                    "option_b": cq.option_b,
+                    "option_c": cq.option_c,
+                    "option_d": cq.option_d,
+                    "explanation": cq.explanation,
+                    "is_solved": answer is not None,
+                    "student_answer": answer.selected_option if answer else None,
+                    "score": answer.score if answer else 0,
+                })
         if contest.contest_type in ('programming', 'combined'):
             for problem in contest.problems.all():
                 # Check if student has solved this problem in the contest
@@ -399,9 +495,11 @@ class StudentContestDetailView(APIView):
             "title": contest.title,
             "description": contest.description,
             "contest_type": contest.contest_type,
+            "sections": contest.sections,
             "coding_weight_percent": contest.coding_weight_percent,
             "aptitude_weight_percent": contest.aptitude_weight_percent,
             "reading_weight_percent": contest.reading_weight_percent,
+            "custom_weight_percent": contest.custom_weight_percent,
             "start_time": contest.start_time,
             "end_time": contest.end_time,
             "access_end_time": contest.access_end_time,
@@ -423,12 +521,14 @@ class StudentContestDetailView(APIView):
             # contests now so the new combined workspace can reuse it).
             "problems": problems_data,
             "aptitude_questions": aptitude_data,
+            "custom_questions": custom_data,
             "participation": {
                 "started_at": participation.started_at,
                 "session_end_time": participation.session_end_time,
                 "remaining_time_seconds": participation.remaining_time_seconds,
                 "problems_solved": participation.problems_solved,
                 "total_score": participation.total_score,
+                "section_scores": participation.section_scores,
                 "time_spent_seconds": participation.time_spent_seconds,
                 "is_active": participation.is_active,
             } if participation else None,
@@ -568,11 +668,11 @@ class StudentContestAutoSubmitView(APIView):
             participation.end_participation(auto_submitted=True)
 
             # Calculate final score and problems solved
-            participation.total_score, participation.problems_solved = _compute_contest_score_and_solved(
+            participation.total_score, participation.problems_solved, participation.section_scores = _compute_contest_score_and_solved(
                 participation.contest, student
             )
 
-            participation.save(update_fields=['total_score', 'problems_solved'])
+            participation.save(update_fields=['total_score', 'problems_solved', 'section_scores'])
         except Exception:
             logger.exception(
                 "Failed to auto-submit contest %s for student %s",
@@ -640,7 +740,7 @@ class StudentContestStopView(APIView):
             participation.total_time_taken = participation.time_spent_seconds
         
         # Recalculate final score and problems solved one last time
-        participation.total_score, participation.problems_solved = _compute_contest_score_and_solved(
+        participation.total_score, participation.problems_solved, participation.section_scores = _compute_contest_score_and_solved(
             contest, request.user.student_profile
         )
 
@@ -688,11 +788,11 @@ class StudentContestSessionStatusView(APIView):
             participation.end_participation(auto_submitted=True)
             
             # Calculate final score — only count Accepted submissions
-            participation.total_score, participation.problems_solved = _compute_contest_score_and_solved(
+            participation.total_score, participation.problems_solved, participation.section_scores = _compute_contest_score_and_solved(
                 participation.contest, student
             )
 
-            participation.save(update_fields=['total_score', 'problems_solved'])
+            participation.save(update_fields=['total_score', 'problems_solved', 'section_scores'])
 
         return Response({
             "participation": {

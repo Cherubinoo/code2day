@@ -587,6 +587,7 @@ class SystemUpdate(models.Model):
         ("tpu", "TPU Officers Only"),
         ("director", "Directors Only"),
         ("principal", "Principals Only"),
+        ("office_admin", "Office Admins Only"),
     )
     CATEGORY_CHOICES = (
         ("feature", "New Feature"),
@@ -1491,6 +1492,7 @@ class StaffProfile(models.Model):
         ("tpu", "TPU (Training & Placement)"),
         ("director", "Director"),
         ("principal", "Principal"),
+        ("office_admin", "Office Admin"),
         ("ja", "Junior Admin (JA)"),
         ("admin", "System Admin"),
     )
@@ -1655,16 +1657,22 @@ class Contest(models.Model):
         choices=CONTEST_TYPE_CHOICES,
         default="programming",
     )
-    # Only meaningful when contest_type == "combined" — how much each section
-    # contributes to the participant's final weighted score. Staff-set,
-    # must sum to 100 (enforced in ContestListCreateView.post). Reading
-    # questions are AptitudeQuestion rows (question_type="RC") that ride
-    # along in `aptitude_questions` alongside regular MCQ questions, so
-    # their weight is tracked separately here even though there's no
-    # separate M2M for them.
+    # Only meaningful when contest_type == "combined" — which sections the
+    # exam includes, and how much each contributes to the participant's
+    # final weighted score. Staff pick the sections in the builder and set
+    # a weight per selected section; the selected sections' weights must
+    # sum to 100 (enforced in ContestListCreateView.post). An empty
+    # `sections` on a legacy combined contest means "all three of coding /
+    # aptitude / reading" (pre-multi-select behavior). Reading questions
+    # are AptitudeQuestion rows (question_type="RC") riding along in
+    # `aptitude_questions`; "custom" questions are inline-authored MCQs
+    # stored in ContestCustomQuestion, never touching the shared bank.
+    SECTION_KEYS = ("coding", "aptitude", "reading", "custom")
+    sections = models.JSONField(default=list, blank=True)
     coding_weight_percent = models.PositiveIntegerField(default=34)
     aptitude_weight_percent = models.PositiveIntegerField(default=33)
     reading_weight_percent = models.PositiveIntegerField(default=33)
+    custom_weight_percent = models.PositiveIntegerField(default=0)
     
     # Contest timing - Enhanced for session-based contests
     access_start_time = models.DateTimeField(
@@ -2050,6 +2058,11 @@ class ContestParticipation(models.Model):
     total_score = models.PositiveIntegerField(default=0)
     problems_solved = models.PositiveIntegerField(default=0)
     total_time_taken = models.PositiveIntegerField(default=0, help_text="Total time taken in seconds")
+    # Combined-contest per-section breakdown, each a 0-100 percent, e.g.
+    # {"coding": 72.0, "aptitude": 85.0, "reading": 60.0, "custom": 90.0}.
+    # `total_score` stays the single weight-blended total; this is only for
+    # showing the student/staff a per-section view of that blend.
+    section_scores = models.JSONField(default=dict, blank=True)
     
     # Winner allocation
     final_rank = models.PositiveIntegerField(null=True, blank=True)
@@ -2113,6 +2126,55 @@ class ContestParticipation(models.Model):
             self.auto_submitted = auto_submitted
             self.save(update_fields=['completed_at', 'time_spent_seconds', 'total_time_taken', 'is_active', 'auto_submitted'])
         return self.time_spent_seconds
+
+
+class ContestCustomQuestion(models.Model):
+    """An MCQ authored inline in the combined-exam builder for a single
+    contest's "Custom Questions" section. Deliberately NOT an
+    AptitudeQuestion — these never enter the shared aptitude bank, never
+    show up in aptitude practice, and are owned by (and deleted with) the
+    contest. Field shape mirrors AptitudeQuestion's MCQ half so the
+    builder can reuse the same authoring layout."""
+    contest = models.ForeignKey(Contest, on_delete=models.CASCADE, related_name="custom_questions")
+    order = models.PositiveIntegerField(default=0)
+    question_text = models.TextField()
+    question_image = models.URLField(max_length=1000, blank=True, default='')
+    option_a = models.CharField(max_length=500)
+    option_b = models.CharField(max_length=500)
+    option_c = models.CharField(max_length=500)
+    option_d = models.CharField(max_length=500)
+    correct_option = models.CharField(max_length=1)  # A, B, C, or D
+    explanation = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "contest_custom_questions"
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.contest_id} #{self.order} - {self.question_text[:50]}"
+
+
+class ContestCustomAnswer(models.Model):
+    """A student's answer to one ContestCustomQuestion — the custom-section
+    parallel of AptitudeContestSubmission."""
+    contest = models.ForeignKey(Contest, on_delete=models.CASCADE, related_name="custom_answers")
+    student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name="contest_custom_answers")
+    question = models.ForeignKey(ContestCustomQuestion, on_delete=models.CASCADE, related_name="answers")
+
+    selected_option = models.CharField(max_length=1, null=True, blank=True)  # A, B, C, D
+    is_correct = models.BooleanField(default=False)
+    score = models.IntegerField(default=0)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    time_taken_seconds = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "contest_custom_answers"
+        unique_together = ("contest", "student", "question")
+        ordering = ["submitted_at"]
+
+    def __str__(self):
+        return f"{self.student.register_number} - CQ#{self.question_id} - {self.is_correct}"
 
 
 # ─── Labs ─────────────────────────────────────────────────────────────────────

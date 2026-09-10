@@ -1510,6 +1510,7 @@ const AdminDashboard = () => {
                                     <option value="director">Director</option>
                                     <option value="principal">Principal</option>
                                     <option value="ja">Junior Admin (JA)</option>
+                                    <option value="office_admin">Office Admin</option>
                                     <option value="admin">Node Admin</option>
                                   </select>
                                 </td>
@@ -1842,6 +1843,7 @@ const AdminDashboard = () => {
                   <option value="director">Director</option>
                   <option value="principal">Principal</option>
                   <option value="ja">Junior Admin (JA)</option>
+                  <option value="office_admin">Office Admin</option>
                   <option value="admin">Node Admin</option>
                 </select>
                 <select value={newStaff.dept_id} onChange={(e) => setNewStaff({ ...newStaff, dept_id: e.target.value })} style={{ width: '100%', padding: '16px 20px', borderRadius: 16, border: '1px solid var(--border-soft)', background: 'var(--bg-2)', fontWeight: 700, boxSizing: 'border-box' }}>

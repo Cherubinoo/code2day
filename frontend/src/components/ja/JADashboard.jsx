@@ -2156,6 +2156,168 @@ function BatchesTab({ batches, onRefresh, onSelectBatch, jaInfo }) {
 
 
 // =============================================================================
+// Staff Assign Tab — search any staff in the institution, assign into MY dept
+// =============================================================================
+
+function StaffAssignTab({ jaInfo }) {
+  const [query, setQuery] = useState('');
+  const [staff, setStaff] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [myDept, setMyDept] = useState(jaInfo?.department?.name || '');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const [rowRole, setRowRole] = useState({});   // faculty_id -> chosen role
+  const [rowBusy, setRowBusy] = useState({});   // faculty_id -> bool
+
+  async function load(q = '') {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = q ? `?q=${encodeURIComponent(q)}` : '';
+      const res = await fetch(`/api/ja/staff/all/${params}`, { credentials: 'include' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to load staff');
+      setStaff(data.staff || []);
+      setRoles(data.assignable_roles || []);
+      if (data.my_department) setMyDept(data.my_department);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const t = setTimeout(() => load(query.trim()), 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  async function assign(row) {
+    setRowBusy(b => ({ ...b, [row.faculty_id]: true }));
+    setMsg(null);
+    try {
+      const body = { faculty_id: row.faculty_id };
+      if (rowRole[row.faculty_id]) body.role = rowRole[row.faculty_id];
+      const res = await fetch('/api/ja/staff/assign/', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Assignment failed');
+      setMsg(data.detail);
+      setStaff(list => list.map(s => (s.faculty_id === row.faculty_id
+        ? { ...s, role: data.staff.role, role_display: data.staff.role_display,
+            department__name: data.staff.department__name, in_my_department: true }
+        : s)));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRowBusy(b => ({ ...b, [row.faculty_id]: false }));
+    }
+  }
+
+  return (
+    <div className="tab-content">
+      <p style={{ color: 'var(--text-soft)', marginTop: 0 }}>
+        Search any staff member in <strong>{jaInfo?.institution?.name || 'your institution'}</strong> and
+        assign them to your department (<strong>{myDept || '—'}</strong>). You can also set their role.
+      </p>
+
+      <div style={{ position: 'relative', maxWidth: 460, marginBottom: 16 }}>
+        <Search size={16} style={{ position: 'absolute', left: 12, top: 11, color: '#9ca3af' }} />
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search by staff ID or name…"
+          style={{ width: '100%', padding: '9px 12px 9px 34px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 14, boxSizing: 'border-box' }}
+        />
+      </div>
+
+      {error && (
+        <div style={{ padding: 12, background: '#fee2e2', borderRadius: 10, color: '#991b1b', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <XCircle size={16} /> {error}
+        </div>
+      )}
+      {msg && (
+        <div style={{ padding: 12, background: '#d1fae5', borderRadius: 10, color: '#065f46', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <CheckCircle size={16} /> {msg}
+        </div>
+      )}
+
+      <div style={{ background: 'white', borderRadius: 14, border: '1px solid #e5e7eb', overflow: 'hidden' }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14, minWidth: 760 }}>
+            <thead>
+              <tr style={{ background: '#f9fafb', textAlign: 'left', color: '#6b7280' }}>
+                <th style={{ padding: '12px 16px', fontWeight: 600 }}>Staff ID</th>
+                <th style={{ padding: '12px 16px', fontWeight: 600 }}>Name</th>
+                <th style={{ padding: '12px 16px', fontWeight: 600 }}>Current role</th>
+                <th style={{ padding: '12px 16px', fontWeight: 600 }}>Current dept</th>
+                <th style={{ padding: '12px 16px', fontWeight: 600 }}>Assign role</th>
+                <th style={{ padding: '12px 16px', fontWeight: 600 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr><td colSpan={6} style={{ padding: 32, textAlign: 'center', color: '#9ca3af' }}>Loading…</td></tr>
+              ) : staff.length === 0 ? (
+                <tr><td colSpan={6} style={{ padding: 32, textAlign: 'center', color: '#9ca3af' }}>No staff found.</td></tr>
+              ) : staff.map(s => {
+                const busy = !!rowBusy[s.faculty_id];
+                return (
+                  <tr key={s.faculty_id} style={{ borderTop: '1px solid #f1f5f9', opacity: busy ? 0.55 : 1 }}>
+                    <td style={{ padding: '10px 16px', fontWeight: 600, color: '#111827' }}>{s.faculty_id}</td>
+                    <td style={{ padding: '10px 16px' }}>{s.name}</td>
+                    <td style={{ padding: '10px 16px', color: '#6b7280' }}>{s.role_display || s.role}</td>
+                    <td style={{ padding: '10px 16px', color: '#6b7280' }}>
+                      {s.department__name || '—'}
+                      {s.in_my_department && (
+                        <span style={{ marginLeft: 6, fontSize: 11, background: '#d1fae5', color: '#065f46', padding: '2px 8px', borderRadius: 20, fontWeight: 700 }}>mine</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '10px 16px' }}>
+                      <select
+                        value={rowRole[s.faculty_id] ?? ''}
+                        disabled={busy}
+                        onChange={e => setRowRole(r => ({ ...r, [s.faculty_id]: e.target.value }))}
+                        style={{ padding: '6px 8px', borderRadius: 8, border: '1px solid #d1d5db', fontSize: 13, minWidth: 150 }}
+                      >
+                        <option value="">Keep current role</option>
+                        {roles.map(r => (
+                          <option key={r.value} value={r.value}>{r.label}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td style={{ padding: '10px 16px', textAlign: 'right' }}>
+                      <button
+                        onClick={() => assign(s)}
+                        disabled={busy}
+                        style={{
+                          padding: '7px 14px', borderRadius: 8, border: 'none',
+                          background: 'var(--olive-700, #2D6A4F)', color: 'white',
+                          cursor: 'pointer', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap',
+                        }}
+                      >
+                        Assign to {myDept || 'my dept'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// =============================================================================
 // Main JADashboard Component
 // =============================================================================
 
@@ -2164,6 +2326,7 @@ const SIDEBAR_ITEMS = [
   { id: 'batches',      label: 'Batches',      icon: FolderOpen },
   { id: 'students',     label: 'All Students', icon: Users },
   { id: 'assignments',  label: 'Assignments',  icon: UserCheck },
+  { id: 'staff',        label: 'Staff',        icon: UserPlus },
   { id: 'import',       label: 'Bulk Import',  icon: Upload },
 ];
 
@@ -2327,6 +2490,9 @@ function JADashboard() {
             )}
             {activeTab === 'assignments' && (
               <AssignmentsTab jaInfo={jaInfo} />
+            )}
+            {activeTab === 'staff' && (
+              <StaffAssignTab jaInfo={jaInfo} />
             )}
             {activeTab === 'import' && (
               <ImportTab jaInfo={jaInfo} onRefresh={loadDashboard} />

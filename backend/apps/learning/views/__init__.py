@@ -8,6 +8,7 @@ from .admin import *  # noqa: F401,F403
 from .hod import *  # noqa: F401,F403
 from .leadership import *  # noqa: F401,F403
 from .ja import *  # noqa: F401,F403
+from .office import *  # noqa: F401,F403
 from .staff import *  # noqa: F401,F403
 from .student import *  # noqa: F401,F403
 from .common import *  # noqa: F401,F403

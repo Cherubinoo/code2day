@@ -1,7 +1,117 @@
 // Enhanced Contest Creator with Student Selection and Filtering
 import { useState, useEffect } from 'react';
-import { Plus, X, Calendar, Clock, Search, Users, CheckCircle, Trophy, Brain, Layers } from 'lucide-react';
+import { Plus, X, Calendar, Clock, Search, Users, CheckCircle, Trophy, Brain, Layers, ListChecks, Code, BookOpen } from 'lucide-react';
 import { buildJsonPostOptions } from '../../lib/appUtils';
+
+const BLANK_CUSTOM_Q = () => ({
+  question_text: '', question_image: '',
+  option_a: '', option_b: '', option_c: '', option_d: '',
+  correct_option: 'A', explanation: '',
+});
+
+// Inline MCQ authoring for a combined exam's "Custom Questions" section.
+// Self-contained: no API — it just mutates formData.custom_questions.
+function CustomQuestionsPanel({ questions, setQuestions }) {
+  const setCount = (n) => {
+    const target = Math.max(0, Math.min(100, parseInt(n) || 0));
+    setQuestions((list) => {
+      const next = list.slice(0, target);
+      while (next.length < target) next.push(BLANK_CUSTOM_Q());
+      return next;
+    });
+  };
+  const updateQ = (idx, patch) =>
+    setQuestions((list) => list.map((q, i) => (i === idx ? { ...q, ...patch } : q)));
+  const removeQ = (idx) => setQuestions((list) => list.filter((_, i) => i !== idx));
+  const addQ = () => setQuestions((list) => [...list, BLANK_CUSTOM_Q()]);
+
+  const inputStyle = { width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 13, boxSizing: 'border-box' };
+  const OPTS = ['a', 'b', 'c', 'd'];
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <h4 style={{ margin: 0, fontSize: 14 }}>Custom Questions ({questions.length})</h4>
+        <label style={{ fontSize: 12, color: '#64748b', display: 'flex', alignItems: 'center', gap: 6 }}>
+          Number of questions
+          <input
+            type="number" min="0" max="100" value={questions.length}
+            onChange={(e) => setCount(e.target.value)}
+            style={{ width: 70, padding: '6px 8px', borderRadius: 6, border: '1px solid #d1d5db' }}
+          />
+        </label>
+      </div>
+
+      <div style={{ display: 'grid', gap: 16 }}>
+        {questions.map((q, idx) => {
+          const incomplete = !(q.question_text || '').trim()
+            || OPTS.some(o => !(q['option_' + o] || '').trim())
+            || !['A', 'B', 'C', 'D'].includes(q.correct_option);
+          return (
+            <div key={idx} style={{
+              padding: 14, borderRadius: 10,
+              border: incomplete ? '1px solid #fca5a5' : '1px solid #e5e7eb',
+              background: '#fafafa',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#475569' }}>Q{idx + 1}</span>
+                <button type="button" onClick={() => removeQ(idx)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444', display: 'flex' }}>
+                  <X size={15} />
+                </button>
+              </div>
+              <textarea
+                placeholder="Question stem…" rows={2} value={q.question_text}
+                onChange={(e) => updateQ(idx, { question_text: e.target.value })}
+                style={{ ...inputStyle, resize: 'vertical', marginBottom: 8 }}
+              />
+              <input
+                placeholder="Image URL (optional)" value={q.question_image}
+                onChange={(e) => updateQ(idx, { question_image: e.target.value })}
+                style={{ ...inputStyle, marginBottom: 8 }}
+              />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8, marginBottom: 8 }}>
+                {OPTS.map((o) => (
+                  <label key={o} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                    <input
+                      type="radio" name={`correct_${idx}`}
+                      checked={q.correct_option === o.toUpperCase()}
+                      onChange={() => updateQ(idx, { correct_option: o.toUpperCase() })}
+                    />
+                    <input
+                      placeholder={`Option ${o.toUpperCase()}`} value={q['option_' + o]}
+                      onChange={(e) => updateQ(idx, { ['option_' + o]: e.target.value })}
+                      style={inputStyle}
+                    />
+                  </label>
+                ))}
+              </div>
+              <input
+                placeholder="Explanation (optional)" value={q.explanation}
+                onChange={(e) => updateQ(idx, { explanation: e.target.value })}
+                style={inputStyle}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      <button type="button" onClick={addQ}
+        style={{
+          marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '8px 14px', borderRadius: 8, border: '1px dashed #94a3b8',
+          background: 'white', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#475569',
+        }}>
+        <Plus size={15} /> Add question
+      </button>
+      {questions.length === 0 && (
+        <p style={{ margin: '8px 0 0', fontSize: 12, color: '#dc2626' }}>
+          Add at least one custom question.
+        </p>
+      )}
+    </div>
+  );
+}
 
 const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming' }) => {
   const [step, setStep] = useState(1); // 1: Basic Info, 2: Problems, 3: Students
@@ -17,6 +127,10 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
     coding_weight_percent: 34,
     aptitude_weight_percent: 33,
     reading_weight_percent: 33,
+    custom_weight_percent: 0,
+    // combined-exam builder: which sections are enabled + inline custom MCQs
+    sections: [],
+    custom_questions: [],
     assigned_batches: [],
     assigned_sections: [],
     assigned_student_ids: [],
@@ -688,9 +802,35 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
       )
     : formData.assigned_student_ids.length;
 
-  const weightsSum = formData.coding_weight_percent + formData.aptitude_weight_percent + formData.reading_weight_percent;
-  const hasNoContentSelected = formData.contest_type === 'combined'
-    ? (formData.problem_slugs.length === 0 && formData.aptitude_question_ids.length === 0 && formData.reading_passage_ids.length === 0) || weightsSum !== 100
+  const isCombined = formData.contest_type === 'combined';
+  // Which sections are in play: the explicit multi-select, or the legacy
+  // fixed trio when nothing has been picked yet.
+  const activeSections = isCombined
+    ? (formData.sections.length ? formData.sections : ['coding', 'aptitude', 'reading'])
+    : [];
+  const sectionWeightMap = {
+    coding: Number(formData.coding_weight_percent) || 0,
+    aptitude: Number(formData.aptitude_weight_percent) || 0,
+    reading: Number(formData.reading_weight_percent) || 0,
+    custom: Number(formData.custom_weight_percent) || 0,
+  };
+  const activeWeightsSum = activeSections.reduce((s, k) => s + sectionWeightMap[k], 0);
+  const customQuestionsComplete = formData.custom_questions.length > 0
+    && formData.custom_questions.every(q =>
+      (q.question_text || '').trim()
+      && ['a', 'b', 'c', 'd'].every(o => (q['option_' + o] || '').trim())
+      && ['A', 'B', 'C', 'D'].includes(q.correct_option));
+  const sectionHasContent = {
+    coding: formData.problem_slugs.length > 0,
+    aptitude: formData.aptitude_question_ids.length > 0,
+    reading: formData.reading_passage_ids.length > 0,
+    custom: customQuestionsComplete,
+  };
+  const weightsSum = activeWeightsSum;
+  const hasNoContentSelected = isCombined
+    ? (formData.sections.length === 0
+        || activeSections.some(k => !sectionHasContent[k])
+        || activeWeightsSum !== 100)
     : formData.contest_type === 'programming'
     ? formData.problem_slugs.length === 0
     : formData.aptitude_question_ids.length === 0;
@@ -862,10 +1002,48 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                   </button>
                 </div>
                 {formData.contest_type === 'combined' && (
-                  <p style={{ margin: '10px 0 0', fontSize: 12, color: '#64748b' }}>
-                    One session covering Coding, Aptitude, and Reading Comprehension together — pick problems, aptitude
-                    questions, and reading passages in the next step, and set how much each section is worth.
-                  </p>
+                  <div style={{ margin: '12px 0 0' }}>
+                    <p style={{ margin: '0 0 8px', fontSize: 12, color: '#64748b' }}>
+                      Pick which sections this exam includes. You'll fill each one and set its weight in the next step.
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                      {[
+                        { key: 'coding', label: 'Coding', icon: Code },
+                        { key: 'aptitude', label: 'Aptitude', icon: Brain },
+                        { key: 'reading', label: 'Reading Comprehension', icon: BookOpen },
+                        { key: 'custom', label: 'Custom Questions', icon: ListChecks },
+                      ].map(({ key, label, icon: Icon }) => {
+                        const on = formData.sections.includes(key);
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => setFormData(fd => ({
+                              ...fd,
+                              sections: on ? fd.sections.filter(s => s !== key) : [...fd.sections, key],
+                            }))}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 6,
+                              padding: '8px 12px', borderRadius: 8,
+                              border: on ? '2px solid #4f46e5' : '1px solid #d1d5db',
+                              background: on ? '#eef2ff' : 'white',
+                              color: on ? '#4f46e5' : '#475569',
+                              fontSize: 13, fontWeight: on ? 700 : 500, cursor: 'pointer',
+                            }}
+                          >
+                            <Icon size={15} />
+                            {label}
+                            {on && <CheckCircle size={14} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {formData.sections.length === 0 && (
+                      <p style={{ margin: '8px 0 0', fontSize: 12, color: '#dc2626' }}>
+                        Select at least one section to continue.
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -2196,34 +2374,43 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
 
           {/* Step 3 (combined contest): pick problems, aptitude questions, and reading
               passages together, plus how much each section is worth. */}
-          {step === 3 && formData.contest_type === 'combined' && (
+          {step === 3 && formData.contest_type === 'combined' && (() => {
+            const SECTION_META = {
+              coding:   { weightKey: 'coding_weight_percent',   label: 'Coding' },
+              aptitude: { weightKey: 'aptitude_weight_percent', label: 'Aptitude' },
+              reading:  { weightKey: 'reading_weight_percent',  label: 'Reading' },
+              custom:   { weightKey: 'custom_weight_percent',   label: 'Custom Questions' },
+            };
+            const showSection = (key) =>
+              formData.sections.length ? formData.sections.includes(key) : key !== 'custom';
+            return (
             <div style={{ display: 'grid', gap: 24 }}>
               <div style={{ padding: 16, background: '#f8fafc', borderRadius: 10, border: '1px solid #e2e8f0' }}>
                 <h4 style={{ margin: '0 0 10px', fontSize: 14 }}>Section Weights (must add up to 100%)</h4>
-                <div style={{ display: 'flex', gap: 16 }}>
-                  {[
-                    { key: 'coding_weight_percent', label: 'Coding' },
-                    { key: 'aptitude_weight_percent', label: 'Aptitude' },
-                    { key: 'reading_weight_percent', label: 'Reading' },
-                  ].map(({ key, label }) => (
-                    <div key={key}>
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  {activeSections.map((sec) => {
+                    const { weightKey, label } = SECTION_META[sec];
+                    return (
+                    <div key={weightKey}>
                       <label style={{ display: 'block', fontSize: 12, color: '#64748b', marginBottom: 4 }}>{label} %</label>
                       <input
                         type="number" min="0" max="100"
-                        value={formData[key]}
-                        onChange={(e) => setFormData({ ...formData, [key]: parseInt(e.target.value) || 0 })}
+                        value={formData[weightKey]}
+                        onChange={(e) => setFormData({ ...formData, [weightKey]: parseInt(e.target.value) || 0 })}
                         style={{ width: 80, padding: '8px 10px', borderRadius: 6, border: '1px solid #d1d5db' }}
                       />
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
-                {(formData.coding_weight_percent + formData.aptitude_weight_percent + formData.reading_weight_percent) !== 100 && (
+                {activeWeightsSum !== 100 && (
                   <p style={{ margin: '10px 0 0', fontSize: 12, color: '#dc2626' }}>
-                    Currently sums to {formData.coding_weight_percent + formData.aptitude_weight_percent + formData.reading_weight_percent}% — must be exactly 100%.
+                    Currently sums to {activeWeightsSum}% — must be exactly 100%.
                   </p>
                 )}
               </div>
 
+              {showSection('coding') && (
               <div>
                 <h4 style={{ margin: '0 0 10px', fontSize: 14 }}>
                   Coding Problems ({formData.problem_slugs.length} selected)
@@ -2249,7 +2436,9 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                   {problems.length === 0 && <p style={{ padding: 12, fontSize: 13, color: '#94a3b8' }}>No problems available.</p>}
                 </div>
               </div>
+              )}
 
+              {showSection('aptitude') && (
               <div>
                 <h4 style={{ margin: '0 0 10px', fontSize: 14 }}>
                   Aptitude Questions ({formData.aptitude_question_ids.length} selected)
@@ -2281,7 +2470,9 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                   )}
                 </div>
               </div>
+              )}
 
+              {showSection('reading') && (
               <div>
                 <h4 style={{ margin: '0 0 10px', fontSize: 14 }}>
                   Reading Passages ({formData.reading_passage_ids.length} selected)
@@ -2306,8 +2497,20 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
                   {readingPassages.length === 0 && <p style={{ fontSize: 13, color: '#94a3b8' }}>No reading passages available.</p>}
                 </div>
               </div>
+              )}
+
+              {showSection('custom') && (
+                <CustomQuestionsPanel
+                  questions={formData.custom_questions}
+                  setQuestions={(updater) => setFormData(fd => ({
+                    ...fd,
+                    custom_questions: typeof updater === 'function' ? updater(fd.custom_questions) : updater,
+                  }))}
+                />
+              )}
             </div>
-          )}
+            );
+          })()}
 
           {/* Step 4: Security & Anti-Cheating Settings */}
           {step === 4 && (
@@ -2733,25 +2936,32 @@ const EnhancedContestCreator = ({ onClose, onSuccess, initialType = 'programming
               >
                 Cancel
               </button>
-              {step < 4 ? (
+              {step < 4 ? (() => {
+                const step1Blocked = step === 1 && (
+                  !formData.title || (isCombined && formData.sections.length === 0)
+                );
+                const step3Blocked = step === 3 && hasNoContentSelected;
+                const nextBlocked = step1Blocked || step3Blocked;
+                return (
                 <button
                   type="button"
                   onClick={() => setStep(step + 1)}
-                  disabled={step === 1 && !formData.title}
+                  disabled={nextBlocked}
                   style={{
                     padding: '10px 20px',
                     borderRadius: 8,
                     border: 'none',
-                    background: (step === 1 && !formData.title) ? '#d1d5db' : '#4f46e5',
+                    background: nextBlocked ? '#d1d5db' : '#4f46e5',
                     color: 'white',
-                    cursor: (step === 1 && !formData.title) ? 'not-allowed' : 'pointer',
+                    cursor: nextBlocked ? 'not-allowed' : 'pointer',
                     fontSize: 14,
                     fontWeight: 500,
                   }}
                 >
                   Next
                 </button>
-              ) : (
+                );
+              })() : (
                 <>
                   <button
                     type="button"

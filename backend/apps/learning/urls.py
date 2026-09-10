@@ -181,8 +181,13 @@ from .views import (
     AptitudeQuestionListView,
     AptitudeQuestionSubmitView,
     AptitudeContestSubmitView,
+    StudentContestCustomSubmitView,
     InstitutionBrandingPreviewView,
     JAStaffListView,
+    JAStaffSearchView,
+    JAStaffAssignView,
+    OfficeStaffRosterView,
+    OfficeStaffDetailView,
     JABatchAdvisorView,
     JABatchAdvisorDeleteView,
     JAMentorAssignView,
@@ -314,6 +319,7 @@ urlpatterns = [
     path("student/contests/<int:contest_id>/problems/<slug:problem_slug>/", StudentContestProblemView.as_view(), name="student-contest-problem"),
     path("student/contests/<int:contest_id>/problems/<slug:problem_slug>/submit/", StudentContestSubmitView.as_view(), name="student-contest-submit"),
     path("student/contests/<int:contest_id>/aptitude/submit/", AptitudeContestSubmitView.as_view(), name="student-contest-aptitude-submit"),
+    path("student/contests/<int:contest_id>/custom/submit/", StudentContestCustomSubmitView.as_view(), name="student-contest-custom-submit"),
     path("student/contests/<int:pk>/lock/", ContestLockView.as_view(), name="contest-student-lock"),
     path("student/contests/<int:pk>/unlock/", ContestUnlockByPinView.as_view(), name="contest-student-unlock-pin"),
     path("student/contests/<int:pk>/snapshot/", ContestSnapshotView.as_view(), name="contest-student-snapshot"),
@@ -535,6 +541,8 @@ urlpatterns = [
     path("ja/import/report/", JAImportReportView.as_view(), name="ja-import-report"),
     # JA — advisor & mentor management
     path("ja/staff/", JAStaffListView.as_view(), name="ja-staff-list"),
+    path("ja/staff/all/", JAStaffSearchView.as_view(), name="ja-staff-search"),
+    path("ja/staff/assign/", JAStaffAssignView.as_view(), name="ja-staff-assign"),
     path("ja/advisors/", JABatchAdvisorView.as_view(), name="ja-advisors"),
     path("ja/advisors/<str:batch_code>/", JABatchAdvisorDeleteView.as_view(), name="ja-advisor-delete"),
     path("ja/mentors/", JAMentorListView.as_view(), name="ja-mentor-list"),
@@ -601,6 +609,10 @@ urlpatterns = [
     path("hod/staff/<str:faculty_id>/", HODManageStaffDetailView.as_view(), name="hod-manage-staff-detail"),
     path("leadership/staff/",                  LeadershipManageStaffView.as_view(),       name="leadership-manage-staff"),
     path("leadership/staff/<str:faculty_id>/", LeadershipManageStaffDetailView.as_view(), name="leadership-manage-staff-detail"),
+
+    # ── Office Admin — institution-wide staff roster ────────────────────────
+    path("office/staff/",                  OfficeStaffRosterView.as_view(), name="office-staff-roster"),
+    path("office/staff/<str:faculty_id>/", OfficeStaffDetailView.as_view(), name="office-staff-detail"),
 
     # ── HOD Company Management (Company Based Lab Practical) ─────────────────
     path("hod/companies/",                     HODCompanyListView.as_view(),   name="hod-companies-list"),

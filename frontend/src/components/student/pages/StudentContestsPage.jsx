@@ -4,6 +4,25 @@ import { Trophy, Clock, CheckCircle, AlertCircle, Calendar, Play, Award, Users, 
 import { getCsrfToken } from '../../../lib/appUtils';
 import AnimatedNumber from '../../common/AnimatedNumber';
 
+const SECTION_LABELS = { coding: 'Coding', aptitude: 'Aptitude', reading: 'Reading', custom: 'Custom' };
+
+// Compact per-section percentage line for combined contests, shown under the total.
+function SectionScoreLine({ sectionScores }) {
+  if (!sectionScores || typeof sectionScores !== 'object') return null;
+  const entries = Object.entries(sectionScores).filter(([k]) => SECTION_LABELS[k]);
+  if (entries.length === 0) return null;
+  return (
+    <div style={{ fontSize: 10, color: '#6b7280', marginTop: 4, lineHeight: 1.5 }}>
+      {entries.map(([k, v], i) => (
+        <span key={k}>
+          {i > 0 && ' · '}
+          {SECTION_LABELS[k]} {Math.round(v)}%
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const StudentContestsPage = ({ onNavigateToContest, autoOpenContestId, onResetAutoOpen }) => {
   const [contests, setContests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -704,6 +723,7 @@ function CompletedContestCard({ contest, onViewWinners }) {
               <AnimatedNumber value={contest.participation.total_score || 0} duration={0.8} />
             </div>
             <div style={{ fontSize: 10, color: '#666' }}>Score</div>
+            <SectionScoreLine sectionScores={contest.participation.section_scores} />
           </div>
         </div>
       ) : (
@@ -829,6 +849,7 @@ function ContestCard({ contest, isUpcoming, isCompleted, onStart }) {
               <div style={{ fontSize: 16, fontWeight: 600, color: '#dc2626' }}>
                 <AnimatedNumber value={contest.participation.total_score || 0} duration={0.8} />
               </div>
+              <SectionScoreLine sectionScores={contest.participation.section_scores} />
             </div>
           </>
         )}

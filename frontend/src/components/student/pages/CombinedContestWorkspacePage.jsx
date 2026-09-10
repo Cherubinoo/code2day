@@ -8,7 +8,7 @@ import Editor from "@monaco-editor/react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
-import { AlertCircle, CheckCircle, XCircle, BookOpen, Code2, Brain } from "lucide-react";
+import { AlertCircle, CheckCircle, XCircle, BookOpen, Code2, Brain, ListChecks } from "lucide-react";
 import { runCodeExecution, getLanguageIdForChoice } from "../../../lib/codeExecution";
 import { starterCodeByLanguage, editorLanguageByChoice } from "../../../lib/appData";
 import { formatDuration, buildJsonPostOptions, configureEditorProtection } from "../../../lib/appUtils";
@@ -178,9 +178,11 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
   const [contest, setContest] = useState(null);
   const [problems, setProblems] = useState([]); // coding
   const [aptitudeQuestions, setAptitudeQuestions] = useState([]); // MCQ + RC combined, raw
+  const [customQuestions, setCustomQuestions] = useState([]); // contest-owned MCQs
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [answers, setAnswers] = useState({}); // {questionId: selectedOption} — aptitude + reading
+  const [customAnswers, setCustomAnswers] = useState({}); // {customQuestionId: selectedOption}
 
   // useDrillDownParam (not plain useState) on activeTab / selectedProblemIndex
   // / selectedPassageId below so the browser Back button steps back through
@@ -257,6 +259,7 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
     problems.length > 0 && { id: "coding", label: "Coding", icon: Code2, count: problems.length },
     mcqQuestions.length > 0 && { id: "aptitude", label: "Aptitude", icon: Brain, count: mcqQuestions.length },
     passages.length > 0 && { id: "reading", label: "Reading", icon: BookOpen, count: passages.length },
+    customQuestions.length > 0 && { id: "custom", label: "Custom", icon: ListChecks, count: customQuestions.length },
   ].filter(Boolean);
 
   useEffect(() => {
@@ -467,12 +470,19 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
         setContest(data);
         setProblems(data.problems || []);
         setAptitudeQuestions(data.aptitude_questions || []);
+        setCustomQuestions(data.custom_questions || []);
 
         const initialAnswers = {};
         (data.aptitude_questions || []).forEach((q) => {
           if (q.student_answer) initialAnswers[q.id] = q.student_answer;
         });
         setAnswers(initialAnswers);
+
+        const initialCustom = {};
+        (data.custom_questions || []).forEach((q) => {
+          if (q.student_answer) initialCustom[q.id] = q.student_answer;
+        });
+        setCustomAnswers(initialCustom);
 
         setLoading(false);
       } catch (err) {
@@ -633,6 +643,19 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
     }
   }, [contestId]);
 
+  // Custom Questions answer submit — contest-owned MCQs, own endpoint
+  const handleCustomAnswerSelect = useCallback(async (questionId, option) => {
+    setCustomAnswers((prev) => ({ ...prev, [questionId]: option }));
+    try {
+      await fetch(`/api/student/contests/${contestId}/custom/submit/`, {
+        method: "POST",
+        ...buildJsonPostOptions({ question_id: questionId, selected_option: option, time_taken_seconds: 0 }),
+      });
+    } catch (err) {
+      console.error("Error saving custom answer:", err);
+    }
+  }, [contestId]);
+
   // Build a per-section pending/attempted/solved breakdown shown before final submission
   const buildSubmitSummary = useCallback(() => {
     const lines = [];
@@ -649,8 +672,12 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
       const answered = readingQuestions.filter((q) => answers[q.id] !== undefined).length;
       lines.push(`Reading: ${answered}/${readingQuestions.length} answered`);
     }
+    if (customQuestions.length) {
+      const answered = customQuestions.filter((q) => customAnswers[q.id] !== undefined).length;
+      lines.push(`Custom: ${answered}/${customQuestions.length} answered`);
+    }
     return lines.join("\n") || "No questions in this contest.";
-  }, [problems, mcqQuestions, readingQuestions, answers]);
+  }, [problems, mcqQuestions, readingQuestions, answers, customQuestions, customAnswers]);
 
   const submitContest = useCallback(async (successMessage) => {
     try {
@@ -833,6 +860,14 @@ export default function CombinedContestWorkspacePage({ contestId, onBack }) {
           <div style={{ maxWidth: 800, margin: "0 auto" }}>
             {mcqQuestions.map((q, idx) => (
               <QuestionCard key={q.id} question={q} index={idx} selected={answers[q.id]} onSelect={handleAnswerSelect} />
+            ))}
+          </div>
+        )}
+
+        {activeTab === "custom" && (
+          <div style={{ maxWidth: 800, margin: "0 auto" }}>
+            {customQuestions.map((q, idx) => (
+              <QuestionCard key={q.id} question={q} index={idx} selected={customAnswers[q.id]} onSelect={handleCustomAnswerSelect} />
             ))}
           </div>
         )}

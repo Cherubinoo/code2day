@@ -36,6 +36,7 @@ import AdminDashboard from "./components/admin/AdminDashboard";
 import InstitutionDetail from "./components/admin/InstitutionDetail";
 import HODDashboard from "./components/hod/HODDashboard";
 import JADashboard from "./components/ja/JADashboard";
+import OfficeAdminDashboard from "./components/office/OfficeAdminDashboard";
 import StaffDashboard from "./components/staff/StaffDashboard";
 import TwoStepVerification from "./components/common/TwoStepVerification";
 import StaffContactPrompt from "./components/common/StaffContactPrompt";
@@ -944,6 +945,7 @@ function App() {
       const targetPage = type === "admin" ? "admin" :
                          (type === "director" || type === "tpu" || type === "principal" || type === "hod" || type === "academics") ? "hod" :
                          type === "ja" ? "ja" :
+                         type === "office_admin" ? "office" :
                          type === "staff" ? "staff" : "explore";
       navigate(targetPage, { replace: true });
     } catch (error) {
@@ -1523,6 +1525,16 @@ function App() {
         </div>
       );
       break;
+    case "office":
+      activeView = userType === "office_admin" ? (
+        <OfficeAdminDashboard institutionId={selectedInstitutionId} />
+      ) : (
+        <div style={{ padding: 40 }}>
+          <h2>Access Denied</h2>
+          <p>Office Admin access required.</p>
+        </div>
+      );
+      break;
     case "staff":
       activeView = ["staff", "hod", "admin", "director", "tpu", "principal", "ja", "academics"].includes(userType) ? (
         <StaffDashboard institutionId={selectedInstitutionId} lockedModules={dashboard.locked_modules || []} />
@@ -1592,6 +1604,10 @@ function App() {
       }
       if (userType === "ja") {
         navigate("ja", { replace: true });
+        break;
+      }
+      if (userType === "office_admin") {
+        navigate("office", { replace: true });
         break;
       }
       activeView = (

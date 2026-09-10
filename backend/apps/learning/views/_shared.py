@@ -99,6 +99,7 @@ __all__ = [
     '_send_password_reset_otp_email',
     '_ja_guard',
     '_staff_guard',
+    '_office_guard',
     '_staff_from_request',
     '_student_from_request',
     '_serialize_assignment',
@@ -629,15 +630,22 @@ def _compute_contest_score_and_solved(contest, student):
     """Canonical way to (re)compute a student's total_score and
     problems_solved for a contest, across all contest types.
 
+    Returns a 3-tuple ``(total_score, problems_solved, section_scores)`` where
+    ``section_scores`` is a ``{section_key: percent}`` dict (0-100 per section),
+    empty for non-combined contests.
+
     - programming: total_score is the raw best-per-problem sum (unchanged).
     - aptitude: total_score is the raw sum of AptitudeContestSubmission.score
       (unchanged).
-    - combined: coding and aptitude/reading are each normalized to a 0-100%
-      of that section's own maximum possible score, then blended using the
-      contest's staff-set weight percentages into a single 0-100 total_score.
-      Reading questions are AptitudeQuestion rows (question_type="RC") that
-      ride along in aptitude_questions/AptitudeContestSubmission, so they're
-      split out from regular aptitude ones by question_type here.
+    - combined: each selected section (coding, aptitude, reading, custom) is
+      normalized to 0-100% of that section's own maximum possible score, then
+      blended using the contest's staff-set weight percentages into a single
+      0-100 total_score. When ``contest.sections`` is empty (legacy combined
+      contests) the fixed coding/aptitude/reading trio is used. Reading
+      questions are AptitudeQuestion rows (question_type="RC") that ride along
+      in aptitude_questions/AptitudeContestSubmission, so they're split out
+      from regular aptitude ones by question_type here. Custom questions are
+      contest-owned ContestCustomQuestion rows with ContestCustomAnswer rows.
     """
     from django.db.models import Sum
 
@@ -646,13 +654,13 @@ def _compute_contest_score_and_solved(contest, student):
         solved = ContestSubmission.objects.filter(
             contest=contest, student=student, status="Accepted",
         ).values("problem").distinct().count()
-        return score, solved
+        return score, solved, {}
 
     if contest.contest_type == "aptitude":
         subs = AptitudeContestSubmission.objects.filter(contest=contest, student=student)
         score = subs.aggregate(total=Sum("score"))["total"] or 0
         solved = subs.filter(is_correct=True).count()
-        return score, solved
+        return score, solved, {}
 
     # combined
     coding_raw = _best_score_per_problem(contest, student)
@@ -677,13 +685,40 @@ def _compute_contest_score_and_solved(contest, student):
     read_raw = sum(s.score for s in read_subs)
     read_pct = (read_raw / len(read_ids) * 100) if read_ids else 0
 
-    weighted = (
-        coding_pct * (contest.coding_weight_percent / 100)
-        + apt_pct * (contest.aptitude_weight_percent / 100)
-        + read_pct * (contest.reading_weight_percent / 100)
+    custom_qs = list(contest.custom_questions.all())
+    custom_answers = list(ContestCustomAnswer.objects.filter(contest=contest, student=student))
+    custom_correct = sum(1 for a in custom_answers if a.is_correct)
+    custom_pct = (custom_correct / len(custom_qs) * 100) if custom_qs else 0
+
+    section_pct = {
+        "coding": round(coding_pct, 2),
+        "aptitude": round(apt_pct, 2),
+        "reading": round(read_pct, 2),
+        "custom": round(custom_pct, 2),
+    }
+    section_weight = {
+        "coding": contest.coding_weight_percent,
+        "aptitude": contest.aptitude_weight_percent,
+        "reading": contest.reading_weight_percent,
+        "custom": contest.custom_weight_percent,
+    }
+
+    active_sections = [s for s in (contest.sections or []) if s in Contest.SECTION_KEYS]
+    if not active_sections:
+        active_sections = ["coding", "aptitude", "reading"]
+
+    weighted = sum(
+        section_pct[s] * (section_weight[s] / 100) for s in active_sections
     )
-    solved = coding_solved + sum(1 for s in apt_subs if s.is_correct) + sum(1 for s in read_subs if s.is_correct)
-    return round(weighted), solved
+    section_scores = {s: section_pct[s] for s in active_sections}
+
+    solved = (
+        coding_solved
+        + sum(1 for s in apt_subs if s.is_correct)
+        + sum(1 for s in read_subs if s.is_correct)
+        + custom_correct
+    )
+    return round(weighted), solved, section_scores
 
 def _display_actual_output(tc_result, actual_raw):
     """What to show as "Received Output" for one test case. On a clean run
@@ -2467,6 +2502,22 @@ def _ja_guard(request):
         return None, Response({"detail": "Your account has been disabled."}, status=status.HTTP_403_FORBIDDEN)
     if not profile.department:
         return None, Response({"detail": "No department assigned to your account."}, status=status.HTTP_400_BAD_REQUEST)
+    return profile, None
+
+def _office_guard(request):
+    """
+    Returns (staff_profile, None) if the request is from an active Office Admin
+    with an institution, or (None, Response) with the appropriate error.
+    """
+    if not request.user.is_authenticated or not hasattr(request.user, 'staff_profile'):
+        return None, Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+    profile = request.user.staff_profile
+    if profile.role != "office_admin":
+        return None, Response({"detail": "Office Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+    if not profile.is_active:
+        return None, Response({"detail": "Your account has been disabled."}, status=status.HTTP_403_FORBIDDEN)
+    if not profile.institution_id:
+        return None, Response({"detail": "No institution assigned to your account."}, status=status.HTTP_400_BAD_REQUEST)
     return profile, None
 
 def _staff_guard(request):

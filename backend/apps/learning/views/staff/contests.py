@@ -99,11 +99,38 @@ class ContestListCreateView(APIView):
         coding_weight = int(request.data.get('coding_weight_percent', 34) or 0)
         aptitude_weight = int(request.data.get('aptitude_weight_percent', 33) or 0)
         reading_weight = int(request.data.get('reading_weight_percent', 33) or 0)
-        if contest_type == 'combined' and (coding_weight + aptitude_weight + reading_weight) != 100:
-            return Response(
-                {"detail": "Coding, aptitude, and reading weights must add up to 100%."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        custom_weight = int(request.data.get('custom_weight_percent', 0) or 0)
+
+        # `sections` is the new multi-select section list for combined contests
+        # (["coding", "aptitude", "reading", "custom"]). An empty/absent list on
+        # a combined contest keeps the legacy fixed 3-section behavior.
+        raw_sections = request.data.get('sections', []) or []
+        sections = [s for s in Contest.SECTION_KEYS if s in raw_sections]
+        custom_questions_payload = request.data.get('custom_questions', []) or []
+
+        if contest_type == 'combined':
+            if sections:
+                _weight_by_key = {
+                    "coding": coding_weight,
+                    "aptitude": aptitude_weight,
+                    "reading": reading_weight,
+                    "custom": custom_weight,
+                }
+                if sum(_weight_by_key[s] for s in sections) != 100:
+                    return Response(
+                        {"detail": "The weights of the selected sections must add up to 100%."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if "custom" in sections and not custom_questions_payload:
+                    return Response(
+                        {"detail": "Add at least one custom question or remove the Custom Questions section."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+            elif (coding_weight + aptitude_weight + reading_weight) != 100:
+                return Response(
+                    {"detail": "Coding, aptitude, and reading weights must add up to 100%."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # Determine initial status
         submit_for_approval = request.data.get('submit_for_approval', False)
@@ -168,6 +195,8 @@ class ContestListCreateView(APIView):
             coding_weight_percent=coding_weight,
             aptitude_weight_percent=aptitude_weight,
             reading_weight_percent=reading_weight,
+            custom_weight_percent=custom_weight,
+            sections=sections if contest_type == 'combined' else [],
             submitted_for_approval_at=timezone.now() if submit_for_approval else None,
             # Security & Anti-cheat settings
             enable_tab_switch_check=request.data.get('enable_tab_switch_check', True),
@@ -177,20 +206,28 @@ class ContestListCreateView(APIView):
             enable_webcam_proctoring=request.data.get('enable_webcam_proctoring', False),
         )
 
+        # For a combined contest whose sections were explicitly chosen, only
+        # attach content for the selected sections (an empty `sections` list is
+        # a legacy combined contest → attach everything, unchanged behavior).
+        def _section_on(key):
+            if contest.contest_type != 'combined':
+                return True
+            return not sections or key in sections
+
         # Add problems by slugs (for programming, and coding section of combined)
-        if contest.contest_type in ('programming', 'combined'):
+        if contest.contest_type in ('programming', 'combined') and _section_on('coding'):
             problem_slugs = request.data.get('problem_slugs', [])
             if problem_slugs:
                 problems = Problem.objects.filter(slug__in=problem_slugs)
                 contest.problems.set(problems)
 
         # Add aptitude questions (for aptitude, and aptitude+reading sections of combined)
-        if contest.contest_type in ('aptitude', 'combined'):
-            aptitude_question_ids = list(request.data.get('aptitude_question_ids', []))
+        if contest.contest_type in ('aptitude', 'combined') and (_section_on('aptitude') or _section_on('reading')):
+            aptitude_question_ids = list(request.data.get('aptitude_question_ids', [])) if _section_on('aptitude') else []
             # Reading passages expand to the RC questions belonging to them —
             # reading questions are just AptitudeQuestion rows (question_type
             # "RC") so they ride along in the same M2M as regular MCQs.
-            reading_passage_ids = request.data.get('reading_passage_ids', [])
+            reading_passage_ids = request.data.get('reading_passage_ids', []) if _section_on('reading') else []
             if reading_passage_ids:
                 passage_question_ids = list(
                     AptitudeQuestion.objects.filter(
@@ -201,6 +238,33 @@ class ContestListCreateView(APIView):
             if aptitude_question_ids:
                 questions = AptitudeQuestion.objects.filter(id__in=aptitude_question_ids)
                 contest.aptitude_questions.set(questions)
+
+        # Custom Questions — MCQ-only, authored inline in the builder, contest-owned
+        # (never touch the shared aptitude bank). Only for combined contests that
+        # selected the "custom" section.
+        if contest.contest_type == 'combined' and 'custom' in sections and custom_questions_payload:
+            custom_rows = []
+            for idx, cq in enumerate(custom_questions_payload):
+                if not isinstance(cq, dict):
+                    continue
+                stem = (cq.get('question_text') or '').strip()
+                correct = (cq.get('correct_option') or '').strip().upper()
+                if not stem or correct not in ('A', 'B', 'C', 'D'):
+                    continue
+                custom_rows.append(ContestCustomQuestion(
+                    contest=contest,
+                    order=idx,
+                    question_text=stem,
+                    question_image=(cq.get('question_image') or '').strip(),
+                    option_a=(cq.get('option_a') or '').strip(),
+                    option_b=(cq.get('option_b') or '').strip(),
+                    option_c=(cq.get('option_c') or '').strip(),
+                    option_d=(cq.get('option_d') or '').strip(),
+                    correct_option=correct,
+                    explanation=(cq.get('explanation') or '').strip(),
+                ))
+            if custom_rows:
+                ContestCustomQuestion.objects.bulk_create(custom_rows)
 
         # Assign batches & sections
         assigned_batches = request.data.get('assigned_batches', [])
@@ -337,14 +401,33 @@ class ContestDetailView(APIView):
                     "correct_option": q.correct_option,
                 })
 
+        custom_data = []
+        if contest.contest_type == 'combined':
+            for cq in contest.custom_questions.all():
+                custom_data.append({
+                    "id": cq.id,
+                    "order": cq.order,
+                    "question_text": cq.question_text,
+                    "question_image": cq.question_image,
+                    "option_a": cq.option_a,
+                    "option_b": cq.option_b,
+                    "option_c": cq.option_c,
+                    "option_d": cq.option_d,
+                    "correct_option": cq.correct_option,
+                    "explanation": cq.explanation,
+                })
+
         data = {
             "id": contest.id,
             "title": contest.title,
             "description": contest.description,
             "contest_type": contest.contest_type,
+            "sections": contest.sections,
             "coding_weight_percent": contest.coding_weight_percent,
             "aptitude_weight_percent": contest.aptitude_weight_percent,
             "reading_weight_percent": contest.reading_weight_percent,
+            "custom_weight_percent": contest.custom_weight_percent,
+            "custom_questions": custom_data,
             "status": contest.status,
             "start_time": contest.start_time,
             "end_time": contest.end_time,
@@ -445,7 +528,7 @@ class ContestAnalyticsView(APIView):
 
         # Participant stats with detailed information
         participants_data = []
-        participations = ContestParticipation.objects.filter(contest=contest).select_related('student')
+        participations = list(ContestParticipation.objects.filter(contest=contest).select_related('student'))
         
         for participation in participations:
             student = participation.student
@@ -477,9 +560,28 @@ class ContestAnalyticsView(APIView):
         
         # Sort by score descending
         participants_data.sort(key=lambda x: (-x['score'], -x['problems_solved']))
-        
+
         # Top performers (top 10)
         top_performers = participants_data[:10]
+
+        # Per-section averages for combined contests — mean of each
+        # participation.section_scores key across all participants.
+        section_averages = {}
+        if contest.contest_type == 'combined':
+            active_sections = [s for s in (contest.sections or []) if s in Contest.SECTION_KEYS] \
+                or ["coding", "aptitude", "reading"]
+            sums = {s: 0.0 for s in active_sections}
+            counts = {s: 0 for s in active_sections}
+            for participation in participations:
+                scores = participation.section_scores or {}
+                for s in active_sections:
+                    if s in scores:
+                        sums[s] += float(scores[s] or 0)
+                        counts[s] += 1
+            section_averages = {
+                s: round(sums[s] / counts[s], 1) if counts[s] else 0.0
+                for s in active_sections
+            }
 
         return Response({
             "contest": {
@@ -487,12 +589,18 @@ class ContestAnalyticsView(APIView):
                 "title": contest.title,
                 "status": contest.status,
                 "contest_type": contest.contest_type,
+                "sections": contest.sections,
+                "coding_weight_percent": contest.coding_weight_percent,
+                "aptitude_weight_percent": contest.aptitude_weight_percent,
+                "reading_weight_percent": contest.reading_weight_percent,
+                "custom_weight_percent": contest.custom_weight_percent,
             },
             "summary": {
                 "total_participants": len(participants_data),
                 "total_submissions": submissions.count(),
                 "accepted_submissions": submissions.filter(is_correct=True).count() if contest.contest_type == 'aptitude' else submissions.filter(status='Accepted').count(),
             },
+            "section_averages": section_averages,
             "problem_stats": problem_stats,
             "top_performers": top_performers,
             "participants": participants_data,
