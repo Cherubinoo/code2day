@@ -35,6 +35,7 @@ from .views import (
     ContestDetailView,
     ContestAnalyticsView,
     ContestApprovalView,
+    ContestDeletionRequestView,
     ContestBatchAssignView,
     ContestLockView,
     ContestPublishView,
@@ -329,6 +330,7 @@ urlpatterns = [
     path("contests/<int:pk>/", ContestDetailView.as_view(), name="contest-detail"),
     path("contests/<int:pk>/analytics/", ContestAnalyticsView.as_view(), name="contest-analytics"),
     path("contests/<int:contest_id>/approve/", ContestApprovalView.as_view(), name="contest-approve"),
+    path("contests/<int:pk>/request-deletion/", ContestDeletionRequestView.as_view(), name="contest-request-deletion"),
 
     # Code execution
     path("run/", CodeRunView.as_view(), name="code-run"),

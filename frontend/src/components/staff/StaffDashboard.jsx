@@ -10,6 +10,7 @@ import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
 import HourlyBatchReportModal from '../common/HourlyBatchReportModal';
 import SolvingActivityChart from '../common/SolvingActivityChart';
 import { useTabNav } from '../../lib/useTabNav';
+import { getCsrfToken } from '../../lib/appUtils';
 
 const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
   const [activeTab, setActiveTab] = useTabNav('overview');
@@ -51,9 +52,56 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
 
   async function handleDeleteContest(e, contest) {
     e.stopPropagation();
+
+    // A deletion request is already pending → offer to withdraw it.
+    if (contest.deletion_requested) {
+      if (!window.confirm(`Withdraw the pending deletion request for "${contest.title}"?`)) return;
+      try {
+        const res = await fetch(`/api/contests/${contest.id}/request-deletion/`, { method: 'DELETE', credentials: 'include', headers: { 'X-CSRFToken': getCsrfToken() } });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          setContestsList((prev) => prev.map((c) => (c.id === contest.id ? { ...c, deletion_requested: false } : c)));
+        } else {
+          alert(data.detail || 'Failed to withdraw request.');
+        }
+      } catch {
+        alert('Failed to withdraw request.');
+      }
+      return;
+    }
+
+    // Approved / live contest → the creator must ask the HOD / Academic
+    // Coordinator to approve the deletion.
+    if (contest.deletion_needs_approval) {
+      const reason = window.prompt(
+        `"${contest.title}" is already approved, so it can't be deleted directly.\n\n` +
+        `Enter a reason for the deletion request — your HOD / Academic Coordinator will review it:`
+      );
+      if (reason === null) return; // cancelled
+      try {
+        const res = await fetch(`/api/contests/${contest.id}/request-deletion/`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCsrfToken() },
+          body: JSON.stringify({ reason }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) {
+          setContestsList((prev) => prev.map((c) => (c.id === contest.id ? { ...c, deletion_requested: true, deletion_request_reason: reason } : c)));
+          alert(data.detail || 'Deletion request sent for approval.');
+        } else {
+          alert(data.detail || 'Failed to send deletion request.');
+        }
+      } catch {
+        alert('Failed to send deletion request.');
+      }
+      return;
+    }
+
+    // Not yet approved → direct delete.
     if (!window.confirm(`Delete "${contest.title}"? This also removes every submission recorded against it. This cannot be undone.`)) return;
     try {
-      const res = await fetch(`/api/contests/${contest.id}/`, { method: 'DELETE', credentials: 'include' });
+      const res = await fetch(`/api/contests/${contest.id}/`, { method: 'DELETE', credentials: 'include', headers: { 'X-CSRFToken': getCsrfToken() } });
       if (res.ok) {
         setContestsList((prev) => prev.filter((c) => c.id !== contest.id));
       } else {
@@ -904,6 +952,11 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
                             <div style={{ fontSize: '13px', color: 'var(--text-soft)' }}>
                               Created on {contest.created_at ? new Date(contest.created_at).toLocaleDateString() : 'N/A'}
                             </div>
+                            {contest.deletion_requested && (
+                              <div style={{ marginTop: 4, fontSize: '12px', fontWeight: 700, color: '#b45309' }}>
+                                🕓 Deletion requested — awaiting HOD / Academic Coordinator approval
+                              </div>
+                            )}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
                             <div style={{ textAlign: 'center' }}>
@@ -917,8 +970,14 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
                             {contest.created_by?.faculty_id === staff.faculty_id && (
                               <button
                                 onClick={(e) => handleDeleteContest(e, contest)}
-                                title="Delete this contest"
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, display: 'flex', color: '#ef4444', flexShrink: 0 }}
+                                title={
+                                  contest.deletion_requested
+                                    ? 'Withdraw deletion request'
+                                    : contest.deletion_needs_approval
+                                    ? 'Request deletion (needs HOD / Academic Coordinator approval)'
+                                    : 'Delete this contest'
+                                }
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 6, display: 'flex', color: contest.deletion_requested ? '#b45309' : '#ef4444', flexShrink: 0 }}
                               >
                                 <Trash2 size={16} />
                               </button>

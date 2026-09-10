@@ -237,6 +237,24 @@ const ContestDetailModal = ({ contestId, onClose }) => {
     );
   }
 
+  // Header meta — tolerate created_by being an object {name} (current API) or a
+  // bare string (older API), and a missing / unparseable created_at.
+  const creatorName =
+    (contest.created_by && typeof contest.created_by === 'object' ? contest.created_by.name : contest.created_by) || 'Admin';
+  const createdAtDate = contest.created_at ? new Date(contest.created_at) : null;
+  const createdAtLabel = createdAtDate && !isNaN(createdAtDate.getTime())
+    ? createdAtDate.toLocaleDateString()
+    : '';
+
+  // Prefer the batches / sections the assignment actually resolved to; fall
+  // back to the raw picks made in the builder ('batch::section' → 'batch-section').
+  const assignedBatches = (contest.resolved_batches && contest.resolved_batches.length
+    ? contest.resolved_batches
+    : (contest.assigned_batches || []));
+  const assignedSections = (contest.resolved_sections && contest.resolved_sections.length
+    ? contest.resolved_sections
+    : (contest.assigned_sections || []).map(s => String(s).replace('::', '-')));
+
   // Filter to only show students who have submitted
   const submittedParticipants = (analytics?.participants || []).filter(p => p.total_submissions > 0);
   const availableBatches = [...new Set(submittedParticipants.map(p => p.batch).filter(Boolean))].sort();
@@ -288,12 +306,48 @@ const ContestDetailModal = ({ contestId, onClose }) => {
           <div style={{ flex: 1 }}>
             <h2 style={{ margin: 0, fontSize: 24, marginBottom: 8 }}>{contest.title}</h2>
             <p style={{ margin: 0, color: '#666', fontSize: 14 }}>
-              Created by {contest.created_by?.name} • {new Date(contest.created_at).toLocaleDateString()}
+              Created by {creatorName}
+              {createdAtLabel ? ` • ${createdAtLabel}` : ''}
             </p>
+            {(assignedBatches.length > 0 || assignedSections.length > 0) && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {assignedBatches.map((b) => (
+                  <span key={`b-${b}`} style={{
+                    fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 20,
+                    background: '#eef2ff', color: '#4f46e5',
+                  }}>Batch {b}</span>
+                ))}
+                {assignedSections.map((s) => (
+                  <span key={`s-${s}`} style={{
+                    fontSize: 12, fontWeight: 700, padding: '2px 10px', borderRadius: 20,
+                    background: '#ecfdf5', color: '#047857',
+                  }}>Section {s}</span>
+                ))}
+              </div>
+            )}
             {contest.description && (
               <p style={{ margin: '8px 0 0', color: '#374151', fontSize: 14 }}>
                 {contest.description}
               </p>
+            )}
+            {contest.deletion_requested && (
+              <div style={{
+                margin: '10px 0 0', padding: '8px 12px', borderRadius: 8,
+                background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b',
+                fontSize: 13, fontWeight: 600,
+              }}>
+                🗑️ Deletion requested{contest.deletion_requested_by ? ` by ${contest.deletion_requested_by}` : ''} — awaiting HOD / Academic Coordinator approval.
+                {contest.deletion_request_reason ? ` Reason: ${contest.deletion_request_reason}` : ''}
+              </div>
+            )}
+            {contest.deletion_denied_reason && !contest.deletion_requested && (
+              <div style={{
+                margin: '10px 0 0', padding: '8px 12px', borderRadius: 8,
+                background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569',
+                fontSize: 13,
+              }}>
+                A previous deletion request was denied. Reason: {contest.deletion_denied_reason}
+              </div>
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginLeft: 16 }}>

@@ -4,12 +4,18 @@ import StudentContestsPage from './StudentContestsPage';
 import ContestWorkspacePage from './ContestWorkspacePage';
 import AptitudeContestWorkspacePage from './AptitudeContestWorkspacePage';
 import CombinedContestWorkspacePage from './CombinedContestWorkspacePage';
+import ExtensionBlockOverlay from '../../common/ExtensionBlockOverlay';
+import { useExtensionGuard } from '../../../lib/extensionGuard';
 
 const ContestContainer = ({ targetContestId, setTargetContestId, onToggleWorkspace }) => {
   const [view, setView] = useState('list'); // 'list' or 'workspace'
   const [selectedContestId, setSelectedContestId] = useState(null);
   const [contestType, setContestType] = useState(null); // 'programming' or 'aptitude'
   const [loadingType, setLoadingType] = useState(false);
+
+  // Block browser-extension usage for the whole duration of a contest session.
+  const inWorkspace = view === 'workspace' && !!selectedContestId;
+  const { blocked: extBlocked, details: extDetails, recheck: extRecheck } = useExtensionGuard({ active: inWorkspace });
 
   // Sync isInsideWorkspace state with parent
   useEffect(() => {
@@ -65,6 +71,9 @@ const ContestContainer = ({ targetContestId, setTargetContestId, onToggleWorkspa
 
   function handleBackToContestList() {
     console.log('Back to contest list');
+    try {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    } catch { /* no-op */ }
     setView('list');
     setSelectedContestId(null);
     setContestType(null);
@@ -80,27 +89,41 @@ const ContestContainer = ({ targetContestId, setTargetContestId, onToggleWorkspa
 
   // Show workspace view
   if (view === 'workspace' && selectedContestId) {
+    let workspace;
     if (contestType === 'combined') {
-      return (
+      workspace = (
         <CombinedContestWorkspacePage
           contestId={selectedContestId}
           onBack={handleBackToContestList}
         />
       );
-    }
-    if (contestType === 'aptitude') {
-      return (
+    } else if (contestType === 'aptitude') {
+      workspace = (
         <AptitudeContestWorkspacePage
           contestId={selectedContestId}
           onBack={handleBackToContestList}
         />
       );
+    } else {
+      workspace = (
+        <ContestWorkspacePage
+          contestId={selectedContestId}
+          onBack={handleBackToContestList}
+        />
+      );
     }
+
     return (
-      <ContestWorkspacePage
-        contestId={selectedContestId}
-        onBack={handleBackToContestList}
-      />
+      <>
+        {workspace}
+        {extBlocked && (
+          <ExtensionBlockOverlay
+            details={extDetails}
+            onRecheck={extRecheck}
+            onLeave={handleBackToContestList}
+          />
+        )}
+      </>
     );
   }
 

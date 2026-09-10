@@ -1777,7 +1777,28 @@ class Contest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     submitted_for_approval_at = models.DateTimeField(null=True, blank=True)
-    
+
+    # ─── Deletion-request workflow ──────────────────────────────────────────
+    # Once a contest has been approved (and usually pushed to students), the
+    # staff who made it can no longer delete it directly — deleting cascades
+    # to every participation / submission / score already recorded. Instead
+    # they raise a request their department HOD / Academic Coordinator
+    # approves (which then performs the delete) or denies.
+    deletion_requested = models.BooleanField(default=False)
+    deletion_requested_by = models.ForeignKey(
+        StaffProfile,
+        on_delete=models.SET_NULL,
+        related_name="requested_contest_deletions",
+        null=True, blank=True,
+    )
+    deletion_requested_at = models.DateTimeField(null=True, blank=True)
+    deletion_request_reason = models.TextField(blank=True, default="")
+    deletion_denied_reason = models.TextField(blank=True, default="")
+    deletion_denied_at = models.DateTimeField(null=True, blank=True)
+
+    # Statuses at which a delete requires HOD / Academic Coordinator sign-off.
+    DELETION_NEEDS_APPROVAL_STATUSES = ("approved", "published", "active", "completed")
+
     class Meta:
         db_table = "contests"
         ordering = ["-created_at"]
@@ -1909,6 +1930,48 @@ class Contest(models.Model):
         if self.status == "approved":
             self.status = "published"
             self.save(update_fields=['status'])
+
+    def needs_deletion_approval(self):
+        """True when deleting this contest requires HOD / Academic Coordinator
+        sign-off (i.e. it's already been approved / gone live)."""
+        return self.status in self.DELETION_NEEDS_APPROVAL_STATUSES
+
+    def request_deletion(self, staff_profile, reason=""):
+        """Raise a deletion request for the department HOD / Academic
+        Coordinator to act on."""
+        self.deletion_requested = True
+        self.deletion_requested_by = staff_profile
+        self.deletion_requested_at = timezone.now()
+        self.deletion_request_reason = (reason or "").strip()
+        self.deletion_denied_reason = ""
+        self.deletion_denied_at = None
+        self.save(update_fields=[
+            'deletion_requested', 'deletion_requested_by', 'deletion_requested_at',
+            'deletion_request_reason', 'deletion_denied_reason', 'deletion_denied_at',
+        ])
+
+    def cancel_deletion_request(self):
+        """Withdraw a pending deletion request (by the requester)."""
+        self.deletion_requested = False
+        self.deletion_requested_by = None
+        self.deletion_requested_at = None
+        self.deletion_request_reason = ""
+        self.save(update_fields=[
+            'deletion_requested', 'deletion_requested_by',
+            'deletion_requested_at', 'deletion_request_reason',
+        ])
+
+    def deny_deletion(self, reason=""):
+        """HOD / Academic Coordinator declines the deletion request."""
+        self.deletion_requested = False
+        self.deletion_requested_by = None
+        self.deletion_requested_at = None
+        self.deletion_denied_reason = (reason or "").strip()
+        self.deletion_denied_at = timezone.now()
+        self.save(update_fields=[
+            'deletion_requested', 'deletion_requested_by', 'deletion_requested_at',
+            'deletion_denied_reason', 'deletion_denied_at',
+        ])
     
     def update_status_if_ended(self):
         """Update contest status to completed if it has ended"""

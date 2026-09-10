@@ -220,8 +220,10 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
               setStats(prev => ({ ...prev, staffCount: filteredStaff.length }));
             }
             
-            // Set contests from department data
+            // Set contests from department data, then refresh from the
+            // contests API so approval / deletion-request fields are present.
             setContests(deptData.analytics?.contests || []);
+            refreshContests();
           }
         } else {
           // Institutional View (Current HOD View)
@@ -357,7 +359,7 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
       .then(res => res.json())
       .then(data => {
         setContests(data.contests || []);
-        const pendingCount = (data.contests || []).filter(c => c.status === 'pending_approval').length;
+        const pendingCount = (data.contests || []).filter(c => c.status === 'pending_approval' || c.deletion_requested).length;
         setStats(prev => ({ ...prev, pendingApprovals: pendingCount, totalContests: (data.contests || []).length }));
       });
   }

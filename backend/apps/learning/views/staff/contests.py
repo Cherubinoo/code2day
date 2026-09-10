@@ -5,6 +5,22 @@ from .._imports import *
 from .._shared import *
 
 
+def _contest_deletion_state(contest):
+    """Deletion-request fields shared by the contest list & detail payloads."""
+    return {
+        "deletion_requested": contest.deletion_requested,
+        "deletion_requested_by": (
+            contest.deletion_requested_by.name or contest.deletion_requested_by.faculty_id
+        ) if contest.deletion_requested_by else None,
+        "deletion_requested_at": contest.deletion_requested_at,
+        "deletion_request_reason": contest.deletion_request_reason,
+        "deletion_denied_reason": contest.deletion_denied_reason,
+        "deletion_denied_at": contest.deletion_denied_at,
+        # True when a direct delete by the creator would need HOD sign-off.
+        "deletion_needs_approval": contest.needs_deletion_approval(),
+    }
+
+
 class ContestListCreateView(APIView):
     """List contests for HOD/staff or create new contest"""
     permission_classes = [IsAuthenticated]
@@ -13,21 +29,21 @@ class ContestListCreateView(APIView):
         """Get contests - filtered by role and department"""
         if request.user.is_superuser or getattr(request.user, 'username', '') in ('0001', 'staff_0001', 'admin'):
             contests = Contest.objects.all().select_related(
-                'created_by', 'department', 'approved_by'
+                'created_by', 'department', 'approved_by', 'deletion_requested_by'
             ).order_by('-created_at')
         elif hasattr(request.user, 'staff_profile'):
             profile = request.user.staff_profile
             if profile.role in ("hod", "academics") and profile.department:
                 contests = Contest.objects.filter(department=profile.department).select_related(
-                    'created_by', 'department', 'approved_by'
+                    'created_by', 'department', 'approved_by', 'deletion_requested_by'
                 ).order_by('-created_at')
             elif profile.role == "staff":
                 contests = Contest.objects.filter(created_by=profile).select_related(
-                    'created_by', 'department', 'approved_by'
+                    'created_by', 'department', 'approved_by', 'deletion_requested_by'
                 ).order_by('-created_at')
             else:
                 contests = Contest.objects.filter(institution=profile.institution).select_related(
-                    'created_by', 'department', 'approved_by'
+                    'created_by', 'department', 'approved_by', 'deletion_requested_by'
                 ).order_by('-created_at')
         else:
             return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
@@ -69,6 +85,7 @@ class ContestListCreateView(APIView):
                 "aptitude_question_count": contest.aptitude_questions.count() if contest.contest_type in ("aptitude", "combined") else 0,
                 "contest_type": contest.contest_type,
                 "assigned_student_count": contest.assigned_students.count(),
+                **_contest_deletion_state(contest),
             })
 
         return Response({
@@ -417,6 +434,15 @@ class ContestDetailView(APIView):
                     "explanation": cq.explanation,
                 })
 
+        # Which batches / sections this contest actually reaches — derived from
+        # the resolved assigned_students set so it's accurate whether the staff
+        # assigned by batch, by batch+section, or hand-picked individuals.
+        assigned_students_qs = contest.assigned_students.all().only('batch', 'section')
+        resolved_batches = sorted({s.batch for s in assigned_students_qs if s.batch})
+        resolved_sections = sorted(
+            {f"{s.batch}-{s.section}" for s in assigned_students_qs if s.batch and s.section}
+        )
+
         data = {
             "id": contest.id,
             "title": contest.title,
@@ -431,7 +457,11 @@ class ContestDetailView(APIView):
             "status": contest.status,
             "start_time": contest.start_time,
             "end_time": contest.end_time,
+            "created_at": contest.created_at,
             "duration_minutes": contest.duration_minutes,
+            "session_duration_minutes": contest.session_duration_minutes,
+            "access_start_time": contest.access_start_time,
+            "access_end_time": contest.access_end_time,
             # "problems" stays coding-only (empty for pure-aptitude contests, unchanged
             # behavior); "aptitude_questions" is aptitude+reading data, new for combined
             # contests but also populated for pure-aptitude ones going forward.
@@ -439,21 +469,37 @@ class ContestDetailView(APIView):
             "aptitude_questions": aptitude_data,
             "problem_count": contest.problem_count,
             "aptitude_question_count": contest.aptitude_question_count,
-            "assigned_batches": contest.assigned_batches,
+            # Raw picks made in the builder…
+            "assigned_batches": contest.assigned_batches or [],
+            "assigned_sections": contest.assigned_sections or [],
+            # …and the batches / sections those actually resolved to.
+            "resolved_batches": resolved_batches,
+            "resolved_sections": resolved_sections,
             "assigned_student_count": contest.assigned_student_count,
-            "created_by": contest.created_by.name if contest.created_by else "Admin",
+            "created_by": {
+                "faculty_id": contest.created_by.faculty_id,
+                "name": contest.created_by.name or contest.created_by.faculty_id,
+            } if contest.created_by else None,
             "department": contest.department.name if contest.department else None,
             "approved_by": contest.approved_by.name if contest.approved_by else None,
             "approved_at": contest.approved_at,
             "rejection_reason": contest.rejection_reason,
+            **_contest_deletion_state(contest),
         }
         return Response(data)
 
     def delete(self, request, pk):
-        """Delete a contest — the creator or an admin only (not any staff
-        in the department, unlike the read permission above, since this
-        is destructive: it cascades to every participation/submission
-        already recorded against it)."""
+        """Delete a contest.
+
+        Destructive — it cascades to every participation / submission / score
+        already recorded against the contest, so it's gated:
+          • Admins and the department's HOD / Academic Coordinator can delete
+            directly, at any status.
+          • The staff creator can delete directly only *before* approval
+            (draft / pending_approval / rejected). Once a contest is approved
+            or live, the creator must raise a deletion request for the HOD /
+            Academic Coordinator to approve — see ContestDeletionRequestView.
+        """
         is_admin = request.user.is_superuser or getattr(request.user, 'username', '') in ('0001', 'staff_0001', 'admin')
         profile = getattr(request.user, 'staff_profile', None)
 
@@ -462,12 +508,97 @@ class ContestDetailView(APIView):
             return Response({"detail": "Contest not found."}, status=status.HTTP_404_NOT_FOUND)
 
         is_creator = profile is not None and contest.created_by_id == profile.id
-        if not (is_admin or is_creator):
-            return Response({"detail": "Only the contest creator or an admin can delete this contest."}, status=status.HTTP_403_FORBIDDEN)
+        is_dept_approver = (
+            profile is not None
+            and profile.role in ("hod", "academics")
+            and profile.department_id
+            and contest.department_id == profile.department_id
+        )
+
+        if not (is_admin or is_creator or is_dept_approver):
+            return Response(
+                {"detail": "Only the contest creator, the department HOD / Academic Coordinator, or an admin can delete this contest."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Creator trying to delete an approved / live contest → must go through
+        # the HOD / Academic Coordinator approval flow instead.
+        if is_creator and not (is_admin or is_dept_approver) and contest.needs_deletion_approval():
+            return Response(
+                {
+                    "detail": "This contest is already approved. Send a deletion request to your HOD / Academic Coordinator to approve the deletion.",
+                    "requires_deletion_request": True,
+                    "deletion_requested": contest.deletion_requested,
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         title = contest.title
         contest.delete()
         return Response({"message": f'"{title}" deleted.'})
+
+class ContestDeletionRequestView(APIView):
+    """Staff creator raises (or withdraws) a request to delete an already-approved
+    contest, for the department HOD / Academic Coordinator to act on.
+
+    POST   /api/contests/<id>/request-deletion/   body: { reason }
+    DELETE /api/contests/<id>/request-deletion/   → withdraw a pending request
+    """
+    permission_classes = [IsAuthenticated]
+
+    def _load(self, request, pk):
+        if not hasattr(request.user, 'staff_profile'):
+            return None, None, Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+        profile = request.user.staff_profile
+        contest = Contest.objects.filter(id=pk).first()
+        if not contest:
+            return None, None, Response({"detail": "Contest not found."}, status=status.HTTP_404_NOT_FOUND)
+        if contest.created_by_id != profile.id:
+            return None, None, Response(
+                {"detail": "Only the staff member who created this contest can request its deletion."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return profile, contest, None
+
+    def post(self, request, pk):
+        profile, contest, err = self._load(request, pk)
+        if err:
+            return err
+
+        if not contest.needs_deletion_approval():
+            return Response(
+                {"detail": "This contest hasn't been approved yet — you can delete it directly."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if contest.deletion_requested:
+            return Response(
+                {"detail": "A deletion request for this contest is already pending approval."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reason = request.data.get('reason', '')
+        contest.request_deletion(profile, reason)
+        logger.info(
+            "Staff %s requested deletion of contest %s (%s)",
+            profile.faculty_id, contest.id, contest.title,
+        )
+        return Response({
+            "detail": "Deletion request sent to your HOD / Academic Coordinator for approval.",
+            "deletion_requested": True,
+            "deletion_request_reason": contest.deletion_request_reason,
+        })
+
+    def delete(self, request, pk):
+        profile, contest, err = self._load(request, pk)
+        if err:
+            return err
+
+        if not contest.deletion_requested:
+            return Response({"detail": "There's no pending deletion request to withdraw."}, status=status.HTTP_400_BAD_REQUEST)
+
+        contest.cancel_deletion_request()
+        logger.info("Staff %s withdrew deletion request for contest %s", profile.faculty_id, contest.id)
+        return Response({"detail": "Deletion request withdrawn.", "deletion_requested": False})
 
 class ContestAnalyticsView(APIView):
     """Get analytics for a specific contest"""
