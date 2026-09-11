@@ -808,25 +808,30 @@ const ProblemBankView = ({ onBack }) => {
   // problem still missing anything, generate/fix its judge schema (+validate,
   // +enable), derive its starter code, and (re)write its Problem Explanation +
   // title. Auto-continues round by round until nothing is left.
-  async function generateEverythingBulk() {
+  async function generateEverythingBulk(force = false) {
     if (!window.confirm(
-      'Generate the Problem Explanation for every problem (overwriting old ones and renaming each problem to match), ' +
-      'and along the way fix any missing judge schema and starter code. This runs in batches and cannot be undone. Continue?'
+      force
+        ? 'Regenerate the Problem Explanation for EVERY problem in the bank — including ones already on the new format — ' +
+          'renaming each problem to match. This re-runs the LLM for the whole bank, takes a while, and cannot be undone. Continue?'
+        : 'Generate the Problem Explanation for every problem still missing one (overwriting old-style ones and renaming ' +
+          'each problem to match), and along the way fix any missing judge schema and starter code. This runs in batches ' +
+          'and cannot be undone. Continue?'
     )) {
       return;
     }
     setGenerateEverything({ busy: true, msg: 'Starting…', done: 0, total: 0 });
-    let totalProcessed = 0, totalExpl = 0, totalErr = 0;
+    let totalProcessed = 0, totalExpl = 0, totalErr = 0, afterId = 0;
     try {
       for (let round = 1; round <= MAX_ROUNDS; round++) {
         const data = (await api.post(
           '/admin/v2/problem-bank/generate-everything/',
-          undefined,
+          force ? { force: true, after_id: afterId } : undefined,
           { timeout: LONG_RUNNING_TIMEOUT },
         )).data;
         totalProcessed += data.processed.length;
         totalExpl += data.processed.filter((p) => p.explanation_generated).length;
         totalErr += data.processed.filter((p) => p.error || p.explanation_error || p.schema_errors).length;
+        afterId = data.last_id ?? afterId;
         const total = totalProcessed + data.remaining_problems;
         await load();
 
@@ -893,11 +898,11 @@ const ProblemBankView = ({ onBack }) => {
           Explanation + matching title, and fix any missing judge schema /
           starter code along the way. Runs in server-side batches and
           auto-continues until nothing is left. */}
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 20, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <button
-          onClick={generateEverythingBulk}
+          onClick={() => generateEverythingBulk(false)}
           disabled={generateEverything.busy}
-          title="For every problem still missing anything: (re)write its Problem Explanation and rename it to match, and fix any missing judge schema and starter code. Runs in batches and keeps going until done."
+          title="For every problem still missing anything: (re)write its Problem Explanation and rename it to match, and fix any missing judge schema and starter code. Skips problems already fully done. Runs in batches and keeps going until done."
           style={{
             background: generateEverything.busy ? '#e2e8f0' : 'var(--olive-700, #2D6A4F)',
             border: 'none', borderRadius: 12, padding: '12px 22px',
@@ -906,7 +911,21 @@ const ProblemBankView = ({ onBack }) => {
           }}
         >
           {generateEverything.busy ? <Loader2 size={17} className="spin" /> : <Sparkles size={17} />}
-          {generateEverything.busy ? 'Generating…' : 'Generate Problem Explanations (All Problems)'}
+          {generateEverything.busy ? 'Generating…' : 'Generate Problem Explanations (Missing Only)'}
+        </button>
+        <button
+          onClick={() => generateEverythingBulk(true)}
+          disabled={generateEverything.busy}
+          title="Rewrite the Problem Explanation for EVERY problem in the bank — topic-tagged or untagged, already generated or not — not just the ones missing it. Renames each problem to match. Runs in batches and keeps going until the whole bank is done."
+          style={{
+            background: generateEverything.busy ? '#e2e8f0' : 'white',
+            border: '2px solid var(--olive-700, #2D6A4F)', borderRadius: 12, padding: '12px 22px',
+            cursor: generateEverything.busy ? 'not-allowed' : 'pointer',
+            display: 'inline-flex', alignItems: 'center', gap: 10, color: 'var(--olive-700, #2D6A4F)', fontWeight: 800, fontSize: 14,
+          }}
+        >
+          {generateEverything.busy ? <Loader2 size={17} className="spin" /> : <RotateCcw size={17} />}
+          {generateEverything.busy ? 'Generating…' : 'Regenerate ALL Explanations (Force)'}
         </button>
       </div>
 

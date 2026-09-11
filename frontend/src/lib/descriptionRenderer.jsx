@@ -26,12 +26,47 @@ export function fixMojibake(s) {
   return s;
 }
 
+// LLM-written math/algorithm explanations occasionally slip into LaTeX
+// commands (\times, \leq, \sqrt{n}, $O(n)$, \(n \times m\) ...) even though
+// nothing here renders LaTeX — left alone those show up as literal backslash
+// gibberish. Convert the common ones to plain Unicode symbols and unwrap the
+// math-mode delimiters so the underlying text still reads normally.
+const LATEX_REPLACEMENTS = [
+  [/\\times/g, '×'], [/\\div/g, '÷'], [/\\cdot/g, '·'],
+  [/\\leq?/g, '≤'], [/\\geq?/g, '≥'], [/\\neq/g, '≠'], [/\\approx/g, '≈'],
+  [/\\sqrt\{([^{}]+)\}/g, '√($1)'], [/\\sqrt/g, '√'],
+  [/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1/$2)'],
+  [/\\rightarrow|\\to\b/g, '→'], [/\\infty/g, '∞'], [/\\pi\b/g, 'π'],
+  [/\^\{?(\d+)\}?/g, (_, d) => ({ 2: '²', 3: '³' }[d] || `^${d}`)],
+  [/\\text\{([^{}]*)\}/g, '$1'],
+];
+function stripLatexArtifacts(text) {
+  if (!text.includes('\\') && !text.includes('$') && !text.includes('^')) return text;
+  let out = text;
+  for (const [pattern, replacement] of LATEX_REPLACEMENTS) {
+    out = out.replace(pattern, replacement);
+  }
+  // Unwrap $...$ / \(...\) / \[...\] math-mode delimiters — nothing here
+  // renders LaTeX, so keep the content and just drop the wrapper.
+  out = out.replace(/\$([^$]+)\$/g, '$1').replace(/\\[()[\]]/g, '');
+  return out;
+}
+
 export function renderInline(text) {
   if (!text || typeof text !== "string") return "";
-  return fixMojibake(text)
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+  return stripLatexArtifacts(fixMojibake(text))
+    // Trim padding inside markers ("**  text  **" -> "**text**") before
+    // matching, so bold segments don't carry extra leading/trailing spaces
+    // into the rendered <strong>.
+    .replace(/\*\*\s*(.+?)\s*\*\*/g, '<strong>$1</strong>')
     .replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Deliberately no single-`*` italic rule: these explanations are
+  // math/algorithm-heavy and use a bare `*` for multiplication constantly
+  // (e.g. "n * log(n)", "3 * 4 * 5") — a single-star italic regex can't
+  // reliably tell that apart from real emphasis and ends up pairing
+  // unrelated asterisks across a sentence, mangling both the math and the
+  // surrounding spacing. Bold (**) and backtick code spans cover real
+  // formatting needs without that ambiguity.
 }
 
 export function escapeHtml(text) {

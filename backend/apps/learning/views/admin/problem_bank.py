@@ -1135,7 +1135,19 @@ class AdminProblemBankGenerateEverythingView(APIView):
     calling until `remaining_problems` hits 0. The LLM work per problem
     (schema gen/regen + explanation) runs through
     run_across_providers_in_parallel(); the deterministic starter-code
-    codegen and all DB writes happen back on the request thread."""
+    codegen and all DB writes happen back on the request thread.
+
+    Pass {"force": true} to force-rewrite the Problem Explanation + title for
+    EVERY problem in the bank — topic-tagged or untagged, already unified or
+    not — not just the ones still missing it. Schema/starter-code still only
+    fill in what's actually missing either way (force-regenerating a schema
+    that's already validated and live isn't what "regenerate all the
+    explanations" is asking for, and is far riskier). Force mode walks the
+    bank by id (pass back the response's "last_id" as the next call's
+    "after_id") since there's no "already done" flag to filter by when the
+    whole point is to redo problems that flag would call done — a fresh
+    force click (after_id omitted) deliberately starts over and redoes
+    everyone again."""
     permission_classes = [IsAuthenticated]
 
     TIME_BUDGET_SECONDS = 90
@@ -1144,7 +1156,7 @@ class AdminProblemBankGenerateEverythingView(APIView):
 
     def _needs_pass_q(self):
         return (
-            Q(explanation_is_story=False)
+            Q(explanation_is_unified=False)
             | Q(generic_schema__isnull=True)
             | Q(uses_generic_judge=False, generic_schema_needs_review=False)
             | _missing_generic_starter_code_q(force=False)
@@ -1153,6 +1165,17 @@ class AdminProblemBankGenerateEverythingView(APIView):
     def post(self, request):
         if not request.user.is_superuser:
             return Response({"detail": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        force = bool(request.data.get("force"))
+        # force=true walks the WHOLE bank once by id, id > after_id — not by
+        # any "already done" flag, since the whole point is to redo problems
+        # that flag would call "already done". The frontend carries this
+        # cursor between its rounds (see generateEverythingBulk); a fresh
+        # click restarts it at 0, deliberately redoing everyone again.
+        try:
+            after_id = int(request.data.get("after_id") or 0)
+        except (TypeError, ValueError):
+            after_id = 0
 
         import time
         from ...services.judging.schema_generator import generate_generic_schema, validate_generic_schema
@@ -1169,7 +1192,8 @@ class AdminProblemBankGenerateEverythingView(APIView):
 
         start = time.monotonic()
         batch_size = min(self.MAX_ACTIONS, provider_count * self.ROUND_SIZE_PER_PROVIDER)
-        problems = list(Problem.objects.filter(self._needs_pass_q()).order_by("id")[:batch_size])
+        base_qs = Problem.objects.filter(id__gt=after_id) if force else Problem.objects.filter(self._needs_pass_q())
+        problems = list(base_qs.order_by("id")[:batch_size])
 
         def call_one(problem, provider):
             """Pure LLM work for one problem — no DB writes (runs in a worker
@@ -1211,8 +1235,13 @@ class AdminProblemBankGenerateEverythingView(APIView):
                         pass
                 out["schema_errors"] = errors or None
 
-            # 3. Explanation + title (always, until explanation_is_story)
-            if not problem.explanation_is_story:
+            # 3. Explanation + title — always under force=true; otherwise
+            # only until explanation_is_unified (a problem already on the OLD
+            # multi-section story style still has explanation_is_story=True,
+            # so that flag alone would wrongly skip it forever;
+            # explanation_is_unified tracks the CURRENT single-block prompt
+            # specifically).
+            if force or not problem.explanation_is_unified:
                 try:
                     new_title, explanation = generate_explanation_with_title(
                         title=problem.title, description=problem.description,
@@ -1283,7 +1312,8 @@ class AdminProblemBankGenerateEverythingView(APIView):
                 problem.title = result["title"]
                 problem.explanation = result["explanation"]
                 problem.explanation_is_story = True
-                fields.update({"title", "explanation", "explanation_is_story"})
+                problem.explanation_is_unified = True
+                fields.update({"title", "explanation", "explanation_is_story", "explanation_is_unified"})
                 entry["explanation_generated"] = True
                 entry["new_title"] = result["title"]
             elif result["explanation_error"]:
@@ -1293,12 +1323,17 @@ class AdminProblemBankGenerateEverythingView(APIView):
                 problem.save(update_fields=list(fields))
             processed.append(entry)
 
-        remaining = Problem.objects.filter(self._needs_pass_q()).count()
+        last_id = problems[-1].id if problems else after_id
+        if force:
+            remaining = Problem.objects.filter(id__gt=last_id).count()
+        else:
+            remaining = Problem.objects.filter(self._needs_pass_q()).count()
         flagged_total = Problem.objects.filter(generic_schema_needs_review=True).count()
         return Response({
             "processed": processed,
             "elapsed_seconds": round(time.monotonic() - start, 1),
             "remaining_problems": remaining,
+            "last_id": last_id,
             "flagged_total": flagged_total,
         })
 

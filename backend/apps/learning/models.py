@@ -370,9 +370,20 @@ class Problem(models.Model):
     explanation = models.TextField(blank=True, default="")  # brief LLM-generated approach summary
     explanation_is_story = models.BooleanField(
         default=False,
-        help_text="Whether `explanation` was generated with the story-hook prompt (vs. the older plain pedagogical style). "
-                   "Lets the 'Regenerate All Explanations' admin sweep track real DB-persisted progress and skip already-migrated "
-                   "problems on a later run, instead of relying on a browser-held cursor that resets on refresh.",
+        help_text="Whether `explanation` was generated with the (now-retired) multi-section story-hook prompt "
+                   "(Story Hook / Core Problem Concept / Step-by-Step Approach headings) rather than the original "
+                   "plain pedagogical style. Superseded by explanation_is_unified for the current single-block "
+                   "'Problem Explanation' prompt — kept only so old data can still be told apart from the very "
+                   "first (pre-story) style if that's ever needed.",
+    )
+    explanation_is_unified = models.BooleanField(
+        default=False,
+        help_text="Whether `explanation` was (re)written with the current single continuous 'Problem Explanation' "
+                   "prompt — one flowing piece with no Story Hook/Core Problem Concept/Step-by-Step headings, hook "
+                   "woven in, 1-2 worked samples inline. This is the flag the 'Generate Problem Explanations' admin "
+                   "sweep (AdminProblemBankGenerateEverythingView) tracks progress against — explanation_is_story "
+                   "alone can't tell a problem apart that's still on the old multi-section style, so a problem "
+                   "already migrated to THAT would otherwise be (wrongly) skipped forever.",
     )
     description_original = models.TextField(
         blank=True, default="",

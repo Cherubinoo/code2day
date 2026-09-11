@@ -563,7 +563,9 @@ Cover, woven together naturally in this order but with no visible labels:
 - Then walk through {sample_count} concrete worked example(s) chosen to fit this problem: for each, give a specific input, the expected output, and a short trace of how the approach reaches that output. Pick the example count and shape from the problem's own complexity — one is plenty for a simple problem, two when a second case shows a meaningfully different path or edge case.
 - For Tree or Graph problems, include a small ASCII diagram of the sample structure and trace the walk over it.
 
-Keep it precise and tailored to THIS problem — a few short paragraphs, not a padded essay, every sentence teaching something specific to this problem's mechanics. No generic filler, no restating a point to pad length, never a one-line answer."""
+Keep it precise and tailored to THIS problem — a few short paragraphs, not a padded essay, every sentence teaching something specific to this problem's mechanics. No generic filler, no restating a point to pad length, never a one-line answer.
+
+Formatting: plain text only, rendered as-is with no LaTeX engine — never use LaTeX commands or math-mode delimiters (no backslash-times, backslash-leq, backslash-frac, backslash-sqrt, no $...$ or \\(...\\) math wrappers). Write math with plain Unicode symbols instead where one exists (×, ÷, ≤, ≥, √, →, π) or spell it out ("n squared", "n times m"); a bare `*` should only ever mean multiplication, never markdown emphasis — use **double asterisks** for real emphasis/bold and never a single `*`, so a stray multiplication sign is never mistaken for italics."""
 
 EXPLANATION_PROMPT_TEMPLATE = """You are a gifted teacher who makes a programming problem stick by opening with a short relatable hook and then teaching the idea in plain language.
 
