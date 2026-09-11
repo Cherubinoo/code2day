@@ -794,6 +794,16 @@ const ProblemBankView = ({ onBack }) => {
   }
 
 
+  // Each click's underlying request already does one time-budgeted batch
+  // server-side (see AdminProblemBankGenerateEverythingView — up to
+  // MAX_ACTIONS problems within TIME_BUDGET_SECONDS); this loop just keeps
+  // re-issuing that request, batch after batch, so ~1800+ problems get swept
+  // without the admin having to click repeatedly. MAX_ROUNDS is just a
+  // runaway guard, not the real stopping condition (remaining_problems
+  // reaching 0 is) — reaching it just means "click again to pick up where
+  // this left off" instead of looping forever.
+  const MAX_ROUNDS = 2000;
+
   // The one button. Per click the server does a time-budgeted batch: for every
   // problem still missing anything, generate/fix its judge schema (+validate,
   // +enable), derive its starter code, and (re)write its Problem Explanation +
