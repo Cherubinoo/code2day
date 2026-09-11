@@ -83,13 +83,21 @@ class StaffLabSubmissionsView(APIView):
         })
 
 class StaffLabListView(APIView):
+    """"My Practicals": labs THIS staff member is actually working on — not
+    every lab they merely set up for someone else. An HOD/Academic
+    Coordinator creates every lab in the department from Lab Center
+    (created_by=them) but hands most of them off to a `staff_in_charge`;
+    those belong on that staff member's own list, not the creator's, or an
+    HOD would see the whole department's labs here instead of just theirs.
+    `created_by` only counts when nobody else has been staffed onto it yet
+    (a plain staff member's own self-authored lab, staff_in_charge unset)."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         staff = _staff_from_request(request)
-        labs = Lab.objects.filter(Q(staff_in_charge=staff) | Q(created_by=staff)).distinct().select_related(
-            "created_by"
-        ).prefetch_related("exercises")
+        labs = Lab.objects.filter(
+            Q(staff_in_charge=staff) | Q(created_by=staff, staff_in_charge__isnull=True)
+        ).distinct().select_related("created_by").prefetch_related("exercises")
         return Response([_serialize_lab_v2(lab) for lab in labs])
 
     def post(self, request):
