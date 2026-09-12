@@ -55,13 +55,13 @@ export default function WorldMapView({ progress, soundEnabled, onToggleSound, on
           className="ghost-button"
           style={{ display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 16 }}
         >
-          <ChevronLeft size={16} /> Learn Games
+          <ChevronLeft size={16} /> SQL Games
         </button>
       )}
 
       <section className="page-header compact-header problem-page-header">
         <div>
-          <p className="kicker">Gamified Practice · Learn Games</p>
+          <p className="kicker">Gamified Practice · SQL Games</p>
           <h1>🐸 SQL Frog: Journey to the SQL Kingdom</h1>
         </div>
         <p style={{ color: "var(--text-soft)", margin: 0 }}>

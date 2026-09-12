@@ -5,7 +5,7 @@
 // folder next to frog/ here, add one more card below, done — this page
 // never needs a rewrite for that.
 import { useState } from "react";
-import { Lock, Sparkles } from "lucide-react";
+import { ArrowLeft, Lock, Sparkles } from "lucide-react";
 import SqlFrogGame from "./frog/SqlFrogGame";
 import "./sql-games.css";
 
@@ -65,7 +65,7 @@ function GameCard({ game, onPlay }) {
   );
 }
 
-export default function SqlGamesHub() {
+export default function SqlGamesHub({ onBack }) {
   const [activeGame, setActiveGame] = useState(null);
 
   if (activeGame === "frog") {
@@ -76,6 +76,19 @@ export default function SqlGamesHub() {
     <div className="page-stack problem-page sqlg-root">
       <section className="page-header compact-header problem-page-header">
         <div>
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 10,
+                background: "none", border: "none", padding: 0, cursor: "pointer",
+                color: "var(--text-soft)", fontWeight: 700, fontSize: "0.85rem",
+              }}
+            >
+              <ArrowLeft size={15} /> Learn Programming Through Games
+            </button>
+          )}
           <p className="kicker">Gamified Practice</p>
           <h1>🎮 SQL Games</h1>
         </div>

@@ -48,7 +48,7 @@ import LabsPage from "./components/student/pages/LabsPage";
 import AptitudePage from "./components/student/pages/AptitudePage";
 import InterviewPracticePage from "./components/student/pages/InterviewPracticePage";
 import LMSPage from "./components/student/pages/LMSPage";
-import SqlGamesHub from "./components/student/pages/sql-games/SqlGamesHub";
+import LearnGamesHub from "./components/student/pages/sql-games/LearnGamesHub";
 import CompetitivePracticePage from "./components/student/pages/CompetitivePracticePage";
 import DiscussPage from "./components/student/pages/DiscussPage";
 import ExplorePage from "./components/student/pages/ExplorePage";
@@ -1427,7 +1427,7 @@ function App() {
       activeView = <LMSPage />;
       break;
     case "sql":
-      activeView = <SqlGamesHub />;
+      activeView = <LearnGamesHub />;
       break;
     case "discuss":
       activeView = (
