@@ -565,11 +565,70 @@ class Announcement(models.Model):
     expires_at = models.DateTimeField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
+    # ─── Audience scoping ────────────────────────────────────────────────────
+    # All four below default to "no restriction" (null / empty) so a plain
+    # general/system announcement still broadcasts to everyone, unchanged from
+    # the original behavior. A contest announcement (see publish_contest_helper)
+    # sets these to the SAME audience the contest itself reaches — a contest
+    # assigned to one batch must only announce to that batch, not the whole
+    # department, and a section-restricted batch only to that section.
+    institution = models.ForeignKey(
+        Institution, on_delete=models.CASCADE, null=True, blank=True, related_name="announcements",
+        help_text="Null = every institution (system-wide). Set to scope to one institution.",
+    )
+    department = models.ForeignKey(
+        Department, on_delete=models.CASCADE, null=True, blank=True, related_name="announcements",
+        help_text="Null = every department in the institution (or fully global if institution is also null).",
+    )
+    assigned_batches = models.JSONField(
+        default=list, blank=True,
+        help_text="Batch codes this announcement targets — same shape/rules as Contest.assigned_batches. Empty = not batch-restricted.",
+    )
+    assigned_sections = models.JSONField(
+        default=list, blank=True,
+        help_text="'batch::section' entries this announcement is restricted to — same shape as Contest.assigned_sections.",
+    )
+    assigned_students = models.ManyToManyField(
+        StudentProfile, blank=True, related_name="individual_announcements",
+        help_text="Specific students this announcement targets (e.g. a contest assigned to hand-picked individuals). "
+                   "When set, ONLY these students see it, regardless of department/batch/section scoping above.",
+    )
+
     class Meta:
         ordering = ("-created_at",)
 
     def __str__(self):
         return self.title
+
+    def is_visible_to_student(self, student):
+        """Whether this announcement should show up for `student` — mirrors
+        Contest.is_student_assigned's department/batch/section/individual
+        scoping so a contest announcement reaches exactly the students the
+        contest itself reaches, never more. An announcement with every
+        scoping field left at its default (the original, pre-scoping shape)
+        is a full broadcast, same as before this scoping existed."""
+        if self.institution_id and student.institution_id != self.institution_id:
+            return False
+
+        if self.assigned_students.exists():
+            return self.assigned_students.filter(id=student.id).exists()
+
+        if self.department_id and student.department_id != self.department_id:
+            return False
+
+        if not self.assigned_batches and not self.assigned_sections:
+            return True  # department-wide (or fully global) broadcast
+
+        section_pairs, plain_sections, restricted_batches = parse_batch_section_scoping(self.assigned_sections)
+        for b, s in section_pairs:
+            if student.batch == b and student.section == s:
+                return True
+        if student.section in plain_sections:
+            return True
+        for b in (self.assigned_batches or []):
+            if b not in restricted_batches and student.batch == b:
+                return True
+        return False
 
 
 class Notification(models.Model):
@@ -1615,6 +1674,36 @@ class BatchAdvisor(models.Model):
         return f"{self.advisor.name} → {self.batch}{sec} ({self.department.code})"
 
 
+def parse_batch_section_scoping(assigned_sections):
+    """(section_pairs, plain_sections, restricted_batches) parsed from an
+    `assigned_sections`-shaped list — shared by every model that scopes an
+    audience the same way Contest does (Contest itself, and Announcement's
+    per-contest audience). Rules:
+      - "batch::section" or {"batch","section"} → that batch is *restricted*
+        to exactly the listed section(s); its other sections are NOT reached
+        even if the batch also appears in a parallel `assigned_batches` list.
+      - a bare "section" string → that section in ANY batch.
+    """
+    section_pairs = []      # (batch, section)
+    plain_sections = []     # section only, no batch
+    restricted_batches = set()
+    for entry in (assigned_sections or []):
+        if isinstance(entry, dict):
+            b, s = entry.get("batch"), entry.get("section")
+        else:
+            entry = str(entry)
+            if "::" in entry:
+                b, _, s = entry.partition("::")
+            else:
+                b, s = "", entry
+        if b and s:
+            section_pairs.append((b, s))
+            restricted_batches.add(b)
+        elif s:
+            plain_sections.append(s)
+    return section_pairs, plain_sections, restricted_batches
+
+
 class Contest(models.Model):
     """Contests created by staff for their department"""
     CONTEST_STATUS_CHOICES = (
@@ -1819,32 +1908,9 @@ class Contest(models.Model):
         return f"{self.title} - {creator} ({self.department.code if self.department else 'No Dept'})"
     
     def _parsed_section_scoping(self):
-        """(section_pairs, plain_sections, restricted_batches) parsed from
-        assigned_sections, using the SAME rules ContestListCreateView.post
-        assigns students by:
-          - "batch::section" or {"batch","section"} → that batch is
-            *restricted* to exactly the listed section(s); its other
-            sections are NOT reached even if the batch is in assigned_batches.
-          - a bare "section" string → that section in ANY batch.
-        """
-        section_pairs = []      # (batch, section)
-        plain_sections = []     # section only, no batch
-        restricted_batches = set()
-        for entry in (self.assigned_sections or []):
-            if isinstance(entry, dict):
-                b, s = entry.get("batch"), entry.get("section")
-            else:
-                entry = str(entry)
-                if "::" in entry:
-                    b, _, s = entry.partition("::")
-                else:
-                    b, s = "", entry
-            if b and s:
-                section_pairs.append((b, s))
-                restricted_batches.add(b)
-            elif s:
-                plain_sections.append(s)
-        return section_pairs, plain_sections, restricted_batches
+        """See parse_batch_section_scoping — same rules
+        ContestListCreateView.post assigns students by."""
+        return parse_batch_section_scoping(self.assigned_sections)
 
     def _assigned_students_q(self):
         """Q over StudentProfile for everyone this contest reaches — the one
