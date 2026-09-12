@@ -69,7 +69,7 @@ jobs:
 
     steps:
       - name: Deploy
-        working-directory: /home/administrator/Desktop/doc_judge/judge0
+        working-directory: /home/administrator/Desktop/code2day_main
         run: |
           set -e
 
@@ -84,97 +84,46 @@ jobs:
           git reset --hard origin/server
           echo "✓ $(git log --oneline -1)"
 
-          # Each service is deployed from its own compose file — frontend,
-          # backend, redis, and the executor are separately-scoped Dokploy
-          # apps on the shared external network (code2day-shared), so no
-          # single "docker compose up" should ever touch all of them at once.
+          # Frontend and backend are each their own compose file/Dokploy app on
+          # the shared external network (code2day-shared). The Judge0 execution
+          # stack (judge0-server, judge0-workers, judge0-db, judge0-redis) is
+          # long-running infra managed by docker-compose.judge0.yml — it is NOT
+          # rebuilt on every app deploy, only ensured to be up, since it doesn't
+          # change with application code.
           FRONTEND_COMPOSE="docker-compose.yml"
           BACKEND_COMPOSE="backend/docker-compose.yml"
-          REDIS_COMPOSE="deploy/redis-compose.yml"
-          EXECUTOR_COMPOSE="deploy/executor-compose.yml"
+          JUDGE0_COMPOSE="docker-compose.judge0.yml"
 
-          # ── 2. Bring up redis + executor first (backend depends on both) ───
-          echo "→ Starting redis and executor..."
-          docker compose -f "$REDIS_COMPOSE" up -d
-          docker compose -f "$EXECUTOR_COMPOSE" up -d
-          echo "✓ Redis and executor up"
-
-          # ── 3. Ensure Piston language packages ──────────────────────────────
-          # Packages persist in the piston-data volume; only downloads on first run.
-          echo "→ Ensuring Piston language packages..."
-          PISTON_URL="http://localhost:2358/api/v2"
-
-          # Wait for Piston to be ready (up to 60 s)
+          # ── 2. Ensure the Judge0 execution stack is up (rarely changes) ─────
+          echo "→ Ensuring Judge0 execution stack is up..."
+          docker compose -f "$JUDGE0_COMPOSE" up -d
+          echo "→ Waiting for Judge0 to respond..."
           for i in $(seq 1 30); do
-            curl -sf "${PISTON_URL}/runtimes" > /dev/null 2>&1 && break
-            echo "  Waiting for Piston... (${i}/30)"
+            curl -sf http://localhost:2358/system_info > /dev/null 2>&1 && break
+            echo "  Waiting for Judge0... (${i}/30)"
             sleep 2
           done
+          echo "✓ Judge0 execution stack up"
 
-          # NOTE: Piston has no package literally named "c" or "c++" — both are
-          # provided by the single "gcc" package (see its metadata.json "provides"
-          # array: language "c" aliased to "gcc", language "c++" aliased to "cpp"/
-          # "g++"). Installing "gcc" registers BOTH "c" and "c++" as runtimes.
-          install_if_missing() {
-            PLANG="$1"
-            PACKAGES_JSON=$(curl -sf "${PISTON_URL}/packages")
-
-            if echo "$PACKAGES_JSON" | grep -qE "\"language\":\"${PLANG//+/\\+}\",\"language_version\":\"[^\"]*\",\"installed\":true"; then
-              echo "  ✓ ${PLANG} already installed"
-              return
-            fi
-
-            # The /packages install endpoint needs an EXACT version — "*" is only
-            # valid on /execute. Resolve the version Piston's own index advertises.
-            VERSION=$(echo "$PACKAGES_JSON" \
-              | grep -oE "\"language\":\"${PLANG//+/\\+}\",\"language_version\":\"[^\"]*\"" \
-              | head -1 | grep -oE '[^"]*"$' | tr -d '"')
-
-            if [ -z "$VERSION" ]; then
-              echo "  ⚠ ${PLANG}: not found in Piston's package index — skipping"
-              return
-            fi
-
-            echo "  Installing ${PLANG}@${VERSION}..."
-            RESP=$(curl -s --max-time 300 -w "\n%{http_code}" -X POST "${PISTON_URL}/packages" \
-              -H "Content-Type: application/json" \
-              -d "{\"language\":\"${PLANG}\",\"version\":\"${VERSION}\"}")
-            CODE=$(echo "$RESP" | tail -1)
-            BODY=$(echo "$RESP" | sed '$d')
-            if [ "$CODE" = "200" ] || [ "$CODE" = "204" ]; then
-              echo "  ✓ ${PLANG}@${VERSION} done"
-            else
-              echo "  ⚠ ${PLANG}@${VERSION} failed (HTTP ${CODE}): ${BODY} — retry next deploy"
-            fi
-          }
-
-          install_if_missing python
-          install_if_missing java
-          install_if_missing gcc
-          echo "✓ Piston packages ready"
-          echo "  Installed runtimes: $(curl -sf "${PISTON_URL}/runtimes" | grep -oE '"language":"[^"]*","version":"[^"]*"' | tr '\n' ' ')"
-
-          # ── 4. Build and start backend ───────────────────────────────────────
-          # JUDGE0_BASE_URL is set directly in backend/docker-compose.yml, so
-          # no .env patching is needed here.
+          # ── 3. Build and start backend ───────────────────────────────────────
           echo "→ Building and starting backend..."
           docker compose -f "$BACKEND_COMPOSE" build backend
           docker compose -f "$BACKEND_COMPOSE" up -d
           sleep 5
           echo "✓ Backend up"
 
-          # ── 5. Build and start frontend ──────────────────────────────────────
+          # ── 4. Build and start frontend ──────────────────────────────────────
           echo "→ Building and starting frontend..."
           docker compose -f "$FRONTEND_COMPOSE" build frontend
           docker compose -f "$FRONTEND_COMPOSE" up -d
           echo "✓ Frontend up"
 
-          # ── 6. Run migrations ──────────────────────────────────────────────
+          # ── 5. Run migrations ──────────────────────────────────────────────
           echo "→ Migrations..."
           docker exec code2day-backend python manage.py migrate --noinput
           echo "✓ Migrations done"
 
-          # ── 7. Sync students from source DB (safe — skips if source unreachable) ──
+          # ── 6. Sync students from source DB (safe — skips if source unreachable) ──
           echo "→ Syncing students from source DB..."
           timeout 60 docker exec code2day-backend python manage.py import_students \
             && echo "✓ Student sync complete" \
@@ -187,16 +136,16 @@ jobs:
           docker exec code2day-backend python manage.py seed_lab_data
           echo "✓ Institution, department mappings, missing students and lab data done"
 
-          # ── 8. Collect static files ────────────────────────────────────────
+          # ── 7. Collect static files ────────────────────────────────────────
           echo "→ Static files..."
           docker exec code2day-backend python manage.py collectstatic --noinput
           echo "✓ Done"
 
-          # ── 9. Health check ────────────────────────────────────────────────
+          # ── 8. Health check ────────────────────────────────────────────────
           sleep 8
           BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/)
           FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8001/)
-          EXECUTOR=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2358/api/v2/runtimes)
+          EXECUTOR=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2358/system_info)
 
           echo "  Backend  → HTTP $BACKEND"
           echo "  Frontend → HTTP $FRONTEND"
