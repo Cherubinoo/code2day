@@ -61,6 +61,14 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────────────
   # CD — Deploy directly on the server via self-hosted runner
+  #
+  # Requires backend/.env and .env (repo root) to already exist on the runner
+  # at /home/administrator/Desktop/code2day_main — they hold real DB/email/API
+  # credentials Dokploy manages separately from this repo (originally copied
+  # from /etc/dokploy/compose/code2day-{backend,frontend}-*/code/**/.env) and
+  # are gitignored, so `git reset --hard` here never touches or removes them.
+  # Without them, docker compose silently defaults every credential to blank
+  # and the backend fails to reach its database.
   # ─────────────────────────────────────────────────────────────────────────────
   deploy:
     name: CD — Deploy to Production
