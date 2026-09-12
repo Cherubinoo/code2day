@@ -95,19 +95,33 @@ jobs:
           JUDGE0_COMPOSE="docker-compose.judge0.yml"
 
           # ── 2. Ensure the Judge0 execution stack is up (rarely changes) ─────
-          echo "→ Ensuring Judge0 execution stack is up..."
-          docker compose -f "$JUDGE0_COMPOSE" up -d
-          echo "→ Waiting for Judge0 to respond..."
-          for i in $(seq 1 30); do
-            curl -sf http://localhost:2358/system_info > /dev/null 2>&1 && break
-            echo "  Waiting for Judge0... (${i}/30)"
-            sleep 2
-          done
-          echo "✓ Judge0 execution stack up"
+          # Judge0's containers on this host were brought up by hand (docker run),
+          # not by this compose file, so `docker compose up` would try to create
+          # containers with names Docker already owns and fail with a naming
+          # conflict. Only fall back to compose if Judge0 isn't actually healthy.
+          echo "→ Checking Judge0 execution stack..."
+          if curl -sf http://localhost:2358/system_info > /dev/null 2>&1; then
+            echo "✓ Judge0 already up and healthy — leaving it alone"
+          else
+            echo "→ Judge0 not responding, bringing up stack via compose..."
+            docker compose -f "$JUDGE0_COMPOSE" up -d
+            echo "→ Waiting for Judge0 to respond..."
+            for i in $(seq 1 30); do
+              curl -sf http://localhost:2358/system_info > /dev/null 2>&1 && break
+              echo "  Waiting for Judge0... (${i}/30)"
+              sleep 2
+            done
+            echo "✓ Judge0 execution stack up"
+          fi
 
           # ── 3. Build and start backend ───────────────────────────────────────
+          # Remove any container holding this name that Compose doesn't already
+          # manage (e.g. one recreated by hand during a previous incident) —
+          # otherwise `up -d` fails with "name already in use". Harmless no-op
+          # when the running container is already the one Compose owns.
           echo "→ Building and starting backend..."
           docker compose -f "$BACKEND_COMPOSE" build backend
+          docker rm -f code2day-backend > /dev/null 2>&1 || true
           docker compose -f "$BACKEND_COMPOSE" up -d
           sleep 5
           echo "✓ Backend up"
@@ -115,6 +129,7 @@ jobs:
           # ── 4. Build and start frontend ──────────────────────────────────────
           echo "→ Building and starting frontend..."
           docker compose -f "$FRONTEND_COMPOSE" build frontend
+          docker rm -f code2day-frontend > /dev/null 2>&1 || true
           docker compose -f "$FRONTEND_COMPOSE" up -d
           echo "✓ Frontend up"
 
