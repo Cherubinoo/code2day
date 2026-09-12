@@ -96,22 +96,41 @@ jobs:
 
           # ── 2. Ensure the Judge0 execution stack is up (rarely changes) ─────
           # Judge0's containers on this host were brought up by hand (docker run),
-          # not by this compose file, so `docker compose up` would try to create
-          # containers with names Docker already owns and fail with a naming
-          # conflict. Only fall back to compose if Judge0 isn't actually healthy.
+          # not by this compose file, so if they already exist (running or
+          # stopped) `docker compose up` fails with a naming conflict instead of
+          # adopting them. So: if they're healthy, leave them alone; if they
+          # exist but are down, `docker start` them directly; only use compose
+          # to create them when none of them exist at all.
+          JUDGE0_CONTAINERS="judge0-db judge0-redis judge0-server judge0-workers"
           echo "→ Checking Judge0 execution stack..."
           if curl -sf http://localhost:2358/system_info > /dev/null 2>&1; then
             echo "✓ Judge0 already up and healthy — leaving it alone"
           else
-            echo "→ Judge0 not responding, bringing up stack via compose..."
-            docker compose -f "$JUDGE0_COMPOSE" up -d
+            EXISTING=""
+            for c in $JUDGE0_CONTAINERS; do
+              docker ps -a --format '{{.Names}}' | grep -qx "$c" && EXISTING="$EXISTING $c"
+            done
+            if [ -n "$EXISTING" ]; then
+              echo "→ Judge0 not responding — starting existing containers:$EXISTING"
+              for c in $EXISTING; do
+                docker start "$c" > /dev/null
+              done
+            else
+              echo "→ No existing Judge0 containers found — creating via compose..."
+              docker compose -f "$JUDGE0_COMPOSE" up -d
+            fi
             echo "→ Waiting for Judge0 to respond..."
             for i in $(seq 1 30); do
               curl -sf http://localhost:2358/system_info > /dev/null 2>&1 && break
               echo "  Waiting for Judge0... (${i}/30)"
               sleep 2
             done
-            echo "✓ Judge0 execution stack up"
+            if curl -sf http://localhost:2358/system_info > /dev/null 2>&1; then
+              echo "✓ Judge0 execution stack up"
+            else
+              echo "✗ Judge0 did not become healthy — check 'docker logs judge0-server' on the server"
+              exit 1
+            fi
           fi
 
           # ── 3. Build and start backend ───────────────────────────────────────
