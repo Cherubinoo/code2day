@@ -1,11 +1,12 @@
 // Staff Dashboard - Staff view with contests and batch-wise analytics
 import { useState, useEffect } from 'react';
-import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, Activity, Brain, MessageSquare, GraduationCap, UserCheck, FlaskConical, Download, Loader2, Trash2, Library, Sparkles } from 'lucide-react';
+import { Users, Trophy, BookOpen, BarChart3, Plus, Eye, FileText, ChevronRight, Calendar, CalendarClock, Activity, Brain, MessageSquare, GraduationCap, UserCheck, FlaskConical, Download, Loader2, Trash2, Library, Sparkles } from 'lucide-react';
 import EnhancedContestCreator from './EnhancedContestCreator';
 import StudentAnalyticsModal from './StudentAnalyticsModal';
 import ContestDetailModal from '../common/ContestDetailModal';
 import DiscussPage from '../student/pages/DiscussPage';
 import StaffLabPanel from './StaffLabPanel';
+import LearnSprintStaffPage from './LearnSprintStaffPage';
 import UserSystemUpdatesWidget from '../common/UserSystemUpdatesWidget';
 import HourlyBatchReportModal from '../common/HourlyBatchReportModal';
 import SolvingActivityChart from '../common/SolvingActivityChart';
@@ -345,6 +346,7 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'performance', label: 'Performance', icon: Trophy },
     { id: 'contests', label: 'Contests', icon: BookOpen },
+    { id: 'learn-sprint', label: 'Learn Sprint', icon: CalendarClock },
     { id: 'batches', label: 'Batches', icon: Users },
     { id: 'mentor', label: 'My Mentees', icon: UserCheck },
     { id: 'advisor', label: 'Class Advisor', icon: GraduationCap },
@@ -1667,6 +1669,13 @@ const StaffDashboard = ({ institutionId, lockedModules = [] }) => {
         {activeTab === 'labs' && (
           <div className="tab-container">
             <StaffLabPanel />
+          </div>
+        )}
+
+        {/* Learn Sprint Tab */}
+        {activeTab === 'learn-sprint' && (
+          <div className="tab-container">
+            <LearnSprintStaffPage />
           </div>
         )}
       </main>

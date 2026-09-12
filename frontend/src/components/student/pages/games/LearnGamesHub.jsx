@@ -1,15 +1,18 @@
 // Learn Programming Through Games — the top-level hub over every gamified
-// learning category. SQL Games (SQL Frog + its coming-soon siblings, see
-// SqlGamesHub) is the first and only playable category today; the other
-// cards are visible but locked so "more categories are coming" is a real
-// roadmap, not a promise in a changelog — same pattern SqlGamesHub already
-// uses one level down for individual games. Adding a new category later
-// means: build its own hub folder next to sql-games/, add one card below,
-// done — this page never needs a rewrite for that.
+// learning category. Each category lives in its own folder here (sql-games/
+// today; python-games/, java-games/ etc. later) exactly the way sql-games/
+// itself gives each individual game its own folder (frog/). SQL Games (SQL
+// Frog + its coming-soon siblings, see SqlGamesHub) is the first and only
+// playable category today; the other cards are visible but locked so "more
+// categories are coming" is a real roadmap, not a promise in a changelog.
+// Adding a new category later means: build its own folder next to
+// sql-games/, add one card below, done — this page never needs a rewrite
+// for that.
 import { useState } from "react";
 import { Lock, Sparkles } from "lucide-react";
-import SqlGamesHub from "./SqlGamesHub";
-import "./sql-games.css";
+import SqlGamesHub from "./sql-games/SqlGamesHub";
+import PythonGamesHub from "./python-games/PythonGamesHub";
+import "./sql-games/sql-games.css";
 
 const CATEGORIES = [
   {
@@ -24,11 +27,15 @@ const CATEGORIES = [
   {
     id: "python",
     title: "Python Games",
-    subtitle: "Coming soon",
+    subtitle: "Journey to the Kingdom of Python",
     emoji: "🐍",
-    description: "Learn Python fundamentals — variables, loops, functions — through playable challenges.",
+    description: "Learn Python fundamentals — variables, types, operators and beyond — through playable games like Py's Journey.",
     accent: "linear-gradient(135deg, #475569, #1e293b)",
-    playable: false,
+    playable: true,
+    // Institution-level lock only (module_registry.py "python_games") — this
+    // category has no top-level nav entry of its own to hide via the usual
+    // navItems-filter mechanism, so it's gated here directly instead.
+    moduleKey: "python_games",
   },
   {
     id: "java",
@@ -67,12 +74,21 @@ function CategoryCard({ category, onOpen }) {
   );
 }
 
-export default function LearnGamesHub() {
+export default function LearnGamesHub({ lockedModules = [] }) {
   const [activeCategory, setActiveCategory] = useState(null);
 
   if (activeCategory === "sql") {
     return <SqlGamesHub onBack={() => setActiveCategory(null)} />;
   }
+  if (activeCategory === "python") {
+    return <PythonGamesHub onBack={() => setActiveCategory(null)} />;
+  }
+
+  const categories = CATEGORIES.map((category) => (
+    category.moduleKey && lockedModules.includes(category.moduleKey)
+      ? { ...category, playable: false, subtitle: "Locked" }
+      : category
+  ));
 
   return (
     <div className="page-stack problem-page sqlg-root">
@@ -87,7 +103,7 @@ export default function LearnGamesHub() {
       </section>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 18 }}>
-        {CATEGORIES.map((category) => (
+        {categories.map((category) => (
           <CategoryCard key={category.id} category={category} onOpen={setActiveCategory} />
         ))}
       </div>

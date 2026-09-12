@@ -27,22 +27,25 @@ class ContestListCreateView(APIView):
 
     def get(self, request):
         """Get contests - filtered by role and department"""
+        # Sprint-day contests (auto-generated per LearnSprintDay) are excluded
+        # from every branch below — staff manage those through the Learn
+        # Sprint monitor, not the regular Contest list.
         if request.user.is_superuser or getattr(request.user, 'username', '') in ('0001', 'staff_0001', 'admin'):
-            contests = Contest.objects.all().select_related(
+            contests = Contest.objects.filter(learnsprintday__isnull=True).select_related(
                 'created_by', 'department', 'approved_by', 'deletion_requested_by'
             ).order_by('-created_at')
         elif hasattr(request.user, 'staff_profile'):
             profile = request.user.staff_profile
             if profile.role in ("hod", "academics") and profile.department:
-                contests = Contest.objects.filter(department=profile.department).select_related(
+                contests = Contest.objects.filter(department=profile.department, learnsprintday__isnull=True).select_related(
                     'created_by', 'department', 'approved_by', 'deletion_requested_by'
                 ).order_by('-created_at')
             elif profile.role == "staff":
-                contests = Contest.objects.filter(created_by=profile).select_related(
+                contests = Contest.objects.filter(created_by=profile, learnsprintday__isnull=True).select_related(
                     'created_by', 'department', 'approved_by', 'deletion_requested_by'
                 ).order_by('-created_at')
             else:
-                contests = Contest.objects.filter(institution=profile.institution).select_related(
+                contests = Contest.objects.filter(institution=profile.institution, learnsprintday__isnull=True).select_related(
                     'created_by', 'department', 'approved_by', 'deletion_requested_by'
                 ).order_by('-created_at')
         else:

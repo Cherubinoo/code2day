@@ -1,12 +1,11 @@
-// The cosmetic shop — spend coins earned from levels to recolor the frog
-// (a "skin", applied as a CSS filter since there's no colored-frog emoji)
-// or give it an accessory. Buying an item also grants a small XP bonus on
-// top of its coin cost (see backend SqlFrogPurchaseCosmeticView) — a
-// purchase is never *pure* spending, it's still forward progress.
+// The cosmetic shop — spend coins earned from levels to recolor Py (a
+// "skin", applied as a CSS filter) or give it an accessory. Buying an item
+// also grants a small XP bonus on top of its coin cost (see backend
+// PyJourneyPurchaseCosmeticView) — same design as SQL Frog's shop.
 import { useEffect, useState } from "react";
 import { X, Coins, Loader2, Check, ShoppingBag } from "lucide-react";
-import { buildJsonPostOptions, extractApiError } from "../../../../../lib/appUtils";
-import { playSound, FrogMascot } from "./shared";
+import { buildJsonPostOptions, extractApiError } from "../../../../../../lib/appUtils";
+import { playSound, PyMascot } from "./shared";
 
 function ItemCard({ item, equippedInSlot, busy, onPurchase, onEquip }) {
   const isEquipped = equippedInSlot === item.id;
@@ -20,7 +19,7 @@ function ItemCard({ item, equippedInSlot, busy, onPurchase, onEquip }) {
       background: isEquipped ? "#f0fdf4" : "white",
     }}>
       <div style={{ height: 44, display: "flex", alignItems: "center" }}>
-        <FrogMascot size={36} equipped={previewEquipped} />
+        <PyMascot size={36} equipped={previewEquipped} />
       </div>
       <div style={{ fontSize: "0.78rem", fontWeight: 800, color: "var(--olive-900)", textAlign: "center" }}>{item.name}</div>
 
@@ -59,7 +58,7 @@ export default function ShopModal({ soundEnabled, onClose, onChanged }) {
   const [busyId, setBusyId] = useState(null);
   const [message, setMessage] = useState(null); // { text, tone: 'good'|'bad' }
 
-  const load = () => fetch("/api/sql-frog/shop/", { credentials: "include" })
+  const load = () => fetch("/api/py-journey/shop/", { credentials: "include" })
     .then(async (res) => {
       const body = await res.json();
       if (!res.ok) throw new Error(extractApiError(body, "Could not load the shop."));
@@ -74,7 +73,7 @@ export default function ShopModal({ soundEnabled, onClose, onChanged }) {
     setBusyId(item.id);
     setMessage(null);
     try {
-      const res = await fetch("/api/sql-frog/shop/purchase/", buildJsonPostOptions({ item_id: item.id }));
+      const res = await fetch("/api/py-journey/shop/purchase/", buildJsonPostOptions({ item_id: item.id }));
       const body = await res.json();
       if (!res.ok) {
         setMessage({ text: body.error || "Could not purchase this item.", tone: "bad" });
@@ -93,7 +92,7 @@ export default function ShopModal({ soundEnabled, onClose, onChanged }) {
     setBusyId(item.id);
     setMessage(null);
     try {
-      const res = await fetch("/api/sql-frog/shop/equip/", buildJsonPostOptions({ item_id: item.id }));
+      const res = await fetch("/api/py-journey/shop/equip/", buildJsonPostOptions({ item_id: item.id }));
       const body = await res.json();
       if (!res.ok) {
         setMessage({ text: body.error || "Could not equip this item.", tone: "bad" });
@@ -119,7 +118,7 @@ export default function ShopModal({ soundEnabled, onClose, onChanged }) {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
           <ShoppingBag size={20} style={{ color: "var(--sqlg-gold)" }} />
-          <h2 style={{ margin: 0, fontSize: "1.2rem" }}>Frog Customization Shop</h2>
+          <h2 style={{ margin: 0, fontSize: "1.2rem" }}>Py Customization Shop</h2>
           <div style={{ flex: 1 }} />
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-soft)", display: "flex" }}>
             <X size={20} />

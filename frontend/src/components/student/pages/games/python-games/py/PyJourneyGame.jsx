@@ -1,16 +1,17 @@
-// SQL Frog: Journey to the SQL Kingdom — the first game under sql-games/.
-// SQL is the actual gameplay mechanic: every mission is graded by really
-// running the player's query (via the existing Judge0 pipeline, see backend
-// SqlFrogRunView) against the pond database, not just checking a keyword.
+// PY: Journey to the Kingdom of Python — the first game under
+// python-games/. Python is the actual gameplay mechanic: every mission is
+// graded by really running the player's code (via the existing Judge0
+// pipeline, see backend PyJourneyRunView) and diffing its printed output,
+// not just checking a keyword.
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
-import { extractApiError } from "../../../../../lib/appUtils";
+import { extractApiError } from "../../../../../../lib/appUtils";
 import { useSoundPref, playSound } from "./shared";
 import WorldMapView from "./WorldMapView";
 import LevelView from "./LevelView";
-import "../sql-games.css";
+import "../../sql-games/sql-games.css";
 
-export default function SqlFrogGame({ onExitToHub }) {
+export default function PyJourneyGame({ onExitToHub }) {
   const [progress, setProgress] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -18,10 +19,10 @@ export default function SqlFrogGame({ onExitToHub }) {
   const [soundEnabled, toggleSound] = useSoundPref();
 
   const fetchProgress = () => {
-    return fetch("/api/sql-frog/progress/", { credentials: "include" })
+    return fetch("/api/py-journey/progress/", { credentials: "include" })
       .then(async (res) => {
         const body = await res.json();
-        if (!res.ok) throw new Error(extractApiError(body, "Could not load SQL Frog."));
+        if (!res.ok) throw new Error(extractApiError(body, "Could not load Py's Journey."));
         return body;
       })
       .then(setProgress)
@@ -33,12 +34,9 @@ export default function SqlFrogGame({ onExitToHub }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Plain component state, not browser history — a level opened via a
-  // direct load/refresh (no pushState ever happened this session) used to
-  // make "back" fall through to whatever page the browser thinks came
-  // before this one instead of the pond map, since nothing here ever
-  // pushed a "map" entry to land back on. A level -> map -> hub stack
-  // that's just React state can't drift out of sync with what's on screen.
+  // Plain component state, not browser history — same reasoning as
+  // SqlFrogGame: a level -> map -> hub stack that's just React state can't
+  // drift out of sync with what's on screen.
   const openLevel = (levelId) => {
     playSound(soundEnabled, "jump");
     setActiveLevelId(levelId);
@@ -50,10 +48,10 @@ export default function SqlFrogGame({ onExitToHub }) {
   };
 
   if (loading) {
-    return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "80px 20px", color: "var(--text-soft)" }}><Loader2 size={20} className="spin" style={{ marginRight: 10 }} /> Loading the pond…</div>;
+    return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "80px 20px", color: "var(--text-soft)" }}><Loader2 size={20} className="spin" style={{ marginRight: 10 }} /> Waking Py up…</div>;
   }
   if (error || !progress) {
-    return <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--text-soft)" }}>{error || "Could not load SQL Frog."}</div>;
+    return <div style={{ padding: "40px 20px", textAlign: "center", color: "var(--text-soft)" }}>{error || "Could not load Py's Journey."}</div>;
   }
 
   return (

@@ -44,11 +44,12 @@ import AuthScreen from "./components/common/AuthScreen";
 import MaintenanceScreen from "./components/common/MaintenanceScreen";
 import TopBar from "./components/common/TopBar";
 import ContestContainer from "./components/student/pages/ContestContainer";
+import LearnSprintContainer from "./components/student/pages/learn-sprint/LearnSprintContainer";
 import LabsPage from "./components/student/pages/LabsPage";
 import AptitudePage from "./components/student/pages/AptitudePage";
 import InterviewPracticePage from "./components/student/pages/InterviewPracticePage";
 import LMSPage from "./components/student/pages/LMSPage";
-import LearnGamesHub from "./components/student/pages/sql-games/LearnGamesHub";
+import LearnGamesHub from "./components/student/pages/games/LearnGamesHub";
 import CompetitivePracticePage from "./components/student/pages/CompetitivePracticePage";
 import DiscussPage from "./components/student/pages/DiscussPage";
 import ExplorePage from "./components/student/pages/ExplorePage";
@@ -1372,6 +1373,11 @@ function App() {
         />
       );
       break;
+    case "learn-sprint":
+      activeView = (
+        <LearnSprintContainer onToggleWorkspace={setIsInsideWorkspace} />
+      );
+      break;
     case "leaderboard":
       activeView = <LeaderboardPage />;
       break;
@@ -1427,7 +1433,7 @@ function App() {
       activeView = <LMSPage />;
       break;
     case "sql":
-      activeView = <LearnGamesHub />;
+      activeView = <LearnGamesHub lockedModules={dashboard.locked_modules || []} />;
       break;
     case "discuss":
       activeView = (

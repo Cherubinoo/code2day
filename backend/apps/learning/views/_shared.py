@@ -70,7 +70,13 @@ __all__ = [
     '_compute_skill_insights',
     '_build_student_performance_charts',
     '_build_department_performance_charts',
+    '_py_journey_grade',
+    'award_game_badges',
     'publish_contest_helper',
+    'allocate_learn_sprint_content',
+    'publish_learn_sprint_helper',
+    'finalize_learn_sprint_badges',
+    'sprint_day_state',
     '_mask_api_key',
     '_extract_balanced_braces',
     '_parse_openai_snippet',
@@ -1041,6 +1047,65 @@ def _sql_frog_grade(query, level):
 
     return True, None, "", actual_rows
 
+
+def _py_journey_grade(code, level):
+    """Runs the player's Python code for one Py's Journey level via the
+    existing Judge0 pipeline (language_name="python" — id 71, already
+    registered in Judge0Service) and grades it by diffing captured stdout
+    against the level's expected_output. Every level's mission is designed
+    to end in exactly one print() (see python_journey/levels.py's module
+    docstring), so this is a single-value diff rather than SQL Frog's
+    row-set diff — reuses the same normalization (_sql_frog_normalize_cell:
+    numeric values compare by value, text case-insensitively) since it's
+    generic despite the name. Returns (success, error_category, message,
+    output)."""
+    stdin = "\n".join(level.get("stdin_lines") or [])
+    try:
+        from ..services.judging.judge0_service import Judge0Service
+        result = Judge0Service().execute_single(source_code=code, language_name="python", stdin=stdin)
+    except (Judge0TimeoutError, Judge0ServiceError) as exc:
+        return False, "execution_error", f"Py's magic sputtered: {exc}", ""
+
+    if result["status_id"] != 3 or (result["stderr"] or "").strip():
+        detail = (result["stderr"] or result["compile_output"] or result["message"] or result["status"]).strip()
+        return False, "syntax_error", f"Something went wrong running your code: {detail}", ""
+
+    actual_output = (result["stdout"] or "").strip()
+    expected_output = (level["expected_output"] or "").strip()
+
+    if _sql_frog_normalize_cell(actual_output) != _sql_frog_normalize_cell(expected_output):
+        return False, "wrong_result", "Your code runs, but it doesn't print what this mission needs yet.", actual_output
+
+    return True, None, "", actual_output
+
+
+def award_game_badges(progress, game_key, level, all_levels):
+    """Called once, right after a first-time level completion (mirrors
+    exactly where SqlFrogRunView/PyJourneyRunView gate XP/coin awarding on
+    `not already_completed`) — awards the 3 badges shared by every game
+    (see game_badges.BADGE_CATALOG): "first_steps" (any first level ever),
+    "world_champion" (every level in this level's world now completed),
+    "game_master" (every level in the whole game now completed)."""
+    completed = set(progress.completed_level_ids)
+    student = progress.student
+
+    if len(completed) == 1:
+        GameBadgeAward.objects.get_or_create(
+            student=student, game_key=game_key, badge_code="first_steps", world=None,
+        )
+
+    world_level_ids = {lvl["id"] for lvl in all_levels if lvl["world"] == level["world"]}
+    if world_level_ids and world_level_ids.issubset(completed):
+        GameBadgeAward.objects.get_or_create(
+            student=student, game_key=game_key, badge_code="world_champion", world=level["world"],
+        )
+
+    all_level_ids = {lvl["id"] for lvl in all_levels}
+    if all_level_ids and all_level_ids.issubset(completed):
+        GameBadgeAward.objects.get_or_create(
+            student=student, game_key=game_key, badge_code="game_master", world=None,
+        )
+
 INTERVIEW_TRACK_LABELS = {
     "civil": "Civil Engineering",
     "mech": "Mechanical Engineering",
@@ -1790,6 +1855,310 @@ def publish_contest_helper(contest):
     
     if notifications:
         Notification.objects.bulk_create(notifications, ignore_conflicts=True)
+
+
+def _weighted_sample_without_replacement(pools, total_needed):
+    """pools: {key: {"weight": float|None, "ids": [id, ...]}}. Returns up to
+    `total_needed` ids sampled without replacement across the pools. When
+    every weight is None, sampling is uniform over the combined pool
+    ("random" mode); otherwise each topic gets approximately its weight's
+    share, topping up from whichever topics still have unused ids left if
+    another topic's own pool ran out early ("weighted" mode). Used by
+    allocate_learn_sprint_content so no question/problem/passage repeats
+    across a sprint's days."""
+    import random
+    shuffled = {k: random.sample(v["ids"], len(v["ids"])) for k, v in pools.items()}
+
+    has_weights = any(v["weight"] is not None for v in pools.values())
+    if not has_weights:
+        combined = [i for ids in shuffled.values() for i in ids]
+        random.shuffle(combined)
+        return combined[:total_needed]
+
+    total_weight = sum((v["weight"] or 0) for v in pools.values()) or 1
+    taken = {k: 0 for k in pools}
+    result = []
+    for k, v in pools.items():
+        share = int(round(total_needed * (v["weight"] or 0) / total_weight))
+        take = min(share, len(shuffled[k]))
+        result.extend(shuffled[k][:take])
+        taken[k] = take
+    while len(result) < total_needed:
+        added = False
+        for k in pools:
+            if taken[k] < len(shuffled[k]):
+                result.append(shuffled[k][taken[k]])
+                taken[k] += 1
+                added = True
+                if len(result) >= total_needed:
+                    break
+        if not added:
+            break  # every pool exhausted — caller already validated pool size upfront
+    random.shuffle(result)
+    return result[:total_needed]
+
+
+def _learn_sprint_topic_pools(sprint, section):
+    """{topic_key: {"weight": float|None, "ids": [candidate id, ...]}} for one
+    bank-backed section ("programming"/"aptitude"/"reading"), scoped to the
+    topics staff selected in sprint.topic_config[section]. "reading"'s ids
+    are ReadingPassage ids (the allocatable unit — reading_per_day counts
+    passages, not individual questions)."""
+    cfg = (sprint.topic_config or {}).get(section) or {}
+    mode = cfg.get("mode", "random")
+    weighted = mode == "weighted"
+    pools = {}
+    for t in (cfg.get("topics") or []):
+        if section == "programming":
+            key = t.get("tag")
+            if not key:
+                continue
+            ids = list(Problem.objects.filter(tags__contains=[key]).values_list("id", flat=True))
+        else:
+            key = t.get("topic_id")
+            if not key:
+                continue
+            if section == "aptitude":
+                ids = list(
+                    AptitudeQuestion.objects.filter(topic_id=key, question_type="MCQ")
+                    .values_list("id", flat=True)
+                )
+            else:  # reading
+                ids = list(ReadingPassage.objects.filter(topic_id=key).values_list("id", flat=True))
+        pools[key] = {"weight": t.get("weight") if weighted else None, "ids": ids}
+    return pools
+
+
+def allocate_learn_sprint_content(sprint):
+    """Runs once, right after LearnSprint.objects.create — samples without
+    replacement across the WHOLE sprint (no problem/question/passage
+    repeated across days) from the staff-selected topics, then chunks the
+    result evenly across sprint.sprint_dates. Persists LearnSprintDay rows
+    (contest=None — the real Contest is only created at publish time) with
+    each day's allocated ids, and assigns each authored manual question to a
+    day. Raises ValueError with a user-facing message if a selected
+    section's pool can't cover what's needed."""
+    dates = sprint.sprint_dates or []
+    day_count = len(dates)
+    if day_count == 0:
+        raise ValueError("Pick at least one date for the sprint.")
+
+    per_day_problem_ids = [[] for _ in range(day_count)]
+    per_day_aptitude_ids = [[] for _ in range(day_count)]
+
+    def _allocate_bank_section(section, per_day, label):
+        total_needed = day_count * per_day
+        if total_needed == 0:
+            return None
+        pools = _learn_sprint_topic_pools(sprint, section)
+        pool_size = sum(len(v["ids"]) for v in pools.values())
+        if pool_size < total_needed:
+            raise ValueError(
+                f"Not enough {label} in the selected topics ({pool_size} available, "
+                f"{total_needed} needed) — pick more topics or lower the per-day count."
+            )
+        return _weighted_sample_without_replacement(pools, total_needed)
+
+    if "programming" in sprint.sections and sprint.programming_per_day > 0:
+        sampled = _allocate_bank_section("programming", sprint.programming_per_day, "programming problems")
+        for day_idx in range(day_count):
+            per_day_problem_ids[day_idx] = sampled[
+                day_idx * sprint.programming_per_day:(day_idx + 1) * sprint.programming_per_day
+            ]
+
+    if "aptitude" in sprint.sections and sprint.aptitude_per_day > 0:
+        sampled = _allocate_bank_section("aptitude", sprint.aptitude_per_day, "aptitude questions")
+        for day_idx in range(day_count):
+            per_day_aptitude_ids[day_idx].extend(sampled[
+                day_idx * sprint.aptitude_per_day:(day_idx + 1) * sprint.aptitude_per_day
+            ])
+
+    if "reading" in sprint.sections and sprint.reading_per_day > 0:
+        sampled_passages = _allocate_bank_section("reading", sprint.reading_per_day, "reading passages")
+        for day_idx in range(day_count):
+            chunk_passages = sampled_passages[
+                day_idx * sprint.reading_per_day:(day_idx + 1) * sprint.reading_per_day
+            ]
+            question_ids = list(
+                AptitudeQuestion.objects.filter(passage_id__in=chunk_passages, question_type="RC")
+                .values_list("id", flat=True)
+            )
+            per_day_aptitude_ids[day_idx].extend(question_ids)
+
+    manual_needed = day_count * sprint.manual_per_day if "manual" in sprint.sections else 0
+    manual_pool = list(sprint.manual_questions.order_by("order")) if manual_needed else []
+    if manual_needed and len(manual_pool) < manual_needed:
+        raise ValueError(
+            f"Author {manual_needed} manual question(s) for this sprint "
+            f"({len(manual_pool)} authored so far)."
+        )
+
+    days = []
+    for idx, date_str in enumerate(dates):
+        day = LearnSprintDay.objects.create(
+            sprint=sprint,
+            day_number=idx + 1,
+            date=date_str,
+            allocated_problem_ids=per_day_problem_ids[idx],
+            allocated_aptitude_question_ids=per_day_aptitude_ids[idx],
+        )
+        days.append(day)
+        if manual_needed:
+            chunk = manual_pool[idx * sprint.manual_per_day:(idx + 1) * sprint.manual_per_day]
+            LearnSprintManualQuestion.objects.filter(id__in=[q.id for q in chunk]).update(assigned_day=day)
+    return days
+
+
+def publish_learn_sprint_helper(sprint):
+    """Create each day's real Contest from its persisted allocation
+    (contest_type='combined', reusing the exact same session/scoring/
+    anti-cheat/workspace machinery a regular contest uses), then publish the
+    sprint and notify students — mirrors publish_contest_helper."""
+    from datetime import datetime as _datetime, time as _time
+
+    sprint.publish()
+
+    section_map = {"programming": "coding", "aptitude": "aptitude", "reading": "reading", "manual": "custom"}
+    day_sections = [section_map[s] for s in sprint.sections if s in section_map]
+    assigned_sections = [f"{sprint.batch}::{sprint.section}"] if sprint.section else []
+    tz = timezone.get_current_timezone()
+
+    for day in sprint.days.all():
+        access_start = timezone.make_aware(
+            _datetime.combine(day.date, sprint.daily_start_time or _time.min), tz,
+        )
+        access_end = timezone.make_aware(
+            _datetime.combine(day.date, sprint.daily_end_time or _time.max.replace(microsecond=0)), tz,
+        )
+        contest = Contest.objects.create(
+            title=f"{sprint.title} — Day {day.day_number}",
+            description=sprint.description,
+            created_by=sprint.created_by,
+            department=sprint.department,
+            institution=sprint.institution,
+            contest_type="combined",
+            sections=day_sections,
+            coding_weight_percent=sprint.programming_weight_percent,
+            aptitude_weight_percent=sprint.aptitude_weight_percent,
+            reading_weight_percent=sprint.reading_weight_percent,
+            custom_weight_percent=sprint.manual_weight_percent,
+            access_start_time=access_start,
+            access_end_time=access_end,
+            session_duration_minutes=max(int((access_end - access_start).total_seconds() // 60), 1),
+            status="published",
+            assigned_batches=[sprint.batch],
+            assigned_sections=assigned_sections,
+        )
+        if day.allocated_problem_ids:
+            contest.problems.set(Problem.objects.filter(id__in=day.allocated_problem_ids))
+        if day.allocated_aptitude_question_ids:
+            contest.aptitude_questions.set(AptitudeQuestion.objects.filter(id__in=day.allocated_aptitude_question_ids))
+        manual_qs = list(day.manual_questions.order_by("order"))
+        if manual_qs:
+            ContestCustomQuestion.objects.bulk_create([
+                ContestCustomQuestion(
+                    contest=contest, order=idx,
+                    question_text=q.question_text, question_image=q.question_image,
+                    option_a=q.option_a, option_b=q.option_b, option_c=q.option_c, option_d=q.option_d,
+                    correct_option=q.correct_option, explanation=q.explanation,
+                ) for idx, q in enumerate(manual_qs)
+            ])
+        day.contest = contest
+        day.save(update_fields=["contest"])
+
+    # Notify the sprint's audience — same shape as publish_contest_helper.
+    student_q = Q(batch=sprint.batch, department=sprint.department)
+    if sprint.section:
+        student_q &= Q(section=sprint.section)
+    reached_students = list(StudentProfile.objects.filter(student_q).values("id", "account"))
+    reached_student_ids = [s["id"] for s in reached_students]
+
+    announcement = Announcement.objects.create(
+        title=f"🏃 New Learn Sprint: {sprint.title}",
+        content=f"A new {sprint.day_count}-day Learn Sprint '{sprint.title}' is now live! A new day unlocks on "
+                f"schedule — keep up your streak.",
+        category="contest",
+        institution=sprint.institution,
+        department=sprint.department,
+        assigned_batches=[sprint.batch],
+        assigned_sections=assigned_sections,
+    )
+    if reached_student_ids:
+        announcement.assigned_students.set(reached_student_ids)
+
+    unique_user_ids = set(filter(None, (s["account"] for s in reached_students)))
+    notifications = [
+        Notification(
+            recipient_id=user_id,
+            title="New Learn Sprint Assigned",
+            message=f"You have been assigned to a new Learn Sprint: {sprint.title}. Check it out now!",
+            link="/learn-sprint",
+        ) for user_id in unique_user_ids
+    ]
+    if notifications:
+        Notification.objects.bulk_create(notifications, ignore_conflicts=True)
+
+
+def finalize_learn_sprint_badges(sprint):
+    """Called once, the first time a sprint's status flips to 'completed'
+    (LearnSprint.update_status_if_ended) — computes the aggregate ranking
+    across all of the sprint's day-contests and awards the 4 badges (see
+    learn_sprint_badges.BADGE_CATALOG for what each means)."""
+    days = list(sprint.days.select_related("contest").all())
+    if not any(d.contest for d in days):
+        return
+
+    totals = defaultdict(float)
+    days_participated = defaultdict(set)
+    day_top_student_ids = set()
+
+    for day in days:
+        if not day.contest:
+            continue
+        rows = list(
+            ContestParticipation.objects.filter(contest=day.contest, has_started=True)
+            .values_list("student_id", "total_score")
+        )
+        rows.sort(key=lambda r: r[1], reverse=True)
+        if rows:
+            day_top_student_ids.add(rows[0][0])
+        for student_id, score in rows:
+            totals[student_id] += score
+            days_participated[student_id].add(day.day_number)
+
+    if not totals:
+        return
+
+    ranking = sorted(totals.items(), key=lambda kv: kv[1], reverse=True)
+    total_days = len(days)
+
+    awards = [LearnSprintBadgeAward(sprint=sprint, student_id=ranking[0][0], badge_code="champion")]
+    awards += [
+        LearnSprintBadgeAward(sprint=sprint, student_id=student_id, badge_code="podium")
+        for student_id, _score in ranking[:3]
+    ]
+    awards += [
+        LearnSprintBadgeAward(sprint=sprint, student_id=student_id, badge_code="perfect_attendance")
+        for student_id, days_done in days_participated.items() if len(days_done) >= total_days
+    ]
+    awards += [
+        LearnSprintBadgeAward(sprint=sprint, student_id=student_id, badge_code="day_champion")
+        for student_id in day_top_student_ids
+    ]
+    LearnSprintBadgeAward.objects.bulk_create(awards, ignore_conflicts=True)
+
+
+def sprint_day_state(day):
+    """'locked' / 'open' / 'completed' for one LearnSprintDay, purely from
+    its generated Contest's access window (pre-publish, always 'locked')."""
+    if not day.contest:
+        return "locked"
+    if day.contest.is_upcoming:
+        return "locked"
+    if day.contest.is_ended:
+        return "completed"
+    return "open"
+
 
 def _mask_api_key(key):
     if not key:

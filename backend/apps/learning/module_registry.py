@@ -178,6 +178,17 @@ MODULE_REGISTRY = [
         "api_path_prefixes": ["/api/sql-frog/"],
     },
     {
+        # Not a top-level nav id — Py's Journey is nested inside the "sql"
+        # nav item's "Learn Programming Through Games" hub, as its own
+        # category card. The frontend gates that one card on this key
+        # directly (LearnGamesHub.jsx) rather than relying on the
+        # nav-hiding mechanism the `key`-matches-nav-id convention enables
+        # for top-level entries.
+        "key": "python_games",
+        "label": "Python Games",
+        "api_path_prefixes": ["/api/py-journey/"],
+    },
+    {
         "key": "progress",
         "label": "Progress",
         "api_path_prefixes": [],  # nav-only — see module docstring

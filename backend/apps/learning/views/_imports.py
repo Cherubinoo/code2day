@@ -103,6 +103,13 @@ from ..models import (
     InterviewQuestion,
     InterviewQuestionProgress,
     SqlFrogProgress,
+    LearnSprint,
+    LearnSprintDay,
+    LearnSprintManualQuestion,
+    LearnSprintBadgeAward,
+    parse_batch_section_scoping,
+    PyJourneyProgress,
+    GameBadgeAward,
 )
 from ..db_manager import create_institution_db, delete_institution_db
 from ..serializers import (
@@ -135,6 +142,19 @@ from ..sql_games.frog import (
     PURCHASE_XP_BONUS as SQL_FROG_PURCHASE_XP_BONUS,
     slot_for as sql_frog_cosmetic_slot_for,
 )
+from ..python_journey import (
+    ALL_LEVELS as PY_JOURNEY_ALL_LEVELS,
+    ALL_LEVELS_BY_ID as PY_JOURNEY_ALL_LEVELS_BY_ID,
+    FUTURE_WORLDS as PY_JOURNEY_FUTURE_WORLDS,
+    WORLD_NAMES as PY_JOURNEY_WORLD_NAMES,
+    ALL_COSMETICS as PY_JOURNEY_ALL_COSMETICS,
+    ALL_COSMETICS_BY_ID as PY_JOURNEY_ALL_COSMETICS_BY_ID,
+    DEFAULT_OWNED as PY_JOURNEY_DEFAULT_OWNED_COSMETICS,
+    PURCHASE_XP_BONUS as PY_JOURNEY_PURCHASE_XP_BONUS,
+    slot_for as py_journey_cosmetic_slot_for,
+)
+from ..games_registry import GAMES_REGISTRY
+from ..game_badges import BADGE_CATALOG as GAME_BADGE_CATALOG
 # NOT _village_schema_view here — this file has no __all__, so `import *`
 # (which every module in this package does: `from .._imports import *`)
 # silently drops any underscore-prefixed name re-exported from here. See

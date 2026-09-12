@@ -73,12 +73,20 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
         department_filter = (request.query_params.get('department') or '').strip()
 
         today = timezone.now().date()
+        # One Coalesce('<game>_progress__xp', 0) annotation per registered
+        # game (games_registry.py) — each is a OneToOne reverse relation, so
+        # stacking more of these as games are added carries no join-
+        # explosion risk (that only applies to one-to-many Sum()s).
+        game_xp_annotations = {
+            f"{game['key']}_xp": Coalesce(f"{game['progress_related_name']}__xp", 0)
+            for game in GAMES_REGISTRY
+        }
         students = StudentProfile.objects.filter(institution=profile.institution).select_related('department').annotate(
             problems_solved=Count('solved_problems', distinct=True),
             solved_today=Count('solved_problems', filter=Q(solved_problems__solved_at__date=today), distinct=True),
             aptitude_solved=Count('solved_aptitude', distinct=True),
             contest_score=Coalesce(Sum('contest_participations__total_score'), 0),
-            sql_frog_xp=Coalesce('sql_frog_progress__xp', 0),
+            **game_xp_annotations,  # e.g. sql_frog_xp, py_journey_xp, ...
         )
 
         # Every department with at least one student here, for the filter
@@ -93,12 +101,16 @@ class StudentLeaderboardView(UnifiedAuthMixin, APIView):
 
         ranked = []
         for s in students:
+            # Sum every registered game's XP — not just SQL Frog's — so a
+            # new game (games_registry.py) counts toward points the moment
+            # it's registered, with no further changes needed here.
+            total_game_xp = sum(getattr(s, f"{game['key']}_xp") for game in GAMES_REGISTRY)
             points = (
                 s.problems_solved * self.POINTS_PER_PROBLEM
                 + s.aptitude_solved * self.POINTS_PER_APTITUDE
                 + s.contest_score
                 + s.current_streak * self.POINTS_PER_STREAK_DAY
-                + s.sql_frog_xp
+                + total_game_xp
             )
             ranked.append((points, s))
         ranked.sort(key=lambda t: (-t[0], t[1].name or ""))

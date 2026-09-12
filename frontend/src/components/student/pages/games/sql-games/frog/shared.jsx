@@ -3,7 +3,7 @@
 // than ~40 lines on its own.
 import { useEffect, useRef, useState } from "react";
 import { Lock } from "lucide-react";
-import { sqlFrogSounds } from "../../../../../lib/sqlFrogSounds";
+import { sqlFrogSounds } from "../../../../../../lib/sqlFrogSounds";
 
 // Mirrors the backend's WORLD_NAMES (apps/learning/sql_games/frog) — just
 // display labels, so keeping a second small copy here is lower-risk than

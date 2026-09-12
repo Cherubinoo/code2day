@@ -3,18 +3,18 @@ import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import {
   ChevronLeft, Loader2, Play, Lightbulb, Sparkles, RotateCcw, ScrollText,
-  ChevronDown, ChevronUp, PartyPopper, X,
+  PartyPopper, X,
 } from "lucide-react";
-import { buildJsonPostOptions, extractApiError } from "../../../../../lib/appUtils";
-import { playSound, FrogMascot, ConfettiBurst, AnimatedNumber, SchemaPanel, ResultFrogs, WORLD_NAMES, WORLD_THEMES } from "./shared";
+import { buildJsonPostOptions, extractApiError } from "../../../../../../lib/appUtils";
+import { playSound, PyMascot, ConfettiBurst, AnimatedNumber, ResultSnakes, VisualEffectPanel, WORLD_NAMES, WORLD_THEMES } from "./shared";
 
 // Use the bundled ESM Monaco build instead of the AMD/CDN loader path —
-// same configuration ProblemsPage.jsx and LabsPage.jsx already do; a page
-// that lands here first (without visiting one of those) still needs it.
+// same configuration ProblemsPage.jsx/LabsPage.jsx/SQL Frog's LevelView
+// already do; a page that lands here first still needs it.
 loader.config({ monaco });
 
 const ERROR_LABELS = {
-  syntax_error: "Syntax Error",
+  syntax_error: "Something's Not Right",
   wrong_result: "Not Quite Right",
   execution_error: "Execution Problem",
 };
@@ -23,7 +23,7 @@ function MissionBriefingModal({ level, onDismiss }) {
   return (
     <div className="sqlg-modal-backdrop sqlg-backdrop-in" onClick={onDismiss}>
       <div className="sqlg-modal-card sqlg-modal-in" onClick={(e) => e.stopPropagation()}>
-        <div style={{ fontSize: "2.4rem", marginBottom: 6 }}>🐸📜</div>
+        <div style={{ fontSize: "2.4rem", marginBottom: 6 }}>🐍📜</div>
         <div style={{ fontSize: "0.72rem", fontWeight: 800, color: "var(--text-soft)", textTransform: "uppercase", letterSpacing: 0.4 }}>
           Mission Briefing · Level {level.order}
         </div>
@@ -38,9 +38,9 @@ function MissionBriefingModal({ level, onDismiss }) {
             <div style={{ fontSize: "0.85rem", color: "var(--text-hard)" }}>{level.concept_explanation}</div>
             {level.example && (
               <div style={{ background: "white", borderRadius: 8, padding: 10, marginTop: 10 }}>
-                <code style={{ fontSize: "0.8rem", color: "var(--olive-900)", fontWeight: 700 }}>{level.example.query}</code>
+                <code style={{ fontSize: "0.8rem", color: "var(--olive-900)", fontWeight: 700, whiteSpace: "pre-wrap" }}>{level.example.code}</code>
                 <div style={{ marginTop: 6, fontSize: "0.75rem", color: "var(--text-soft)" }}>
-                  Result: {level.example.result.map((r) => `(${r.join(", ")})`).join("  ")}
+                  Output: {level.example.output}
                 </div>
               </div>
             )}
@@ -53,7 +53,7 @@ function MissionBriefingModal({ level, onDismiss }) {
         </div>
 
         <button onClick={onDismiss} className="primary-button" style={{ borderRadius: 12, padding: "12px 24px", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-          Let's Hop In! <span className="sqlg-hop" style={{ display: "inline-block" }}>🐸</span>
+          Let's Slither In! <span className="sqlg-hop" style={{ display: "inline-block" }}>🐍</span>
         </button>
       </div>
     </div>
@@ -73,9 +73,9 @@ function RewardModal({ level, result, perfectSolve, onBack, onNext, onClose }) {
           <X size={16} />
         </button>
         {confettiKey >= 0 && <ConfettiBurst key={confettiKey} onDone={() => setConfettiKey(-1)} />}
-        <div style={{ fontSize: "2.6rem", marginBottom: 8 }}>⭐🐸⭐</div>
+        <div style={{ fontSize: "2.6rem", marginBottom: 8 }}>⭐🐍⭐</div>
         <h2 style={{ margin: "0 0 4px" }}>Level Complete!</h2>
-        <p style={{ color: "var(--text-soft)", margin: "0 0 14px" }}>Frog Progress +1 — {level.title}</p>
+        <p style={{ color: "var(--text-soft)", margin: "0 0 14px" }}>Py's Progress +1 — {level.title}</p>
 
         {perfectSolve && (
           <div className="sqlg-perfect-badge" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 999, fontSize: "0.75rem", fontWeight: 800, color: "#78350f", marginBottom: 14 }}>
@@ -92,12 +92,12 @@ function RewardModal({ level, result, perfectSolve, onBack, onNext, onClose }) {
           </div>
         </div>
         <div style={{ padding: "8px 14px", borderRadius: 10, background: "var(--bg-2)", fontSize: "0.82rem", fontWeight: 700, color: "var(--olive-900)", marginBottom: 20 }}>
-          🧠 Skill Unlocked: {result.skill_unlocked}
+          🐍 Skill Unlocked: {result.skill_unlocked}
         </div>
 
         <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
           <button onClick={onBack} style={{ flex: 1, padding: "10px 16px", borderRadius: 12, border: "1px solid var(--border-soft)", background: "white", fontWeight: 700, cursor: "pointer" }}>
-            Pond Map
+            Journey Map
           </button>
           {onNext && (
             <button onClick={onNext} className="primary-button" style={{ flex: 1, borderRadius: 12, padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
@@ -120,14 +120,13 @@ export default function LevelView({ levelId, allLevels, equipped, onBack, onComp
   const [level, setLevel] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [query, setQuery] = useState("");
+  const [code, setCode] = useState("");
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
   const [hints, setHints] = useState([]);
   const [hintLoading, setHintLoading] = useState(false);
   const [showBriefing, setShowBriefing] = useState(true);
   const [showReward, setShowReward] = useState(false);
-  const [referenceOpen, setReferenceOpen] = useState(true);
   const [hintOpen, setHintOpen] = useState(false);
 
   useEffect(() => {
@@ -138,25 +137,25 @@ export default function LevelView({ levelId, allLevels, equipped, onBack, onComp
     setHintOpen(false);
     setShowReward(false);
     setShowBriefing(true);
-    fetch(`/api/sql-frog/levels/${levelId}/`, { credentials: "include" })
+    fetch(`/api/py-journey/levels/${levelId}/`, { credentials: "include" })
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(extractApiError(body, "Could not load this level."));
         return body;
       })
-      .then((data) => { setLevel(data); setQuery(""); })
+      .then((data) => { setLevel(data); setCode(data.starter_code || ""); })
       .catch((err) => setLoadError(err.message))
       .finally(() => setLoading(false));
   }, [levelId]);
 
-  const runQuery = async () => {
-    if (!query.trim() || running) return;
+  const runCode = async () => {
+    if (!code.trim() || running) return;
     setRunning(true);
-    playSound(soundEnabled, "jump"); // small frog sound — instant feedback the click registered
+    playSound(soundEnabled, "jump");
     try {
-      const res = await fetch(`/api/sql-frog/levels/${levelId}/run/`, buildJsonPostOptions({ query }));
+      const res = await fetch(`/api/py-journey/levels/${levelId}/run/`, buildJsonPostOptions({ code }));
       const body = await res.json();
-      if (!res.ok) throw new Error(extractApiError(body, "Something went wrong running your query."));
+      if (!res.ok) throw new Error(extractApiError(body, "Something went wrong running your code."));
       setResult(body);
       if (body.success) {
         playSound(soundEnabled, "success");
@@ -170,7 +169,7 @@ export default function LevelView({ levelId, allLevels, equipped, onBack, onComp
         playSound(soundEnabled, "error");
       }
     } catch (err) {
-      setResult({ success: false, error_category: "execution_error", message: err.message, rows: [] });
+      setResult({ success: false, error_category: "execution_error", message: err.message, output: "" });
       playSound(soundEnabled, "error");
     } finally {
       setRunning(false);
@@ -179,9 +178,9 @@ export default function LevelView({ levelId, allLevels, equipped, onBack, onComp
 
   const requestHint = async (hintLevel) => {
     setHintLoading(true);
-    playSound(soundEnabled, "jump"); // small frog sound, same cue as Run — not the generic "click" blip
+    playSound(soundEnabled, "jump");
     try {
-      const res = await fetch(`/api/sql-frog/levels/${levelId}/hint/`, buildJsonPostOptions({ hint_level: hintLevel }));
+      const res = await fetch(`/api/py-journey/levels/${levelId}/hint/`, buildJsonPostOptions({ hint_level: hintLevel }));
       const body = await res.json();
       if (!res.ok) throw new Error(extractApiError(body, "Could not fetch a hint."));
       setHints((prev) => {
@@ -231,7 +230,7 @@ export default function LevelView({ levelId, allLevels, equipped, onBack, onComp
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
         <button onClick={onBack} className="ghost-button" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <ChevronLeft size={16} /> Pond Map
+          <ChevronLeft size={16} /> Journey Map
         </button>
         <button
           onClick={() => setShowBriefing(true)}
@@ -242,7 +241,7 @@ export default function LevelView({ levelId, allLevels, equipped, onBack, onComp
           <ScrollText size={16} /> Mission
         </button>
         <div style={{ flex: 1 }} />
-        <FrogMascot mood={mascotMood} size={30} equipped={equipped} />
+        <PyMascot mood={mascotMood} size={30} equipped={equipped} />
       </div>
 
       <section className="page-header compact-header problem-page-header">
@@ -253,48 +252,54 @@ export default function LevelView({ levelId, allLevels, equipped, onBack, onComp
       </section>
 
       <div className="sqlg-workspace">
-        {/* LEFT: collapsible reference panel — schema + concept recap, out of
-            the way of the workspace by default on small screens but sticky
-            and always visible on desktop since it's the thing players
-            re-check most while writing a query. */}
+        {/* LEFT: the mission description is always visible here (not just in
+            the one-time briefing modal, which disappears once dismissed) so
+            a player can re-check what they're supposed to do without
+            leaving the workspace. Sticky on desktop, same as SQL Frog's
+            reference panel. No schema panel here — Python levels don't have
+            a database to reference. */}
         <div className="sqlg-reference-panel">
-          <div className="surface-card sqlg-card-in" style={{ padding: 0, overflow: "hidden" }}>
-            <button
-              onClick={() => setReferenceOpen((v) => !v)}
-              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 16px", background: "none", border: "none", cursor: "pointer", fontWeight: 800, fontSize: "0.85rem", color: "var(--olive-900)" }}
-            >
-              📚 Reference {referenceOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-            </button>
-            {referenceOpen && (
-              <div style={{ padding: "0 16px 16px" }}>
-                <SchemaPanel schemas={level.schemas} />
+          <div className="surface-card sqlg-card-in" style={{ padding: 16 }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 800, color: "var(--text-soft)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>
+              📜 Description
+            </div>
+            {level.story && (
+              <p style={{ fontStyle: "italic", color: "var(--text-soft)", fontSize: "0.85rem", margin: "0 0 12px" }}>{level.story}</p>
+            )}
+            {level.concept_title && (
+              <div style={{ background: "var(--bg-2)", borderRadius: 10, padding: 10, marginBottom: 12, borderLeft: "3px solid var(--sqlg-purple)" }}>
+                <div style={{ fontSize: "0.65rem", fontWeight: 800, color: "var(--sqlg-purple)", textTransform: "uppercase", marginBottom: 3 }}>New Skill</div>
+                <div style={{ fontWeight: 800, fontSize: "0.85rem", marginBottom: 3 }}>{level.concept_title}</div>
+                <div style={{ fontSize: "0.8rem", color: "var(--text-hard)" }}>{level.concept_explanation}</div>
               </div>
             )}
+            <div style={{ background: "linear-gradient(135deg, #fef3c7, #fde68a)", borderRadius: 10, padding: 10 }}>
+              <div style={{ fontSize: "0.65rem", fontWeight: 800, color: "#92400e", textTransform: "uppercase", marginBottom: 3 }}>Your Mission</div>
+              <div style={{ fontWeight: 700, color: "#78350f", fontSize: "0.85rem" }}>{level.mission}</div>
+            </div>
           </div>
         </div>
 
-        {/* RIGHT: the actual play space — a much bigger editor than before,
-            with the results and hints living right underneath it so the
-            editor + what-happened-when-I-ran-it loop stays in one glance. */}
+        {/* RIGHT: the actual play space. */}
         <div>
           <div className="surface-card sqlg-card-in" style={{ padding: 0, overflow: "hidden", marginBottom: 16, borderTop: `3px solid ${theme.accent}` }}>
-            <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border-soft)", fontWeight: 800, fontSize: "0.8rem", color: "var(--text-soft)", textTransform: "uppercase" }}>Query</div>
+            <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border-soft)", fontWeight: 800, fontSize: "0.8rem", color: "var(--text-soft)", textTransform: "uppercase" }}>Code</div>
             <div className="sqlg-editor-shell">
               <Editor
                 height="320px"
-                language="sql"
-                value={query}
-                onChange={(v) => setQuery(v || "")}
+                language="python"
+                value={code}
+                onChange={(v) => setCode(v || "")}
                 theme="vs"
                 options={{ minimap: { enabled: false }, fontSize: 14, scrollBeyondLastLine: false, lineNumbers: "on", padding: { top: 12 } }}
               />
             </div>
             <div style={{ display: "flex", gap: 8, padding: 12, borderTop: "1px solid var(--border-soft)", position: "relative" }}>
-              <button onClick={runQuery} disabled={running || !query.trim()} className="primary-button" style={{ borderRadius: 10, padding: "10px 20px", display: "flex", alignItems: "center", gap: 6 }}>
-                {running ? <Loader2 size={16} className="spin" /> : <Play size={16} />} {running ? "Running…" : "Run Query"}
+              <button onClick={runCode} disabled={running || !code.trim()} className="primary-button" style={{ borderRadius: 10, padding: "10px 20px", display: "flex", alignItems: "center", gap: 6 }}>
+                {running ? <Loader2 size={16} className="spin" /> : <Play size={16} />} {running ? "Running…" : "Run Code"}
               </button>
-              <button onClick={() => setQuery("")} title="Clear" style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border-soft)", background: "white", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                <RotateCcw size={15} /> Clear
+              <button onClick={() => setCode(level.starter_code || "")} title="Reset to starter code" style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid var(--border-soft)", background: "white", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+                <RotateCcw size={15} /> Reset
               </button>
 
               {!result?.success && (
@@ -304,13 +309,9 @@ export default function LevelView({ levelId, allLevels, equipped, onBack, onComp
                     className="sqlg-hint-btn"
                     style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #fde68a", background: "#fffbeb", color: "#92400e", fontWeight: 800, fontSize: "0.82rem", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}
                   >
-                    🐸 <Lightbulb size={15} /> Hint{hints.filter(Boolean).length > 0 ? ` ${hints.filter(Boolean).length}/3` : ""}
+                    🐍 <Lightbulb size={15} /> Hint{hints.filter(Boolean).length > 0 ? ` ${hints.filter(Boolean).length}/3` : ""}
                   </button>
 
-                  {/* A small speech-bubble popover instead of a permanent
-                      full-width panel — hints are opt-in help, not
-                      something that should occupy real estate on every
-                      level whether the player wants it or not. */}
                   {hintOpen && (
                     <div className="sqlg-modal-in" style={{
                       position: "absolute", bottom: "calc(100% + 10px)", right: 0, width: 260, zIndex: 50,
@@ -318,7 +319,7 @@ export default function LevelView({ levelId, allLevels, equipped, onBack, onComp
                       boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
                     }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-                        <span style={{ fontSize: "1.05rem" }}>🐸💡</span>
+                        <span style={{ fontSize: "1.05rem" }}>🐍💡</span>
                         <span style={{ fontWeight: 800, fontSize: "0.8rem" }}>Need a hint?</span>
                         <div style={{ flex: 1 }} />
                         <button onClick={() => setHintOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-soft)", display: "flex" }}>
@@ -357,22 +358,15 @@ export default function LevelView({ levelId, allLevels, equipped, onBack, onComp
 
           {result && (
             <div className="surface-card sqlg-card-in" style={{ padding: 20, marginBottom: 16, border: result.success ? "1px solid #86efac" : "1px solid #fecaca", position: "relative", overflow: "hidden" }}>
-              <ResultFrogs rowCount={result.rows?.length} state={result.success ? "success" : "error"} />
+              <ResultSnakes count={result.success ? 3 : 1} state={result.success ? "success" : "error"} />
               <div style={{ fontWeight: 800, color: result.success ? "#166534" : "#991b1b", marginBottom: 6 }}>
-                {result.success ? "🎉 Correct! The frog leaps forward." : ERROR_LABELS[result.error_category] || "Not Quite Right"}
+                {result.success ? "🎉 Correct! Py slithers forward." : ERROR_LABELS[result.error_category] || "Not Quite Right"}
               </div>
-              <div style={{ color: "var(--text-soft)", fontSize: "0.88rem", marginBottom: result.rows?.length ? 12 : 0 }}>{result.message}</div>
-              {result.rows?.length > 0 && (
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ borderCollapse: "collapse", fontSize: "0.78rem", width: "100%" }}>
-                    <tbody>
-                      {result.rows.slice(0, 20).map((row, i) => (
-                        <tr key={i}>
-                          {row.map((cell, j) => <td key={j} style={{ padding: "4px 10px", borderBottom: "1px solid var(--border-soft)" }}>{String(cell)}</td>)}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              <div style={{ color: "var(--text-soft)", fontSize: "0.88rem", marginBottom: 12 }}>{result.message}</div>
+              {result.success && level.visual_effect && <VisualEffectPanel effect={level.visual_effect} />}
+              {result.output && (
+                <div style={{ background: "var(--bg-2)", borderRadius: 8, padding: "10px 14px", fontFamily: "monospace", fontSize: "0.85rem", whiteSpace: "pre-wrap" }}>
+                  {result.output}
                 </div>
               )}
             </div>

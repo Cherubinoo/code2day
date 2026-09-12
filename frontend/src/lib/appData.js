@@ -1,4 +1,4 @@
-import { LayoutGrid, Map, Code2, Building2, Brain, FolderCode, Trophy, BarChart3, MessageSquare, Database, Terminal, FlaskConical, Mic, Swords, Crown, GraduationCap } from "lucide-react";
+import { LayoutGrid, Map, Code2, Building2, Brain, FolderCode, Trophy, BarChart3, MessageSquare, Database, Terminal, FlaskConical, Mic, Swords, Crown, GraduationCap, CalendarClock } from "lucide-react";
 
 function buildFallbackCalendar() {
   const today = new Date();
@@ -746,6 +746,7 @@ export const navItems = [
   { id: "company",  label: "Companies", icon: Building2 },
   { id: "aptitude", label: "Aptitude",  icon: Brain },
   { id: "contest",  label: "Contest",   icon: Trophy },
+  { id: "learn-sprint", label: "Learn Sprint", icon: CalendarClock },
   { id: "leaderboard", label: "Leaderboard", icon: Crown },
   { id: "interview", label: "Interview Practice", icon: Mic },
   { id: "competitive", label: "Competitive Practice", icon: Swords },

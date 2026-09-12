@@ -36,6 +36,12 @@ from .views import (
     ContestAnalyticsView,
     ContestApprovalView,
     ContestDeletionRequestView,
+    LearnSprintListCreateView,
+    LearnSprintDetailView,
+    LearnSprintSubmitForApprovalView,
+    LearnSprintApprovalView,
+    StudentLearnSprintListView,
+    StudentLearnSprintResultsView,
     ContestBatchAssignView,
     ContestLockView,
     ContestPublishView,
@@ -113,6 +119,13 @@ from .views import (
     SqlFrogShopView,
     SqlFrogPurchaseCosmeticView,
     SqlFrogEquipCosmeticView,
+    PyJourneyProgressView,
+    PyJourneyLevelDetailView,
+    PyJourneyRunView,
+    PyJourneyHintView,
+    PyJourneyShopView,
+    PyJourneyPurchaseCosmeticView,
+    PyJourneyEquipCosmeticView,
     RegisterNumberListView,
     StudentContestDetailView,
     StudentContestListView,
@@ -285,7 +298,7 @@ from .file_views import (
 )
 
 # Import PDF report views
-from .pdf_reports import ContestReportPDFView, StudentContestReportPDFView, BatchReportPDFView, StudentCompanyTrackReportPDFView
+from .pdf_reports import ContestReportPDFView, StudentContestReportPDFView, BatchReportPDFView, StudentCompanyTrackReportPDFView, LearnSprintReportPDFView
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health-check"),
@@ -333,6 +346,17 @@ urlpatterns = [
     path("contests/<int:contest_id>/approve/", ContestApprovalView.as_view(), name="contest-approve"),
     path("contests/<int:pk>/request-deletion/", ContestDeletionRequestView.as_view(), name="contest-request-deletion"),
 
+    # Learn Sprint — multi-day scheduled contest series. Each day is a real
+    # Contest (see apps/learning/views/_shared.py::publish_learn_sprint_helper)
+    # reached via the existing student/contests + contests/<pk>/analytics/
+    # routes above — these only cover the sprint wrapper itself.
+    path("learn-sprints/", LearnSprintListCreateView.as_view(), name="learn-sprint-list-create"),
+    path("learn-sprints/<int:pk>/", LearnSprintDetailView.as_view(), name="learn-sprint-detail"),
+    path("learn-sprints/<int:pk>/submit-for-approval/", LearnSprintSubmitForApprovalView.as_view(), name="learn-sprint-submit-for-approval"),
+    path("learn-sprints/<int:sprint_id>/approve/", LearnSprintApprovalView.as_view(), name="learn-sprint-approve"),
+    path("student/learn-sprints/", StudentLearnSprintListView.as_view(), name="student-learn-sprint-list"),
+    path("student/learn-sprints/<int:pk>/results/", StudentLearnSprintResultsView.as_view(), name="student-learn-sprint-results"),
+
     # Code execution
     path("run/", CodeRunView.as_view(), name="code-run"),
     path("playground/run/", PlaygroundRunView.as_view(), name="playground-run"),
@@ -343,6 +367,13 @@ urlpatterns = [
     path("sql-frog/shop/", SqlFrogShopView.as_view(), name="sql-frog-shop"),
     path("sql-frog/shop/purchase/", SqlFrogPurchaseCosmeticView.as_view(), name="sql-frog-shop-purchase"),
     path("sql-frog/shop/equip/", SqlFrogEquipCosmeticView.as_view(), name="sql-frog-shop-equip"),
+    path("py-journey/progress/", PyJourneyProgressView.as_view(), name="py-journey-progress"),
+    path("py-journey/levels/<str:level_id>/", PyJourneyLevelDetailView.as_view(), name="py-journey-level-detail"),
+    path("py-journey/levels/<str:level_id>/run/", PyJourneyRunView.as_view(), name="py-journey-run"),
+    path("py-journey/levels/<str:level_id>/hint/", PyJourneyHintView.as_view(), name="py-journey-hint"),
+    path("py-journey/shop/", PyJourneyShopView.as_view(), name="py-journey-shop"),
+    path("py-journey/shop/purchase/", PyJourneyPurchaseCosmeticView.as_view(), name="py-journey-shop-purchase"),
+    path("py-journey/shop/equip/", PyJourneyEquipCosmeticView.as_view(), name="py-journey-shop-equip"),
 
     # Editor bootstrap
     path("editor/bootstrap/", EditorBootstrapView.as_view(), name="editor-bootstrap"),
@@ -515,6 +546,7 @@ urlpatterns = [
     path("staff/<str:faculty_id>/report/", StaffReportPDFView.as_view(), name="staff-report-pdf"),
     path("batches/<str:batch_code>/report/", BatchReportPDFView.as_view(), name="batch-report-pdf"),
     path("contests/<int:contest_id>/report/", ContestReportPDFView.as_view(), name="contest-report-pdf"),
+    path("learn-sprints/<int:sprint_id>/report/", LearnSprintReportPDFView.as_view(), name="learn-sprint-report-pdf"),
     path("contests/<int:contest_id>/students/<str:register_number>/report/", StudentContestReportPDFView.as_view(), name="contest-student-report-pdf"),
     
     # Institution Branding

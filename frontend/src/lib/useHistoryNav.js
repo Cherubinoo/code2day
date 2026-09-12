@@ -37,6 +37,7 @@ export const PAGE_PATHS = {
   playground:    "/playground",
   labs:          "/labs",
   contest:       "/contest",
+  "learn-sprint": "/learn-sprint",
   leaderboard:   "/leaderboard",
   progress:      "/progress",
   discuss:       "/discuss",

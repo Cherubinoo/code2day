@@ -282,9 +282,13 @@ class StudentContestListView(APIView):
 
         student = request.user.student_profile
 
-        # Get contests accessible to student (published, completed, active, or approved)
+        # Get contests accessible to student (published, completed, active, or approved).
+        # Sprint-day contests (auto-generated per LearnSprintDay) are excluded —
+        # students reach those only through the Learn Sprint pages, never the
+        # regular Contest tab.
         all_contests = Contest.objects.filter(
-            status__in=['published', 'completed', 'active', 'approved']
+            status__in=['published', 'completed', 'active', 'approved'],
+            learnsprintday__isnull=True,
         ).distinct().select_related('created_by', 'department').prefetch_related('problems', 'aptitude_questions')
 
         contests = [c for c in all_contests if c.is_student_assigned(student)]

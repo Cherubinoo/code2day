@@ -7,11 +7,13 @@ import {
   Settings, Bell, MoreVertical, ExternalLink, Shield, ShieldOff,
   UserPlus, Check, X, FileText, Briefcase, Layout, UserCheck, Building2,
   Calendar, Lock, Unlock, CheckCircle, BarChart, XCircle, Activity, Brain, MessageSquare,
-  Pencil, Plus, Eye, EyeOff, Download, Clock, Trash2, Library, Sparkles
+  Pencil, Plus, Eye, EyeOff, Download, Clock, Trash2, Library, Sparkles, CalendarClock
 } from 'lucide-react';
 import DoubleConfirmModal from '../common/DoubleConfirmModal';
 import { getCsrfToken } from '../../lib/appUtils';
 import ContestApprovalPanel from './ContestApprovalPanel';
+import LearnSprintApprovalPanel from './LearnSprintApprovalPanel';
+import LearnSprintStaffPage from '../staff/LearnSprintStaffPage';
 import ContestDetailModal from '../common/ContestDetailModal';
 import EnhancedContestCreator from '../staff/EnhancedContestCreator';
 import DiscussPage from '../student/pages/DiscussPage';
@@ -59,6 +61,7 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
     { id: 'students', label: 'Student Directory', icon: UserCheck },
     { id: 'batches', label: 'Batch Analytics', icon: Building2 },
     { id: 'contests', label: 'Contest Center', icon: Layout },
+    { id: 'learn-sprint', label: 'Learn Sprint', icon: CalendarClock },
     { id: 'labs', label: 'Lab Center', icon: FlaskConical },
     { id: 'companies', label: 'Companies', icon: Briefcase },
     { id: 'my-practicals', label: 'My Practicals', icon: Pencil },
@@ -91,6 +94,7 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
   const [department, setDepartment] = useState(null);
   const [departmentStudents, setDepartmentStudents] = useState([]);
   const [contests, setContests] = useState([]);
+  const [sprints, setSprints] = useState([]);
   const [showContestCreator, setShowContestCreator] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -224,6 +228,7 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
             // contests API so approval / deletion-request fields are present.
             setContests(deptData.analytics?.contests || []);
             refreshContests();
+            refreshSprints();
           }
         } else {
           // Institutional View (Current HOD View)
@@ -267,6 +272,7 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
               const contestsData = await contestsRes.json();
               setContests(contestsData.contests || []);
             }
+            refreshSprints();
           }
         }
       }
@@ -362,6 +368,12 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
         const pendingCount = (data.contests || []).filter(c => c.status === 'pending_approval' || c.deletion_requested).length;
         setStats(prev => ({ ...prev, pendingApprovals: pendingCount, totalContests: (data.contests || []).length }));
       });
+  }
+
+  function refreshSprints() {
+    fetch(`/api/learn-sprints/`, { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => setSprints(data.sprints || []));
   }
 
   async function handleContestClick(contestId) {
@@ -2141,6 +2153,13 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
                 />
               </div>
 
+              <div className="premium-card" style={{ marginBottom: 32 }}>
+                <LearnSprintApprovalPanel
+                  sprints={sprints}
+                  onRefresh={refreshSprints}
+                />
+              </div>
+
               <div className="premium-card">
                 {(() => {
                   const filtered = contests.filter(c => {
@@ -3101,6 +3120,12 @@ const HODDashboard = ({ institutionId, lockedModules = [], role = null }) => {
             </div>
           )}
         </div>
+
+        {activeTab === 'learn-sprint' && (
+          <div className="tab-container">
+            <LearnSprintStaffPage />
+          </div>
+        )}
 
         {activeTab === 'labs' && (
           <HODLabCenter />

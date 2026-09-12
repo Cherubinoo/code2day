@@ -107,3 +107,63 @@ class ContestApprovalView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+
+class LearnSprintApprovalView(APIView):
+    """HOD or Academic Coordinator can approve / reject a Learn Sprint —
+    mirrors ContestApprovalView's approve/reject half (Learn Sprints don't
+    have a deletion-request workflow, see models.py)."""
+    permission_classes = [IsAuthenticated]
+
+    ACTIONS = ('approve', 'reject')
+
+    def post(self, request, sprint_id):
+        if not hasattr(request.user, 'staff_profile'):
+            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        profile = request.user.staff_profile
+        if profile.role not in ("hod", "academics"):
+            return Response(
+                {"detail": "Only HOD or Academic Coordinator can approve Learn Sprints."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        sprint = LearnSprint.objects.filter(id=sprint_id).first()
+        if not sprint:
+            return Response({"detail": "Learn Sprint not found."}, status=status.HTTP_404_NOT_FOUND)
+        if sprint.department != profile.department:
+            return Response(
+                {"detail": "You can only manage Learn Sprints in your department."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        action = request.data.get('action')
+        if action not in self.ACTIONS:
+            return Response({"detail": "Invalid action. Use 'approve' or 'reject'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            if action == 'approve':
+                sprint.approve(profile)
+                publish_learn_sprint_helper(sprint)
+                return Response({
+                    "detail": "Learn Sprint approved and published successfully.",
+                    "sprint_id": sprint.id,
+                    "status": sprint.status,
+                })
+            reason = request.data.get('reason', '')
+            sprint.reject(reason)
+            return Response({
+                "detail": "Learn Sprint rejected.",
+                "sprint_id": sprint.id,
+                "status": sprint.status,
+                "reason": reason,
+            })
+        except Exception:
+            logger.exception(
+                "Failed to %s Learn Sprint %s for HOD %s",
+                action, sprint_id, profile.faculty_id,
+            )
+            return Response(
+                {"detail": f"Failed to {action} Learn Sprint. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+

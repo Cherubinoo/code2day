@@ -13,6 +13,7 @@ Professional PDF reports for student performance data with:
 
 import logging
 import os
+from collections import defaultdict
 from datetime import datetime, timedelta
 from io import BytesIO
 from django.conf import settings
@@ -64,8 +65,9 @@ from .models import (
     StudentProfile, StaffProfile, Contest, ContestParticipation,
     ContestSubmission, SolvedProblem, ProblemSolution, SolvedAptitude,
     Problem, AptitudeQuestion, Department, Institution, TestCase,
-    AptitudeContestSubmission,
+    AptitudeContestSubmission, LearnSprint, LearnSprintBadgeAward,
 )
+from .learn_sprint_badges import BADGE_CATALOG
 
 logger = logging.getLogger(__name__)
 
@@ -1852,6 +1854,172 @@ class StudentContestReportPDFView(UnifiedAuthMixin, APIView):
         story.append(Paragraph(
             f"Individual Contest Report — {contest.title} — "
             f"{student.register_number or student.name} — "
+            f"Generated {_now_ist().strftime('%d %b %Y %I:%M %p')} — CONFIDENTIAL", fs))
+        return story
+
+
+# ---------------------------------------------------------------------------
+# Learn Sprint reports — a single day's report is just the existing
+# ContestReportPDFView called with that day's auto-generated contest id (see
+# LearnSprintDay.contest); this is the OVERALL, whole-sprint report, only
+# generatable once the sprint has actually completed (its last day ended) —
+# the numbers aren't final before then.
+# ---------------------------------------------------------------------------
+
+class LearnSprintReportPDFView(UnifiedAuthMixin, APIView):
+    """Overall Learn Sprint report — day-by-day summary, the final
+    aggregate leaderboard, and badges awarded."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, sprint_id):
+        if not REPORTLAB_AVAILABLE:
+            return Response({"error": "reportlab not installed"}, status=500)
+
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+
+        try:
+            sprint = LearnSprint.objects.select_related('department', 'institution', 'created_by').get(id=sprint_id)
+        except LearnSprint.DoesNotExist:
+            return Response({"error": "Learn Sprint not found"}, status=404)
+
+        if not self._can_access_sprint(profile, profile_type, sprint):
+            return Response({"error": "Access denied."}, status=403)
+
+        sprint.update_status_if_ended()
+        if sprint.status != "completed":
+            return Response(
+                {"error": "The overall report is only available once the Learn Sprint has completed (after its final day)."},
+                status=400,
+            )
+
+        buffer = BytesIO()
+        try:
+            doc = create_watermarked_pdf_contest(
+                buffer, institution=sprint.institution, department=sprint.department,
+                pagesize=A4,
+                rightMargin=0.6*inch, leftMargin=0.6*inch,
+                topMargin=2.1*inch, bottomMargin=0.6*inch,
+            )
+            story = self._build_story(sprint)
+            doc.build(story)
+        except Exception as e:
+            import traceback
+            return Response(
+                {"error": f"PDF generation failed: {str(e)}", "trace": traceback.format_exc()},
+                status=500,
+            )
+
+        buffer.seek(0)
+        resp = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+        ts = _now_ist().strftime('%Y%m%d_%H%M%S')
+        resp['Content-Disposition'] = f'attachment; filename="learn_sprint_{sprint.id}_{ts}.pdf"'
+        return resp
+
+    def _can_access_sprint(self, profile, profile_type, sprint):
+        if profile_type in ("staff", "hod", "academics"):
+            if profile.institution != sprint.institution:
+                return False
+            return sprint.department is None or profile.department == sprint.department
+        elif profile_type in ("director", "tpu", "principal", "ja"):
+            return profile.institution == sprint.institution
+        elif profile_type == "admin":
+            return True
+        return False
+
+    def _build_story(self, sprint):
+        styles = getSampleStyleSheet()
+        story = []
+
+        story.append(Paragraph(
+            f"<b>{sprint.title}</b>",
+            ParagraphStyle('lsTitle', fontName='Helvetica-Bold', fontSize=18, textColor=_hx(_INDIGO), spaceAfter=4),
+        ))
+        story.append(Paragraph(
+            f"{sprint.batch}{' / ' + sprint.section if sprint.section else ' (full batch)'} &middot; "
+            f"{sprint.day_count}-day sprint &middot; {', '.join(s.capitalize() for s in sprint.sections)}",
+            ParagraphStyle('lsSub', fontName='Helvetica', fontSize=10, textColor=_hx(_GRAY), spaceAfter=14),
+        ))
+
+        days = list(sprint.days.select_related('contest').order_by('day_number'))
+
+        def _ls_table_style(header_bg):
+            """A fresh TableStyle for one table — same base look, different
+            header color. Each call returns its own TableStyle instance
+            rather than mutating/reusing one, since TableStyle has no public
+            way to clone-and-extend an existing instance's commands."""
+            return TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), _hx(header_bg)),
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('TEXTCOLOR', (0, 0), (-1, 0), _hx(_WHITE)),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 0.5, _hx(_BORDER)),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [_hx(_WHITE), _hx(_LIGHT)]),
+                ('TOPPADDING', (0, 0), (-1, -1), 5),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ])
+
+        # ── Day-by-day summary ──────────────────────────────────────────
+        story.append(_section_header("Day-by-Day Summary"))
+        day_rows = [["Day", "Date", "Participants", "Top Score"]]
+        totals = defaultdict(float)
+        names = {}
+        for day in days:
+            if not day.contest:
+                day_rows.append([f"Day {day.day_number}", str(day.date), "—", "—"])
+                continue
+            participations = list(
+                ContestParticipation.objects.filter(contest=day.contest, has_started=True).select_related('student')
+            )
+            top_score = max((p.total_score for p in participations), default=0)
+            day_rows.append([f"Day {day.day_number}", str(day.date), str(len(participations)), f"{top_score:.0f}"])
+            for p in participations:
+                totals[p.student_id] += p.total_score
+                names[p.student_id] = (p.student.name, p.student.register_number)
+
+        day_table = Table(day_rows, colWidths=[0.9*inch, 1.3*inch, 1.5*inch, 1.5*inch])
+        day_table.setStyle(_ls_table_style(_INDIGO))
+        story.append(day_table)
+        story.append(Spacer(1, 16))
+
+        # ── Overall leaderboard ─────────────────────────────────────────
+        story.append(_section_header("Overall Leaderboard", color=_TEAL))
+        ranking = sorted(totals.items(), key=lambda kv: kv[1], reverse=True)
+        lb_rows = [["Rank", "Student", "Register No.", "Total Score"]]
+        for i, (student_id, score) in enumerate(ranking[:25]):
+            name, reg = names[student_id]
+            lb_rows.append([_ordinal(i + 1), name, reg, f"{score:.0f}"])
+        if len(lb_rows) == 1:
+            lb_rows.append(["—", "No participants", "—", "—"])
+        lb_table = Table(lb_rows, colWidths=[0.7*inch, 2.2*inch, 1.5*inch, 1.2*inch])
+        lb_table.setStyle(_ls_table_style(_TEAL))
+        story.append(lb_table)
+        story.append(Spacer(1, 16))
+
+        # ── Badges awarded ───────────────────────────────────────────────
+        story.append(_section_header("Badges Awarded", color=_ORANGE))
+        awards = list(
+            LearnSprintBadgeAward.objects.filter(sprint=sprint).select_related('student').order_by('badge_code', 'student__name')
+        )
+        if awards:
+            badge_rows = [["Badge", "Student", "Register No."]]
+            for a in awards:
+                label = BADGE_CATALOG.get(a.badge_code, {}).get('label', a.badge_code)
+                badge_rows.append([label, a.student.name, a.student.register_number])
+            badge_table = Table(badge_rows, colWidths=[1.8*inch, 2.2*inch, 1.5*inch])
+            badge_table.setStyle(_ls_table_style(_ORANGE))
+            story.append(badge_table)
+        else:
+            story.append(Paragraph("No badges were awarded.", styles['Normal']))
+
+        story.append(Spacer(1, 20))
+        story.append(_divider())
+        story.append(Spacer(1, 6))
+        fs = ParagraphStyle("lsFoot", fontName="Helvetica", fontSize=7, alignment=1, textColor=_hx(_GRAY))
+        story.append(Paragraph(
+            f"Learn Sprint Overall Report — {sprint.title} — "
             f"Generated {_now_ist().strftime('%d %b %Y %I:%M %p')} — CONFIDENTIAL", fs))
         return story
 

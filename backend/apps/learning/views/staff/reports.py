@@ -248,7 +248,19 @@ class StudentReportPDFView(APIView):
                 ])
             return _styled_table(data, [1.9 * inch, 0.7 * inch, 1.2 * inch, 2.6 * inch])
 
-        if rd['programming_topic_breakdown'] or rd['aptitude_topic_breakdown']:
+        def _game_mastery_table(rows):
+            # A dedicated table, not _topic_table, because each game has its
+            # own total-level count rather than one shared threshold.
+            data = [["Language", "Levels Completed", "Mastery", "Proficiency"]]
+            for gm in rows:
+                bar_color = LEVEL_COLORS.get(gm['level'], '#4f46e5')
+                data.append([
+                    gm['game'], f"{gm['completed']}/{gm['total']}", _level_cell(gm['level']),
+                    _progress_bar(gm['pct'] / 100, color=bar_color, w=130, h=10),
+                ])
+            return _styled_table(data, [1.3 * inch, 1.3 * inch, 1.2 * inch, 2.6 * inch])
+
+        if rd['programming_topic_breakdown'] or rd['aptitude_topic_breakdown'] or rd['game_mastery']:
             els.append(Paragraph("Topic-by-Topic Breakdown", header_style))
             els.append(Paragraph(
                 "Proficiency is based on problems solved per topic: Not Started (0) -&gt; Beginner (1-4) "
@@ -263,6 +275,15 @@ class StudentReportPDFView(APIView):
             if rd['aptitude_topic_breakdown']:
                 els.append(Paragraph("Aptitude Topics", ParagraphStyle('RPSubHeader2', parent=sub_style, fontName='Helvetica-Bold', fontSize=9.5, textColor=colors.HexColor(GREEN_HDR), spaceBefore=6, spaceAfter=4)))
                 els.append(_topic_table(rd['aptitude_topic_breakdown']))
+                els.append(Spacer(1, 0.15 * inch))
+            if rd['game_mastery']:
+                els.append(Paragraph("Languages & Games", ParagraphStyle('RPSubHeader3', parent=sub_style, fontName='Helvetica-Bold', fontSize=9.5, textColor=colors.HexColor(GREEN_HDR), spaceBefore=6, spaceAfter=4)))
+                els.append(Paragraph(
+                    "Mastery is the percentage of a learning game's levels completed — a language the "
+                    "student has practiced through gamified learning, not a game they've merely played.",
+                    sub_style,
+                ))
+                els.append(_game_mastery_table(rd['game_mastery']))
             els.append(Spacer(1, 0.25 * inch))
 
         # ── Section 6: 12-Week Trend ─────────────────────────────────────
@@ -585,6 +606,36 @@ class StudentReportPDFView(APIView):
         # which only care about topic/count/level, not which group it came from.
         topic_breakdown = programming_topic_breakdown + aptitude_topic_breakdown
 
+        # ── Languages & Games (mastery via learning-game completion) ──────
+        # Framed as a language/skill the student knows ("SQL", "Python"),
+        # never as "SQL Frog"/"Py's Journey" — same games_registry.py every
+        # game registers in for the leaderboard and badges. Percentage-based
+        # buckets (not raw count) since each game has a different total
+        # level count. Games with zero progress are skipped so this stays
+        # a "what they've actually touched" list, not a static roster of
+        # every registered game at 0%.
+        def _mastery_level(pct):
+            if pct <= 0:
+                return "Not Started"
+            if pct < 34:
+                return "Beginner"
+            if pct < 75:
+                return "Intermediate"
+            return "Advanced"
+
+        game_mastery = []
+        for game in GAMES_REGISTRY:
+            progress = game["progress_model_fn"]().objects.filter(student=student).first()
+            if not progress or not progress.completed_level_ids:
+                continue
+            total_levels = game["total_levels_fn"]() or 1
+            pct = round(len(progress.completed_level_ids) / total_levels * 100)
+            game_mastery.append({
+                'game': game['label'], 'completed': len(progress.completed_level_ids),
+                'total': total_levels, 'pct': pct, 'level': _mastery_level(pct),
+            })
+        game_mastery.sort(key=lambda g: g['pct'], reverse=True)
+
         # ── 12-Week Trend ────────────────────────────────────────────────
         today = timezone.localdate()
         weekly_trend = []
@@ -742,6 +793,7 @@ class StudentReportPDFView(APIView):
             'topic_breakdown': topic_breakdown,
             'programming_topic_breakdown': programming_topic_breakdown,
             'aptitude_topic_breakdown': aptitude_topic_breakdown,
+            'game_mastery': game_mastery,
             'weekly_trend': weekly_trend,
             'company_readiness': company_readiness,
             'insights': insights,

@@ -1412,6 +1412,64 @@ class SqlFrogProgress(models.Model):
         return f"{self.student} — {self.xp} XP"
 
 
+class PyJourneyProgress(models.Model):
+    """One student's progress through "PY — Journey to the Kingdom of
+    Python" — field-for-field the same shape as SqlFrogProgress (see its
+    docstring): levels are hand-authored content in python_journey/, not DB
+    rows; this model only tracks per-student state against that fixed
+    content. A separate model per game (rather than one shared table) is a
+    deliberate choice — see games_registry.py for how scoring/badges/reports
+    generalize across every *Progress model without needing them merged."""
+    student = models.OneToOneField(StudentProfile, on_delete=models.CASCADE, related_name="py_journey_progress")
+    xp = models.PositiveIntegerField(default=0)
+    coins = models.PositiveIntegerField(default=0)
+    # e.g. ["w1_l01", "w1_l02", ...] — level ids from python_journey/levels.py.
+    completed_level_ids = models.JSONField(default=list, blank=True)
+    # Stats only ({"w1_l04": 2, ...}) — hints never reduce XP/coin rewards.
+    hints_used = models.JSONField(default=dict, blank=True)
+    # Cosmetic shop — item ids from python_journey/cosmetics.py.
+    owned_cosmetic_ids = models.JSONField(default=list, blank=True)
+    # {"skin": "skin_blue", "accessory": "acc_hat"} — at most one item per slot.
+    equipped_cosmetics = models.JSONField(default=dict, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "py_journey_progress"
+
+    def __str__(self):
+        return f"{self.student} — {self.xp} XP"
+
+
+class GameBadgeAward(models.Model):
+    """A completion badge earned by a student in one learning game (SQL
+    Frog, Py's Journey, and any future game registered in
+    games_registry.py) — shared across every game rather than one model
+    per game, since the badge criteria themselves (first level, world
+    complete, whole game complete) are identical regardless of which game
+    earned them. Catalog (label/icon/description) is hardcoded Python
+    content in game_badges.py, same convention as learn_sprint_badges.py."""
+    BADGE_CHOICES = (
+        ("first_steps", "First Steps"),
+        ("world_champion", "World Champion"),
+        ("game_master", "Game Master"),
+    )
+    student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name="game_badges")
+    game_key = models.CharField(max_length=30)  # matches a games_registry.py "key"
+    badge_code = models.CharField(max_length=30, choices=BADGE_CHOICES)
+    # Set only for "world_champion" (which world was completed); null for
+    # "first_steps"/"game_master", which aren't per-world.
+    world = models.PositiveIntegerField(null=True, blank=True)
+    awarded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "game_badge_awards"
+        unique_together = ("student", "game_key", "badge_code", "world")
+        ordering = ["-awarded_at"]
+
+    def __str__(self):
+        return f"{self.student.register_number} - {self.game_key} - {self.badge_code}"
+
+
 class AptitudeAttempt(models.Model):
     """Logs every free-practice aptitude answer — correct or wrong.
     SolvedAptitude only records correct answers, so it can show "questions
@@ -2352,6 +2410,233 @@ class ContestCustomAnswer(models.Model):
 
     def __str__(self):
         return f"{self.student.register_number} - CQ#{self.question_id} - {self.is_correct}"
+
+
+# ─── Learn Sprint ───────────────────────────────────────────────────────────
+# A staff-designed, HOD-approved *series* of daily contests scheduled over
+# several days. Deliberately reuses Contest as the per-day engine: each
+# LearnSprintDay owns one auto-generated Contest (contest_type="combined")
+# at publish time, so day-locking (Contest.access_start_time/access_end_time
+# already gates a window), scoring, sessions, anti-cheat, and the student
+# workspace are all the *exact same* machinery a regular contest uses — a
+# Learn Sprint only adds the scheduling wrapper, topic-weighted allocation,
+# and cross-day leaderboard/badge aggregation on top.
+
+class LearnSprint(models.Model):
+    STATUS_CHOICES = (
+        ("draft", "Draft"),
+        ("pending_approval", "Pending Approval"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+        ("published", "Published"),
+        ("active", "Active"),
+        ("completed", "Completed"),
+        ("archived", "Archived"),
+    )
+    # Which content types this sprint includes — a checkbox set from the
+    # creation wizard. "manual" questions are inline-authored (see
+    # LearnSprintManualQuestion) rather than drawn from a shared bank.
+    SECTION_KEYS = ("programming", "aptitude", "reading", "manual")
+
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True, default="")
+    created_by = models.ForeignKey(
+        StaffProfile, on_delete=models.SET_NULL, related_name="learn_sprints", null=True,
+    )
+    department = models.ForeignKey(
+        Department, on_delete=models.CASCADE, related_name="learn_sprints", null=True, blank=True,
+    )
+    institution = models.ForeignKey(
+        Institution, on_delete=models.CASCADE, related_name="learn_sprints", null=True, blank=True,
+    )
+
+    sections = models.JSONField(default=list, blank=True)
+
+    # Staff sets one questions-per-day count per selected section; the same
+    # count applies to every day of the sprint. reading_per_day counts
+    # PASSAGES (each passage's questions ride along as a unit), matching how
+    # Contest already treats a reading passage as one attachable item.
+    programming_per_day = models.PositiveIntegerField(default=0)
+    aptitude_per_day = models.PositiveIntegerField(default=0)
+    reading_per_day = models.PositiveIntegerField(default=0)
+    manual_per_day = models.PositiveIntegerField(default=0)
+
+    # {"programming": {"mode": "weighted"|"random", "topics": [{"tag": "Array", "weight": 40}, ...]},
+    #  "aptitude":    {"mode": ..., "topics": [{"topic_id": 12, "weight": ...}, ...]},
+    #  "reading":     {"mode": ..., "topics": [{"topic_id": 3, "weight": ...}]}}
+    # "programming" topics key off Problem.tags strings; "aptitude"/"reading"
+    # key off AptitudeTopic ids (filtered by question_type MCQ vs RC
+    # respectively). Selected topics' weights must sum to 100 when
+    # mode="weighted" (validated in the view, not here).
+    topic_config = models.JSONField(default=dict, blank=True)
+
+    # One daily time window applied to every scheduled date (e.g. 18:00-20:00).
+    daily_start_time = models.TimeField(null=True, blank=True)
+    daily_end_time = models.TimeField(null=True, blank=True)
+    # Explicit ISO date strings the staff picked on a calendar — not
+    # necessarily consecutive. len(sprint_dates) is the day count.
+    sprint_dates = models.JSONField(default=list, blank=True)
+
+    # Audience — single batch (required) + optional section (blank = whole
+    # batch), simpler than Contest's multi-batch JSON scheme, matching how
+    # the staff wizard asks for it ("elect batch, section... batch must be
+    # must").
+    batch = models.CharField(max_length=20)
+    section = models.CharField(max_length=10, blank=True, default="")
+
+    # How much each selected section contributes to a day's blended score —
+    # copied onto each day's generated Contest.*_weight_percent verbatim
+    # (manual -> Contest.custom_weight_percent). Selected sections' weights
+    # must sum to 100 (validated in the view, same convention as Contest).
+    programming_weight_percent = models.PositiveIntegerField(default=25)
+    aptitude_weight_percent = models.PositiveIntegerField(default=25)
+    reading_weight_percent = models.PositiveIntegerField(default=25)
+    manual_weight_percent = models.PositiveIntegerField(default=25)
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="draft")
+    approved_by = models.ForeignKey(
+        StaffProfile, on_delete=models.SET_NULL, related_name="approved_learn_sprints",
+        null=True, blank=True, help_text="HOD who approved this sprint",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, default="")
+    submitted_for_approval_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "learn_sprints"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.title} ({self.batch}{'/' + self.section if self.section else ''})"
+
+    @property
+    def day_count(self):
+        return len(self.sprint_dates or [])
+
+    def submit_for_approval(self):
+        self.status = "pending_approval"
+        self.submitted_for_approval_at = timezone.now()
+        self.save(update_fields=["status", "submitted_for_approval_at"])
+
+    def approve(self, hod_profile):
+        self.status = "approved"
+        self.approved_by = hod_profile
+        self.approved_at = timezone.now()
+        self.save(update_fields=["status", "approved_by", "approved_at"])
+
+    def reject(self, reason=""):
+        self.status = "rejected"
+        self.rejection_reason = reason
+        self.save(update_fields=["status", "rejection_reason"])
+
+    def publish(self):
+        if self.status == "approved":
+            self.status = "published"
+            self.save(update_fields=["status"])
+
+    @property
+    def is_ended(self):
+        """True once the last scheduled day's access window has passed."""
+        last_day = self.days.order_by("-date").first()
+        if not last_day or not last_day.contest:
+            return False
+        return last_day.contest.is_ended
+
+    def update_status_if_ended(self):
+        """Flip to completed once the last day has ended, and finalize
+        badges the first time that happens (lazy-evaluated on read, same
+        convention as the Achievement awarding in views/common.py — no
+        Celery/cron needed)."""
+        if self.status in ("published", "active") and self.is_ended:
+            self.status = "completed"
+            self.save(update_fields=["status"])
+            from apps.learning.views._shared import finalize_learn_sprint_badges
+            finalize_learn_sprint_badges(self)
+            return True
+        return False
+
+
+class LearnSprintDay(models.Model):
+    """One scheduled day of a Learn Sprint. `contest` is created only at
+    publish time (publish_learn_sprint_helper) so draft/pending sprints
+    never create real Contest rows."""
+    sprint = models.ForeignKey(LearnSprint, on_delete=models.CASCADE, related_name="days")
+    day_number = models.PositiveIntegerField()
+    date = models.DateField()
+    contest = models.OneToOneField(
+        Contest, on_delete=models.SET_NULL, null=True, blank=True, related_name="learnsprintday",
+    )
+    # Exactly which bank ids the allocation algorithm assigned to this day —
+    # read at publish time to populate the generated Contest's M2Ms.
+    allocated_problem_ids = models.JSONField(default=list, blank=True)
+    allocated_aptitude_question_ids = models.JSONField(default=list, blank=True)
+
+    class Meta:
+        db_table = "learn_sprint_days"
+        unique_together = ("sprint", "day_number")
+        ordering = ["day_number"]
+
+    def __str__(self):
+        return f"{self.sprint.title} — Day {self.day_number} ({self.date})"
+
+
+class LearnSprintManualQuestion(models.Model):
+    """The inline-authored MCQ pool for a sprint's 'manual' section — same
+    shape as ContestCustomQuestion. Authored once as a pool of exactly
+    day_count * manual_per_day questions; the allocation algorithm assigns
+    each to one day (assigned_day), and at publish time each assigned
+    question is copied into a real ContestCustomQuestion owned by that
+    day's generated Contest."""
+    sprint = models.ForeignKey(LearnSprint, on_delete=models.CASCADE, related_name="manual_questions")
+    order = models.PositiveIntegerField(default=0)
+    question_text = models.TextField()
+    question_image = models.URLField(max_length=1000, blank=True, default="")
+    option_a = models.CharField(max_length=500)
+    option_b = models.CharField(max_length=500)
+    option_c = models.CharField(max_length=500)
+    option_d = models.CharField(max_length=500)
+    correct_option = models.CharField(max_length=1)
+    explanation = models.TextField(blank=True, default="")
+    assigned_day = models.ForeignKey(
+        LearnSprintDay, on_delete=models.SET_NULL, null=True, blank=True, related_name="manual_questions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "learn_sprint_manual_questions"
+        ordering = ["order", "id"]
+
+    def __str__(self):
+        return f"{self.sprint_id} #{self.order} - {self.question_text[:50]}"
+
+
+class LearnSprintBadgeAward(models.Model):
+    """A badge earned by a student for one completed Learn Sprint. Badge
+    catalog (label/icon/description) is hardcoded Python content —
+    see learn_sprint_badges.BADGE_CATALOG — matching the codebase's existing
+    convention of code-defined content + DB-only state (e.g. SQL Frog's
+    cosmetics catalog)."""
+    BADGE_CHOICES = (
+        ("champion", "Sprint Champion"),
+        ("podium", "Podium Finish"),
+        ("perfect_attendance", "Perfect Attendance"),
+        ("day_champion", "Day Champion"),
+    )
+    sprint = models.ForeignKey(LearnSprint, on_delete=models.CASCADE, related_name="badge_awards")
+    student = models.ForeignKey(StudentProfile, on_delete=models.CASCADE, related_name="learn_sprint_badges")
+    badge_code = models.CharField(max_length=30, choices=BADGE_CHOICES)
+    awarded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "learn_sprint_badge_awards"
+        unique_together = ("sprint", "student", "badge_code")
+        ordering = ["-awarded_at"]
+
+    def __str__(self):
+        return f"{self.student.register_number} - {self.badge_code} - sprint {self.sprint_id}"
 
 
 # ─── Labs ─────────────────────────────────────────────────────────────────────
