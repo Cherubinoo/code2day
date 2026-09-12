@@ -194,10 +194,24 @@ jobs:
           echo "✓ Done"
 
           # ── 8. Health check ────────────────────────────────────────────────
+          # `curl` itself can fail (connection reset, timeout) rather than just
+          # returning a bad HTTP code — under `set -e` that would abort the
+          # whole script right here with a bare curl exit code and no output,
+          # instead of the clear pass/fail below. Fall back to "000" so a
+          # transient blip is just another failing status to report, and give
+          # each endpoint a few retries since containers may still be warming up.
+          check_http() {
+            for i in 1 2 3 4 5; do
+              CODE=$(curl -s -o /dev/null -w "%{http_code}" "$1" || echo "000")
+              [ "$CODE" = "200" ] || [ "$CODE" = "302" ] && break
+              sleep 3
+            done
+            echo "$CODE"
+          }
           sleep 8
-          BACKEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/admin/)
-          FRONTEND=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8001/)
-          EXECUTOR=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:2358/system_info)
+          BACKEND=$(check_http http://localhost:8000/admin/)
+          FRONTEND=$(check_http http://localhost:8001/)
+          EXECUTOR=$(check_http http://localhost:2358/system_info)
 
           echo "  Backend  → HTTP $BACKEND"
           echo "  Frontend → HTTP $FRONTEND"
