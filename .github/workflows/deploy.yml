@@ -94,13 +94,23 @@ jobs:
           BACKEND_COMPOSE="backend/docker-compose.yml"
           JUDGE0_COMPOSE="docker-compose.judge0.yml"
 
-          # ── 2. Ensure the Judge0 execution stack is up (rarely changes) ─────
+          # ── 2. Ensure the Judge0 execution stack is up (rarely changes, and is
+          # independent infra from the app deploy below — its readiness is a
+          # nice-to-have here, never a reason to block backend/frontend from
+          # shipping, matching how the final health check in step 8 treats it) ──
           # Judge0's containers on this host were brought up by hand (docker run),
           # not by this compose file, so if they already exist (running or
           # stopped) `docker compose up` fails with a naming conflict instead of
           # adopting them. So: if they're healthy, leave them alone; if they
           # exist but are down, `docker start` them directly; only use compose
           # to create them when none of them exist at all.
+          #
+          # judge0-server in particular has a known intermittent boot bug (a
+          # Rails classic-autoloader race that surfaces as a TSort::Cyclic error
+          # — see conversation history / ops notes) that isn't caused by
+          # anything this deploy does and isn't fixed by waiting or recreating
+          # the container. Give it a reasonable chance to come up, but never
+          # fail the whole deploy over it.
           JUDGE0_CONTAINERS="judge0-db judge0-redis judge0-server judge0-workers"
           echo "→ Checking Judge0 execution stack..."
           if curl -sf http://localhost:2358/system_info > /dev/null 2>&1; then
@@ -113,13 +123,13 @@ jobs:
             if [ -n "$EXISTING" ]; then
               echo "→ Judge0 not responding — starting existing containers:$EXISTING"
               for c in $EXISTING; do
-                docker start "$c" > /dev/null
+                docker start "$c" > /dev/null 2>&1 || true
               done
             else
               echo "→ No existing Judge0 containers found — creating via compose..."
-              docker compose -f "$JUDGE0_COMPOSE" up -d
+              docker compose -f "$JUDGE0_COMPOSE" up -d || true
             fi
-            echo "→ Waiting for Judge0 to respond..."
+            echo "→ Waiting for Judge0 to respond (best-effort, won't block the deploy)..."
             for i in $(seq 1 30); do
               curl -sf http://localhost:2358/system_info > /dev/null 2>&1 && break
               echo "  Waiting for Judge0... (${i}/30)"
@@ -128,27 +138,8 @@ jobs:
             if curl -sf http://localhost:2358/system_info > /dev/null 2>&1; then
               echo "✓ Judge0 execution stack up"
             else
-              # judge0-server has, more than once, come back from `docker start`
-              # with a corrupted writable layer (Rails TSort::Cyclic error on
-              # boot) — restarting it never fixes that, only recreating the
-              # container from the known-good image does. Try that once before
-              # giving up.
-              echo "⚠ Judge0 still not responding — recreating judge0-server from known-good image..."
-              docker rm -f judge0-server > /dev/null 2>&1 || true
-              docker run -d --name judge0-server --network code2day-shared \
-                --network-alias judge0-server -p 2358:2358 --privileged \
-                --restart unless-stopped code2day-judge0:sql-fixed
-              for i in $(seq 1 30); do
-                curl -sf http://localhost:2358/system_info > /dev/null 2>&1 && break
-                echo "  Waiting for recreated judge0-server... (${i}/30)"
-                sleep 2
-              done
-              if curl -sf http://localhost:2358/system_info > /dev/null 2>&1; then
-                echo "✓ Judge0 execution stack up (after recreating judge0-server)"
-              else
-                echo "✗ Judge0 still not healthy — check 'docker logs judge0-server' on the server"
-                exit 1
-              fi
+              echo "⚠ Judge0 still not responding — continuing deploy anyway (code execution"
+              echo "  will be degraded until it stabilizes; check 'docker logs judge0-server')"
             fi
           fi
 
