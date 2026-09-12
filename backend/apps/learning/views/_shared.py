@@ -1740,20 +1740,37 @@ def _build_department_performance_charts(department, institution, days=30):
 def publish_contest_helper(contest):
     """Helper to publish a contest and notify students"""
     contest.publish()
-    
-    # Create Announcement
-    Announcement.objects.create(
+
+    # The resolved audience — same rules Contest.is_student_assigned uses, so
+    # the announcement (and the per-student notifications below) reach
+    # exactly who the contest reaches: an individually-assigned contest only
+    # announces to those students, a batch-restricted-to-a-section one only
+    # to that section, never the whole department. Fetched once, reused for
+    # both the announcement's audience snapshot and the notifications below.
+    reached_students = list(contest.assigned_students_queryset().values('id', 'account'))
+    reached_student_ids = [s['id'] for s in reached_students]
+
+    # Create Announcement — scoped to the contest's own audience, not a
+    # department-wide (or global) broadcast. department/assigned_batches/
+    # assigned_sections are kept as informational fallback scoping; the
+    # assigned_students snapshot below is what is_visible_to_student()
+    # actually checks first whenever there's a resolved audience to snapshot.
+    announcement = Announcement.objects.create(
         title=f"🚀 New Contest: {contest.title}",
         content=f"A new contest '{contest.title}' is now live! Challenge yourself and climb the leaderboard.",
-        category="contest"
+        category="contest",
+        institution=contest.institution,
+        department=contest.department,
+        assigned_batches=contest.assigned_batches or [],
+        assigned_sections=contest.assigned_sections or [],
     )
+    if reached_student_ids:
+        announcement.assigned_students.set(reached_student_ids)
 
     # Create Notifications for every student the contest actually reaches —
     # section-scoped batches reach only their listed section(s), not the
     # whole batch (Contest.assigned_students_queryset resolves that).
-    student_users = list(
-        contest.assigned_students_queryset().values_list('account', flat=True)
-    )
+    student_users = [s['account'] for s in reached_students]
 
     # Unique users
     unique_user_ids = set(filter(None, student_users))

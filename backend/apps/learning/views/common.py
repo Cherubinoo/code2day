@@ -351,12 +351,17 @@ class DashboardView(UnifiedAuthMixin, APIView):
         else:
             preferred_language = "Python"
 
-        # Announcements Logic (Fetch active announcements from last 7 days)
+        # Announcements Logic (Fetch active announcements from last 7 days) —
+        # scoped to this student's own audience (see
+        # Announcement.is_visible_to_student / publish_contest_helper), so a
+        # contest announcement for one batch/section/individual doesn't show
+        # up for the whole department. Sliced AFTER filtering, not before.
         seven_days_ago = timezone.now() - timedelta(days=7)
-        announcements = Announcement.objects.filter(
-            is_active=True, 
+        all_announcements = Announcement.objects.filter(
+            is_active=True,
             created_at__gte=seven_days_ago
-        ).order_by('-created_at')[:5]
+        ).prefetch_related('assigned_students').order_by('-created_at')
+        announcements = [a for a in all_announcements if a.is_visible_to_student(profile)][:5]
 
         payload = {
             "user": user_payload,
@@ -1013,15 +1018,27 @@ class ContestBatchAssignView(APIView):
 
 class AnnouncementListView(UnifiedAuthMixin, APIView):
     def get(self, request):
-        # Universal Table Refresh logic: 
+        # Universal Table Refresh logic:
         # Only show announcements from the last 7 days
         seven_days_ago = timezone.now() - timedelta(days=7)
-        
+
         announcements = Announcement.objects.filter(
             is_active=True,
             created_at__gte=seven_days_ago
-        ).order_by('-created_at')
-        
+        ).prefetch_related('assigned_students').order_by('-created_at')
+
+        # A student only sees announcements whose audience actually includes
+        # them — a contest announcement scoped to one batch/section/individual
+        # student set must not show up for the whole department (see
+        # Announcement.is_visible_to_student / publish_contest_helper).
+        # Staff/HOD/admin views are unaffected — everything still broadcasts
+        # to them the same as before this scoping existed.
+        profile, profile_type, error = self.get_authenticated_profile(request)
+        if error:
+            return error
+        if profile_type == "student":
+            announcements = [a for a in announcements if a.is_visible_to_student(profile)]
+
         data = [{
             "id": a.id,
             "title": a.title,
@@ -1030,7 +1047,7 @@ class AnnouncementListView(UnifiedAuthMixin, APIView):
             "time": a.created_at.strftime("%I:%M %p"),
             "date": a.created_at.strftime("%b %d")
         } for a in announcements]
-        
+
         return Response({"announcements": data})
 
 class NotificationListView(UnifiedAuthMixin, APIView):
